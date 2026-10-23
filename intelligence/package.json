@@ -32,6 +32,7 @@
     "api:local": "node api/start.mjs",
     "backtest": "node scripts/backtest.mjs",
     "refresh-cross-platform": "node scripts/refresh-cross-platform.mjs",
+    "analyze-ai": "node scripts/analyze-ai.mjs",
     "dispatch-telegram-alerts": "node scripts/dispatch-telegram-alerts.mjs"
   },
   "exports": {

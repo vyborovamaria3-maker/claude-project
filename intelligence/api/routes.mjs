@@ -36,26 +36,31 @@ export function parseApiRequest(raw,now=new Date()){
     return {kind:"health"};
   }
   const nowIso=safeTime(now);
-  const globalMatch=/^\/api\/intelligence\/v1\/(signals|backtest)$/.exec(url.pathname);
+  const globalMatch=/^\/api\/intelligence\/v1\/(signals|backtest|ai)$/.exec(url.pathname);
   if(globalMatch){
     const kind=globalMatch[1];
-    const allowed=kind==="signals"?new Set(["asOf","limit"]):new Set(["signal","limit"]);
+    const allowed=kind==="ai"?new Set(["asOf","limit","source"]):kind==="signals"?new Set(["asOf","limit"]):new Set(["signal","limit"]);
     const query=url.searchParams;
     for(const key of query.keys()){
       if(!allowed.has(key)||query.getAll(key).length!==1)throw new TypeError("invalid_query");
     }
     const rawLimit=query.get("limit")??"50";
     if(!/^[1-9][0-9]*$/.test(rawLimit)||Number(rawLimit)>100)throw new TypeError("invalid_limit");
-    if(kind==="signals"){
+    if(kind==="signals"||kind==="ai"){
       const asOf=timeParam(query.get("asOf"),"asOf");
       if(asOf>nowIso)throw new TypeError("invalid_time_window");
+      if(kind==="ai"){
+        const source=query.get("source");
+        if(source!==null&&!["x","tg"].includes(source))throw new TypeError("invalid_source");
+        return {kind,asOf,source,tokenId:null,limit:Number(rawLimit)};
+      }
       return {kind,asOf,limit:Number(rawLimit)};
     }
     const signal=query.get("signal");
     if(signal!==null&&!/^[a-z][a-z0-9_]{0,63}$/.test(signal))throw new TypeError("invalid_signal");
     return {kind,signal,limit:Number(rawLimit)};
   }
-  const match=/^\/api\/intelligence\/v1\/tokens\/([^/]+)\/(timeline|links|swap-evidence|summary|features|correlations)$/.exec(url.pathname);
+  const match=/^\/api\/intelligence\/v1\/tokens\/([^/]+)\/(timeline|links|swap-evidence|summary|features|correlations|ai)$/.exec(url.pathname);
   if(!match)return null;
   let tokenId;
   try{tokenId=decodeURIComponent(match[1]);}
@@ -68,7 +73,7 @@ export function parseApiRequest(raw,now=new Date()){
   const legacy=new Set(["timeline","links","swap-evidence"]);
   const routeAllowed=legacy.has(kind)
     ? new Set(["occurredBefore","knownAt","limit"])
-    : kind==="correlations" ? new Set(["asOf","limit"]) : new Set(["asOf"]);
+    : ["correlations","ai"].includes(kind) ? new Set(["asOf","limit"]) : new Set(["asOf"]);
   for(const key of query.keys()){
     if(!routeAllowed.has(key)||query.getAll(key).length!==1)throw new TypeError("invalid_query");
   }
@@ -183,6 +188,60 @@ function safeCoverage(value){
   const normalize=(item)=>["complete","partial","unknown"].includes(item)?item:"unknown";
   return {tg:normalize(source.tg),x:normalize(source.x),blockchain:normalize(source.blockchain)};
 }
+function boundedNumber(value,min,max){
+  if(typeof value!=="number"||!Number.isFinite(value)||value<min||value>max)
+    throw new TypeError("invalid_stored_ai_result");
+  return value;
+}
+function safeModelId(value){
+  if(typeof value!=="string"||!/^[a-z0-9][a-z0-9._-]{0,127}$/.test(value))
+    throw new TypeError("invalid_stored_ai_model");
+  return value;
+}
+function normalizeAiAnalysis(row){
+  if(!["x","tg"].includes(row.source_system))throw new TypeError("invalid_stored_ai_source");
+  const evidenceId=safeEvidenceId(row.evidence_ref);
+  if(!evidenceId.startsWith(row.source_system=== "x"?"x:tweet:":"tg:message:"))
+    throw new TypeError("invalid_stored_ai_evidence");
+  const input=safeObject(row.result);
+  const confidence=boundedNumber(input.confidence,0,1);
+  let result;
+  if(row.task==="sentiment"){
+    if(!["bullish","bearish","neutral","mixed"].includes(input.label))
+      throw new TypeError("invalid_stored_ai_result");
+    result={label:input.label,score:boundedNumber(input.score,-1,1),confidence};
+  }else if(row.task==="narrative"){
+    if(input.narrativeId!==null&&(typeof input.narrativeId!=="string"||
+        !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(input.narrativeId)))
+      throw new TypeError("invalid_stored_ai_result");
+    if(!Array.isArray(input.keywords)||input.keywords.length>10||
+        input.keywords.some(value=>typeof value!=="string"||value.length>80||/[\u0000-\u001f]/.test(value)))
+      throw new TypeError("invalid_stored_ai_result");
+    result={narrativeId:input.narrativeId,confidence,keywords:input.keywords};
+  }else throw new TypeError("invalid_stored_ai_task");
+  if(typeof row.model_version!=="string"||!row.model_version.length||row.model_version.length>128||
+      /[\u0000-\u001f]/.test(row.model_version))throw new TypeError("invalid_stored_ai_model");
+  return {
+    source:row.source_system,evidenceId,task:row.task,result,
+    evidenceRefs:safeRefs(input.evidenceRefs).filter(ref=>ref===evidenceId),
+    modelId:safeModelId(row.model_id),modelVersion:row.model_version,
+    sourceObservedAt:safeTime(row.source_observed_at),analyzedAt:safeTime(row.analyzed_at),
+    interpretation:"model_classification_of_source_content",
+  };
+}
+function normalizeGroundedExplanation(row){
+  const grounding=safeObject(row.explanation_grounding);
+  if(grounding.version!=="alert-facts-v1")return null;
+  if(typeof row.explanation!=="string"||!row.explanation.length||row.explanation.length>4000)
+    throw new TypeError("invalid_stored_explanation");
+  const allowed=safeRefs(row.evidence_refs);
+  return {
+    text:row.explanation,modelId:safeModelId(row.explanation_model_id),
+    createdAt:safeTime(row.explanation_created_at),
+    evidenceRefs:safeRefs(row.explanation_evidence_refs).filter(ref=>allowed.includes(ref)),
+    grounding:{version:"alert-facts-v1"},
+  };
+}
 function normalizeSummary(row,request){
   return {
     schemaVersion:"token-intelligence-v1",tokenId:request.tokenId,
@@ -279,6 +338,44 @@ export async function queryTokenApi(pool,request){
       featureVersion:row.feature_version,features:safeFeatures(row.features),dataAvailable:true,
     };
   }
+  if(request.kind==="ai"){
+    const result=await pool.query(`SELECT analysis.source_system,analysis.evidence_ref,analysis.task,
+      analysis.model_id,analysis.model_version,analysis.result,analysis.source_observed_at,analysis.analyzed_at
+      FROM ai_message_analyses analysis
+      JOIN timeline_events event ON event.source_system=analysis.source_system
+        AND event.source_event_kind=analysis.source_event_kind AND event.event_key=analysis.event_key
+        AND event.evidence_source_id=analysis.evidence_ref
+      JOIN intelligence_inbox inbox ON inbox.source_system=event.source_system
+        AND inbox.event_kind=event.source_event_kind AND inbox.event_key=event.event_key
+      WHERE analysis.analyzed_at <= $2 AND analysis.source_observed_at <= $2
+        AND event.observed_at <= $2 AND event.occurred_at <= $2 AND inbox.ingested_at <= $2
+        AND ($4::text IS NULL OR analysis.source_system=$4)
+        AND ($1::text IS NULL OR EXISTS (
+          SELECT 1 FROM timeline_event_entities entity
+          WHERE entity.source_system=event.source_system AND entity.source_event_kind=event.source_event_kind
+            AND entity.event_key=event.event_key AND entity.kind='token' AND entity.canonical_id=$1
+        ) OR EXISTS (
+          SELECT 1 FROM token_link_observations verified
+          WHERE verified.source_system=analysis.source_system AND verified.evidence_source_id=analysis.evidence_ref
+            AND verified.state='verified' AND verified.canonical_token_id=$1
+            AND verified.observed_at <= analysis.analyzed_at AND verified.inserted_at <= analysis.analyzed_at
+            AND COALESCE(verified.occurred_at,verified.observed_at) <= $2
+            AND NOT EXISTS (
+              SELECT 1 FROM token_link_observations invalidated
+              WHERE invalidated.source_system=verified.source_system
+                AND invalidated.evidence_source_id=verified.evidence_source_id AND invalidated.state='invalidated'
+                AND invalidated.observed_at >= LEAST(verified.observed_at,analysis.source_observed_at)
+                AND invalidated.observed_at <= $2 AND invalidated.inserted_at <= $2
+            )
+        ))
+      ORDER BY analysis.analyzed_at DESC,analysis.analysis_id DESC LIMIT $3`,
+    [request.tokenId,request.asOf,request.limit+1,request.source??null]);
+    return {
+      schemaVersion:"token-intelligence-v1",tokenId:request.tokenId,asOf:request.asOf,
+      historicalCompleteness:"unknown",truncated:result.rows.length>request.limit,
+      items:result.rows.slice(0,request.limit).map(normalizeAiAnalysis),
+    };
+  }
   if(request.kind==="correlations"){
     const result=await pool.query(`SELECT event_kind,event_at,outcome_kind,outcome_at,lift,ci_low,ci_high,p_value,
       baseline,sample_size,evaluated_at,data_cutoff_at,model_id FROM (
@@ -304,11 +401,19 @@ export async function queryTokenApi(pool,request){
   }
   if(request.kind==="signals"){
     const result=await pool.query(`SELECT alert.alert_id,alert.canonical_token_id,alert.alert_type,alert.severity,
-      alert.triggered_at,alert.as_of,alert.score,alert.score_version,alert.evidence_refs,history.status
+      alert.triggered_at,alert.as_of,alert.score,alert.score_version,alert.evidence_refs,history.status,
+      explanation.explanation,explanation.model_id AS explanation_model_id,
+      explanation.created_at AS explanation_created_at,explanation.evidence_refs AS explanation_evidence_refs,
+      explanation.grounding AS explanation_grounding
       FROM token_alerts alert JOIN LATERAL (
         SELECT status FROM token_alert_status_history WHERE alert_id=alert.alert_id AND changed_at <= $1
         ORDER BY changed_at DESC,history_id DESC LIMIT 1
       ) history ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT explanation,model_id,created_at,evidence_refs,grounding FROM signal_explanations
+        WHERE alert_id=alert.alert_id AND created_at <= $1 AND grounding->>'version'='alert-facts-v1'
+        ORDER BY created_at DESC,explanation_id DESC LIMIT 1
+      ) explanation ON TRUE
       WHERE alert.triggered_at <= $1 AND alert.created_at <= $1 AND history.status NOT IN ('resolved','sending')
       ORDER BY alert.triggered_at DESC LIMIT $2`,[request.asOf,request.limit+1]);
     const items=result.rows.slice(0,request.limit).map((row)=>({
@@ -316,6 +421,7 @@ export async function queryTokenApi(pool,request){
       severity:String(row.severity),triggeredAt:safeTime(row.triggered_at),asOf:safeTime(row.as_of),
       score:numberOrNull(row.score),scoreVersion:typeof row.score_version==="string"?row.score_version:null,
       evidenceRefs:safeRefs(row.evidence_refs),status:String(row.status),
+      explanation:normalizeGroundedExplanation(row),
     }));
     return {schemaVersion:"token-intelligence-v1",asOf:request.asOf,historicalCompleteness:"unknown",
       truncated:result.rows.length>request.limit,items};

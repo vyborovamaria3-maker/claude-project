@@ -1,5 +1,7 @@
 PROJECT: X Collector Runtime v2
 
+2026-10-23 PR #167 AI integration: added migration009, post-ACK AI batches and read-only legacy snapshot worker, immutable typed results, bounded retries, refresh repair and historical API exposure. Explanations select stored fact IDs and are rendered/verified by the application. Strict typecheck/build and 113 tests pass on PostgreSQL16 with no skips. Live five-call X pipeline verified real source rows → persistence → HTTP200, with zero-call replay. Actual local X source has 1,174,046 rows; TG audit DB empty and configured live TG endpoint unavailable. No source DB migrations/writes or merge. See intelligence/AI_PIPELINE.md.
+
 2026-10-23 PR #167 follow-up: backtest signals use snapshot availability (later of input cutoff and database write time), with UTC signal-date filtering before daily selection. Refresh records wall-clock insertion time. Correlation replay/conflicting labels fail before persistence. Added real PostgreSQL refresh/selection/persistence regressions and correlation replay tests; see intelligence/CROSS_PLATFORM_AI.md. Local strict typecheck/build and all 101 Intelligence tests pass against disposable PostgreSQL 16 with no skips. No merge.
 
 ## PR #127 — локальная приёмка и производительность V2

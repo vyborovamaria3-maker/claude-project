@@ -310,15 +310,38 @@ export async function refreshTokenDailyCrossPlatform(
   const bot = SAFE_NUMERIC("bot_ratio");
   const rug = SAFE_NUMERIC("rug_risk");
   const volume = SAFE_NUMERIC("volume_usd");
+  const membership=`JOIN LATERAL (
+    SELECT MAX(known_at) AS known_at FROM (
+      SELECT te.observed_at AS known_at FROM timeline_event_entities e
+      WHERE e.source_system=te.source_system AND e.source_event_kind=te.source_event_kind
+        AND e.event_key=te.event_key AND e.kind='token' AND e.canonical_id=$1
+      UNION ALL
+      SELECT GREATEST(v.observed_at,v.inserted_at) FROM token_link_observations v
+      WHERE v.source_system=te.source_system AND v.evidence_source_id=te.evidence_source_id
+        AND v.state='verified' AND v.canonical_token_id=$1
+        AND v.observed_at<=$3::timestamptz AND v.inserted_at<=$3::timestamptz
+        AND NOT EXISTS(SELECT 1 FROM token_link_observations inv
+          WHERE inv.source_system=v.source_system AND inv.evidence_source_id=v.evidence_source_id
+            AND inv.state='invalidated' AND inv.observed_at>=v.observed_at
+            AND inv.observed_at<=$3::timestamptz AND inv.inserted_at<=$3::timestamptz)
+    ) identities HAVING COUNT(*)>0
+  ) membership ON TRUE`;
   const sql = `WITH token_events AS (
-    SELECT te.source_system,te.source_event_kind,te.event_key,te.timeline_kind,
-      te.occurred_at,te.observed_at,inbox.ingested_at,te.payload
+    SELECT DISTINCT ON(te.source_system,te.evidence_source_id,te.timeline_kind)
+      te.source_system,te.source_event_kind,te.event_key,te.timeline_kind,
+      te.occurred_at,GREATEST(te.observed_at,membership.known_at,ai.analyzed_at) AS observed_at,inbox.ingested_at,
+      CASE WHEN ai.result IS NULL THEN te.payload
+        ELSE te.payload || jsonb_build_object('sentiment_score',ai.result->'score') END AS payload
     FROM timeline_events te
-    JOIN timeline_event_entities token_entity
-      ON token_entity.source_system=te.source_system
-      AND token_entity.source_event_kind=te.source_event_kind
-      AND token_entity.event_key=te.event_key
-      AND token_entity.kind='token' AND token_entity.canonical_id=$1
+    ${membership}
+    LEFT JOIN LATERAL(SELECT result,analyzed_at FROM ai_message_analyses a
+      WHERE a.source_system=te.source_system AND a.source_event_kind=te.source_event_kind AND a.event_key=te.event_key
+        AND a.task='sentiment' AND a.analyzed_at<=$3::timestamptz AND a.source_observed_at<=$3::timestamptz
+        AND NOT EXISTS(SELECT 1 FROM token_link_observations inv
+          WHERE inv.source_system=te.source_system AND inv.evidence_source_id=te.evidence_source_id
+            AND inv.state='invalidated' AND inv.observed_at>=a.source_observed_at
+            AND inv.observed_at<=$3::timestamptz AND inv.inserted_at<=$3::timestamptz)
+      ORDER BY a.analyzed_at DESC,a.analysis_id DESC LIMIT 1) ai ON TRUE
     JOIN intelligence_inbox inbox
       ON inbox.source_system=te.source_system
       AND inbox.event_kind=te.source_event_kind AND inbox.event_key=te.event_key
@@ -328,6 +351,7 @@ export async function refreshTokenDailyCrossPlatform(
       AND te.occurred_at <= $3::timestamptz
       AND te.occurred_at >= (($2::date - INTERVAL '7 days') AT TIME ZONE 'UTC')
       AND te.occurred_at < (($2::date + INTERVAL '1 day') AT TIME ZONE 'UTC')
+    ORDER BY te.source_system,te.evidence_source_id,te.timeline_kind,te.observed_at DESC,te.event_key DESC
   ), day_events AS (
     SELECT * FROM token_events
     WHERE occurred_at >= ($2::date::timestamp AT TIME ZONE 'UTC') AND occurred_at < (($2::date + INTERVAL '1 day') AT TIME ZONE 'UTC')
@@ -336,13 +360,9 @@ export async function refreshTokenDailyCrossPlatform(
       MIN(te.occurred_at) FILTER (WHERE te.source_system='tg' AND te.timeline_kind='tg_message_published') AS first_mention_tg_at,
       MIN(te.occurred_at) FILTER (WHERE te.source_system='x' AND te.timeline_kind='tweet_published') AS first_mention_x_at,
       MIN(te.occurred_at) FILTER (WHERE te.source_system='blockchain' AND te.timeline_kind='trade_executed') AS first_trade_at,
-      MAX(GREATEST(te.observed_at,inbox.ingested_at)) AS max_historical_event_observed_at
+      MAX(GREATEST(te.observed_at,inbox.ingested_at,membership.known_at)) AS max_historical_event_observed_at
     FROM timeline_events te
-    JOIN timeline_event_entities token_entity
-      ON token_entity.source_system=te.source_system
-      AND token_entity.source_event_kind=te.source_event_kind
-      AND token_entity.event_key=te.event_key
-      AND token_entity.kind='token' AND token_entity.canonical_id=$1
+    ${membership}
     JOIN intelligence_inbox inbox
       ON inbox.source_system=te.source_system
       AND inbox.event_kind=te.source_event_kind AND inbox.event_key=te.event_key

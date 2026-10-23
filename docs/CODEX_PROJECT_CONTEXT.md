@@ -1,5 +1,7 @@
 # X Collector Runtime v2 context
 
+PR #167 API AI pipeline (2026-10-23): migration009 persists collector-backed sentiment/narrative and fact-grounded signal explanations. Existing ETL invokes bounded AI after ACK; legacy collectors have an opt-in read-only snapshot worker. Source text is not copied to destination/API. Global and token AI endpoints respect as-of/link invalidations. Explicitly unattributed legacy X posts remain unattributed. See intelligence/AI_PIPELINE.md.
+
 PR #167 follow-up (2026-10-23): source aggregation day is distinct from backtest signal date. Outcomes start at GREATEST(snapshot as_of, created_at); refresh sets created_at using clock_timestamp(). Filter signal dates before selecting one snapshot per token/UTC signal day. Duplicate correlation event observations are rejected; overlapping windows still require independent validation.
 
 PR #68 merge integration (2026-10-18): preserve canonical Alchemy history and Settings V2 transport/monitoring; forensic coverage and per-request collection ledger use separate explicit schemas so #65 cache rows survive unchanged. No automatic Helius fallback. Fence success/failure/budget-release by lease token and expiry; retain raw inventory evidence and unknown execution. Offline settings/forensic/FIFO/API/legacy-database regressions cover integration; authoritative PnL remains unavailable for incompletely decoded raw history.

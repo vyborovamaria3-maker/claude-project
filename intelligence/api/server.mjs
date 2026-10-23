@@ -118,7 +118,10 @@ export async function checkApiReadiness(pool){
     "to_regclass('token_correlations') IS NOT NULL AS correlations,"+
     "to_regclass('token_alerts') IS NOT NULL AS alerts,"+
     "to_regclass('backtest_runs') IS NOT NULL AS backtests,"+
-    "to_regclass('token_alert_status_history') IS NOT NULL AS alert_status_history",
+    "to_regclass('token_alert_status_history') IS NOT NULL AS alert_status_history,"+
+    "to_regclass('ai_message_analyses') IS NOT NULL AS ai_message_analyses,"+
+    "EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('signal_explanations') "+
+      "AND attname='grounding' AND NOT attisdropped) AS explanation_grounding",
   );
   const row=result.rows[0]??{};
   if(!row.inbox||!row.timeline||!row.entities||!row.links){
@@ -130,4 +133,6 @@ export async function checkApiReadiness(pool){
     throw new Error("intelligence_api_migration_006_required");
   }
   if(!row.alert_status_history)throw new Error("intelligence_api_migration_008_required");
+  if(!row.ai_message_analyses||!row.explanation_grounding)
+    throw new Error("intelligence_api_migration_009_required");
 }

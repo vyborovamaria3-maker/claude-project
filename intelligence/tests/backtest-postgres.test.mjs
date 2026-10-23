@@ -15,7 +15,7 @@ async function isolated(fn) {
     await client.query("CREATE SCHEMA backtest_regression");
     await client.query("SET LOCAL search_path TO backtest_regression");
     for(const file of ["001_entity_registry.sql","002_timeline.sql","003_feature_store.sql",
-      "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql","006_cross_platform_analytics.sql"])
+      "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql","006_cross_platform_analytics.sql","009_ai_analysis.sql"])
       await client.query(await readFile(new URL("../migrations/"+file,import.meta.url),"utf8"));
     await fn(client);
   } finally {

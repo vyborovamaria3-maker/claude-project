@@ -1,6 +1,6 @@
 # Intelligence API — ARCH-10 read-only v1
 
-**Статус:** отдельный черновой PR поверх #141 и предыдущей архитектурной цепочки. Это **локальный API для серверного прокси**, не публичный браузерный API, не новый Collector и не автоматически включённый сервис. Никакие X/TG/Blockchain базы или аккаунты при разработке не открывались.
+**Статус:** локальный API для серверного прокси. Автоматическое включение и публичный доступ отсутствуют. AI-конвейер проверен на небольшой выборке реальной локальной базы X в режиме read-only, с отдельной тестовой базой назначения. Рабочие базы и аккаунты не изменялись.
 
 ## Принципы безопасности
 
@@ -75,3 +75,6 @@ These endpoints return normalized metrics only, not raw Telegram messages, tweet
 
 
 Blockchain semantics: `chainTransactions` counts normalized `chain_transaction` events. `chainSwapEvidenceCount` counts only currently consistent, supported wallet/signature revisions known by `asOf`; it is not a confirmed settled-trade count. `chainTrades` is derived only from explicit `trade_executed` Timeline events. `chainVolumeUsd` stays null unless every counted trade has a valid numeric volume; coverage metadata alone cannot prove that Timeline mirrors the settled trade tape. `firstTradeAt` remains null when no explicit trade event is available.
+# Collector-backed AI routes
+
+Migration009 is required for the current API readiness check. `GET /api/intelligence/v1/ai?asOf=<UTC>&source=x` reads typed stored results, including unattributed source messages. The token-specific `/tokens/<id>/ai` route requires source-backed token attribution and respects invalidations. `/signals` includes only fact-grounded explanations saved by `asOf`. See [../AI_PIPELINE.md](../AI_PIPELINE.md) for execution and secret configuration. Raw message text is not returned.

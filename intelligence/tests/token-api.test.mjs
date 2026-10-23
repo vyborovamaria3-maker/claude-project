@@ -14,7 +14,7 @@ import {
 } from "../dist/index.js";
 import {createIntelligenceApi,checkApiReadiness,validateApiToken} from "../api/server.mjs";
 import {apiConfiguration} from "../api/start.mjs";
-import {parseApiRequest} from "../api/routes.mjs";
+import {parseApiRequest,queryTokenApi} from "../api/routes.mjs";
 
 const token="f".repeat(43);
 const mint="So11111111111111111111111111111111111111112";
@@ -32,6 +32,19 @@ function fakePool(){
     async query(sql,params){
       logs.push({sql,params});
       if(sql==="SELECT 1 AS ok")return {rows:[{ok:1}]};
+      if(sql.includes("FROM ai_message_analyses"))return {rows:[{
+        source_system:"x",evidence_ref:"x:tweet:1024",task:"sentiment",
+        model_id:"sentiment-v1",model_version:"v1",provider_id:"SECRET-key",
+        event_key:"SECRET-event",text:"SECRET source text",trace_id:"SECRET-trace",
+        result:{label:"bullish",score:0.7,confidence:0.8,evidenceRefs:["x:tweet:1024","x:tweet:9999"],
+          text:"SECRET raw source",providerKey:"SECRET-provider-key"},
+        source_observed_at:new Date(occurred),analyzed_at:new Date(known),
+      },{
+        source_system:"tg",evidence_ref:"tg:message:-100123:42",task:"narrative",
+        model_id:"narrative-v1",model_version:"v1",result:{narrativeId:"solana",confidence:0.9,
+          keywords:["Solana"],evidenceRefs:["tg:message:-100123:42"]},
+        source_observed_at:new Date(occurred),analyzed_at:new Date(known),
+      }]};
       if(sql.includes("FROM token_daily_cross_platform"))return {rows:[{
         canonical_token_id:id,as_of:new Date(known),max_input_observed_at:new Date("2026-10-20T02:00:00Z"),
         tg_mentions:"5",tg_unique_authors:"3",tg_copypasta_ratio:"0.1",tg_sentiment_score:"0.4",tg_scam_ratio:"0.02",
@@ -57,6 +70,10 @@ function fakePool(){
         alert_id:"12",canonical_token_id:id,alert_type:"attention_spike",severity:"medium",
         triggered_at:new Date(at),as_of:new Date(known),score:"2.4",score_version:"cross-platform-heuristics-v2",
         evidence_refs:["x:tweet:1024"],status:"open",
+        explanation:"Recorded alert facts:\nAlert type: \"attention_spike\"\nInput cutoff: \""+known+"\"",
+        explanation_model_id:"explanation-v1",explanation_created_at:new Date(at),
+        explanation_evidence_refs:["x:tweet:1024","x:tweet:9999"],
+        explanation_grounding:{version:"alert-facts-v1",factIds:["tokenId","alertType","asOf"]},
       }]};
       if(sql.includes("FROM backtest_runs"))return {rows:[{
         run_id:"00000000-0000-4000-8000-000000000001",signal_name:"attention_score",outcome_kind:"price_2x_24h",
@@ -128,6 +145,9 @@ test("strict token/time/query validation rejects aliases, encoded slashes, futur
   assert.equal(parseApiRequest(base+"/summary?asOf="+encodeURIComponent(known),now).kind,"summary");
   assert.equal(parseApiRequest(base+"/features?asOf="+encodeURIComponent(known),now).kind,"features");
   assert.equal(parseApiRequest(base+"/correlations?asOf="+encodeURIComponent(known)+"&limit=2",now).limit,2);
+  assert.equal(parseApiRequest(base+"/ai?asOf="+encodeURIComponent(known)+"&limit=2",now).kind,"ai");
+  assert.deepEqual(parseApiRequest("/api/intelligence/v1/ai?asOf="+encodeURIComponent(known)+"&source=x",now),
+    {kind:"ai",asOf:known,source:"x",tokenId:null,limit:50});
   assert.equal(parseApiRequest("/api/intelligence/v1/signals?asOf="+encodeURIComponent(known),now).kind,"signals");
   assert.equal(parseApiRequest("/api/intelligence/v1/backtest?signal=attention_score",now).kind,"backtest");
   for(const route of [
@@ -138,6 +158,12 @@ test("strict token/time/query validation rejects aliases, encoded slashes, futur
     base+"/timeline?"+window+"&unknown=1",
     base+"/timeline?knownAt="+encodeURIComponent(known),
     base+"/summary?asOf="+encodeURIComponent(known)+"&limit=2",
+    base+"/ai?asOf="+encodeURIComponent(known)+"&limit=101",
+    base+"/ai?asOf="+encodeURIComponent(known)+"&limit=1&limit=2",
+    base+"/ai?asOf="+encodeURIComponent(known)+"&providerKey=private",
+    "/api/intelligence/v1/ai?asOf="+encodeURIComponent(known)+"&source=blockchain",
+    "/api/intelligence/v1/ai?asOf="+encodeURIComponent(known)+"&source=x&source=tg",
+    base+"/ai?asOf="+encodeURIComponent("2026-10-20T23:30:00.000Z"),
     "/api/intelligence/v1/signals?asOf="+encodeURIComponent("2026-10-20T23:30:00.000Z"),
     base+"/links?"+window.replace(encodeURIComponent(known),encodeURIComponent("2026-10-20T23:30:00.000Z")),
     base+"/timeline?occurredBefore="+encodeURIComponent(at)+"&knownAt="+encodeURIComponent(known),
@@ -206,6 +232,25 @@ test("HTTP API enforces Bearer, no cookie/CORS, safe responses and read-only que
     const featureSql=pool.logs.find(entry=>entry.sql.includes("FROM chain_token_features"))?.sql??"";
     assert.match(featureSql,/computed_at <= \$2/);
     assert.ok(!JSON.stringify(featuresBody).includes("SECRET"));
+    const ai=await fetch(origin+base+"/ai?asOf="+encodeURIComponent(known)+"&limit=1",{headers:headers()});
+    assert.equal(ai.status,200);
+    const aiBody=await ai.json();
+    assert.equal(aiBody.truncated,true);
+    assert.deepEqual(aiBody.items[0].result,{label:"bullish",score:0.7,confidence:0.8});
+    assert.deepEqual(aiBody.items[0].evidenceRefs,["x:tweet:1024"]);
+    assert.equal(aiBody.items[0].analyzedAt,known);
+    assert.ok(!JSON.stringify(aiBody).includes("SECRET"));
+    const aiQuery=pool.logs.find(entry=>entry.sql.includes("FROM ai_message_analyses"));
+    assert.deepEqual(aiQuery.params,[id,known,2,null]);
+    assert.match(aiQuery.sql,/analysis\.analyzed_at <= \$2/);
+    assert.match(aiQuery.sql,/analysis\.source_observed_at <= \$2/);
+    assert.match(aiQuery.sql,/inbox\.ingested_at <= \$2/);
+    assert.match(aiQuery.sql,/entity\.kind='token' AND entity\.canonical_id=\$1/);
+    assert.match(aiQuery.sql,/verified\.canonical_token_id=\$1/);
+    assert.match(aiQuery.sql,/verified\.observed_at <= analysis\.analyzed_at/);
+    assert.match(aiQuery.sql,/verified\.inserted_at <= analysis\.analyzed_at/);
+    assert.match(aiQuery.sql,/invalidated\.observed_at >= LEAST\(verified\.observed_at,analysis\.source_observed_at\)/);
+    assert.match(aiQuery.sql,/invalidated\.inserted_at <= \$2/);
     const correlations=await fetch(origin+base+"/correlations?asOf="+encodeURIComponent(at)+"&limit=5",{headers:headers()});
     assert.equal(correlations.status,200);
     assert.equal((await correlations.json()).items[0].pValue,0.02);
@@ -213,16 +258,45 @@ test("HTTP API enforces Bearer, no cookie/CORS, safe responses and read-only que
     assert.match(correlationSql,/created_at <= \$2/);
     const signals=await fetch(origin+"/api/intelligence/v1/signals?asOf="+encodeURIComponent(at),{headers:headers()});
     assert.equal(signals.status,200);
-    assert.equal((await signals.json()).items[0].alertType,"attention_spike");
+    const signalBody=await signals.json();
+    assert.equal(signalBody.items[0].alertType,"attention_spike");
+    assert.equal(signalBody.items[0].explanation.grounding.version,"alert-facts-v1");
+    assert.deepEqual(signalBody.items[0].explanation.evidenceRefs,["x:tweet:1024"]);
     const signalSql=pool.logs.find(entry=>entry.sql.includes("FROM token_alerts alert"))?.sql??"";
     assert.match(signalSql,/token_alert_status_history/); assert.match(signalSql,/changed_at <= \$1/);
+    assert.match(signalSql,/created_at <= \$1 AND grounding->>'version'='alert-facts-v1'/);
     const backtests=await fetch(origin+"/api/intelligence/v1/backtest?signal=attention_score",{headers:headers()});
     assert.equal(backtests.status,200);
     assert.equal((await backtests.json()).items[0].metrics.sampleSize,100);
-    assert.equal(pool.logs.length,9);
+    assert.equal(pool.logs.length,10);
     assert.equal(pool.logs[0].params[0],id);
     assert.equal(pool.logs[0].params[3],2,"fetch limit+1 for truncation detection");
   });
+});
+
+test("AI API emits typed narrative fields and refuses malformed stored results or legacy explanation prose",async()=>{
+  const body=await queryTokenApi(fakePool(),{kind:"ai",tokenId:id,asOf:known,limit:2});
+  assert.deepEqual(body.items[1].result,{narrativeId:"solana",confidence:0.9,keywords:["Solana"]});
+  assert.equal(body.truncated,false);
+  for(const result of [
+    {label:"bullish",score:2,confidence:0.8},
+    {label:"forecast_100x",score:0.5,confidence:0.8},
+    {label:"bullish",score:0.5,confidence:"0.8"},
+  ])await assert.rejects(queryTokenApi({query:async()=>({rows:[{
+    source_system:"x",evidence_ref:"x:tweet:1024",task:"sentiment",result,
+    model_id:"sentiment-v1",model_version:"v1",source_observed_at:occurred,analyzed_at:known,
+  }]})},{kind:"ai",tokenId:id,asOf:known,limit:1}),/invalid_stored_ai_result/);
+  const signalPool=fakePool();
+  const signals=await queryTokenApi({query:async(sql,params)=>{
+    const result=await signalPool.query(sql,params);
+    for(const row of result.rows){
+      row.explanation="SECRET legacy unsupported forecast";
+      row.explanation_grounding=null;
+    }
+    return result;
+  }},{kind:"signals",asOf:at,limit:1});
+  assert.equal(signals.items[0].explanation,null);
+  assert.ok(!JSON.stringify(signals).includes("SECRET"));
 });
 
 test("HTTP HTTP parser refuses duplicated Authorization without evaluating SQL",async()=>{
@@ -281,9 +355,15 @@ test("readiness requires destination 001/002/004; no fallback to source database
     inbox:true,timeline:true,entities:true,links:true,swap_revisions:true,feature_store:true,
     model_registry:true,cross_platform:true,correlations:true,alerts:true,backtests:true,alert_status_history:false,
   }]})}),/migration_008_required/);
+  await assert.rejects(checkApiReadiness({query:async()=>({rows:[{
+    inbox:true,timeline:true,entities:true,links:true,swap_revisions:true,feature_store:true,
+    model_registry:true,cross_platform:true,correlations:true,alerts:true,backtests:true,alert_status_history:true,
+    ai_message_analyses:false,explanation_grounding:false,
+  }]})}),/migration_009_required/);
   await assert.doesNotReject(checkApiReadiness({query:async()=>({rows:[{
     inbox:true,timeline:true,entities:true,links:true,swap_revisions:true,feature_store:true,
     model_registry:true,cross_platform:true,correlations:true,alerts:true,backtests:true,alert_status_history:true,
+    ai_message_analyses:true,explanation_grounding:true,
   }]})}));
 });
 
@@ -300,7 +380,7 @@ test("real isolated PostgreSQL: token timeline and retraction-aware links are sa
     await admin.query('SET search_path TO "'+schema+'"');
     for(const file of ["001_entity_registry.sql","002_timeline.sql","003_feature_store.sql",
       "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql","006_cross_platform_analytics.sql",
-      "008_alert_status_history.sql"]){
+      "008_alert_status_history.sql","009_ai_analysis.sql"]){
       await admin.query(await readFile(new URL("../migrations/"+file,import.meta.url),"utf8"));
     }
     pool=new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:3});
@@ -362,6 +442,29 @@ test("real isolated PostgreSQL: token timeline and retraction-aware links are sa
       await ingestTokenLinkObservation(pool,event);
     }
     await pool.query("UPDATE token_link_observations SET inserted_at=observed_at");
+    const tgRegistry={sourceSystem:"tg",eventKind:"message_observed",eventKey:"tg:42:api",
+      schemaVersion:"v1",entityRefs:[source],evidenceRef:tgEvidence(firstAt)};
+    await ingestRegistryEvent(pool,tgRegistry);
+    await ingestTimelineEvent(pool,"tg","message_observed",buildTimelineEvent({
+      eventKey:tgRegistry.eventKey,kind:"tg_message_published",occurredAt:occurred,
+      observedAt:firstAt,entityRefs:[source],evidenceRef:tgEvidence(firstAt),payload:{text:"SECRET TG content"},
+    }));
+    await pool.query("UPDATE intelligence_inbox SET ingested_at='2026-10-20T02:01:00Z' "+
+      "WHERE source_system='tg' AND event_key='tg:42:api'");
+    await pool.query(`INSERT INTO model_registry(model_id,provider,name,version,task,status)
+      VALUES ('api-sentiment-v1','fixture','fixture','v1','sentiment','active')`);
+    const analyzedAt="2026-10-20T02:15:00.000Z";
+    for(const [sourceSystem,sourceEventKind,eventKey,evidenceRef] of [
+      ["x","tweet_observed",registry.eventKey,"x:tweet:1024"],
+      ["tg","message_observed",tgRegistry.eventKey,"tg:message:-100123:42"],
+    ])await pool.query(`INSERT INTO ai_message_analyses
+      (source_system,source_event_kind,event_key,evidence_ref,canonical_token_ids,text_sha256,task,
+       model_id,model_version,provider_id,trace_id,result,source_observed_at,analyzed_at)
+      VALUES ($1,$2,$3,$4,'[]'::jsonb,$5,'sentiment','api-sentiment-v1','v1','fixture',
+        '00000000-0000-4000-8000-000000000001',$6::jsonb,$7,$8)`,
+    [sourceSystem,sourceEventKind,eventKey,evidenceRef,"a".repeat(64),
+      JSON.stringify({label:"neutral",score:0,confidence:0.8,evidenceRefs:[evidenceRef],rawText:"SECRET"}),
+      firstAt,analyzedAt]);
     await withServer(pool,async origin=>{
       const earlier="occurredBefore="+encodeURIComponent(occurred)+"&knownAt="+encodeURIComponent("2026-10-20T02:10:00Z");
       const later="occurredBefore="+encodeURIComponent(occurred)+"&knownAt="+encodeURIComponent("2026-10-20T02:50:00Z");
@@ -380,6 +483,32 @@ test("real isolated PostgreSQL: token timeline and retraction-aware links are sa
       const latest=await fetch(origin+base+"/links?"+later,{headers:headers()});
       assert.equal(latest.status,200);
       assert.equal((await latest.json()).items.length,0);
+      const aiAt=async asOf=>{
+        const response=await fetch(origin+base+"/ai?asOf="+encodeURIComponent(asOf),{headers:headers()});
+        assert.equal(response.status,200);
+        return response.json();
+      };
+      assert.equal((await aiAt("2026-10-20T02:10:00Z")).items.length,0,
+        "analysis unavailable until it has actually completed");
+      const classified=await aiAt("2026-10-20T02:20:00Z");
+      assert.deepEqual(classified.items.map(item=>item.source).sort(),["tg","x"],
+        "direct token attribution and existing verified links both expose their analyses");
+      assert.ok(!JSON.stringify(classified).includes("SECRET"));
+      assert.deepEqual((await aiAt("2026-10-20T02:50:00Z")).items.map(item=>item.source),["x"],
+        "known token-link invalidation suppresses stale message analysis");
+      const reverified=buildVerifiedTokenLinkEvent({
+        sourceSystem:"tg",sourceEntity:source,evidenceRef:tgEvidence("2026-10-20T03:00:00Z"),
+        mint,matchedLiteralMint:mint,sourceRevisionSha256:"c".repeat(64),
+        mintVerification:{chainId:"solana-mainnet",method:"spl_mint_account",provider:"alchemy-solana-rpc",
+          tokenProgram:"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",checkedAt:"2026-10-20T03:00:00Z"},
+      });
+      await ingestRegistryEvent(pool,reverified.payload.registryEvent);
+      await ingestTokenLinkObservation(pool,reverified);
+      await pool.query("UPDATE token_link_observations SET inserted_at=observed_at");
+      assert.deepEqual((await aiAt("2026-10-20T03:10:00Z")).items.map(item=>item.source),["x"],
+        "later reverified revision must not resurrect analysis of the earlier message");
+      assert.equal((await aiAt("2026-10-20T02:20:00Z")).items.length,2,
+        "later corrections preserve the earlier as-of view");
     });
   }finally{
     if(pool)await pool.end();

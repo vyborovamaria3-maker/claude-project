@@ -53,6 +53,7 @@ test("cross-platform refresh SQL keeps transaction, swap evidence and settled tr
       "001_entity_registry.sql","002_timeline.sql","003_feature_store.sql",
       "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql",
       "006_cross_platform_analytics.sql",
+      "009_ai_analysis.sql",
     ]){
       const ddl=await readFile(new URL("../migrations/"+file,import.meta.url),"utf8");
       await client.query(ddl);
