@@ -58,17 +58,17 @@ test("Intelligence 2.2 PostgreSQL schema: as-of, coverage, validation, dedup and
     assert.equal(await requireCurrentSignalValidation(db,signalVersion,signalTime),false);
     const runId=randomUUID();
     await db.query(`INSERT INTO backtest_runs(run_id,signal_name,outcome_kind,from_at,to_at,horizon_hours,
-      threshold,baseline_kind,status,metrics,started_at,completed_at,data_cutoff_at)
+      threshold,baseline_kind,status,metrics,feature_version,started_at,completed_at,data_cutoff_at)
       VALUES($1,'attention_score','price_2x_24h',clock_timestamp()-INTERVAL '5 days',
         clock_timestamp()-INTERVAL '4 days',24,0.7,'market_average','completed',
-        '{"sampleSize":25}',clock_timestamp()-INTERVAL '10 seconds',
+        '{"sampleSize":25}','cross-platform-heuristics-v2',clock_timestamp()-INTERVAL '10 seconds',
         clock_timestamp(),clock_timestamp()-INTERVAL '5 seconds')`,[runId]);
     // PostgreSQL preserves microseconds that JS Date rounds away: copy the cutoff server-side.
     await db.query(`INSERT INTO signal_validation_registry
       (signal_version,backtest_run_id,method,method_params,reproducibility_hash,
-        dataset_cutoff,validation_status,deployment_valid_until)
-      SELECT $1,run_id,'holdout','{"held_out":true}'::jsonb,$3,
-        data_cutoff_at,'passed',$4::timestamptz FROM backtest_runs WHERE run_id=$2`,
+        dataset_cutoff,validation_status,deployment_valid_until,validation_report)
+      SELECT $1,run_id,'holdout','{"producer":"temporal_holdout_v1"}'::jsonb,$3,
+        data_cutoff_at,'passed',$4::timestamptz,'{"pValue":0.001}'::jsonb FROM backtest_runs WHERE run_id=$2`,
       [signalVersion,runId,"a".repeat(64),new Date(Date.now()+86400000)]);
     assert.equal(await requireCurrentSignalValidation(db,signalVersion,signalTime),true);
     assert.equal(await requireCurrentSignalValidation(db,signalVersion,new Date(Date.now()+2*86400000)),false);
