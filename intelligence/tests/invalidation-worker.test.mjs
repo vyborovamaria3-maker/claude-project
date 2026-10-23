@@ -26,6 +26,10 @@ test("missing publication day is retried and audited, not silently completed",as
   const {queries,db}=fake(0);
   const result=await processInvalidationBatch(db,1);
   assert.equal(result.retried,1);assert.equal(result.completed,0);
+  assert.ok(queries.some(x=>x.sql.includes("next_attempt_at<=clock_timestamp()")),
+    "queued failures must not be immediately reclaimed");
+  assert.ok(queries.some(x=>x.sql.includes("LEAST(300,5*power(2")),
+    "failed jobs must receive bounded exponential retry delay");
   assert.ok(queries.some(x=>x.sql.includes("ROLLBACK TO SAVEPOINT")));
   assert.ok(queries.some(x=>x.sql.includes("INSERT INTO analytics_invalidation_log")));
   assert.deepEqual(queries.find(x=>x.sql.includes("SET status=$2")).params,[1,"queued"]);

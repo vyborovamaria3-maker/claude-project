@@ -25,8 +25,8 @@ export async function processInvalidationBatch(tx:PgTransaction,maxJobs=4):Promi
     try{
       const claim=await tx.query(`SELECT invalidation_id,canonical_token_id,source_system,
         event_kind,event_key,attempts FROM analytics_invalidation_queue
-        WHERE status='queued'
-        ORDER BY queued_at,invalidation_id LIMIT 1 FOR UPDATE SKIP LOCKED`);
+        WHERE status='queued' AND next_attempt_at<=clock_timestamp()
+        ORDER BY next_attempt_at,queued_at,invalidation_id LIMIT 1 FOR UPDATE SKIP LOCKED`);
       if(!claim.rows.length){
         await tx.query("COMMIT");counters.empty=true;break;
       }
@@ -63,7 +63,9 @@ export async function processInvalidationBatch(tx:PgTransaction,maxJobs=4):Promi
         if(savepoint){await tx.query("ROLLBACK TO SAVEPOINT invalidation_refresh");savepoint=false;}
         const terminal=Number(item.attempts)+1>=5;
         await tx.query(`UPDATE analytics_invalidation_queue
-          SET status=$2,processed_at=CASE WHEN $2='failed' THEN clock_timestamp() ELSE NULL END
+          SET status=$2,processed_at=CASE WHEN $2='failed' THEN clock_timestamp() ELSE NULL END,
+            next_attempt_at=clock_timestamp() +
+              (LEAST(300,5*power(2,LEAST(attempts,6))) * INTERVAL '1 second')
           WHERE invalidation_id=$1`,[id,terminal?"failed":"queued"]);
         await tx.query(`INSERT INTO analytics_invalidation_log(invalidation_id,transition)
           VALUES($1,'failed')`,[id]);

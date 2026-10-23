@@ -18,6 +18,10 @@ async function main(){
     await db.connect();
     const ready=await db.query("SELECT to_regclass('analytics_invalidation_queue') IS NOT NULL AS ready");
     if(ready.rows[0]?.ready!==true)throw new Error("intelligence_migration_010_required");
+    const retryColumn=await db.query(`SELECT EXISTS(SELECT 1 FROM information_schema.columns
+      WHERE table_schema=current_schema() AND table_name='analytics_invalidation_queue'
+        AND column_name='next_attempt_at') AS ready`);
+    if(retryColumn.rows[0]?.ready!==true)throw new Error("intelligence_migration_013_required");
     const result=await processInvalidationBatch(db,limit);
     process.stdout.write(JSON.stringify(result)+"\n");
   }finally{await db.end()}
