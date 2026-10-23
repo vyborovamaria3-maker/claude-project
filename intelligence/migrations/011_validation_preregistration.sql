@@ -1,0 +1,16 @@
+-- Intelligence 2.2: a post-hoc backtest cannot establish an independent holdout.
+-- Preregistration is a separate governance boundary and MUST predate the holdout.
+CREATE TABLE IF NOT EXISTS signal_policy_preregistrations (
+  policy_id UUID PRIMARY KEY,
+  signal_version TEXT NOT NULL CHECK(length(signal_version) BETWEEN 1 AND 128),
+  signal_name TEXT NOT NULL CHECK(signal_name ~ '^[a-z][a-z0-9_]{0,63}$'),
+  threshold NUMERIC NOT NULL,
+  horizon_hours INTEGER NOT NULL CHECK(horizon_hours BETWEEN 1 AND 720),
+  code_revision TEXT NOT NULL CHECK(code_revision ~ '^[a-f0-9]{40}$'),
+  registered_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE(signal_version,signal_name,threshold,horizon_hours,code_revision)
+);
+CREATE INDEX IF NOT EXISTS idx_signal_policy_lookup ON signal_policy_preregistrations
+  (signal_version,signal_name,registered_at DESC);
+ALTER TABLE signal_validation_registry ADD COLUMN IF NOT EXISTS policy_id UUID
+  REFERENCES signal_policy_preregistrations(policy_id);
