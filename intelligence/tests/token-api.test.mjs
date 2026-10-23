@@ -223,6 +223,8 @@ test("HTTP API enforces Bearer, no cookie/CORS, safe responses and read-only que
     assert.equal(summaryBody.metrics.chainTransactions,4);
     assert.equal(summaryBody.metrics.chainSwapEvidenceCount,2);
     assert.equal(summaryBody.scores.risk,0.1);
+    assert.equal(summaryBody.scores.interpretation.risk,"heuristic");
+    assert.equal(summaryBody.scores.calibration,"not_probability");
     const summarySql=pool.logs.find(entry=>entry.sql.includes("FROM token_daily_cross_platform"))?.sql??"";
     assert.match(summarySql,/created_at <= \$2/); assert.match(summarySql,/ORDER BY day DESC,as_of DESC/);
     const features=await fetch(origin+base+"/features?asOf="+encodeURIComponent(known),{headers:headers()});

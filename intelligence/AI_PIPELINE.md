@@ -1,10 +1,10 @@
 # Collector-backed API AI analysis
 
-Apply migrations 001–006, 008 and **009_ai_analysis.sql** to the separate Intelligence destination. Migration 007/pgvector is optional and is not needed for sentiment, narratives or explanations. Do not apply these migrations to collector databases.
+Apply migrations 001–006, 008, 009 and **010_intelligence_governance.sql** to the separate Intelligence destination before enabling the AI runtime. Migration 007/pgvector is optional and is not needed for sentiment, narratives or explanations. Do not apply these migrations to collector databases.
 
 ## Execution
 
-With the explicit AI flags below enabled, the existing `etl:once` and foreground `etl:supervise` commands run bounded AI batches **after** normal destination commit and source ACK. They reuse the existing collector pools. API errors do not NACK an already delivered message or restart source collection. No message text is copied into the Intelligence database.
+With the explicit AI flags below enabled, the existing `etl:once` and foreground `etl:supervise` commands run bounded AI batches **after** normal destination commit and source ACK. They reuse the existing collector pools. API errors do not NACK an already delivered message or restart source collection. No plaintext message text is copied into the Intelligence database. Migration 010 only provisions an optional encrypted, 30-day-max snapshot contract; no encryption adapter is wired, and storing plaintext/ciphertext is NOT enabled. The current AI text adapter still performs bounded read-only lookups against source schemas. Do not claim source-schema decoupling until a privacy-reviewed snapshot producer and purge worker are deployed. Successful AI calls have a typed cost-ledger entry; failed/retried/invalid provider calls still require independent billing reconciliation.
 
 For existing collector databases without the new outbox schema, the read-only snapshot worker is available:
 
@@ -66,3 +66,9 @@ For each retained Telegram message, the runtime supplies up to two non-template 
 Expanded read-only review sampled 200 collector messages (194 unique texts, 116 sources) and 16 additional contextual target messages. Known repeated VIP result/entry cards and scanner subscription boilerplate are filtered by their full format, not by words such as NOT, VIP or DEX alone. Synthetic analogs of the reviewed language form a retained-input regression fixture without publishing collector texts; a human warning about DEX NOT PAID/VIP is retained. This convenience sample is not a guarantee of zero false positives or general sarcasm accuracy. Filtering excludes AI work, not underlying collector records or entity evidence.
 
 AI attempts retain only an allowlisted stable gateway error code (network/HTTP/auth/rate/budget/capacity/response errors), or `ai_output_validation_failed` for known structured-output validation failures; arbitrary exception text and provider bodies are never stored. Existing bounded backoff and one-attempt gateway behavior remain. The full-runtime PostgreSQL/HTTP regression uses synthetic source messages and an injected network failure to verify filter/context wiring, persistence, API metadata/history, backoff and retry of only the failed task. It makes no paid provider requests.
+
+## Intelligence 2.2 operational gates
+
+- Migration 010 adds `ai_cost_ledger`; `createAiRuntime` fails closed without it. A successful typed sentiment/narrative/explanation result logs the provider trace as the idempotency key. Price estimates are NOT reconciled provider invoices; the existing AI Gateway in-memory reservation is process-local, not a cross-worker budget.
+- Protected text storage is OPTIONAL and NOT ACTIVE. A separate source-adapter + encryption + purge rollout must precede any event_text_snapshots writes. No raw Telegram/X texts, API keys or session data are logged.
+- The central API currently remains loopback-only; no remote POTAPoff gateway is deployed by this migration.

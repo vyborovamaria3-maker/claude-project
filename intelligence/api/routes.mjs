@@ -284,6 +284,8 @@ function normalizeSummary(row,request){
       risk:numberOrNull(row.risk_score),momentum:numberOrNull(row.momentum_score),
       version:typeof row.score_version==="string"?row.score_version:null,
       reason:safeObject(row.score_reason),
+      interpretation:{attention:"heuristic",credibility:"heuristic",risk:"heuristic",momentum:"heuristic"},
+      calibration:"not_probability",
     },
     dataConfidence:numberOrNull(row.data_confidence),
     sourceCoverage:safeCoverage(row.source_coverage),
