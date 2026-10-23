@@ -78,7 +78,7 @@ Suite подключён к security:test. 6/6 collector keyring compatibility t
 Полный security suite прошёл: 5 TOML + 4 ip-address tests, ошибок нет.
 Полный lint: 0 errors, 368 прежних warnings. analysis:test, production build и
 TypeScript прошли. Production Playwright smoke: 6 PASS, 0 FAIL; внешний запрос
-заблокирован, API-запросов на проверенной публичной странице не было.
+заблокирован; 1 API-запрос на проверенной публичной странице замокан.
 Smoke server остановлен. Результаты сохранены в outputs/Audit-moderate-review.md.
 
 Рабочие БД/ключи не читались и не менялись. SQL/collector dependencies не менялись,
