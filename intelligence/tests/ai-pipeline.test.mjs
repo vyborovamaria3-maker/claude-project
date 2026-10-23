@@ -210,3 +210,12 @@ test("format filter rejects known scanner cards but retains conversational warni
  for(const text of ['🫡 Gamble Found! 🟩 The Ice Age Lion ($Sparta) MC: 15K','🚀 Token started migration to Raydium','🔥$REKT: $251K >> $1M3 | Х5 | 1m','0xee9fcc99971e3da8dd8c97557387bd7b88927777','├ MC: 10K\n├ VOL: 20K\n└ HOLDERS: 100'])assert.equal(isLowValueTelegramPost(text),true,text);
  for(const text of ['it still holding well wow','thought id come back to it getting rugged','Don’t screw up my DCA’s lmao tryna bid better dips 😂','I ignore Gamble Found! posts; they are bot spam','Other UMI dumping hard expecting this one to hold the cat meta'])assert.equal(isLowValueTelegramPost(text),false,text);
 });
+
+
+test("synthetic dialogue regressions preserve negations and irony while removing repeated VIP cards",async()=>{
+ const {retained,excluded}=JSON.parse(await readFile(new URL("./fixtures/telegram-filter-holdout.json",import.meta.url),"utf8"));
+ for(const text of retained)assert.equal(isLowValueTelegramPost(text),false,text);
+ for(const text of excluded)assert.equal(isLowValueTelegramPost(text),true,text);
+ // A human discussing the same keywords is useful, not the repeated card shape.
+ assert.equal(isLowValueTelegramPost("Don't buy VIP access just because DEX NOT PAID scares you; check liquidity yourself."),false);
+});
