@@ -15,10 +15,16 @@ export async function requireCurrentSignalValidation(
   const result=await tx.query(`SELECT validation.validation_id
     FROM signal_validation_registry validation JOIN backtest_runs run
       ON run.run_id=validation.backtest_run_id
+    JOIN signal_policy_preregistrations policy
+      ON policy.policy_id=validation.policy_id
     WHERE validation.signal_version=$1 AND validation.validation_status='passed'
       AND validation.method IN ('walk_forward','holdout','expanding_window')
       AND validation.dataset_cutoff=run.data_cutoff_at
       AND run.feature_version=validation.signal_version
+      AND run.signal_name=policy.signal_name
+      AND run.threshold=policy.threshold AND run.horizon_hours=policy.horizon_hours
+      AND policy.signal_version=validation.signal_version
+      AND policy.registered_at<(validation.method_params->>'splitAt')::timestamptz
       AND validation.method_params->>'producer'='temporal_holdout_v1'
       AND validation.validation_report->>'pValue' IS NOT NULL
       AND validation.published_at<=$2::timestamptz

@@ -1,6 +1,29 @@
-import {createHash} from "node:crypto";
+import {createHash,randomUUID} from "node:crypto";
 import {toUtcIso} from "@claude-project/contracts";
 import type {PgTransaction} from "./entity-registry.js";
+
+/** Publish the policy BEFORE the first holdout observation is available.
+ * PostgreSQL's clock supplies registered_at; callers cannot backdate it. */
+export async function preregisterSignalPolicy(tx:PgTransaction,input:Readonly<{
+  signalVersion:string;signalName:string;threshold:number;horizonHours:number;codeRevision:string;
+}>):Promise<string>{
+  if(!/^[a-zA-Z0-9._-]{1,128}$/.test(input.signalVersion)||
+     !/^[a-z][a-z0-9_]{0,63}$/.test(input.signalName)||
+     !Number.isFinite(input.threshold)||!Number.isSafeInteger(input.horizonHours)||
+     input.horizonHours<1||input.horizonHours>720||
+     !/^[a-f0-9]{40}$/.test(input.codeRevision))
+    throw new TypeError("invalid_signal_policy");
+  const id=randomUUID();
+  const result=await tx.query(`INSERT INTO signal_policy_preregistrations
+    (policy_id,signal_version,signal_name,threshold,horizon_hours,code_revision)
+    VALUES($1,$2,$3,$4,$5,$6)
+    ON CONFLICT(signal_version,signal_name,threshold,horizon_hours,code_revision)
+    DO UPDATE SET signal_version=EXCLUDED.signal_version
+    RETURNING policy_id`,[id,input.signalVersion,input.signalName,input.threshold,
+      input.horizonHours,input.codeRevision]);
+  if(!result.rows.length)throw new Error("policy_registration_failed");
+  return String(result.rows[0]!.policy_id);
+}
 
 export type HoldoutRow=Readonly<{
   canonicalTokenId:string;signalAt:string;score:number;selected:boolean;outcome:boolean;
@@ -102,11 +125,22 @@ export async function certifyTemporalHoldout(tx:PgTransaction,input:Readonly<{
       throw new TypeError("validation_outcomes_or_threshold_not_point_in_time");
   }
   const result=evaluateTemporalHoldout(samples);
+  const policy=await tx.query(`SELECT policy_id,registered_at
+    FROM signal_policy_preregistrations
+    WHERE signal_version=$1 AND signal_name=$2 AND threshold=$3
+      AND horizon_hours=$4 AND code_revision=$5
+      AND registered_at<$6::timestamptz
+    ORDER BY registered_at ASC LIMIT 1`,[
+      input.signalVersion,row.signal_name,Number(row.threshold),
+      Number(row.horizon_hours),input.codeRevision,result.splitAt,
+    ]);
+  if(!policy.rows.length)throw new TypeError("validation_policy_not_preregistered");
+  const policyId=String(policy.rows[0]!.policy_id);
   const params={producer:"temporal_holdout_v1",splitAt:result.splitAt,
     trainCount:result.trainCount,testCount:result.testCount,
     selectedCount:result.selectedCount,controlCount:result.controlCount};
   const reproducibilityHash=createHash("sha256").update(JSON.stringify({
-    codeRevision:input.codeRevision,runId:input.runId,signalVersion:input.signalVersion,
+    codeRevision:input.codeRevision,policyId,runId:input.runId,signalVersion:input.signalVersion,
     modelId:row.model_id,signal:row.signal_name,
     threshold:Number(row.threshold),horizonHours:Number(row.horizon_hours),
     datasetCutoff:cutoff,method:"holdout",params,rows:result.rows,
@@ -117,13 +151,13 @@ export async function certifyTemporalHoldout(tx:PgTransaction,input:Readonly<{
     trainCount:result.trainCount,testCount:result.testCount};
   await tx.query(`INSERT INTO signal_validation_registry
       (signal_version,backtest_run_id,method,method_params,reproducibility_hash,
-       dataset_cutoff,validation_status,deployment_valid_until,validation_report)
+       dataset_cutoff,validation_status,deployment_valid_until,validation_report,policy_id)
       VALUES ($1,$2,'holdout',$3::jsonb,$4,
         (SELECT data_cutoff_at FROM backtest_runs WHERE run_id=$2),
-        $5,clock_timestamp()+($6::integer*INTERVAL '1 day'),$7::jsonb)
+        $5,clock_timestamp()+($6::integer*INTERVAL '1 day'),$7::jsonb,$8)
       ON CONFLICT(signal_version,backtest_run_id,reproducibility_hash) DO NOTHING`,[
     input.signalVersion,input.runId,JSON.stringify(params),reproducibilityHash,
-    result.passed?"passed":"failed",days,JSON.stringify(report),
+    result.passed?"passed":"failed",days,JSON.stringify(report),policyId,
   ]);
   return {passed:result.passed,reproducibilityHash,pValue:result.pValue,
     trainCount:result.trainCount,testCount:result.testCount};
