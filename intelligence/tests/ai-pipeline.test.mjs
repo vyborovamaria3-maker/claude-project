@@ -24,7 +24,8 @@ async function fixture(t){
   t.after(async()=>{await source.end();await destination.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);
     await admin.query(`DROP SCHEMA ${schema}_source CASCADE`);await admin.end();});
   for(const file of ["001_entity_registry.sql","002_timeline.sql","003_feature_store.sql","004_token_link_observations.sql",
-    "005_blockchain_swap_evidence_revisions.sql","006_cross_platform_analytics.sql","008_alert_status_history.sql","009_ai_analysis.sql"])
+    "005_blockchain_swap_evidence_revisions.sql","006_cross_platform_analytics.sql","008_alert_status_history.sql",
+    "009_ai_analysis.sql","010_intelligence_governance.sql"])
     await destination.query(await readFile(new URL("../migrations/"+file,import.meta.url),"utf8"));
   await source.query(`CREATE TABLE twitter_tweets(tweet_id TEXT PRIMARY KEY,author_id TEXT,text TEXT,updated_at BIGINT,posted_at BIGINT);
     CREATE TABLE tg_sources(id BIGINT PRIMARY KEY,peer_id TEXT);

@@ -16,8 +16,9 @@ export async function createAiRuntime(destination,sources,env=process.env){
   const gateway=createAiGatewayFromEnv(env,{maxAttempts:1});
   const client=await destination.connect();
   try{
-    const tables=await client.query("SELECT to_regclass('ai_message_analyses') IS NOT NULL AS ready");
+    const tables=await client.query("SELECT to_regclass('ai_message_analyses') IS NOT NULL AS ready, to_regclass('ai_cost_ledger') IS NOT NULL AS ledger_ready");
     if(!tables.rows[0]?.ready)throw new Error("ai_migration_009_required");
+    if(!tables.rows[0]?.ledger_ready)throw new Error("ai_migration_010_required");
     for(const def of definitions){
       await registerModel(client,{...def,status:"active"});
       const active=await client.query("SELECT status FROM model_registry WHERE model_id=$1",[def.modelId]);

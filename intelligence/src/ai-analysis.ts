@@ -179,6 +179,7 @@ export function createAiAnalysisService(tx: PgTransaction, gateway: AiGateway) {
         modelId: model.model_id, modelVersion: model.version,
         providerId: response.providerId, traceId: response.traceId,
         observedAt: new Date().toISOString(), estimatedCostUsd: response.estimatedCostUsd,
+        inputTokens:response.inputTokens,outputTokens:response.outputTokens,
       };
     },
 
@@ -215,6 +216,7 @@ export function createAiAnalysisService(tx: PgTransaction, gateway: AiGateway) {
         modelId: model.model_id, modelVersion: model.version, providerId: response.providerId,
         traceId: response.traceId, observedAt: new Date().toISOString(),
         estimatedCostUsd: response.estimatedCostUsd,
+        inputTokens:response.inputTokens,outputTokens:response.outputTokens,
       };
     },
 
@@ -257,6 +259,7 @@ export function createAiAnalysisService(tx: PgTransaction, gateway: AiGateway) {
         modelId: model.model_id, modelVersion: model.version, providerId: response.providerId,
         traceId: response.traceId, observedAt: new Date().toISOString(),
         estimatedCostUsd: response.estimatedCostUsd,
+        inputTokens:response.inputTokens,outputTokens:response.outputTokens,
       };
     },
 
