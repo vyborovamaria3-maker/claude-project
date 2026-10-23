@@ -32,6 +32,8 @@
     "invalidation:once": "node scripts/run-invalidations.mjs",
     "validation:holdout": "node scripts/certify-holdout.mjs",
     "gateway:local": "node api/start-gateway.mjs",
+    "text-snapshot:import": "node scripts/import-text-snapshots.mjs",
+    "text-snapshot:purge": "node scripts/purge-text-snapshots.mjs",
     "api:local": "node api/start.mjs",
     "backtest": "node scripts/backtest.mjs",
     "refresh-cross-platform": "node scripts/refresh-cross-platform.mjs",
