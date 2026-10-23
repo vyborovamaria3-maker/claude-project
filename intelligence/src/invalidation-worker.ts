@@ -33,7 +33,8 @@ export async function processInvalidationBatch(tx:PgTransaction,maxJobs=4):Promi
       const item=claim.rows[0] as InvalidationRow;
       const id=Number(item.invalidation_id);
       const token=String(item.canonical_token_id);
-      if(!Number.isSafeInteger(id)||id<1||parseTokenId(token)?.id!==token)
+      const canonicalToken=parseTokenId(token);
+      if(!Number.isSafeInteger(id)||id<1||!canonicalToken||canonicalToken.id!==token)
         throw new Error("invalidation_identity_invalid");
       await tx.query("UPDATE analytics_invalidation_queue SET status='processing',attempts=attempts+1 WHERE invalidation_id=$1",[id]);
       await tx.query("SAVEPOINT invalidation_refresh");savepoint=true;
@@ -52,7 +53,7 @@ export async function processInvalidationBatch(tx:PgTransaction,maxJobs=4):Promi
           throw new Error("invalidation_day_unavailable");
         const now=(await tx.query("SELECT clock_timestamp() AS at")).rows[0]?.at;
         if(!(now instanceof Date)&&typeof now!=="string")throw new Error("invalidation_clock_unavailable");
-        for(const day of days)await refreshTokenDailyCrossPlatform(tx,token,day,now);
+        for(const day of days)await refreshTokenDailyCrossPlatform(tx,canonicalToken.id,day,now);
         await tx.query("RELEASE SAVEPOINT invalidation_refresh");savepoint=false;
         await tx.query("UPDATE analytics_invalidation_queue SET status='completed',processed_at=clock_timestamp() WHERE invalidation_id=$1",[id]);
         await tx.query(`INSERT INTO analytics_invalidation_log(invalidation_id,transition,artifact_key)
