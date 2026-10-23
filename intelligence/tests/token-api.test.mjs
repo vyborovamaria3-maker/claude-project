@@ -282,6 +282,8 @@ test("AI API emits typed narrative fields and refuses malformed stored results o
     {label:"bullish",score:2,confidence:0.8},
     {label:"forecast_100x",score:0.5,confidence:0.8},
     {label:"bullish",score:0.5,confidence:"0.8"},
+    {label:"bullish",score:0.5,confidence:0.8,directionAmbiguous:true},
+    {label:"mixed",score:0,confidence:0.8,directionAmbiguous:"true"},
   ])await assert.rejects(queryTokenApi({query:async()=>({rows:[{
     source_system:"x",evidence_ref:"x:tweet:1024",task:"sentiment",result,
     model_id:"sentiment-v1",model_version:"v1",source_observed_at:occurred,analyzed_at:known,

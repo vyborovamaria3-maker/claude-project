@@ -21,7 +21,7 @@ const gateway = createAiGateway({
       }) } }], usage: { prompt_tokens: 10, completion_tokens: 20 } }));
     }
     return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
-      label: "bullish", score: 0.7, confidence: 0.8, evidenceRefs: ["tg:message:1"],
+      label: "bullish", directionAmbiguous:false, score: 0.7, confidence: 0.8, evidenceRefs: ["tg:message:1"],
     }) } }], usage: { prompt_tokens: 10, completion_tokens: 20 } }));
   },
 });
@@ -208,5 +208,18 @@ test("narrative abstains on weak evidence and excludes invented keywords from re
       fetchImpl:async()=>new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({...sample.payload,evidenceRefs:["tg:message:1"]})}}]}))});
     const result=await createAiAnalysisService(fakeTx("narrative"),gateway).classifyNarrative({modelId:"narrative-v2",text:sample.text,evidenceRefs:["tg:message:1"]});
     assert.equal(result.narrativeId,sample.expected);assert.deepEqual(result.keywords,sample.keywords);
+  }
+});
+
+
+test("unresolved direction cannot become a directional score even if provider returns bullish", async () => {
+  for(const payload of [
+    {label:"bullish",score:0.6,confidence:0.74,directionAmbiguous:true},
+    {label:"bearish",score:-0.7,confidence:0.8,directionAmbiguous:true},
+  ]){
+    const gateway=createAiGateway({providers:[{id:"primary",baseUrl:"https://api.example.test/v1",apiKey:"test-secret-key-123",chatModel:"chat-test"}],defaultProviderId:"primary",
+      fetchImpl:async()=>new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({...payload,evidenceRefs:["tg:message:1"]})}}]}))});
+    const result=await createAiAnalysisService(fakeTx(),gateway).analyzeSentiment({modelId:"sentiment-v3",text:"Other UMI dumping hard expecting this one to hold the cat meta",evidenceRefs:["tg:message:1"]});
+    assert.equal(result.label,"mixed");assert.equal(result.score,0);assert.equal(result.directionAmbiguous,true);
   }
 });

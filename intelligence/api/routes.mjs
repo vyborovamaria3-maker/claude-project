@@ -209,7 +209,11 @@ function normalizeAiAnalysis(row){
   if(row.task==="sentiment"){
     if(!["bullish","bearish","neutral","mixed"].includes(input.label))
       throw new TypeError("invalid_stored_ai_result");
-    result={label:input.label,score:boundedNumber(input.score,-1,1),confidence};
+    if((input.directionAmbiguous!==undefined&&typeof input.directionAmbiguous!=="boolean")||
+        (input.directionAmbiguous===true&&(input.label!=="mixed"||input.score!==0)))
+        throw new TypeError("invalid_stored_ai_result");
+      result={label:input.label,score:boundedNumber(input.score,-1,1),confidence,
+        ...(input.directionAmbiguous===undefined?{}:{directionAmbiguous:input.directionAmbiguous})};
   }else if(row.task==="narrative"){
     if(input.narrativeId!==null&&(typeof input.narrativeId!=="string"||
         !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(input.narrativeId)))

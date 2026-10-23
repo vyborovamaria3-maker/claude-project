@@ -77,6 +77,7 @@ export async function runAiAnalysisBatch(input:{destination:AiPool;source:Source
           // Provenance belongs to typed columns, never to arbitrary provider JSON.
           const result=task==="sentiment"?{
             label:(output as {label:string}).label,score:(output as {score:number}).score,
+            directionAmbiguous:(output as {directionAmbiguous:boolean}).directionAmbiguous,
             confidence:output.confidence,evidenceRefs:output.evidenceRefs,
           }:{narrativeId:(output as {narrativeId:string|null}).narrativeId,
             keywords:(output as {keywords:string[]}).keywords,confidence:output.confidence,evidenceRefs:output.evidenceRefs};

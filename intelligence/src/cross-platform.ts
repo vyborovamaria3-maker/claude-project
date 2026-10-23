@@ -331,6 +331,7 @@ export async function refreshTokenDailyCrossPlatform(
       te.source_system,te.source_event_kind,te.event_key,te.timeline_kind,
       te.occurred_at,GREATEST(te.observed_at,membership.known_at,ai.analyzed_at) AS observed_at,inbox.ingested_at,
       CASE WHEN ai.result IS NULL THEN te.payload
+        WHEN ai.result->>'directionAmbiguous'='true' THEN te.payload - 'sentiment_score'
         ELSE te.payload || jsonb_build_object('sentiment_score',ai.result->'score') END AS payload
     FROM timeline_events te
     ${membership}

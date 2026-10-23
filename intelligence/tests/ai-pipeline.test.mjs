@@ -42,7 +42,7 @@ async function fixture(t){
       const system=calls.at(-1).messages[0].content;
       const result=supplied.facts?{factIds:["alertType","asOf","score"],evidenceRefs:supplied.evidenceRefs}:
         system.includes("narrative")?{narrativeId:"test-launch",confidence:0.8,keywords:["launch"],evidenceRefs:supplied.evidenceRefs}:
-        {label:"bullish",score:0.75,confidence:0.8,evidenceRefs:supplied.evidenceRefs};
+        {label:"bullish",directionAmbiguous:false,score:0.75,confidence:0.8,evidenceRefs:supplied.evidenceRefs};
       return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(result)}}],usage:{prompt_tokens:10,completion_tokens:20}}));
     }});
   return {destination,source,ms,calls,gateway,setFail:value=>{fail=value;},models:{sentiment:"test-sentiment",narrative:"test-narrative"}};
@@ -78,6 +78,12 @@ test("real PG source snapshots -> AI -> immutable storage -> API and as-of summa
     assert.ok(Date.parse(snapshot.maxInputObservedAt)>=saved.rows[0].analyzed_at.getTime());
     await tx.query("ROLLBACK");
   }finally{tx.release();}
+  await f.destination.query(`UPDATE ai_message_analyses SET result=result || '{"directionAmbiguous":true,"label":"mixed","score":0}'::jsonb WHERE source_system='x' AND task='sentiment'`);
+  const ambiguous=await refreshTokenDailyCrossPlatform(f.destination,token,new Date(f.ms-1000).toISOString().slice(0,10),new Date());
+  assert.equal(ambiguous.xMentions,1,"ambiguous sentiment does not erase the underlying mention");
+  assert.equal(ambiguous.xSentimentScore,null,"message-wide opposing targets must not enter token sentiment averages as zero");
+  const ambiguousApi=await queryTokenApi(f.destination,parseApiRequest(`/api/intelligence/v1/tokens/${token}/ai?asOf=${new Date().toISOString()}`));
+  assert.equal(ambiguousApi.items.find(item=>item.task==='sentiment').result.directionAmbiguous,true);
   const sourceCount=(await f.source.query("SELECT count(*) FROM twitter_tweets")).rows[0].count;
   assert.equal(sourceCount,"1");
   await f.source.query("UPDATE twitter_tweets SET updated_at=$1,text='Revised launch'",[f.ms+2000]);
