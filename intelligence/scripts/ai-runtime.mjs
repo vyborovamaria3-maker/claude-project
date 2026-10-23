@@ -1,5 +1,5 @@
 import {createAiGatewayFromEnv} from "@claude-project/ai-gateway";
-import {readCollectorMessage,readCollectorContext,runAiAnalysisBatch,registerModel,refreshTokenDailyCrossPlatform,parseSnapshotEncryptionKey,readEncryptedEventText} from "../dist/index.js";
+import {readCollectorMessage,readCollectorContext,runAiAnalysisBatch,registerModel,refreshTokenDailyCrossPlatform,parseSnapshotEncryptionKey,readEncryptedEventText,reserveSharedAiBudget,settleSharedAiBudget} from "../dist/index.js";
 
 /** Explicit API opt-in, separate from collector ACK/lease handling. */
 export async function createAiRuntime(destination,sources,env=process.env){
@@ -19,11 +19,70 @@ export async function createAiRuntime(destination,sources,env=process.env){
   if(snapshotMode&&(!snapshotKeyRef||!/^[a-zA-Z0-9._:-]{1,128}$/.test(snapshotKeyRef)))
     throw new Error("ai_snapshot_key_ref_required");
   const gateway=createAiGatewayFromEnv(env,{maxAttempts:1});
+  const sharedMode=env.INTELLIGENCE_AI_SHARED_BUDGET_ENABLED==="true";
+  const dailyLimit=Number(env.INTELLIGENCE_AI_SHARED_DAILY_BUDGET_USD);
+  const configured=sharedMode?JSON.parse(env.AI_PROVIDERS_JSON??"[]"):[];
+  const prices=new Map(configured.map(item=>[item.id,item]));
+  if(sharedMode&&(!Number.isFinite(dailyLimit)||dailyLimit<=0||dailyLimit>100_000||
+     !Array.isArray(configured)||!configured.length||
+     configured.some(item=>!item||typeof item.id!=="string"||
+       !Number.isFinite(item.inputCostPer1kUsd)||item.inputCostPer1kUsd<0||
+       !Number.isFinite(item.outputCostPer1kUsd)||item.outputCostPer1kUsd<0)))
+    throw new Error("ai_shared_budget_configuration_invalid");
+  const reservationCost=(provider,request,task)=>{
+    const config=prices.get(provider);
+    if(!config)throw new Error("ai_shared_budget_unknown_provider");
+    // Conservative upper-bound proxy: UTF-8 bytes rather than chars/4,
+    // plus protocol overhead, and the configured maximum output tokens.
+    const bytes=task==="chat"?Buffer.byteLength(JSON.stringify(request.messages),"utf8"):
+      Buffer.byteLength(JSON.stringify(request.texts),"utf8");
+    const inputTokensUpper=bytes+8192;
+    const outputTokensUpper=task==="chat"?Number(request.maxTokens??256):0;
+    if(!Number.isSafeInteger(outputTokensUpper)||outputTokensUpper<0||
+       outputTokensUpper>Number(config.maxOutputTokens??8192))
+      throw new Error("ai_shared_budget_output_bound_invalid");
+    return Math.max(0.00000001,(inputTokensUpper*config.inputCostPer1kUsd+
+      outputTokensUpper*config.outputCostPer1kUsd)/1000);
+  };
+  const budgetGateway=sharedMode?{
+    ...gateway,
+    async chatCompletion(request){
+      const provider=request.providerId??env.AI_DEFAULT_PROVIDER;
+      const id=await reserveSharedAiBudget(destination,{providerId:provider,
+        dailyLimitUsd:dailyLimit,reservationUsd:reservationCost(provider,request,"chat")});
+      let cost=null;
+      try{
+        const result=await gateway.chatCompletion(request);
+        cost=result.estimatedCostUsd;
+        return result;
+      }finally{
+        // Unknown/failed remote requests retain their full allowance so that
+        // a billing uncertainty can never unlock additional API requests.
+        await settleSharedAiBudget(destination,{reservationId:id,measuredCostUsd:cost});
+      }
+    },
+    async createEmbeddings(request){
+      const provider=request.providerId??env.AI_DEFAULT_PROVIDER;
+      const id=await reserveSharedAiBudget(destination,{providerId:provider,
+        dailyLimitUsd:dailyLimit,reservationUsd:reservationCost(provider,request,"embedding")});
+      let cost=null;
+      try{
+        const result=await gateway.createEmbeddings(request);
+        cost=result.estimatedCostUsd;return result;
+      }finally{
+        await settleSharedAiBudget(destination,{reservationId:id,measuredCostUsd:cost});
+      }
+    },
+  }:gateway;
   const client=await destination.connect();
   try{
     const tables=await client.query("SELECT to_regclass('ai_message_analyses') IS NOT NULL AS ready, to_regclass('ai_cost_ledger') IS NOT NULL AS ledger_ready");
     if(!tables.rows[0]?.ready)throw new Error("ai_migration_009_required");
     if(!tables.rows[0]?.ledger_ready)throw new Error("ai_migration_010_required");
+    if(sharedMode){
+      const ready=await client.query("SELECT to_regclass('ai_daily_budgets') IS NOT NULL AS ready");
+      if(ready.rows[0]?.ready!==true)throw new Error("ai_migration_012_required");
+    }
     for(const def of definitions){
       await registerModel(client,{...def,status:"active"});
       const active=await client.query("SELECT status FROM model_registry WHERE model_id=$1",[def.modelId]);
@@ -35,7 +94,7 @@ export async function createAiRuntime(destination,sources,env=process.env){
       if(!["x","tg"].includes(source))return null;
       const connection=sources?.[source];
       if(!snapshotMode&&!connection)return null;
-      return runAiAnalysisBatch({destination,source,gateway,models,limit,signal,
+      return runAiAnalysisBatch({destination,source,gateway:budgetGateway,models,limit,signal,
         readText:async(ref,at,kind,eventKey)=>{
           if(!snapshotMode)return readCollectorMessage(connection,source,ref,at);
           if(!kind||!eventKey)throw new Error("ai_snapshot_identity_required");
