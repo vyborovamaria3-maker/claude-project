@@ -50,6 +50,9 @@ test("gateway rejects upstream redirects and streams with oversized bodies",asyn
     async()=>new Response(new ReadableStream({start(controller){
       controller.enqueue(new Uint8Array(1024*1024+1));controller.close();
     }}),{status:200,headers:{"content-type":"application/json"}}),
+    async()=>new Response(JSON.stringify({detail:"private-database-secret"}),{
+      status:500,headers:{"content-type":"application/json"},
+    }),
   ];
   let index=0;
   const server=createPotapoffGateway({clients:[{id:"analyst",role:"analyst",token:client}],
@@ -63,11 +66,13 @@ test("gateway rejects upstream redirects and streams with oversized bodies",asyn
   await new Promise(resolve=>server.listen(0,"127.0.0.1",resolve));
   t.after(()=>new Promise(resolve=>server.close(resolve)));
   const base="http://127.0.0.1:"+server.address().port;
-  for(let n=0;n<2;n++){
+  for(let n=0;n<3;n++){
     const response=await fetch(base+endpoint,{headers:{Authorization:"Bearer "+client}});
     assert.equal(response.status,502);
+    const body=await response.text();
+    assert.doesNotMatch(body,/private-database-secret/);
   }
-  assert.equal(index,2);
+  assert.equal(index,3);
 });
 test("gateway refuses access if security audit cannot be persisted",async t=>{
   const f=await fixture(t,{async query(){throw new Error("connection credentials: secret")}});
@@ -75,4 +80,15 @@ test("gateway refuses access if security audit cannot be persisted",async t=>{
   assert.equal(response.status,503);
   assert.equal(f.upstream.length,0);
   assert.doesNotMatch(JSON.stringify(await response.json()),/credentials|secret/);
+});
+
+test("oversized request target is audited before any response",async t=>{
+  const f=await fixture(t);
+  const response=await fetch(f.base+summary+"&junk="+"z".repeat(2500),{
+    headers:{Authorization:"Bearer "+analyst},
+  });
+  assert.equal(response.status,414);
+  assert.equal(f.audits.length,1);
+  assert.equal(f.audits[0].params[0].length,36);
+  assert.equal(f.upstream.length,0);
 });

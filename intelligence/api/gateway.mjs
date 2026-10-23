@@ -50,7 +50,14 @@ export function createPotapoffGateway({clients,internalApiToken,internalApiPort=
   const server=http.createServer(async(req,res)=>{
     const requestId=randomUUID();
     let principal=null,route=null;
-    if(!req.url||req.url.length>2048){reply(res,414,{error:"request_target_too_long"});return;}
+    if(!req.url||req.url.length>2048){
+      try{
+        await auditDb.query(`INSERT INTO gateway_auth_log
+          (request_id,operation,allowed,denial_code)
+          VALUES($1,'request_target',false,'request_target_too_long')`,[requestId]);
+      }catch{reply(res,503,{error:"gateway_audit_unavailable"});return;}
+      reply(res,414,{error:"request_target_too_long"});return;
+    }
     try{
       const raw=req.headers.authorization;
       const valid=typeof raw==="string"&&/^Bearer [A-Za-z0-9_-]{32,128}$/.test(raw)&&
@@ -80,6 +87,12 @@ export function createPotapoffGateway({clients,internalApiToken,internalApiPort=
           method:"GET",headers:{"Authorization":"Bearer "+internalApiToken,
             "Accept":"application/json"},redirect:"error",signal:AbortSignal.timeout(7000),
         });
+        // Never relay diagnostic 5xx JSON (which can contain internal details)
+        // from the private Intelligence API to a client of the gateway.
+        if(upstream.status>=500){
+          try{await upstream.body?.cancel()}catch{}
+          reply(res,502,{error:"intelligence_upstream_failed"});return;
+        }
         if(!upstream.headers.get("content-type")?.startsWith("application/json")){
           reply(res,502,{error:"upstream_invalid_content_type"});return;
         }
