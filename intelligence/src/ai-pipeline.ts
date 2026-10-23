@@ -1,5 +1,5 @@
 import {createHash} from "node:crypto";
-import type {AiGateway} from "@claude-project/ai-gateway";
+import {AiGatewayError,type AiGateway} from "@claude-project/ai-gateway";
 import {toUtcIso} from "@claude-project/contracts";
 import type {PgTransaction} from "./entity-registry.js";
 import {isLowValueTelegramPost,type AiMessageContext} from "./ai-message-input.js";
@@ -8,6 +8,19 @@ import {createAiAnalysisService} from "./ai-analysis.js";
 type Client=PgTransaction & {release():void};
 export type AiPool={connect():Promise<Client>};
 export type AiModels={sentiment?:string;narrative?:string;explanation?:string};
+const SAFE_GATEWAY_ERRORS=new Set(["ai_provider_network_error","ai_provider_http_error","ai_provider_auth_failed",
+  "ai_provider_rate_limited","ai_provider_response_invalid","ai_provider_rate_limit_exhausted",
+  "ai_provider_cost_budget_exhausted","ai_provider_capacity_exhausted","ai_request_aborted","ai_provider_request_failed"]);
+function analysisErrorCode(error:unknown):string{
+  if(error instanceof AiGatewayError&&SAFE_GATEWAY_ERRORS.has(error.code))return error.code;
+  if(error instanceof Error&&error.message==="source_revision_unavailable")return error.message;
+  if(error instanceof Error&&["AI structured response is invalid","AI sentiment response failed validation",
+    "AI sentiment label and score disagree","AI narrative ID failed validation","AI narrative response failed validation",
+    "AI evidence references are invalid","AI returned evidence outside the supplied evidence set"].includes(error.message))
+    return "ai_output_validation_failed";
+  return "ai_analysis_failed";
+}
+
 type Source="x"|"tg";
 function sourceTime(value:unknown):string{
   if(typeof value==="number"||typeof value==="string"&&/^\d{10,16}$/.test(value)){
@@ -147,7 +160,7 @@ export async function runAiAnalysisBatch(input:{destination:AiPool;source:Source
         }catch(error){
           try{await client.query("ROLLBACK");}catch{}
           stats.failed++;
-          const code=error instanceof Error&&error.message==="source_revision_unavailable"?error.message:"ai_analysis_failed";
+          const code=analysisErrorCode(error);
           await client.query(`INSERT INTO ai_message_attempts(source_system,source_event_kind,event_key,task,model_id,attempts,next_attempt_at,error_code)
             VALUES($1,$2,$3,$4,$5,1,clock_timestamp()+INTERVAL '5 minutes',$6)
             ON CONFLICT(source_system,source_event_kind,event_key,task,model_id) DO UPDATE

@@ -5,7 +5,10 @@ import {readFile} from "node:fs/promises";
 import pg from "pg";
 import {createAiGateway} from "@claude-project/ai-gateway";
 import {readCollectorMessage,readCollectorContext,isLowValueTelegramPost,runAiAnalysisBatch,registerModel,refreshTokenDailyCrossPlatform,
-  evaluateCrossPlatformAlerts,persistAlertCandidates} from "../dist/index.js";
+  evaluateCrossPlatformAlerts,persistAlertCandidates,ingestRegistryEvent,ingestTimelineEvent} from "../dist/index.js";
+import {createAiRuntime} from "../scripts/ai-runtime.mjs";
+import {buildTgSnapshotEvent} from "../scripts/backfill-core.mjs";
+import {createIntelligenceApi} from "../api/server.mjs";
 import {importAiSourceSnapshots} from "../scripts/ai-source-snapshot.mjs";
 import {parseApiRequest,queryTokenApi} from "../api/routes.mjs";
 
@@ -133,6 +136,7 @@ test("provider failures back off, busy workers do not bill, refresh retries with
   const input={...f,source:"x",models:{sentiment:"test-sentiment"},readText:(ref,at)=>readCollectorMessage(f.source,"x",ref,at)};
   f.setFail(true);
   assert.equal((await runAiAnalysisBatch(input)).failed,1);
+  assert.equal((await f.destination.query("SELECT error_code FROM ai_message_attempts")).rows[0].error_code,"ai_provider_http_error");
   assert.equal((await runAiAnalysisBatch(input)).analyzed,0);assert.equal(f.calls.length,1);
   await f.destination.query("UPDATE ai_message_attempts SET next_attempt_at=clock_timestamp()-INTERVAL '1 second'");
   f.setFail(false);
@@ -218,4 +222,51 @@ test("synthetic dialogue regressions preserve negations and irony while removing
  for(const text of excluded)assert.equal(isLowValueTelegramPost(text),true,text);
  // A human discussing the same keywords is useful, not the repeated card shape.
  assert.equal(isLowValueTelegramPost("Don't buy VIP access just because DEX NOT PAID scares you; check liquidity yourself."),false);
+});
+
+
+test("runtime source filter -> context -> gateway failure/retry -> storage -> real HTTP API",{skip:!url},async t=>{
+ const f=await fixture(t);
+ await f.source.query("UPDATE tg_messages SET text='I feared a collapse, but it is still holding.'");
+ await f.source.query(`INSERT INTO tg_messages VALUES
+   (1,6,'The price is still holding',$1,$2,NULL),
+   (1,8,'Gamble Found! synthetic card',$1,$1,NULL),
+   (1,9,'#SAMPLE · VIP: x2\n├ Growth: x2\n└ DEX NOT PAID\nGet VIP access',$1,$1,NULL)`,[new Date(f.ms),new Date(f.ms-1000)]);
+ const rows=(await f.source.query("SELECT m.*,s.peer_id FROM tg_messages m JOIN tg_sources s ON s.id=m.source_id WHERE message_id>=7")).rows;
+ for(const row of rows){const event=buildTgSnapshotEvent(row);const tx=await f.destination.connect();try{
+  await tx.query('BEGIN');await ingestRegistryEvent(tx,event.payload.registryEvent);await ingestTimelineEvent(tx,'tg',event.eventKind,event.payload.timelineEvent);await tx.query('COMMIT');
+ }finally{tx.release();}}
+ const originalFetch=globalThis.fetch;let calls=0,failNarrative=true,api;
+ globalThis.fetch=async(input,init)=>{
+  if(!String(input).startsWith('https://runtime.example.test/'))return originalFetch(input,init);
+  calls++;const request=JSON.parse(init.body),supplied=JSON.parse(request.messages[1].content);
+  assert.equal(supplied.context.length,1);assert.equal(supplied.context[0].evidenceRef,'tg:message:-100123:6');
+  const narrative=request.messages[0].content.includes('narrative');
+  if(narrative&&failNarrative){failNarrative=false;throw new Error('sensitive provider body must never persist');}
+  const result=narrative?{narrativeId:null,confidence:0.9,keywords:[],evidenceRefs:supplied.evidenceRefs}:
+    {label:'mixed',score:0,directionAmbiguous:true,confidence:0.9,evidenceRefs:supplied.evidenceRefs};
+  return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(result)}}]}));
+ };
+ try{
+  const env={AI_GATEWAY_ENABLED:'true',AI_DEFAULT_PROVIDER:'test',RUNTIME_TEST_KEY:'synthetic-key-only',
+    AI_PROVIDERS_JSON:JSON.stringify([{id:'test',baseUrl:'https://runtime.example.test/v1',apiKeyEnv:'RUNTIME_TEST_KEY',chatModel:'test'}]),
+    INTELLIGENCE_AI_ENABLED:'true',INTELLIGENCE_AI_BATCH_SIZE:'8',
+    INTELLIGENCE_AI_MODELS_JSON:JSON.stringify(['sentiment','narrative'].map(task=>({modelId:'test-'+task,provider:'test',name:'test',version:'1',task})))};
+  const runtime=await createAiRuntime(f.destination,{tg:f.source},env);
+  const first=await runtime.run('tg');assert.equal(first.filtered,4);assert.equal(first.analyzed,1);assert.equal(first.failed,1);assert.equal(calls,2);
+  const failed=(await f.destination.query("SELECT error_code FROM ai_message_attempts WHERE attempts=1")).rows;
+  assert.deepEqual(failed,[{error_code:'ai_provider_network_error'}]);assert.equal(JSON.stringify(failed).includes('sensitive'),false);
+  await runtime.run('tg');assert.equal(calls,2,'backoff must not rebill completed or filtered work');
+  await f.destination.query("UPDATE ai_message_attempts SET next_attempt_at=clock_timestamp()-INTERVAL '1 second' WHERE attempts=1");
+  assert.equal((await runtime.run('tg')).analyzed,1);assert.equal(calls,3,'retry only the failed task');
+  const saved=(await f.destination.query('SELECT result FROM ai_message_analyses')).rows;assert.equal(saved.length,2);
+  const apiToken='synthetic-runtime-api-token-1234567890';api=createIntelligenceApi({pool:f.destination,token:apiToken});await new Promise(resolve=>api.listen(0,'127.0.0.1',resolve));
+  const base=`http://127.0.0.1:${api.address().port}/api/intelligence/v1/ai`;
+  const response=await fetch(base+'?source=tg&asOf='+new Date().toISOString(),{headers:{Authorization:'Bearer '+apiToken}});
+  assert.equal(response.status,200);const body=await response.json();assert.equal(body.items.length,2);
+  assert.ok(body.items.every(item=>item.contextEvidence[0].evidenceRef==='tg:message:-100123:6'));
+  assert.equal(JSON.stringify(body).includes('The price is still holding'),false);
+  const past=await fetch(base+'?source=tg&asOf='+new Date(f.ms).toISOString(),{headers:{Authorization:'Bearer '+apiToken}});assert.equal((await past.json()).items.length,0);
+  await runtime.run('tg');assert.equal(calls,3,'successful replay must not call provider');
+ }finally{globalThis.fetch=originalFetch;if(api)await new Promise(resolve=>api.close(resolve));}
 });
