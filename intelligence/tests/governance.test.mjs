@@ -10,7 +10,7 @@ const token="solana:So11111111111111111111111111111111111111112";
 const migrations=["001_entity_registry.sql","002_timeline.sql","003_feature_store.sql",
   "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql",
   "006_cross_platform_analytics.sql","008_alert_status_history.sql","009_ai_analysis.sql",
-  "010_intelligence_governance.sql"];
+  "010_intelligence_governance.sql","011_validation_preregistration.sql"];
 
 test("Intelligence 2.2 PostgreSQL schema: as-of, coverage, validation, dedup and privacy",{
   skip:!url,
@@ -70,7 +70,8 @@ test("Intelligence 2.2 PostgreSQL schema: as-of, coverage, validation, dedup and
       SELECT $1,run_id,'holdout','{"producer":"temporal_holdout_v1"}'::jsonb,$3,
         data_cutoff_at,'passed',$4::timestamptz,'{"pValue":0.001}'::jsonb FROM backtest_runs WHERE run_id=$2`,
       [signalVersion,runId,"a".repeat(64),new Date(Date.now()+86400000)]);
-    assert.equal(await requireCurrentSignalValidation(db,signalVersion,signalTime),true);
+    assert.equal(await requireCurrentSignalValidation(db,signalVersion,signalTime),false,
+      "fabricated validation without immutable preregistration cannot authorize an alert");
     assert.equal(await requireCurrentSignalValidation(db,signalVersion,new Date(Date.now()+2*86400000)),false);
 
     const interpret=await db.query(`SELECT column_default FROM information_schema.columns

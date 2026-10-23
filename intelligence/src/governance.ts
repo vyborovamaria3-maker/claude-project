@@ -25,6 +25,7 @@ export async function requireCurrentSignalValidation(
       AND run.threshold=policy.threshold AND run.horizon_hours=policy.horizon_hours
       AND policy.signal_version=validation.signal_version
       AND policy.registered_at<(validation.method_params->>'splitAt')::timestamptz
+      AND (validation.method_params->>'splitAt')::timestamptz<=validation.dataset_cutoff
       AND validation.method_params->>'producer'='temporal_holdout_v1'
       AND validation.validation_report->>'pValue' IS NOT NULL
       AND validation.published_at<=$2::timestamptz

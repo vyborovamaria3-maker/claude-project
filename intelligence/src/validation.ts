@@ -18,11 +18,16 @@ export async function preregisterSignalPolicy(tx:PgTransaction,input:Readonly<{
     (policy_id,signal_version,signal_name,threshold,horizon_hours,code_revision)
     VALUES($1,$2,$3,$4,$5,$6)
     ON CONFLICT(signal_version,signal_name,threshold,horizon_hours,code_revision)
-    DO UPDATE SET signal_version=EXCLUDED.signal_version
-    RETURNING policy_id`,[id,input.signalVersion,input.signalName,input.threshold,
+    DO NOTHING RETURNING policy_id`,[id,input.signalVersion,input.signalName,input.threshold,
       input.horizonHours,input.codeRevision]);
-  if(!result.rows.length)throw new Error("policy_registration_failed");
-  return String(result.rows[0]!.policy_id);
+  if(result.rows.length)return String(result.rows[0]!.policy_id);
+  const prior=await tx.query(`SELECT policy_id FROM signal_policy_preregistrations
+    WHERE signal_version=$1 AND signal_name=$2 AND threshold=$3
+      AND horizon_hours=$4 AND code_revision=$5`,[
+    input.signalVersion,input.signalName,input.threshold,input.horizonHours,input.codeRevision,
+  ]);
+  if(prior.rows.length!==1)throw new Error("policy_registration_failed");
+  return String(prior.rows[0]!.policy_id);
 }
 
 export type HoldoutRow=Readonly<{
@@ -125,6 +130,7 @@ export async function certifyTemporalHoldout(tx:PgTransaction,input:Readonly<{
       throw new TypeError("validation_outcomes_or_threshold_not_point_in_time");
   }
   const result=evaluateTemporalHoldout(samples);
+  if(result.splitAt>cutoff)throw new TypeError("validation_split_after_data_cutoff");
   const policy=await tx.query(`SELECT policy_id,registered_at
     FROM signal_policy_preregistrations
     WHERE signal_version=$1 AND signal_name=$2 AND threshold=$3

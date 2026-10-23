@@ -48,6 +48,10 @@ test("holdout certificate is deterministic and bound to run details",async()=>{
       selected:r.selected,outcome_label:r.outcome,outcome_at:r.outcomeAt,
       outcome_observed_at:r.outcomeObservedAt,
     }))};
+    if(sql.includes("FROM signal_policy_preregistrations"))return {rows:[{
+      policy_id:"00000000-0000-4000-8000-000000000002",
+      registered_at:"2026-09-30T00:00:00Z",
+    }]};
     if(sql.includes("INSERT INTO signal_validation_registry"))return {rows:[]};
     throw new Error("unexpected SQL");
   }};

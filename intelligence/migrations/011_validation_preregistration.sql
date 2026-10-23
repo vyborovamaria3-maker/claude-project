@@ -14,3 +14,20 @@ CREATE INDEX IF NOT EXISTS idx_signal_policy_lookup ON signal_policy_preregistra
   (signal_version,signal_name,registered_at DESC);
 ALTER TABLE signal_validation_registry ADD COLUMN IF NOT EXISTS policy_id UUID
   REFERENCES signal_policy_preregistrations(policy_id);
+
+-- Registration time is DB-owned, not client-supplied. Policies cannot be
+-- moved back in time or edited after publication.
+CREATE OR REPLACE FUNCTION enforce_immutable_signal_policy() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP='INSERT' THEN
+    NEW.registered_at=clock_timestamp();
+    RETURN NEW;
+  END IF;
+  RAISE EXCEPTION 'signal_policy_immutable';
+END
+$$;
+DROP TRIGGER IF EXISTS tr_signal_policy_immutable ON signal_policy_preregistrations;
+CREATE TRIGGER tr_signal_policy_immutable
+  BEFORE INSERT OR UPDATE OR DELETE ON signal_policy_preregistrations
+  FOR EACH ROW EXECUTE FUNCTION enforce_immutable_signal_policy();
