@@ -32,6 +32,19 @@ test("validated correlation alerts require OOS evidence and enough samples",()=>
   assert.deepEqual(evaluateCrossPlatformAlerts({...candidate,correlationExposedCount:10,correlationControlCount:10,
     correlationValidation:"out_of_sample"}).map(a=>a.alertType),["validated_correlation"]);
 });
+test("validated correlation persistence fails closed without independent registry evidence",async()=>{
+  const candidates=evaluateCrossPlatformAlerts({...base,correlationLift:3,correlationPValue:0.002,
+    correlationExposedCount:30,correlationControlCount:30,correlationValidation:"out_of_sample"});
+  let inserts=0,checked=0;
+  const db={async query(sql){
+    if(sql.includes("signal_validation_registry")){checked++;return {rows:[]};}
+    if(sql.includes("INSERT INTO token_alerts"))inserts++;
+    return {rows:[]};
+  }};
+  await assert.rejects(persistAlertCandidates(db,candidates),/validated_correlation_requires_verified_registry/);
+  assert.equal(checked,1);assert.equal(inserts,0);
+});
+
 test("persistence suppresses any active incident regardless of age",async()=>{
   const candidates=evaluateCrossPlatformAlerts({...base,riskScore:0.9});
   let insertCalls=0;
