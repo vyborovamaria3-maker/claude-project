@@ -5,7 +5,7 @@ import {createPotapoffGateway} from "../api/gateway.mjs";
 const viewer="a".repeat(48),analyst="b".repeat(48),internal="c".repeat(48);
 const token="solana:So11111111111111111111111111111111111111112";
 const summary="/api/intelligence/v1/tokens/"+encodeURIComponent(token)+"/summary?asOf=2026-10-22T12%3A00%3A00Z";
-const backtest="/api/intelligence/v1/backtest?asOf=2026-10-22T12%3A00%3A00Z";
+const backtest="/api/intelligence/v1/backtest?signal=attention_score";
 async function fixture(t,audit={async query(){return {rows:[]}}}){
   const audits=[];const upstream=[];
   const db={async query(sql,params){audits.push({sql,params});return audit.query(sql,params)}};
