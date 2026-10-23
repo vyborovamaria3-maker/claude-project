@@ -52,3 +52,5 @@ Existing Bearer authentication, loopback binding, bounded limits and no-store re
 ## Validation
 
 PostgreSQL tests cover source reads and edits/deletions, legacy schemas, persistence and replay, as-of API/summary results, source worker locks, retry backoff, refresh repair and grounded explanation persistence. Live validation reads a small bounded selection from the actual local `xcollector.twitter_tweets` database and writes only to a disposable destination, then checks the HTTP API and no-call replay. The local TG audit database is empty and the configured live TG endpoint was unavailable; synthetic PostgreSQL TG integration is not claimed as live Telegram validation.
+
+Legacy snapshot reads default to a 120-second statement timeout; normal source lookups default to 5 seconds. Set `INTELLIGENCE_AI_SOURCE_QUERY_TIMEOUT_MS` (1000–300000) for the source connection when needed. This bounds database work without retrying paid AI requests.

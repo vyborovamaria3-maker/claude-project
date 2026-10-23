@@ -7,12 +7,20 @@ import {createAiRuntime} from "./ai-runtime.mjs";
 import {importAiSourceSnapshots} from "./ai-source-snapshot.mjs";
 import {setTimeout as sleep} from "node:timers/promises";
 
+export function sourceQueryTimeout(env=process.env){
+  const timeout=Number(env.INTELLIGENCE_AI_SOURCE_QUERY_TIMEOUT_MS??
+    (env.INTELLIGENCE_AI_SOURCE_SNAPSHOT_ENABLED==='true'?120000:5000));
+  if(!Number.isSafeInteger(timeout)||timeout<1000||timeout>300000)throw new Error("invalid_ai_source_query_timeout");
+  return timeout;
+}
+
 export async function analyzeOnce(source,env=process.env,watch=false){
   if(!["x","tg"].includes(source))throw new Error("invalid_ai_source");
   if(env.INTELLIGENCE_AI_ENABLED!=="true")throw new Error("ai_explicit_opt_in_required");
+  const queryTimeout=sourceQueryTimeout(env);
   const destination=destinationConnection();
   const sourceDb=new pg.Pool({connectionString:requiredEnv(source==="x"?"X_SOURCE_DATABASE_URL":"TG_SOURCE_DATABASE_URL"),
-    max:1,connectionTimeoutMillis:5000,statement_timeout:5000,options:"-c default_transaction_read_only=on"});
+    max:1,connectionTimeoutMillis:5000,statement_timeout:queryTimeout,options:"-c default_transaction_read_only=on"});
   const stop=new AbortController();
   const shutdown=()=>stop.abort();
   for(const signal of ["SIGINT","SIGTERM"])process.once(signal,shutdown);
