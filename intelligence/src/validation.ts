@@ -1,0 +1,130 @@
+import {createHash} from "node:crypto";
+import {toUtcIso} from "@claude-project/contracts";
+import type {PgTransaction} from "./entity-registry.js";
+
+export type HoldoutRow=Readonly<{
+  canonicalTokenId:string;signalAt:string;score:number;selected:boolean;outcome:boolean;
+  outcomeAt:string;outcomeObservedAt:string;
+}>;
+function logChoose(n:number,k:number):number{
+  if(k<0||k>n)return Number.NEGATIVE_INFINITY;
+  let value=0,m=Math.min(k,n-k);
+  for(let i=1;i<=m;i++)value+=Math.log(n-m+i)-Math.log(i);
+  return value;
+}
+function fisher(a:number,b:number,c:number,d:number):number{
+  const successes=a+c,total=a+b+c+d,exposed=a+b;
+  const lo=Math.max(0,successes-(c+d)),hi=Math.min(exposed,successes);
+  const denom=logChoose(total,successes);
+  const logP=(x:number)=>logChoose(exposed,x)+logChoose(total-exposed,successes-x)-denom;
+  const observed=logP(a);
+  let p=0;
+  for(let x=lo;x<=hi;x++)if(logP(x)<=observed+1e-9)p+=Math.exp(logP(x));
+  return Math.min(1,Math.max(0,p));
+}
+/**
+ * A strictly chronological, never-shuffled holdout. Scores and threshold
+ * must have been committed BEFORE labels were observed; the validation
+ * only evaluates an already completed backtest, never optimizes a threshold.
+ */
+export function evaluateTemporalHoldout(rows:readonly HoldoutRow[],testFraction=0.3){
+  if(!Array.isArray(rows)||rows.length<40||rows.length>50_000||
+     !Number.isFinite(testFraction)||testFraction<0.2||testFraction>0.5)
+    throw new TypeError("holdout_insufficient_samples");
+  const sorted=[...rows].sort((a,b)=>a.signalAt.localeCompare(b.signalAt)||a.canonicalTokenId.localeCompare(b.canonicalTokenId));
+  const distinctTokens=new Set<string>();
+  for(const r of sorted){
+    if(typeof r.canonicalTokenId!=="string"||distinctTokens.has(r.canonicalTokenId)||
+       typeof r.score!=="number"||!Number.isFinite(r.score)||
+       typeof r.selected!=="boolean"||typeof r.outcome!=="boolean"||
+       toUtcIso(r.outcomeAt)<=toUtcIso(r.signalAt)||
+       toUtcIso(r.outcomeObservedAt)<toUtcIso(r.outcomeAt))
+      throw new TypeError("holdout_invalid_or_dependent_observations");
+    distinctTokens.add(r.canonicalTokenId);
+  }
+  // Never split observations sharing the same calendar day across train/test.
+  const boundary=Math.floor(sorted.length*(1-testFraction));
+  const splitDay=sorted[boundary]!.signalAt.slice(0,10);
+  const train=sorted.filter(r=>r.signalAt.slice(0,10)<splitDay);
+  const test=sorted.filter(r=>r.signalAt.slice(0,10)>=splitDay);
+  if(train.length<20||test.length<20||
+     new Set(train.map(r=>r.signalAt.slice(0,10))).size<2||
+     new Set(test.map(r=>r.signalAt.slice(0,10))).size<2)
+    throw new TypeError("holdout_chronological_split_unavailable");
+  const selected=test.filter(r=>r.selected),control=test.filter(r=>!r.selected);
+  if(selected.length<10||control.length<10)
+    throw new TypeError("holdout_control_groups_too_small");
+  const a=selected.filter(r=>r.outcome).length,c=control.filter(r=>r.outcome).length;
+  const selectedRate=a/selected.length,controlRate=c/control.length;
+  const pValue=fisher(a,selected.length-a,c,control.length-c);
+  const lift=controlRate===0?null:selectedRate/controlRate;
+  const passed=pValue<=0.05&&selectedRate>controlRate&&lift!==null&&lift>=2;
+  return {passed,pValue,lift,selectedRate,controlRate,trainCount:train.length,
+    testCount:test.length,selectedCount:selected.length,controlCount:control.length,
+    splitAt:splitDay+"T00:00:00.000Z",rows:sorted};
+}
+
+export async function certifyTemporalHoldout(tx:PgTransaction,input:Readonly<{
+  runId:string;signalVersion:string;codeRevision:string;deploymentDays?:number;
+}>):Promise<{passed:boolean;reproducibilityHash:string;pValue:number;trainCount:number;testCount:number}>{
+  if(!/^[0-9a-f-]{36}$/i.test(input.runId)||!/^[a-zA-Z0-9._-]{1,128}$/.test(input.signalVersion)||
+     !/^[0-9a-f]{40}$/.test(input.codeRevision))throw new TypeError("invalid_validation_identity");
+  const days=input.deploymentDays??14;
+  if(!Number.isSafeInteger(days)||days<1||days>30)throw new TypeError("invalid_validation_expiry");
+  // A dedicated validation DB role must protect INSERT into the registry.
+  const [run,records]=await Promise.all([
+    tx.query(`SELECT run_id,signal_name,status,threshold,baseline_kind,feature_version,
+      horizon_hours,model_id,metrics,data_cutoff_at,completed_at FROM backtest_runs
+      WHERE run_id=$1`,[input.runId]),
+    tx.query(`SELECT canonical_token_id,signal_at,score,selected,outcome_label,
+      outcome_at,outcome_observed_at FROM backtest_results WHERE run_id=$1
+      ORDER BY signal_at,canonical_token_id`,[input.runId]),
+  ]);
+  const row=run.rows[0];
+  if(!row||row.status!=="completed"||row.feature_version!==input.signalVersion||
+      row.baseline_kind!=="market_average"||
+      !Number.isFinite(Number(row.threshold))||
+      Number(row.metrics?.sampleSize)!==records.rows.length||
+      !row.data_cutoff_at||!row.completed_at)
+    throw new TypeError("validation_requires_completed_versioned_backtest");
+  const cutoff=toUtcIso(row.data_cutoff_at as Date|string);
+  const completed=toUtcIso(row.completed_at as Date|string);
+  if(cutoff>completed)throw new TypeError("validation_cutoff_after_completion");
+  const samples=records.rows.map(r=>({
+    canonicalTokenId:String(r.canonical_token_id),signalAt:toUtcIso(r.signal_at as Date|string),
+    score:Number(r.score),selected:r.selected===true,outcome:r.outcome_label===true,
+    outcomeAt:toUtcIso(r.outcome_at as Date|string),
+    outcomeObservedAt:toUtcIso(r.outcome_observed_at as Date|string),
+  }));
+  for(const item of samples){
+    if(item.outcomeObservedAt>cutoff||item.signalAt>=item.outcomeObservedAt||
+       item.selected!==(item.score>=Number(row.threshold)))
+      throw new TypeError("validation_outcomes_or_threshold_not_point_in_time");
+  }
+  const result=evaluateTemporalHoldout(samples);
+  const params={producer:"temporal_holdout_v1",splitAt:result.splitAt,
+    trainCount:result.trainCount,testCount:result.testCount,
+    selectedCount:result.selectedCount,controlCount:result.controlCount};
+  const reproducibilityHash=createHash("sha256").update(JSON.stringify({
+    codeRevision:input.codeRevision,runId:input.runId,signalVersion:input.signalVersion,
+    modelId:row.model_id,signal:row.signal_name,
+    threshold:Number(row.threshold),horizonHours:Number(row.horizon_hours),
+    datasetCutoff:cutoff,method:"holdout",params,rows:result.rows,
+  })).digest("hex");
+  const report={pValue:result.pValue,lift:result.lift,
+    selectedRate:result.selectedRate,controlRate:result.controlRate,
+    selectedCount:result.selectedCount,controlCount:result.controlCount,
+    trainCount:result.trainCount,testCount:result.testCount};
+  await tx.query(`INSERT INTO signal_validation_registry
+      (signal_version,backtest_run_id,method,method_params,reproducibility_hash,
+       dataset_cutoff,validation_status,deployment_valid_until,validation_report)
+      VALUES ($1,$2,'holdout',$3::jsonb,$4,
+        (SELECT data_cutoff_at FROM backtest_runs WHERE run_id=$2),
+        $5,clock_timestamp()+($6::integer*INTERVAL '1 day'),$7::jsonb)
+      ON CONFLICT(signal_version,backtest_run_id,reproducibility_hash) DO NOTHING`,[
+    input.signalVersion,input.runId,JSON.stringify(params),reproducibilityHash,
+    result.passed?"passed":"failed",days,JSON.stringify(report),
+  ]);
+  return {passed:result.passed,reproducibilityHash,pValue:result.pValue,
+    trainCount:result.trainCount,testCount:result.testCount};
+}

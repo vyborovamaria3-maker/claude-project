@@ -15,3 +15,5 @@ export * from "./ai-message-input.js";
 export * from "./governance.js";
 
 export * from "./invalidation-worker.js";
+
+export * from "./validation.js";

@@ -176,3 +176,8 @@ CREATE TABLE IF NOT EXISTS gateway_auth_log (
   CHECK(allowed OR denial_code IS NOT NULL)
 );
 CREATE INDEX IF NOT EXISTS idx_gateway_auth_time ON gateway_auth_log(recorded_at DESC);
+
+-- A database role that inserts validation rows must be separate from the
+-- collector and public API roles. Only a validation producer should receive INSERT.
+ALTER TABLE signal_validation_registry ADD COLUMN IF NOT EXISTS validation_report JSONB
+  NOT NULL DEFAULT '{}'::jsonb CHECK(jsonb_typeof(validation_report)='object');
