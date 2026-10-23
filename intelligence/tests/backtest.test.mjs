@@ -88,3 +88,15 @@ test("persistence refuses signals whose horizon or outcome observation exceeds c
       outcomeObservedAt:"2026-10-01T03:01:00Z"}]}),/as-of or completed-horizon/);
   assert.equal(called,false);
 });
+
+test("small independent cohorts have no invented confidence interval or p-value",()=>{
+  // Two distinct canonical public Solana IDs rather than repeat observations
+  // for one mint; even distinct small groups are insufficient for significance.
+  const other=formatTokenId("solana","11111111111111111111111111111111");
+  const result=runSignalBacktest([
+    row(1,0.9,true),{...row(2,0.1,false),canonicalTokenId:other},
+  ],{threshold:0.5});
+  assert.equal(result.metrics.pValue,null);
+  assert.equal(result.metrics.ciLow,null);
+  assert.equal(result.metrics.ciHigh,null);
+});
