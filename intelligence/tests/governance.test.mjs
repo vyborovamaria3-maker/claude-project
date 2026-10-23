@@ -72,6 +72,7 @@ test("Intelligence 2.2 PostgreSQL schema: as-of, coverage, validation, dedup and
       [signalVersion,runId,"a".repeat(64),new Date(Date.now()+86400000)]);
     assert.equal(await requireCurrentSignalValidation(db,signalVersion,signalTime),false,
       "fabricated validation without immutable preregistration cannot authorize an alert");
+    // The authorization query must reject p>0.05, lift<2 and tiny holdout cohorts.
     assert.equal(await requireCurrentSignalValidation(db,signalVersion,new Date(Date.now()+2*86400000)),false);
 
     const interpret=await db.query(`SELECT column_default FROM information_schema.columns

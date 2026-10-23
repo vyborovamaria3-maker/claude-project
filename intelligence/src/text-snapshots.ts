@@ -83,7 +83,8 @@ export async function readEncryptedEventText(tx:PgTransaction,key:Buffer,input:S
         WHERE removed.source_system=original.source_system
           AND removed.evidence_source_id=original.evidence_source_id
           AND removed.event_kind IN ('message_deleted','token_links_invalidated')
-          AND removed.ingested_at>=original.ingested_at
+          AND (removed.event_kind='message_deleted'
+               OR removed.ingested_at>=original.ingested_at)
       )
     ORDER BY s.available_at DESC LIMIT 2`,[
       input.sourceSystem,input.sourceEventKind,input.eventKey,
