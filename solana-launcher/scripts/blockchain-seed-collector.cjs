@@ -1046,6 +1046,14 @@ function appendDiscoveredWallets(db, ownerKind, ownerAddress, transactions, scop
   for (const tx of transactions) {
     if (!tx || tx.transactionError != null || tx.error != null) continue;
     if (ownerKind === "token") {
+      // Alchemy raw receipts have no enhanced swap/tokenTransfers arrays.
+      // Only explicit SPL ownership metadata creates wallet candidates; token
+      // account addresses and fee payers are not substituted for their owners.
+      if (tx.raw?.meta?.err === null) {
+        for (const balance of [...(tx.raw.meta.preTokenBalances || []), ...(tx.raw.meta.postTokenBalances || [])]) {
+          if (balance.mint === ownerAddress) add(balance.owner,500,"token_balance_owner");
+        }
+      }
       const swap=tx.events?.swap;
       const swapTouchesToken=[...(swap?.tokenInputs||[]),...(swap?.tokenOutputs||[])].some(x=>x?.mint===ownerAddress);
       if (swapTouchesToken) {
@@ -1133,12 +1141,13 @@ function appendDiscoveredCreators(db,scopeId,tokenAddress,transactions){
 }
 function appendDiscoveredCreatorTokens(db,scopeId,creatorAddress,transactions){
   const {extractPumpFunLaunches}=require("./blockchain-pumpfun-discovery.cjs");
-  const launches=extractPumpFunLaunches(transactions).filter(x=>x.creator===creatorAddress);
+  const launches=extractPumpFunLaunches(transactions).filter(x=>x.creator===creatorAddress || x.launchedBy===creatorAddress);
   if(!launches.length)return 0;
   savePumpFunLaunches(db,scopeId,launches);
   for(const launch of launches){
     deferScopeMember(db,scopeId,"creator",creatorAddress,"token",launch.mint,900,
-      "pumpfun_creator_launch","creator",creatorAddress);
+      launch.creator===creatorAddress ? "pumpfun_creator_launch" : "pumpfun_creator_initiated_launch",
+      "creator",creatorAddress);
   }
   return launches.length;
 }
