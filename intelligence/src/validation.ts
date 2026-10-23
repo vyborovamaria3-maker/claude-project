@@ -34,20 +34,19 @@ export type HoldoutRow=Readonly<{
   canonicalTokenId:string;signalAt:string;score:number;selected:boolean;outcome:boolean;
   outcomeAt:string;outcomeObservedAt:string;
 }>;
-function logChoose(n:number,k:number):number{
-  if(k<0||k>n)return Number.NEGATIVE_INFINITY;
-  let value=0,m=Math.min(k,n-k);
-  for(let i=1;i<=m;i++)value+=Math.log(n-m+i)-Math.log(i);
-  return value;
-}
 function fisher(a:number,b:number,c:number,d:number):number{
   const successes=a+c,total=a+b+c+d,exposed=a+b;
+  // Cached log factorials avoid O(n^2) combinations on the 50k-row limit.
+  const factorials=new Float64Array(total+1);
+  for(let i=2;i<=total;i++)factorials[i]=factorials[i-1]!+Math.log(i);
+  const choose=(n:number,k:number)=>k<0||k>n?Number.NEGATIVE_INFINITY:
+    factorials[n]!-factorials[k]!-factorials[n-k]!;
   const lo=Math.max(0,successes-(c+d)),hi=Math.min(exposed,successes);
-  const denom=logChoose(total,successes);
-  const logP=(x:number)=>logChoose(exposed,x)+logChoose(total-exposed,successes-x)-denom;
+  const denom=choose(total,successes);
+  const logP=(x:number)=>choose(exposed,x)+choose(total-exposed,successes-x)-denom;
   const observed=logP(a);
   let p=0;
-  for(let x=lo;x<=hi;x++)if(logP(x)<=observed+1e-9)p+=Math.exp(logP(x));
+  for(let x=lo;x<=hi;x++)if(logP(x)<=observed+1e-8)p+=Math.exp(logP(x));
   return Math.min(1,Math.max(0,p));
 }
 /**
@@ -118,6 +117,10 @@ export async function certifyTemporalHoldout(tx:PgTransaction,input:Readonly<{
   const cutoff=toUtcIso(row.data_cutoff_at as Date|string);
   const completed=toUtcIso(row.completed_at as Date|string);
   if(cutoff>completed)throw new TypeError("validation_cutoff_after_completion");
+  // Never silently turn a missing label into a negative outcome.
+  if(records.rows.some(r=>typeof r.outcome_label!=="boolean"||typeof r.selected!=="boolean"||
+      r.score===null||r.score===undefined))
+    throw new TypeError("validation_requires_explicit_boolean_outcomes");
   const samples=records.rows.map(r=>({
     canonicalTokenId:String(r.canonical_token_id),signalAt:toUtcIso(r.signal_at as Date|string),
     score:Number(r.score),selected:r.selected===true,outcome:r.outcome_label===true,

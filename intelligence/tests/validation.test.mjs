@@ -63,3 +63,25 @@ test("holdout certificate is deterministic and bound to run details",async()=>{
   assert.equal(a.reproducibilityHash,b.reproducibilityHash);
   assert.match(a.reproducibilityHash,/^[a-f0-9]{64}$/);
 });
+
+test("missing outcomes cannot be silently counted as false",async()=>{
+  const db={async query(sql){
+    if(sql.includes("FROM backtest_runs"))return {rows:[{
+      status:"completed",signal_name:"attention_score",threshold:"0.7",
+      baseline_kind:"market_average",feature_version:"cross-platform-heuristics-v2",
+      horizon_hours:24,metrics:{sampleSize:1},data_cutoff_at:"2026-10-20T00:00:00Z",
+      completed_at:"2026-10-21T00:00:00Z",
+    }]};
+    if(sql.includes("FROM backtest_results"))return {rows:[{
+      canonical_token_id:"a",signal_at:"2026-10-01T00:00:00Z",
+      score:"0.9",selected:true,outcome_label:null,
+      outcome_at:"2026-10-01T01:00:00Z",
+      outcome_observed_at:"2026-10-01T02:00:00Z",
+    }]};
+    throw new Error("unexpected query");
+  }};
+  await assert.rejects(certifyTemporalHoldout(db,{
+    runId:"00000000-0000-4000-8000-000000000001",
+    signalVersion:"cross-platform-heuristics-v2",codeRevision:"a".repeat(40),
+  }),/validation_requires_explicit_boolean_outcomes/);
+});
