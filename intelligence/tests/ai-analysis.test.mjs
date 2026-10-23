@@ -195,3 +195,18 @@ test("embedding output is checked for 1024 dimensions", async () => {
   });
   assert.equal(result.embedding.length, 1024);
 });
+
+
+test("narrative abstains on weak evidence and excludes invented keywords from real Telegram examples", async () => {
+  const cases = [
+    {text:"just have been waiting for coins to do with paybox", payload:{narrativeId:"crypto-payments",confidence:0.42,keywords:["coins","Paybox","payments"]}, expected:null, keywords:["coins","Paybox"]},
+    {text:"Elon just replied to this photo of Starman from 2018", payload:{narrativeId:null,confidence:0.96,keywords:["Elon Musk","Starman","SpaceX","photo","","photo"]}, expected:null, keywords:["Starman","photo"]},
+    {text:"Petal posted about a new developer console on Pump.fun", payload:{narrativeId:"pump-fun-platform-tools",confidence:0.86,keywords:["Pump.fun","developer console","platform tools","Petal"]}, expected:"pump-fun-platform-tools", keywords:["Pump.fun","developer console","Petal"]},
+  ];
+  for(const sample of cases){
+    const gateway=createAiGateway({providers:[{id:"primary",baseUrl:"https://api.example.test/v1",apiKey:"test-secret-key-123",chatModel:"chat-test"}],defaultProviderId:"primary",
+      fetchImpl:async()=>new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({...sample.payload,evidenceRefs:["tg:message:1"]})}}]}))});
+    const result=await createAiAnalysisService(fakeTx("narrative"),gateway).classifyNarrative({modelId:"narrative-v2",text:sample.text,evidenceRefs:["tg:message:1"]});
+    assert.equal(result.narrativeId,sample.expected);assert.deepEqual(result.keywords,sample.keywords);
+  }
+});
