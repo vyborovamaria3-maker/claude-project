@@ -123,6 +123,10 @@ export async function certifyTemporalHoldout(tx:PgTransaction,input:Readonly<{
      coverage.completedHorizonCount!==records.rows.length||
      coverage.missingOutcomeCount!==0||coverage.incompleteHorizonCount!==0)
     throw new TypeError("validation_unverified_outcome_coverage");
+  // Never silently turn a missing label into a negative outcome.
+  if(records.rows.some(r=>typeof r.outcome_label!=="boolean"||typeof r.selected!=="boolean"||
+      r.score===null||r.score===undefined))
+    throw new TypeError("validation_requires_explicit_boolean_outcomes");
   // Source and outcome comparisons stay inside PostgreSQL: timestamp equality
   // would otherwise lose microseconds through JavaScript Date conversions.
   // The score column is selected from the closed allowlist above, not user SQL.
@@ -153,10 +157,6 @@ export async function certifyTemporalHoldout(tx:PgTransaction,input:Readonly<{
   const cutoff=toUtcIso(row.data_cutoff_at as Date|string);
   const completed=toUtcIso(row.completed_at as Date|string);
   if(cutoff>completed)throw new TypeError("validation_cutoff_after_completion");
-  // Never silently turn a missing label into a negative outcome.
-  if(records.rows.some(r=>typeof r.outcome_label!=="boolean"||typeof r.selected!=="boolean"||
-      r.score===null||r.score===undefined))
-    throw new TypeError("validation_requires_explicit_boolean_outcomes");
   const samples=records.rows.map(r=>({
     canonicalTokenId:String(r.canonical_token_id),signalAt:toUtcIso(r.signal_at as Date|string),
     score:Number(r.score),selected:r.selected===true,outcome:r.outcome_label===true,

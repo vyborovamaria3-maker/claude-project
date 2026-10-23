@@ -44,6 +44,8 @@ test("holdout certificate is deterministic and bound to run details",async()=>{
         completedHorizonCount:120,missingOutcomeCount:0,incompleteHorizonCount:0}},data_cutoff_at:"2026-10-20T00:00:00Z",
       completed_at:"2026-10-21T00:00:00Z",
     }]};
+    if(sql.includes("FROM backtest_results r")&&sql.includes("token_daily_cross_platform"))
+      return {rows:[{invalid:0}]};
     if(sql.includes("FROM backtest_results"))return {rows:rows.map(r=>({
       canonical_token_id:r.canonicalTokenId,signal_at:r.signalAt,score:r.score,
       selected:r.selected,outcome_label:r.outcome,outcome_at:r.outcomeAt,
@@ -53,8 +55,6 @@ test("holdout certificate is deterministic and bound to run details",async()=>{
       policy_id:"00000000-0000-4000-8000-000000000002",
       registered_at:"2026-09-30T00:00:00Z",
     }]};
-    if(sql.includes("FROM backtest_results r")&&sql.includes("token_daily_cross_platform"))
-      return {rows:[{invalid:0}]};
     if(sql.includes("INSERT INTO signal_validation_registry"))return {rows:[]};
     throw new Error("unexpected SQL");
   }};
