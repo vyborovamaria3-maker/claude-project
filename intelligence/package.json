@@ -31,6 +31,7 @@
     "etl:quality": "node scripts/quality.mjs",
     "invalidation:once": "node scripts/run-invalidations.mjs",
     "validation:holdout": "node scripts/certify-holdout.mjs",
+    "validation:preregister": "node scripts/register-signal-policy.mjs",
     "gateway:local": "node api/start-gateway.mjs",
     "text-snapshot:import": "node scripts/import-text-snapshots.mjs",
     "text-snapshot:purge": "node scripts/purge-text-snapshots.mjs",
