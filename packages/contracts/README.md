@@ -61,3 +61,19 @@ tests and provenances. Do not alter historical applied migrations.
 
 If legacy systems lack stable numeric source IDs, store the observed handle as
 a noncanonical lookup attribute until a stable ID is obtained; do not guess.
+
+
+## Native TG / X / Blockchain token identity adapter (2026-10-22)
+
+Use `canonicalTokenIdFromNative(nativeChain, nativeMint)` for an **already identified** chain-qualified native token key. It validates the full address, maps TG's `solana-mainnet` to the shared `solana` label, preserves case-sensitive Solana base58 and normalizes EVM addresses to lowercase.
+
+```ts
+canonicalTokenIdFromNative("solana-mainnet", "So11111111111111111111111111111111111111112")
+// "solana:So11111111111111111111111111111111111111112"
+canonicalTokenIdFromNative("solana", "So11111111111111111111111111111111111111112")
+// identical shared token ID
+```
+
+This **does not verify** that the address is a token mint, attribute a message to a token, or validate a chain swap. The X and TG verified-token-link producers must independently confirm the mint via SPL/Token-2022 layout and exact literal evidence; the Blockchain swap producer must pass its own transaction/balance evidence checks. Never turn an unresolved `$TICKER`, arbitrary wallet address or substring into a verified token link. Native DB `(chain_id,mint)` keys are unchanged and no migration is needed.
+
+Test: `npm --prefix packages/contracts test` includes `tests/native-token-identity.test.mjs`. The already existing `intelligence/tests/cross-source-token-timeline.test.mjs` proves **synthetic destination ingestion**, not live verified cross-source publication. The next independent gate is producer-to-consumer integration with real-source fixtures, retractions and restart/replay cases, followed by explicitly approved live checks.
