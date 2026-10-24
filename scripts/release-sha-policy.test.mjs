@@ -113,3 +113,16 @@ test("production workflow pins SHA in checkout, artifacts and deploy",()=>{
   assert.ok(workflow.includes("scripts/deploy-production.sh '$"+"{RELEASE_SHA}'"));
   assert.ok(workflow.includes("potapoff-admin-$"+"{RELEASE_SHA}.tar.gz"));
 });
+
+test("automatic deployment is opt-in and manual dispatch remains supported",()=>{
+  const gate=/^  require-main:\n([\s\S]*?)(?=^  predeploy:)/m.exec(workflow)?.[1];
+  assert.ok(gate,"production deployment must have require-main gate");
+  assert.match(gate,/github\.event_name == 'workflow_dispatch'/,
+    "manual deployment remains possible with exact SHA verification");
+  assert.match(gate,/github\.event\.workflow_run\.conclusion == 'success'/);
+  assert.match(gate,/github\.event\.workflow_run\.head_branch == 'main'/);
+  assert.match(gate,/vars\.POTAPOFF_AUTODEPLOY_ENABLED == 'true'/,
+    "a successful image build alone must never deploy without operator opt-in");
+  assert.ok(!/vars\.POTAPOFF_AUTODEPLOY_ENABLED != 'false'/.test(gate),
+    "absent variables must never imply permission");
+});
