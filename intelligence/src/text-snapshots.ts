@@ -107,9 +107,19 @@ export async function readEncryptedEventText(tx:PgTransaction,key:Buffer,input:S
 export async function purgeEncryptedEventText(tx:PgTransaction,limit=100):Promise<number>{
   if(!Number.isSafeInteger(limit)||limit<1||limit>1000)throw new TypeError("Invalid purge batch");
   const result=await tx.query(`WITH selected AS (
-    SELECT source_system,source_event_kind,event_key,revision_sha256
-    FROM event_text_snapshots WHERE expires_at<=clock_timestamp() OR purged_at IS NOT NULL
-    ORDER BY expires_at LIMIT $1 FOR UPDATE SKIP LOCKED
+    SELECT s.source_system,s.source_event_kind,s.event_key,s.revision_sha256
+    FROM event_text_snapshots s
+    WHERE s.expires_at<=clock_timestamp() OR s.purged_at IS NOT NULL
+      OR EXISTS (
+        SELECT 1 FROM intelligence_inbox original
+        JOIN intelligence_inbox removed ON removed.source_system=original.source_system
+          AND removed.evidence_source_id=original.evidence_source_id
+        WHERE original.source_system=s.source_system
+          AND original.event_kind=s.source_event_kind AND original.event_key=s.event_key
+          AND removed.event_kind IN ('message_deleted','token_links_invalidated')
+          AND (removed.event_kind='message_deleted' OR removed.ingested_at>=original.ingested_at)
+      )
+    ORDER BY s.expires_at LIMIT $1 FOR UPDATE OF s SKIP LOCKED
   ) DELETE FROM event_text_snapshots e USING selected s
     WHERE e.source_system=s.source_system AND e.source_event_kind=s.source_event_kind
       AND e.event_key=s.event_key AND e.revision_sha256=s.revision_sha256

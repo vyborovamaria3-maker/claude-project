@@ -18,6 +18,33 @@ function provider(overrides = {}) {
   };
 }
 
+test("provider requests forbid redirects and cancel rejected response streams",async()=>{
+  let cancelled=0;
+  const gateway=createAiGateway({providers:[provider()],defaultProviderId:"primary",maxAttempts:2,
+    sleep:async()=>{},fetchImpl:async(_url,init)=>{
+      assert.equal(init.redirect,"error");
+      return new Response(new ReadableStream({cancel(){cancelled++;}}),{status:503});
+    }});
+  await assert.rejects(gateway.chatCompletion({messages:[{role:"user",content:"hello"}]}),
+    error=>error.code==="ai_provider_http_error");
+  assert.equal(cancelled,2);
+});
+
+test("provider responses enforce byte limits with and without content-length",async()=>{
+  for(const declared of [true,false]){
+    let cancelled=false;
+    const gateway=createAiGateway({providers:[provider()],defaultProviderId:"primary",
+      fetchImpl:async()=>new Response(new ReadableStream({
+        start(controller){if(!declared)controller.enqueue(new Uint8Array(16*1024*1024+1));},
+        cancel(){cancelled=true;},
+      }),{headers:declared?{"content-length":String(16*1024*1024+1)}:{}})});
+    await assert.rejects(gateway.chatCompletion({messages:[{role:"user",content:"hello"}]}),
+      error=>error.code==="ai_provider_response_too_large");
+    assert.equal(cancelled,true);
+    assert.equal(gateway.getMetrics()[0].inFlight,0);
+  }
+});
+
 test("chat completion uses configured API credentials without exposing them in results", async () => {
   let request;
   const gateway = createAiGateway({

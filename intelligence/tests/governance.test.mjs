@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {randomUUID,randomBytes} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import pg from "pg";
-import {recordAiCost,queueAnalyticsInvalidation,requireCurrentSignalValidation,storeEncryptedEventText,readEncryptedEventText} from "../dist/index.js";
+import {recordAiCost,queueAnalyticsInvalidation,requireCurrentSignalValidation,storeEncryptedEventText,readEncryptedEventText,purgeEncryptedEventText} from "../dist/index.js";
 
 const url=process.env.INTELLIGENCE_TEST_DB_URL;
 const token="solana:So11111111111111111111111111111111111111112";
@@ -101,6 +101,12 @@ test("Intelligence 2.2 PostgreSQL schema: as-of, coverage, validation, dedup and
     const storedBytes=await db.query("SELECT text_ciphertext FROM event_text_snapshots");
     assert.equal(storedBytes.rows.length,1);
     assert.equal(storedBytes.rows[0].text_ciphertext.includes(Buffer.from("Sensitive Telegram")),false);
+    // A snapshot inserted concurrently with delivery can miss delivery's UPDATE.
+    // Its tombstone still denies reads; purge must destroy its unexpired bytes.
+    assert.equal(await storeEncryptedEventText(db,{...eventId,
+      observedAt:"2026-10-20T12:00:00Z",text:"Another revision",key,keyRef:"fixture-key-v1"}),false);
+    assert.equal(await purgeEncryptedEventText(db),1);
+    assert.equal((await db.query("SELECT 1 FROM event_text_snapshots")).rows.length,0);
 
     const interpret=await db.query(`SELECT column_default FROM information_schema.columns
       WHERE table_schema=current_schema() AND table_name='token_daily_cross_platform'

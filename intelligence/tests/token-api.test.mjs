@@ -514,6 +514,22 @@ test("real isolated PostgreSQL: token timeline and retraction-aware links are sa
         "later reverified revision must not resurrect analysis of the earlier message");
       assert.equal((await aiAt("2026-10-20T02:20:00Z")).items.length,2,
         "later corrections preserve the earlier as-of view");
+      await pool.query(`UPDATE intelligence_inbox SET ingested_at=$1
+        WHERE source_system='tg' AND event_kind='token_links_invalidated'`,[revokedAt]);
+      await pool.query(`INSERT INTO intelligence_inbox
+        (source_system,event_kind,event_key,schema_version,evidence_source_id,ingested_at)
+        VALUES('x','message_deleted','x:1024:deleted','v1','x:tweet:1024','2026-10-20T03:20:00Z')`);
+      const globalAt=async asOf=>{
+        const response=await fetch(origin+"/api/intelligence/v1/ai?asOf="+encodeURIComponent(asOf),{headers:headers()});
+        assert.equal(response.status,200);
+        return response.json();
+      };
+      assert.equal((await globalAt("2026-10-20T03:30:00Z")).items.length,0,
+        "global AI feed must suppress deleted and invalidated source messages");
+      assert.equal((await aiAt("2026-10-20T03:30:00Z")).items.length,0,
+        "deletion must also revoke directly attributed token analysis");
+      assert.equal((await globalAt("2026-10-20T02:20:00Z")).items.length,2,
+        "deletion does not change the historical view before its delivery");
     });
   }finally{
     if(pool)await pool.end();

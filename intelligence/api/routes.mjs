@@ -366,6 +366,14 @@ export async function queryTokenApi(pool,request){
         AND inbox.event_kind=event.source_event_kind AND inbox.event_key=event.event_key
       WHERE analysis.analyzed_at <= $2 AND analysis.source_observed_at <= $2
         AND event.observed_at <= $2 AND event.occurred_at <= $2 AND inbox.ingested_at <= $2
+        AND NOT EXISTS (
+          SELECT 1 FROM intelligence_inbox removed
+          WHERE removed.source_system=analysis.source_system
+            AND removed.evidence_source_id=analysis.evidence_ref
+            AND removed.event_kind IN ('message_deleted','token_links_invalidated')
+            AND removed.ingested_at <= $2
+            AND (removed.event_kind='message_deleted' OR removed.ingested_at>=inbox.ingested_at)
+        )
         AND ($4::text IS NULL OR analysis.source_system=$4)
           AND NOT EXISTS(SELECT 1 FROM ai_message_attempts excluded
             WHERE excluded.source_system=analysis.source_system AND excluded.source_event_kind=analysis.source_event_kind

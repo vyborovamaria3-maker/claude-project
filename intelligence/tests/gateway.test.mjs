@@ -92,3 +92,30 @@ test("oversized request target is audited before any response",async t=>{
   assert.equal(f.audits[0].params[0].length,36);
   assert.equal(f.upstream.length,0);
 });
+
+test("pending audits reserve capacity and failed audits release it",{timeout:5000},async t=>{
+  let release,ready;
+  const blocked=new Promise(resolve=>{release=resolve});
+  const allAuditing=new Promise(resolve=>{ready=resolve});
+  let count=0;
+  t.after(()=>release());
+  const f=await fixture(t,{async query(sql,params){
+    if(params[4]===true){
+      if(++count===8)ready();
+      await blocked;
+      throw new Error("audit failed");
+    }
+    return {rows:[]};
+  }});
+  const request=()=>fetch(f.base+summary,{headers:{Authorization:"Bearer "+viewer}});
+  const pending=Array.from({length:8},request);
+  await allAuditing;
+  const excess=await request();
+  assert.equal(excess.status,503);
+  assert.equal(f.audits.at(-1).params[5],"capacity_exhausted");
+  release();
+  for(const response of await Promise.all(pending))assert.equal(response.status,503);
+  await request();
+  assert.equal(count,9,"failed audits must release reservations");
+  assert.equal(f.upstream.length,0);
+});

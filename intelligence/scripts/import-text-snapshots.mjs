@@ -49,10 +49,10 @@ async function main(){
       if(text===null){unavailable++;continue}
       await dest.query("BEGIN");
       try{
-        await storeEncryptedEventText(dest,{sourceSystem:args[1],
+        const inserted=await storeEncryptedEventText(dest,{sourceSystem:args[1],
           sourceEventKind:event.source_event_kind,eventKey:event.event_key,
           observedAt:event.observed_at,text,key,keyRef,retentionDays:days});
-        await dest.query("COMMIT");stored++;
+        await dest.query("COMMIT");if(inserted)stored++;else unavailable++;
       }catch(e){await dest.query("ROLLBACK");throw e}
     }
     process.stdout.write(JSON.stringify({source:args[1],requested:pending.rows.length,stored,unavailable})+"\n");

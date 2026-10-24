@@ -49,6 +49,7 @@ export function createPotapoffGateway({clients,internalApiToken,internalApiPort=
   let inFlight=0;
   const server=http.createServer(async(req,res)=>{
     const requestId=randomUUID();
+    let reserved=false;
     let principal=null,route=null;
     if(!req.url||req.url.length>2048){
       try{
@@ -72,6 +73,9 @@ export function createPotapoffGateway({clients,internalApiToken,internalApiPort=
         !route?404:req.headers["transfer-encoding"]!==undefined||
         (req.headers["content-length"]!==undefined&&req.headers["content-length"]!=="0")?400:
         inFlight>=8?503:200;
+      // Reserve before awaiting the audit: concurrent requests must count
+      // requests still waiting for their durable authorization decision.
+      if(status===200){inFlight++;reserved=true;}
       // One audit row per decision, before forwarding any bytes.
       await auditDb.query(`INSERT INTO gateway_auth_log(request_id,principal_hash,role,operation,allowed,denial_code)
         VALUES($1,$2,$3,$4,$5,$6)`,[
@@ -81,7 +85,6 @@ export function createPotapoffGateway({clients,internalApiToken,internalApiPort=
             400:"invalid_body",503:"capacity_exhausted"})[status]??"request_rejected",
       ]);
       if(status!==200){reply(res,status,{error:status===401?"unauthorized":status===403?"forbidden":"invalid_request"});return}
-      inFlight++;
       try{
         const upstream=await fetchImpl(BASE+internalApiPort+req.url,{
           method:"GET",headers:{"Authorization":"Bearer "+internalApiToken,
@@ -101,11 +104,10 @@ export function createPotapoffGateway({clients,internalApiToken,internalApiPort=
         catch{reply(res,502,{error:"upstream_response_invalid"});return}
         reply(res,upstream.status>=200&&upstream.status<=599?upstream.status:502,body);
       }catch{reply(res,503,{error:"intelligence_upstream_unavailable"})}
-      finally{inFlight--}
     }catch{
       // Audit failures are fail-closed. Never reveal database errors or tokens.
       reply(res,503,{error:"gateway_audit_unavailable"});
-    }
+    }finally{if(reserved)inFlight--;}
   });
   server.requestTimeout=10000;server.headersTimeout=8000;
   server.keepAliveTimeout=3000;server.maxHeadersCount=32;
