@@ -39,7 +39,15 @@ if [[ "$mode" == exact ]]; then
     exit 1
   fi
 elif [[ "$remote_main" != "$release_sha" ]]; then
-  # Same intentionally narrow docs-only policy as release-images paths-ignore.
+  # Disable rename detection: a runtime-to-docs move must expose both
+  # the deleted runtime path and the added docs path, not only the latter.
+  # Materialize the diff so git failures cannot be masked by process substitution.
+  diff_names="$(mktemp)"
+  trap 'rm -f "$diff_names"' EXIT
+  if ! git diff --no-renames --name-only -z "$release_sha" "$remote_main" -- > "$diff_names"; then
+    echo 'Unable to verify release file changes' >&2
+    exit 1
+  fi
   while IFS= read -r -d '' path; do
     case "$path" in
       docs/*|*.md|*.mdx) ;;
@@ -48,7 +56,9 @@ elif [[ "$remote_main" != "$release_sha" ]]; then
         exit 1
         ;;
     esac
-  done < <(git diff --name-only -z "$release_sha" "$remote_main" --)
+  done < "$diff_names"
+  rm -f "$diff_names"
+  trap - EXIT
 fi
 
 echo "RELEASE_SHA_OK release=$release_sha event=$event_sha remote_main=$remote_main mode=$mode"
