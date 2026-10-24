@@ -43,3 +43,7 @@ document.
    versus unknown source windows before enabling producers.
 6. Deploy each source and consumer via explicit opt-in; green CI does not prove
    any live source or provider integration.
+
+### Request-only token reports (migration 016)
+
+The optional authenticated token POST reads X/TG stores through read-only sessions and SQLite token_trades through a read-only handle. It writes only derived reports and usage to the separate Intelligence DB. No raw social text is copied there. Literal address matches are labeled as such, not promoted to verified mappings, and cached legacy trade rows do not prove settlement/PnL. Background ETL/AI flags are unnecessary and remain off in request-only deployment. Source coverage remains unknown when collection completeness is unproven.

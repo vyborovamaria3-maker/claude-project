@@ -3,6 +3,7 @@ import "node:process";
 import {resolve} from "node:path";
 import {pathToFileURL} from "node:url";
 import pg from "pg";
+import {createTokenRequestRuntime} from "../scripts/token-request-runtime.mjs";
 import {API_HOST,createIntelligenceApi,checkApiReadiness,validateApiToken} from "./server.mjs";
 
 export function apiConfiguration(env=process.env){
@@ -28,10 +29,12 @@ export async function startLocalIntelligenceApi(env=process.env){
     statement_timeout:5000,
     options:"-c default_transaction_read_only=on -c statement_timeout=5000",
   });
-  let server;
+  let server,tokenRuntime;
   try{
     await checkApiReadiness(pool);
-    server=createIntelligenceApi({token:config.token,pool});
+    tokenRuntime=await createTokenRequestRuntime(env);
+    server=createIntelligenceApi({token:config.token,pool,analyzeToken:tokenRuntime?.analyze});
+    if(tokenRuntime)server.once("close",()=>{void tokenRuntime.close();});
     const api=server;
     await new Promise((accept,reject)=>{
       api.once("error",reject);
@@ -46,7 +49,7 @@ export async function startLocalIntelligenceApi(env=process.env){
     process.once("SIGTERM",shutdown);
     return {server:api,pool,address:API_HOST,port:config.port};
   }catch(error){
-    if(server)server.close();
+    if(server)server.close();else if(tokenRuntime)await tokenRuntime.close();
     await pool.end();
     throw error;
   }

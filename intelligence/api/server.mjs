@@ -46,7 +46,7 @@ function response(res,status,body,headers={}){
  * queries. Caller injects an Intelligence-only read-only PostgreSQL pool. */
 export function createIntelligenceApi({
   token,pool,now=()=>new Date(),requestsPerMinute=MAX_REQUESTS_PER_MINUTE,
-  maxInFlight=MAX_IN_FLIGHT,
+  maxInFlight=MAX_IN_FLIGHT,analyzeToken,
 }){
   const verifier=sha(validateApiToken(token));
   if(!pool||typeof pool.query!=="function")throw new TypeError("database_pool_required");
@@ -73,6 +73,21 @@ export function createIntelligenceApi({
       if(!checkAuthorization(req,verifier)){
         response(res,401,{error:"unauthorized"},
           {"WWW-Authenticate":"Bearer realm=\"intelligence\""});
+        return;
+      }
+      // Paid work is possible only through an explicit authenticated POST.
+      const tokenRequest=/^\/api\/intelligence\/v1\/tokens\/([^/]+)\/analyze$/.exec(req.url);
+      if(req.method==='POST'&&tokenRequest){
+        if(!analyzeToken){response(res,503,{error:'token_analysis_disabled'});return;}
+        if(req.headers['transfer-encoding']!==undefined||
+          (req.headers['content-length']!==undefined&&req.headers['content-length']!=='0')){
+          response(res,400,{error:'request_body_forbidden'});return;
+        }
+        let tokenId;
+        try{tokenId=decodeURIComponent(tokenRequest[1]);parseApiRequest('/api/intelligence/v1/tokens/'+encodeURIComponent(tokenId)+'/ai?asOf='+now().toISOString(),now());}
+        catch{response(res,400,{error:'invalid_token_id'});return;}
+        try{response(res,200,await analyzeToken(tokenId));}
+        catch{response(res,503,{error:'token_analysis_unavailable'});}
         return;
       }
       if(req.method!=="GET"){
