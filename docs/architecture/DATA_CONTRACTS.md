@@ -122,3 +122,12 @@ The inventory above was written against `main` as of 2026-10-20 and partly exten
 - No source outbox opt-in, consumer supervision, production migration, private provider credential or live source identity can be inferred from this documentation change. Require [#173](https://github.com/vyborovamaria3-maker/claude-project/issues/173), [#174](https://github.com/vyborovamaria3-maker/claude-project/issues/174), [#175](https://github.com/vyborovamaria3-maker/claude-project/issues/175) and actual [LIVE_TESTS](LIVE_TESTS.md) evidence.
 
 For planned boundary choices, see [ADR-0001](ARCHITECTURE_DECISIONS/0001-independent-evidence-and-runtime-boundaries.md). All changes remain proposal-level until accepted by maintainers.
+
+
+## Native mint verification status — 2026-10-24 after #165 merge
+
+[PR #165](https://github.com/vyborovamaria3-maker/claude-project/pull/165) was merged to `main` at `0bfd1c71c438d2f32a93652f4b6a2670c38d7b9b` (2026-10-24). Its tests and API use the versioned source-qualified `token_link_verified` / `token_links_invalidated` contract, native TG `solana-mainnet` → canonical `solana:<mint>`, and strict key-order-independent JSONB comparison. The merged [#184](https://github.com/vyborovamaria3-maker/claude-project/pull/184) adds an isolated X/TG PostgreSQL + blockchain SQLite → Intelligence PostgreSQL regression with commit-failure/no ACK and replay handling. This is **implemented and offline/CI tested**, not verified live.
+
+A bounded opt-in X mint verification CLI **already exists** at [`x-collector/scripts/verify-x-token-links.ts`](../../x-collector/scripts/verify-x-token-links.ts). It uses a dedicated source-row-lock/recheck after a valid RPC mint-account proof, enforces three independent opt-ins, RPC budgets and a dry-run default; it does not run automatically with X collection. See [X_MINT_VERIFICATION](X_MINT_VERIFICATION.md). The TG resolver has an opt-in transactional verified source producer. Blockchain is a separate supported/unsupported provider-parsed revision record; neither a raw wallet observation nor a chain revision proves a settled trade or PnL.
+
+Open [#166](https://github.com/vyborovamaria3-maker/claude-project/pull/166) and [#167](https://github.com/vyborovamaria3-maker/claude-project/pull/167) remain draft AI/read-model proposals: reconcile scopes before enabling provider calls or running new migrations. The physical production DB inventory remains unverified, and no real source collection, paid RPC, backup/restore or live cross-source emission was executed in this documentation work.
