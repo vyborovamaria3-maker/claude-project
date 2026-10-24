@@ -108,7 +108,10 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
     const token=formatTokenId("solana",mint);
     const seen="2026-10-22T13:00:00Z";
     const cutoff="2026-10-18T02:00:00Z";
-    const knownAt="2026-10-23T00:00:00Z";
+    // The destination ingests now. A fixed 2026-10-23 knownAt must NOT see
+    // a later (2026-10-24) CI ingestion, even if source evidence was seen on 22nd.
+    const historicalKnownAt="2026-10-23T00:00:00Z";
+    const knownAt=new Date(Date.now()+60_000).toISOString();
     const inputs=[
       {
         pool:xPool,sourceSystem:"x",
@@ -173,6 +176,8 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
       assert.equal(delivered.delivered,1);
       assert.equal(delivered.failed,0);
     }
+    assert.equal((await queryActiveTokenLinks(destPool,token,cutoff,historicalKnownAt)).length,0,
+      "destination commit after historical as-of cannot be backdated");
     const beforeEdit=await queryActiveTokenLinks(destPool,token,cutoff,knownAt);
     assert.deepEqual(new Set(beforeEdit.map(row=>row.source_system)),
       new Set(["tg","x"]));
