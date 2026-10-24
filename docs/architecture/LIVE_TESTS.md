@@ -46,3 +46,23 @@ For each run record:
 6. Mark each independent test with actual results; publish aggregate readiness only after all required gates pass.
 
 Related: [DATA_CONTRACTS.md](DATA_CONTRACTS.md), [KNOWN_GAPS.md](KNOWN_GAPS.md), [TG Collector README](../../tg-collector/README.md).
+
+
+## Broader readiness evidence register — snapshot 2026-10-24
+
+This is an **additional** inventory; it does not change the 2026-10-22 TG `NOT RUN` statuses above. `CI PASSED` is a separate verification dimension from `LIVE PASSED`. All external actions and production read/write tests listed here were **NOT RUN by this GitHub-only audit**.
+
+| Component/gate | Offline or CI evidence actually observed | External/live status in this audit | Required next proof |
+| --- | --- | --- | --- |
+| X Collector code quality on `main` | [X Collector quality run](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/40070070244) `success` for `c3e5e1a3...` (not latest `8f79ce92` head) | **NOT RUN** | Controlled read-only account observation, provenance, rate/recovery evidence; exact new run SHA. |
+| X Autoposting v2 | PR [#127](https://github.com/vyborovamaria3-maker/claude-project/pull/127) merged; its description explicitly says no real X action | **NOT RUN** | Dedicated authorized X test account; publication/ambiguous-state/manual-review and no-duplicate outcome evidence ([#175](https://github.com/vyborovamaria3-maker/claude-project/issues/175)). |
+| TG collector | Main contains [#164](https://github.com/vyborovamaria3-maker/claude-project/pull/164) documentation and TG tests/workflows; standalone TG execution rows above are NOT RUN | **NOT RUN** | Permitted dedicated MTProto test session, stable peer ID, history/checkpoint/retraction, sanitized evidence. |
+| Chain evidence and token identity | Code and disposable/saved receipt fixtures; native-to-canonical adapter work in open [#165](https://github.com/vyborovamaria3-maker/claude-project/pull/165) | **NOT RUN** | Approved capped RPC read, mint-layout verification, finality/provenance, unknown operations and evidence coverage. |
+| Intelligence synthetic cross-source delivery | Dedicated offline suites documented in [Intelligence README](../../intelligence/README.md); [PR #167 Intelligence CI](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/40071746525) succeeded for PR head `f24e0e2d...` | **NOT RUN** | Verify three separate live producers, bounded supervised consumer, ACK-after-commit, timeline and retractions with logged proofs. |
+| Security Gates on proposed PR #167 | [Run 40071746530](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/40071746530): **FAILED** for legacy-miniapp and subscription-service dependency audits; other checked security jobs passed | **No prod audit executed by this review** | Fix latest candidate head, rerun whole gate, compare to branch main separately ([#171](https://github.com/vyborovamaria3-maker/claude-project/issues/171)). |
+| Backup + restore / deploy trust | Historical 2026-10-19 SSH failures in [KNOWN_GAPS](KNOWN_GAPS.md) | **NOT RUN** | Verify host fingerprint correctly, isolated dump/restore, SQLite WAL-aware backup, recovery timing ([#172](https://github.com/vyborovamaria3-maker/claude-project/issues/172)). |
+| End-to-end user query / pilot | Proposed in [ADR-0002](ARCHITECTURE_DECISIONS/0002-token-intelligence-mvp-focus.md) | **NOT RUN** | Authorized API/UI scenario then independent usability/pilot metrics ([#177](https://github.com/vyborovamaria3-maker/claude-project/issues/177), [#180](https://github.com/vyborovamaria3-maker/claude-project/issues/180)). |
+
+### Completion rule (all components)
+
+Never promote “not tested” based on a merge, test-name existence, synthetic fixture, screenshot or a passing job for another commit. For **each** real run, append dated evidence containing: full `sha`, exact UTC timestamp, tested branch/config, bounded scope, authorization/owner, sanitized log or Actions URL, DB identity without secrets, expected and actual result, recovery/retraction assertions, and reason for any `FAILED` or `BLOCKED`. The GitHub-only documentation audit makes **no live-pass claims**.
