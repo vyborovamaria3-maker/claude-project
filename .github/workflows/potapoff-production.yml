@@ -18,11 +18,20 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main')
+       github.event.workflow_run.head_branch == 'main' &&
+       vars.POTAPOFF_AUTODEPLOY_ENABLED == 'true')
     runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 5
+    outputs:
+      release_sha: ${{ steps.release-guard.outputs.release_sha }}
     steps:
+      - name: Checkout main with history for release ancestry proof
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - name: Reject non-main or drifting production deploys
+        id: release-guard
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -35,17 +44,19 @@ jobs:
             echo "Production deploys must target main; got $GITHUB_REF" >&2
             exit 1
           fi
+          release_sha="$GITHUB_SHA"
+          mode=exact
           if [[ "$EVENT_NAME" == "workflow_run" ]]; then
             if [[ "$RELEASE_CONCLUSION" != "success" || "$RELEASE_HEAD_BRANCH" != "main" ]]; then
               echo "Production deploy requires a successful release-images run from main" >&2
               exit 1
             fi
-            if [[ "$RELEASE_HEAD_SHA" != "$GITHUB_SHA" ]]; then
-              echo "Release SHA $RELEASE_HEAD_SHA does not match production workflow SHA $GITHUB_SHA; refusing drift" >&2
-              exit 1
-            fi
+            release_sha="$RELEASE_HEAD_SHA"
+            mode=docs-only
           fi
-          echo "PRODUCTION_SOURCE_OK sha=$GITHUB_SHA event=$EVENT_NAME"
+          bash .github/scripts/verify-release-sha-drift.sh "$release_sha" "$GITHUB_SHA" "$mode"
+          printf 'release_sha=%s\n' "$release_sha" >> "$GITHUB_OUTPUT"
+          echo "PRODUCTION_SOURCE_OK release_sha=$release_sha event=$EVENT_NAME"
 
   predeploy:
     name: Predeploy validation
@@ -59,11 +70,22 @@ jobs:
     runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 20
     environment: production
+    env:
+      RELEASE_SHA: ${{ needs.require-main.outputs.release_sha }}
+      DRIFT_MODE: ${{ github.event_name == 'workflow_run' && 'docs-only' || 'exact' }}
 
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Checkout main for latest-SHA recheck
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Recheck main drift before accessing production
+        run: bash .github/scripts/verify-release-sha-drift.sh "$RELEASE_SHA" "$GITHUB_SHA" "$DRIFT_MODE"
+
+      - name: Check out exact published release files
+        run: git checkout --detach "$RELEASE_SHA"
 
       - name: Configure pinned SSH (refuse unverified keys)
         shell: bash
@@ -164,8 +186,8 @@ jobs:
           set -euo pipefail
           SSH=(ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST")
           "${SSH[@]}" "set -euo pipefail
-            docker manifest inspect 'ghcr.io/vyborovamaria3-maker/claude-project/backend:${GITHUB_SHA}' >/dev/null
-            docker manifest inspect 'ghcr.io/vyborovamaria3-maker/claude-project/frontend:${GITHUB_SHA}' >/dev/null
+            docker manifest inspect 'ghcr.io/vyborovamaria3-maker/claude-project/backend:${RELEASE_SHA}' >/dev/null
+            docker manifest inspect 'ghcr.io/vyborovamaria3-maker/claude-project/frontend:${RELEASE_SHA}' >/dev/null
             echo RELEASE_IMAGES_OK"
 
       - name: Stage admin Control Center release
@@ -177,8 +199,8 @@ jobs:
           set -euo pipefail
           SSH=(ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST")
           SCP=(scp -i ~/.ssh/deploy_key -P "$SERVER_PORT")
-          local_archive="potapoff-admin-${GITHUB_SHA}.tar.gz"
-          remote_archive="/tmp/potapoff-admin-${GITHUB_SHA}.tar.gz"
+          local_archive="potapoff-admin-${RELEASE_SHA}.tar.gz"
+          remote_archive="/tmp/potapoff-admin-${RELEASE_SHA}.tar.gz"
 
           tar \
             --exclude='admin-site/.env' \
@@ -194,7 +216,7 @@ jobs:
           "${SCP[@]}" "$local_archive" "$SERVER_USER@$SERVER_HOST:$remote_archive"
           "${SSH[@]}" "set -euo pipefail
             root=/opt/claude-project
-            stage=\"\$root/.admin-site-stage-${GITHUB_SHA}\"
+            stage=\"\$root/.admin-site-stage-${RELEASE_SHA}\"
             rm -rf \"\$stage\"
             mkdir -p \"\$stage\"
             tar -xzf '$remote_archive' -C \"\$stage\"
@@ -210,6 +232,9 @@ jobs:
           SERVER_USER: ${{ secrets.SERVER_USER }}
         run: |
           set -euo pipefail
+          # New code may have reached main while predeploy/staging ran. Fail
+          # closed before invoking the remote deploy script.
+          bash .github/scripts/verify-release-sha-drift.sh "$RELEASE_SHA" "$GITHUB_SHA" "$DRIFT_MODE"
           SSH=(ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST")
           "${SSH[@]}" \
-            "cd /opt/potapoff-deploy && bash scripts/deploy-production.sh '${GITHUB_SHA}'"
+            "cd /opt/potapoff-deploy && bash scripts/deploy-production.sh '${RELEASE_SHA}'"
