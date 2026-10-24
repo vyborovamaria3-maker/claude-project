@@ -83,9 +83,8 @@ test("workflow_run: moving a runtime file into docs must fail closed",()=>{
   scenario(({repo,write,commit,check})=>{
     write("README.md","# Documentation update\n");
     const eventB=commit("docs B");
-    const from=join(repo,"app.js"),to=join(repo,"docs","app.js");
     mkdirSync(join(repo,"docs"),{recursive:true});
-    execFileSync("git",["mv",from,to],{cwd:repo});
+    execFileSync("git",["mv","app.js","docs/app.js"],{cwd:repo});
     commit("move executable into docs");
     const result=check(eventB);
     assert.notEqual(result.status,0,
