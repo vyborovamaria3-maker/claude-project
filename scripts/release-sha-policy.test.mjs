@@ -79,6 +79,21 @@ test("workflow_run: executable change C after docs B blocks older release",()=>{
   });
 });
 
+test("workflow_run: moving a runtime file into docs must fail closed",()=>{
+  scenario(({repo,write,commit,check})=>{
+    write("README.md","# Documentation update\n");
+    const eventB=commit("docs B");
+    const from=join(repo,"app.js"),to=join(repo,"docs","app.js");
+    mkdirSync(join(repo,"docs"),{recursive:true});
+    execFileSync("git",["mv",from,to],{cwd:repo});
+    commit("move executable into docs");
+    const result=check(eventB);
+    assert.notEqual(result.status,0,
+      "renamed runtime deletion must be visible despite docs destination");
+    assert.match(result.stderr,/non-documentation drift/);
+  });
+});
+
 test("workflow_run: mixed docs and workflow changes fail closed",()=>{
   scenario(({write,commit,check})=>{
     write("README.md","# B\n");
