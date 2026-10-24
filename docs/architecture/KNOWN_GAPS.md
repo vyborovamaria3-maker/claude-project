@@ -67,3 +67,34 @@ On a clean checkout with Node 22 and disposable PostgreSQL 16:
 - **ARCH-08+:** checkpointed backfill, query API/UI, quality and alerting, followed by independently evaluated signals.
 
 Related background: `CODE_REVIEW_20261018.md`, `CODEX_FINAL_INTEGRATION_PLAN_20261018.md`, and `DATA_CONTRACTS.md`. Keep status files accurate as work progresses.
+
+
+## TG Collector analytics sprint-0 delta — code audit 2026-10-22
+
+This section supplements, not replaces, the cross-source deployment blockers above. `EXISTS` means a concrete implementation or migration was inspected. No database state, local service or real Telegram session was available to this audit.
+
+| Priority | TG analytics unit | Code evidence and **confirmed** state | Gap / minimum acceptance test | Audit status |
+| --- | --- | --- | --- | --- |
+| P0 | Schema evolution | `src/db.ts` creates `schema_migrations(name,checksum,applied_at,applied_by)`, validates stored checksum before applying further numbered migrations; SQL files 001–035 exist. | Disposable clean and upgraded-DB migration replay, schema introspection and checksum tamper negative case. | EXISTS; replay NOT EXECUTED |
+| P0 | Token cross-source join | TG native `tg_tokens(chain_id,mint)`, `chain_id='solana-mainnet'`; shared contract uses canonical `solana:<mint>`. Source outbox is default-off. | Contract test with exactly same mint in TG, X, Blockchain; verified-mint-only versioned adapter and source retraction. | BLOCKED for live token join |
+| P0 | Token candidates vs token | `tg_token_candidates`, `tg_ticker_registry`, `tg_token_mentions` and on-chain mint layout resolver already exist. | Test ambiguous ticker, wrong SPL layout, stale attestation, revision retraction and high-volume sample with actual RPC permissions. | EXISTS; live coverage NOT VERIFIED |
+| P0 | History claims | Full-history pass and coverage migration sequence 023, 029, 031, 033 exists; `tg_token_first_mentions.coverage_status` exists. | Implement safe `validate:coverage` CLI only after auditing checkpoint semantics; show `partial/gap/unknown`, never fabricate expected count from sparse Telegram IDs. | PARTLY IMPLEMENTED; CLI NOT VERIFIED |
+| P0 | Market outcomes | `market-data.ts` uses DexScreener observed snapshots, tolerance windows and `outcome_status='insufficient_data'` when base price absent; run from explicit scripts. | `result_reason` taxonomy for distinct unknown reasons; stale/missing snapshots and no-peeking fixtures; test actual snapshot history coverage. | EXISTS; outcomes NOT LIVE VERIFIED |
+| P0 | Historical backtest | `backtest.ts` requires chronological `from < test-start < to` and completed 24h outcomes; stores baseline and per-signal results. | Review event-time vs observation-time leakage, selection bias, overlapping token samples, uncertainty/CI, provider history and holdout quality. | EXISTS; predictive validity NOT VERIFIED |
+| P1 | Channel score | `refreshChannelScores` calculates component scores and composite only when at least 5 outcomes and all component inputs available. | Add operator-visible missing-input reasons without fabricating score; sample-size/robustness and real-outcome checks. | EXISTS; score_reason NOT VERIFIED |
+| P1 | Velocity and scheduling | `refreshTokenVelocity` has windows 5m/15m/1h/6h/24h and independent copy clusters; SQL projects `NULL` for `z_score`. Worker loop only runs discovery and collection; analytics refresh is an explicit CLI. | Define safe bounded scheduler/refresh cadence, deterministic baseline `z_score`, query cost/time and restart recovery. | PARTIAL: no worker scheduler; `z_score` unavailable |
+| P1 | Duplicate/copy signals | `tg_message_fingerprints`, `tg_copy_clusters`, `tg_message_similarity` exist; extractor does normalized exact matching, plus candidate similarity path. | Demonstrate 100 copies counted as 100 posts but 1 independent cluster; inspect false positives and lifecycle retractions. | EXISTS; measured accuracy NOT VERIFIED |
+| P1 | Coordination/risk/bots | `tg_coordination_events`, `tg_author_bot_scores` exist; model-facing infrastructure present. | Calibrate against labeled evidence; do not equate synchronicity with conspiracy or bot-score with human identity. | EXISTS; accuracy NOT VERIFIED |
+| P1 | Natural-language narratives | `src/analytics/narratives.ts` uses `NARRATIVE_MODEL_VERSION='keyword-v1'`; narratives are attached to verified token observations. | Add benchmark with labeled multi-language Telegram content before claiming embedding/semantic detection. | KEYWORD IMPLEMENTED; embedding NOT VERIFIED |
+| P1 | TG dashboards | Next.js integration routes, source/graph API, admin controls exist. | Auth/CSRF/access smoke with local dev instance and query verification against test TG DB. | EXISTS; live UI NOT VERIFIED |
+| P1 | Operational health | Worker has advisory lock, heartbeat, FloodWait, queue lease handling; `db:metrics` is an explicit entrypoint. | Measure heartbeat freshness, delayed queue, analytics staleness and backup/restore; alert channels to be specified. | EXISTS; observability end-to-end NOT VERIFIED |
+
+### Recommended bounded next actions
+
+1. **Do not add** duplicate `tg_token_mentions`, `tg_ticker_registry`, `tg_message_fingerprints`, `tg_author_bot_scores`, `tg_token_velocity`, `tg_channel_scores`, `tg_token_outcomes` or `schema_migrations`. They exist in checked migrations.
+2. First obtain *read-only and non-secret* aggregate DB observations from a safe TG test fixture, then distinguish absent data from code failure. Never connect audit commands to the laptop production DB by default.
+3. Write tests for common token ID mapping, contradictory ticker claims, chronological first mention, empty/missing prices and duplicate-text independent cluster counts before optimizing code.
+4. Only after isolated green tests, schedule offline refresh and market outcome tasks with explicit RPC rate/budget limits and stop/backpressure semantics. Retention and other destructive jobs remain opt-in.
+5. Archive live results, environment, commit SHA and evidence links in [LIVE_TESTS.md](LIVE_TESTS.md); keep `NOT RUN` until tests genuinely execute.
+
+See [TG contracts](DATA_CONTRACTS.md). No production read, migration, mutation, live Telegram call, paid Solana RPC or secret inspection was performed for this delta.
