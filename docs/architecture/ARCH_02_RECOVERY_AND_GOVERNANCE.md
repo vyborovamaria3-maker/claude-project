@@ -81,3 +81,27 @@ bash /opt/potapoff-deploy/scripts/verify-backup-restore.sh /opt/potapoff-deploy/
 - [ ] Согласован порядок зависимых PR, миграций, zero-data-loss rollback и восстановление после ошибок.
 
 До выполнения чеклиста **ARCH-02 не считать закрытым**, даже при успешных CI-тестах с синтетическими данными.
+
+
+## 7. Operator recovery evidence and release-trigger correction — 2026-10-24
+
+**Current, independently verified GitHub evidence (do not confuse image publication with deployment):**
+
+- [POTAPoff backup run 39389328246](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/39389328246), 2026-10-20: **FAILED** in `Create database backup`; job log reports `Host key verification failed` and an offending previously stored ECDSA key. No successful production backup/restore after that was established by this audit.
+- [POTAPoff production deploy run 39209623066](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/39209623066), 2026-10-19: **FAILED** at `Upload deployment configuration`, with the same SSH trust error. No newer successful production deployment was found in workflow-run listings during the 2026-10-24 audit.
+- [POTAPoff release images run 40082327583](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/40082327583), 2026-10-24: **SUCCESS** for main SHA `e9231d0228723e9eb337a728008d161146ca03c8`. This publishes SHA-tagged build artifacts; **it does not show production was deployed**.
+- `main` returned `protected:false`. Repository administrator must configure branch protection or rulesets separately ([#170](https://github.com/vyborovamaria3-maker/claude-project/issues/170)); this repository code change **cannot** install those settings.
+
+**Safe operator sequence (requires verified host ownership and access; NOT executed by this audit):**
+
+1. Using a trusted cloud provider console (NOT the SSH connection displaying the warning), verify the host identity, intended DNS/IP/port, and whether a planned host-key rotation or server rebuild occurred. Treat an unexplained changed SSH host key as a potential incident and investigate before proceeding.
+2. On that trusted console, read the exact host public key and calculate `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256`. Compare against a separately trusted record. Do not use `ssh-keyscan` as evidence of authenticity or disable `StrictHostKeyChecking`.
+3. Only after the operator confirms a legitimate rotation, update **both** scoped GitHub Secrets `SERVER_SSH_KNOWN_HOSTS` (correct `[hostname]:port` format when port is not 22) and `SERVER_SSH_HOST_KEY_SHA256`. Remove the stale conflicting key from the secret contents; do not blindly delete all SSH trust entries.
+4. Run `SSH connection check` manually on `main`. Capture run URL and sanitized result; verify it uses the pinned SSH helper and the approved target.
+5. Run `POTAPoff backup` manually. Check its exit code and location of a completed, checksum-verified backup (no paths, credentials or archive contents in public issue comments).
+6. On the trusted host, run `verify-backup-restore.sh` against the approved completed backup. It restores into a *disposable no-network Docker* PostgreSQL instance, not into production. Preserve a sanitized checksum/row-count/result summary, and additionally cover independent X/TG PostgreSQL and chain SQLite stores; these are **not** backed up by the POTAPoff server workflow automatically.
+7. Only then consider a controlled deployment using an exact reviewed main SHA with a documented rollback, current Security Gates, and a production smoke test. Verify which `workflow_run` triggers/approvals actually fired; a successful `POTAPoff release images` workflow is not permission to claim deployment succeeded.
+
+**Scoped prevention change:** the release-images workflow now ignores **documentation-only pushes** under `docs/**` and `**/*.md(x)`. A mixed docs + code/config/workflow push still triggers the existing main/CI/image gates. `workflow_dispatch` remains available for an explicitly authorized main release. This removes unnecessary production image publication from readme/architecture-only merges, but does **not** fix the SSH trust incident or restore backups by itself.
+
+**Required outcome:** [#172](https://github.com/vyborovamaria3-maker/claude-project/issues/172) stays OPEN until real backup **and restore** evidence exists; do not close [#175](https://github.com/vyborovamaria3-maker/claude-project/issues/175) based only on synthetic CI or published images.
