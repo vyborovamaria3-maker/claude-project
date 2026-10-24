@@ -105,3 +105,14 @@ bash /opt/potapoff-deploy/scripts/verify-backup-restore.sh /opt/potapoff-deploy/
 **Scoped prevention change:** the release-images workflow now ignores **documentation-only pushes** under `docs/**` and `**/*.md(x)`. A mixed docs + code/config/workflow push still triggers the existing main/CI/image gates. `workflow_dispatch` remains available for an explicitly authorized main release. This removes unnecessary production image publication from readme/architecture-only merges, but does **not** fix the SSH trust incident or restore backups by itself.
 
 **Required outcome:** [#172](https://github.com/vyborovamaria3-maker/claude-project/issues/172) stays OPEN until real backup **and restore** evidence exists; do not close [#175](https://github.com/vyborovamaria3-maker/claude-project/issues/175) based only on synthetic CI or published images.
+
+
+### Release SHA drift guard for docs-only pushes
+
+The release trigger filter must be paired with the production deploy SHA contract. When image build for code commit **A** finishes after a docs-only commit **B** (current main), GitHub's `workflow_run` uses the default-branch `GITHUB_SHA=B`, while the successful release event carries `head_sha=A`. It would be unsafe either to deploy images tagged `B` (which do not exist) or to allow arbitrary code drift.
+
+`.github/scripts/verify-release-sha-drift.sh` verifies live `origin/main` over a fresh fetch, that `A` is an ancestor of both the event SHA and current main, and that all final changed paths from `A` to current main match the **same narrow documentation-only allowlist** as the release trigger (`docs/**`, `*.md`, `*.mdx`). A non-documentation change **fails closed**. Manual production dispatch requires exact equality between event, release and current main (the operator must first create reviewed images for the current SHA). If a production event follows a published release with docs-only changes, its deploy job checks out **A**, loads image tags `:A`, stages admin artifact as `A`, and invokes the remote script with **A** — never with `B`.
+
+The check is repeated before accessing production and immediately before invoking the remote deploy script. Synthetic local-Git tests cover A→B(docs), A→B(docs)→C(docs), code drift, mixed docs/code, invalid SHA, non-main and manual mode. These tests **do not** invoke production or prove that SSH, external backups or real deploy succeeded. Concurrent code commits *after the final guard but before the remote deploy completes* are an inherent TOCTOU window; the running deployment remains pinned to the exact reviewed release artifacts. For stronger rollout synchronization, require operator-controlled deployment locks / environment approval and verify deployed SHA explicitly.
+
+Production SSH recovery, real backup/restore, and main branch protection remain operator/admin-owned P0 issues; this guard neither changes their permissions nor bypasses pinned keys.
