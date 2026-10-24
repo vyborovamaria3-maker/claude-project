@@ -6,6 +6,8 @@ import pg from "pg";
 import {createAiGateway} from "@claude-project/ai-gateway";
 import {readCollectorMessage,readCollectorContext,isLowValueTelegramPost,runAiAnalysisBatch,registerModel,refreshTokenDailyCrossPlatform,
   evaluateCrossPlatformAlerts,persistAlertCandidates,ingestRegistryEvent,ingestTimelineEvent} from "../dist/index.js";
+import {analyzeOnce} from "../scripts/analyze-ai.mjs";
+import {importNewTelegramSnapshots} from "../scripts/ai-source-watch.mjs";
 import {createAiRuntime} from "../scripts/ai-runtime.mjs";
 import {buildTgSnapshotEvent} from "../scripts/backfill-core.mjs";
 import {createIntelligenceApi} from "../api/server.mjs";
@@ -269,4 +271,54 @@ test("runtime source filter -> context -> gateway failure/retry -> storage -> re
   const past=await fetch(base+'?source=tg&asOf='+new Date(f.ms).toISOString(),{headers:{Authorization:'Bearer '+apiToken}});assert.equal((await past.json()).items.length,0);
   await runtime.run('tg');assert.equal(calls,3,'successful replay must not call provider');
  }finally{globalThis.fetch=originalFetch;if(api)await new Promise(resolve=>api.close(resolve));}
+});
+
+
+test("Telegram watch cursor drains bursts across restart and rolls back failed pages atomically",{skip:!url},async t=>{
+ const f=await fixture(t);await f.destination.query(await readFile(new URL('../migrations/010_ai_watch_cursor.sql',import.meta.url),'utf8'));
+ assert.equal((await importNewTelegramSnapshots(f.source,f.destination,2)).initialized,true);
+ assert.equal((await f.destination.query('SELECT count(*) FROM timeline_events')).rows[0].count,'0','startup must not bill historical messages');
+ const timestamp=new Date(f.ms+1000).toISOString().replace('Z','456Z');
+ for(let id=8;id<=12;id++)await f.source.query("INSERT INTO tg_messages VALUES(1,$1,$2,$3,$3,NULL)",[id,'Synthetic new message '+id,timestamp]);
+ let fail=true;
+ const broken={connect:async()=>{const c=await f.destination.connect();return {release:()=>c.release(),query:async(sql,args)=>{if(fail&&sql.startsWith('UPDATE ai_source_watch_cursors')){fail=false;throw new Error('synthetic page failure');}return c.query(sql,args);}};}};
+ await assert.rejects(importNewTelegramSnapshots(f.source,broken,2),/synthetic page failure/);
+ assert.equal((await f.destination.query('SELECT count(*) FROM timeline_events')).rows[0].count,'0');
+ assert.equal((await importNewTelegramSnapshots(f.source,f.destination,2)).imported,2);
+ assert.equal((await importNewTelegramSnapshots(f.source,f.destination,2)).imported,2);
+ assert.equal((await importNewTelegramSnapshots(f.source,f.destination,2)).imported,1);
+ assert.equal((await importNewTelegramSnapshots(f.source,f.destination,2)).imported,0);
+ assert.equal((await f.destination.query('SELECT count(*) FROM timeline_events')).rows[0].count,'5');
+ const cursor=(await f.destination.query("SELECT observed_at::text AS at,message_id::text FROM ai_source_watch_cursors")).rows[0];
+ assert.equal(cursor.message_id,'12');assert.match(cursor.at,/456/,'microseconds must survive cursor persistence');
+});
+
+test("one waiting AI watch automatically processes later arrivals and does not rebill after restart",{skip:!url},async t=>{
+ const f=await fixture(t);await f.destination.query(await readFile(new URL('../migrations/010_ai_watch_cursor.sql',import.meta.url),'utf8'));
+ const sourceUrl=new URL(url),destUrl=new URL(url);
+ sourceUrl.searchParams.set('options',f.source.options.options);destUrl.searchParams.set('options',f.destination.options.options);
+ const env={TG_SOURCE_DATABASE_URL:sourceUrl.href,INTELLIGENCE_DATABASE_URL:destUrl.href,
+  INTELLIGENCE_AI_ENABLED:'true',INTELLIGENCE_AI_SOURCE_SNAPSHOT_ENABLED:'true',INTELLIGENCE_AI_BATCH_SIZE:'2',
+  AI_GATEWAY_ENABLED:'true',AI_DEFAULT_PROVIDER:'test',WATCH_TEST_KEY:'synthetic-key-only',
+  AI_PROVIDERS_JSON:JSON.stringify([{id:'test',baseUrl:'https://watch.example.test/v1',apiKeyEnv:'WATCH_TEST_KEY',chatModel:'test'}]),
+  INTELLIGENCE_AI_MODELS_JSON:JSON.stringify(['sentiment','narrative'].map(task=>({modelId:'test-'+task,provider:'test',name:'test',version:'1',task})))};
+ const originalFetch=globalThis.fetch;let calls=0,inserted=false;
+ globalThis.fetch=async(_input,init)=>{calls++;const body=JSON.parse(init.body),supplied=JSON.parse(body.messages[1].content);
+  assert.ok(supplied.context.length>0);
+  const result=body.messages[0].content.includes('narrative')?{narrativeId:null,confidence:0.8,keywords:[],evidenceRefs:supplied.evidenceRefs}:
+   {label:'neutral',score:0,directionAmbiguous:false,confidence:0.8,evidenceRefs:supplied.evidenceRefs};
+  return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(result)}}]}));};
+ try{
+  const stats=await analyzeOnce('tg',env,true,{pollMs:100,maxCycles:5,onReport:async event=>{
+   if(event.snapshot.initialized&&!inserted){inserted=true;
+    for(let id=8;id<=12;id++)await f.source.query('INSERT INTO tg_messages VALUES(1,$1,$2,$3,$3,NULL)',[id,id<=10?'Synthetic conversational message '+id:'Gamble Found! synthetic card',new Date(f.ms+2000)]);
+   }
+  }});
+  assert.equal(inserted,true);assert.equal(stats.analyzed,6);assert.equal(stats.filtered,4);assert.equal(calls,6);
+  assert.equal((await f.destination.query('SELECT count(*) FROM ai_message_analyses')).rows[0].count,'6');
+  const api=await queryTokenApi(f.destination,{kind:'ai',tokenId:null,source:'tg',asOf:new Date().toISOString(),limit:20});
+  assert.equal(api.items.length,6);assert.ok(api.items.every(item=>item.contextEvidence.length>0));
+  const restart=await analyzeOnce('tg',env,true,{pollMs:100,maxCycles:2,onReport:()=>{}});
+  assert.equal(restart.analyzed,0);assert.equal(calls,6);
+ }finally{globalThis.fetch=originalFetch;}
 });

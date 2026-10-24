@@ -154,3 +154,5 @@ A historical backtest requires explicit outcome labels in token_outcomes and val
 npm --prefix intelligence run backtest -- --signal attention_score --outcome price_2x_24h --from 2025-01-01 --to 2025-09-30 --threshold 2.0 --horizon-hours 24
 ```
 The command fails when labels are missing or the complete outcome horizon has not elapsed; it prints cohort coverage counts instead of reporting selective precision. Statistical significance is not reported for repeated-token or overlapping random-control observations without an independent design. Migration 007 must be applied before using putFeatureEmbedding.
+
+Telegram legacy automatic mode requires migration 010 and a supervised `analyze-ai --source tg --watch` process with AI/source snapshot opt-in. It starts at current source high water, drains new observations with a durable transactional cursor and skips startup history. See AI_PIPELINE.md for timestamp polling limitations and configuration; collector startup alone does not activate AI.
