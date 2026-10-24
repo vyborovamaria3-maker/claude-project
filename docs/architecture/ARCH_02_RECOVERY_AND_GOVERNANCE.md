@@ -116,3 +116,12 @@ The release trigger filter must be paired with the production deploy SHA contrac
 The check is repeated before accessing production and immediately before invoking the remote deploy script. Synthetic local-Git tests cover A→B(docs), A→B(docs)→C(docs), code drift, mixed docs/code, invalid SHA, non-main and manual mode. These tests **do not** invoke production or prove that SSH, external backups or real deploy succeeded. Concurrent code commits *after the final guard but before the remote deploy completes* are an inherent TOCTOU window; the running deployment remains pinned to the exact reviewed release artifacts. For stronger rollout synchronization, require operator-controlled deployment locks / environment approval and verify deployed SHA explicitly.
 
 Production SSH recovery, real backup/restore, and main branch protection remain operator/admin-owned P0 issues; this guard neither changes their permissions nor bypasses pinned keys.
+
+
+### Production auto-deploy safety switch (default off)
+
+The `POTAPoff production deploy` `workflow_run` path is intentionally **disabled by default**. An automatically completed release build may start production only when repository Actions variable `POTAPOFF_AUTODEPLOY_ENABLED` is exactly the string `true` (the job-level `require-main.if` checks this along with the successful main-branch release). If the variable is absent, `false`, or any other value, all dependent jobs are skipped and production SSH credentials are not accessed. Publishing GHCR artifacts is never deployment authorization on its own.
+
+**Operator approval sequence:** confirm the genuine SSH host fingerprint through an independent trusted channel; repair pinned GitHub Secrets without disabling strict checking; successfully run manual SSH check, production backup, disposable verified product/admin restore, and production predeploy and smoke tests; configure required `main` branch reviews and repository/environment protection. **Only then** explicitly set `POTAPOFF_AUTODEPLOY_ENABLED=true` under GitHub Settings → Secrets and variables → Actions → Variables (with suitable environment/repository control and independent review). Remove/disable the variable to pause further automatic deployments. `workflow_dispatch` remains available for an operator's intentional manual deployment, still subject to strict release SHA/SSH/predeploy checks.
+
+Until that approval, merging release-workflow corrections can still publish images, **but must not attempt automatic production deployment**.
