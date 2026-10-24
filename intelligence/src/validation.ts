@@ -163,6 +163,9 @@ export async function certifyTemporalHoldout(tx:PgTransaction,input:Readonly<{
   const cutoff=toUtcIso(row.data_cutoff_at as Date|string);
   const completed=toUtcIso(row.completed_at as Date|string);
   if(cutoff>completed)throw new TypeError("validation_cutoff_after_completion");
+  const horizonHours=Number(row.horizon_hours);
+  if(!Number.isSafeInteger(horizonHours)||horizonHours<1||horizonHours>720)
+    throw new TypeError("validation_invalid_horizon");
   const samples=records.rows.map(r=>({
     canonicalTokenId:String(r.canonical_token_id),signalAt:toUtcIso(r.signal_at as Date|string),
     score:Number(r.score),selected:r.selected===true,outcome:r.outcome_label===true,
@@ -170,6 +173,9 @@ export async function certifyTemporalHoldout(tx:PgTransaction,input:Readonly<{
     outcomeObservedAt:toUtcIso(r.outcome_observed_at as Date|string),
   }));
   for(const item of samples){
+    const horizonEnd=Date.parse(item.signalAt)+horizonHours*3_600_000;
+    if(Date.parse(item.outcomeAt)>horizonEnd||horizonEnd>Date.parse(cutoff))
+      throw new TypeError("validation_outside_completed_horizon");
     if(item.outcomeObservedAt>cutoff||item.signalAt>=item.outcomeObservedAt||
        item.selected!==(item.score>=Number(row.threshold)))
       throw new TypeError("validation_outcomes_or_threshold_not_point_in_time");

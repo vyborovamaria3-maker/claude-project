@@ -40,13 +40,15 @@ test("insufficient controls cannot validate",()=>{
 });
 test("holdout certificate is deterministic and bound to run details",async()=>{
   const rows=cohort();
+  let horizon=24,cutoff="2026-10-20T00:00:00Z",writes=0;
   const db={async query(sql){
+    if(sql.includes("INSERT INTO signal_validation_registry")){writes++;return {rows:[]};}
     if(sql.includes("FROM backtest_runs"))return {rows:[{
       run_id:"00000000-0000-4000-8000-000000000001",status:"completed",
       signal_name:"attention_score",outcome_kind:"price_2x_24h",threshold:"0.7",baseline_kind:"market_average",
-      feature_version:"cross-platform-heuristics-v2",horizon_hours:24,model_id:null,
+      feature_version:"cross-platform-heuristics-v2",horizon_hours:horizon,model_id:null,
       metrics:{sampleSize:120,outcomeCoverage:{eligibleCount:120,labeledCount:120,
-        completedHorizonCount:120,missingOutcomeCount:0,incompleteHorizonCount:0,ambiguousOutcomeCount:0}},data_cutoff_at:"2026-10-20T00:00:00Z",
+        completedHorizonCount:120,missingOutcomeCount:0,incompleteHorizonCount:0,ambiguousOutcomeCount:0}},data_cutoff_at:cutoff,
       completed_at:"2026-10-21T00:00:00Z",
     }]};
     if(sql.includes("FROM backtest_results r")&&sql.includes("token_daily_cross_platform"))
@@ -60,7 +62,6 @@ test("holdout certificate is deterministic and bound to run details",async()=>{
       policy_id:"00000000-0000-4000-8000-000000000002",
       registered_at:"2026-09-30T00:00:00Z",
     }]};
-    if(sql.includes("INSERT INTO signal_validation_registry"))return {rows:[]};
     throw new Error("unexpected SQL");
   }};
   const args={runId:"00000000-0000-4000-8000-000000000001",
@@ -70,6 +71,18 @@ test("holdout certificate is deterministic and bound to run details",async()=>{
   assert.equal(a.passed,true);
   assert.equal(a.reproducibilityHash,b.reproducibilityHash);
   assert.match(a.reproducibilityHash,/^[a-f0-9]{64}$/);
+  const original=rows[0];
+  rows[0]={...original,outcomeAt:"2026-10-03T12:00:00Z",outcomeObservedAt:"2026-10-03T13:00:00Z"};
+  await assert.rejects(certifyTemporalHoldout(db,args),/validation_outside_completed_horizon/);
+  rows[0]=original;
+  cutoff="2026-10-12T15:00:00Z"; // All labels exist, but the final 24h horizon is unfinished.
+  await assert.rejects(certifyTemporalHoldout(db,args),/validation_outside_completed_horizon/);
+  cutoff="2026-10-20T00:00:00Z";
+  for(const invalid of [0,1.5,721,null]){
+    horizon=invalid;
+    await assert.rejects(certifyTemporalHoldout(db,args),/validation_invalid_horizon/);
+  }
+  assert.equal(writes,2,"invalid runs must never publish a certificate");
 });
 
 test("missing outcomes cannot be silently counted as false",async()=>{
