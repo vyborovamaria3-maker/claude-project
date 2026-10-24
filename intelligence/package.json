@@ -10,7 +10,8 @@
     "@claude-project/contracts": "file:../packages/contracts",
     "@claude-project/event-outbox": "file:../packages/event-outbox",
     "pg": "^8.16.3",
-    "better-sqlite3": "^12.10.0"
+    "better-sqlite3": "^12.10.0",
+    "@claude-project/ai-gateway": "file:../packages/ai-gateway"
   },
   "devDependencies": {
     "typescript": "5.9.3",
@@ -21,14 +22,24 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test tests/*.test.mjs",
+    "test": "npm run build && node --check scripts/backtest.mjs && node --check scripts/refresh-cross-platform.mjs && node --check scripts/dispatch-telegram-alerts.mjs && node --check scripts/analyze-ai.mjs && node --check scripts/ai-runtime.mjs && node --check scripts/ai-source-snapshot.mjs && node --check scripts/ai-source-watch.mjs && node --check scripts/token-analysis.mjs && node --check scripts/token-request-runtime.mjs && node --test tests/*.test.mjs",
     "check": "npm run typecheck && npm run test",
     "etl:status": "node scripts/run.mjs --status",
     "etl:once": "node scripts/run.mjs --once",
     "etl:supervise": "node scripts/supervise.mjs --sources x,tg,blockchain",
     "etl:backfill": "node scripts/backfill.mjs",
     "etl:quality": "node scripts/quality.mjs",
-    "api:local": "node api/start.mjs"
+    "invalidation:once": "node scripts/run-invalidations.mjs",
+    "validation:holdout": "node scripts/certify-holdout.mjs",
+    "validation:preregister": "node scripts/register-signal-policy.mjs",
+    "gateway:local": "node api/start-gateway.mjs",
+    "text-snapshot:import": "node scripts/import-text-snapshots.mjs",
+    "text-snapshot:purge": "node scripts/purge-text-snapshots.mjs",
+    "api:local": "node api/start.mjs",
+    "backtest": "node scripts/backtest.mjs",
+    "refresh-cross-platform": "node scripts/refresh-cross-platform.mjs",
+    "analyze-ai": "node scripts/analyze-ai.mjs",
+    "dispatch-telegram-alerts": "node scripts/dispatch-telegram-alerts.mjs"
   },
   "exports": {
     ".": {

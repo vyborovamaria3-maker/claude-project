@@ -46,7 +46,7 @@ function response(res,status,body,headers={}){
  * queries. Caller injects an Intelligence-only read-only PostgreSQL pool. */
 export function createIntelligenceApi({
   token,pool,now=()=>new Date(),requestsPerMinute=MAX_REQUESTS_PER_MINUTE,
-  maxInFlight=MAX_IN_FLIGHT,
+  maxInFlight=MAX_IN_FLIGHT,analyzeToken,
 }){
   const verifier=sha(validateApiToken(token));
   if(!pool||typeof pool.query!=="function")throw new TypeError("database_pool_required");
@@ -73,6 +73,21 @@ export function createIntelligenceApi({
       if(!checkAuthorization(req,verifier)){
         response(res,401,{error:"unauthorized"},
           {"WWW-Authenticate":"Bearer realm=\"intelligence\""});
+        return;
+      }
+      // Paid work is possible only through an explicit authenticated POST.
+      const tokenRequest=/^\/api\/intelligence\/v1\/tokens\/([^/]+)\/analyze$/.exec(req.url);
+      if(req.method==='POST'&&tokenRequest){
+        if(!analyzeToken){response(res,503,{error:'token_analysis_disabled'});return;}
+        if(req.headers['transfer-encoding']!==undefined||
+          (req.headers['content-length']!==undefined&&req.headers['content-length']!=='0')){
+          response(res,400,{error:'request_body_forbidden'});return;
+        }
+        let tokenId;
+        try{tokenId=decodeURIComponent(tokenRequest[1]);parseApiRequest('/api/intelligence/v1/tokens/'+encodeURIComponent(tokenId)+'/ai?asOf='+now().toISOString(),now());}
+        catch{response(res,400,{error:'invalid_token_id'});return;}
+        try{response(res,200,await analyzeToken(tokenId));}
+        catch{response(res,503,{error:'token_analysis_unavailable'});}
         return;
       }
       if(req.method!=="GET"){
@@ -106,19 +121,33 @@ export function createIntelligenceApi({
   return server;
 }
 export async function checkApiReadiness(pool){
-  // Migration 004 is mandatory for the links endpoint. Fail CLOSED.
   const result=await pool.query(
     "SELECT to_regclass('intelligence_inbox') IS NOT NULL AS inbox,"+
     "to_regclass('timeline_events') IS NOT NULL AS timeline,"+
     "to_regclass('timeline_event_entities') IS NOT NULL AS entities,"+
     "to_regclass('token_link_observations') IS NOT NULL AS links,"+
-    "to_regclass('blockchain_swap_evidence_revisions') IS NOT NULL AS swap_revisions",
+    "to_regclass('blockchain_swap_evidence_revisions') IS NOT NULL AS swap_revisions,"+
+    "to_regclass('chain_token_features') IS NOT NULL AS feature_store,"+
+    "to_regclass('model_registry') IS NOT NULL AS model_registry,"+
+    "to_regclass('token_daily_cross_platform') IS NOT NULL AS cross_platform,"+
+    "to_regclass('token_correlations') IS NOT NULL AS correlations,"+
+    "to_regclass('token_alerts') IS NOT NULL AS alerts,"+
+    "to_regclass('backtest_runs') IS NOT NULL AS backtests,"+
+    "to_regclass('token_alert_status_history') IS NOT NULL AS alert_status_history,"+
+    "to_regclass('ai_message_analyses') IS NOT NULL AS ai_message_analyses,"+
+    "EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('signal_explanations') "+
+      "AND attname='grounding' AND NOT attisdropped) AS explanation_grounding",
   );
-  if(!result.rows[0]?.inbox||!result.rows[0]?.timeline||
-     !result.rows[0]?.entities||!result.rows[0]?.links){
+  const row=result.rows[0]??{};
+  if(!row.inbox||!row.timeline||!row.entities||!row.links){
     throw new Error("intelligence_api_migrations_001_002_004_required");
   }
-  if(!result.rows[0]?.swap_revisions){
-    throw new Error("intelligence_api_migration_005_required");
+  if(!row.swap_revisions)throw new Error("intelligence_api_migration_005_required");
+  if(!row.feature_store)throw new Error("intelligence_api_migration_003_required");
+  if(!row.model_registry||!row.cross_platform||!row.correlations||!row.alerts||!row.backtests){
+    throw new Error("intelligence_api_migration_006_required");
   }
+  if(!row.alert_status_history)throw new Error("intelligence_api_migration_008_required");
+  if(!row.ai_message_analyses||!row.explanation_grounding)
+    throw new Error("intelligence_api_migration_009_required");
 }
