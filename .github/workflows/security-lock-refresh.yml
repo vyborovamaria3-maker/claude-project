@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   refresh-lockfiles:
-    if: github.head_ref == 'security/full-audit-20260818'
+    if: github.head_ref == 'security/full-audit-20260818' || github.head_ref == 'fix/security-audit-bodyparser-zod-20261024'
     runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 20
     steps:
@@ -27,16 +27,21 @@ jobs:
         with:
           node-version: '22'
       - name: Refresh solana-launcher lockfile
+        if: github.head_ref == 'security/full-audit-20260818'
         working-directory: solana-launcher
         run: npm install --package-lock-only --legacy-peer-deps --ignore-scripts
       - name: Refresh subscription-service lockfile
         working-directory: solana-subscription-service
         run: npm install --package-lock-only --ignore-scripts
+      - name: Refresh legacy miniapp lockfile
+        if: github.head_ref == 'fix/security-audit-bodyparser-zod-20261024'
+        working-directory: telegram-miniapp/backend-new
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
       - name: Commit refreshed lockfiles
         run: |
           git config user.name 'security-audit-bot'
           git config user.email 'security-audit-bot@users.noreply.github.com'
-          git add solana-launcher/package-lock.json solana-subscription-service/package-lock.json
+          git add solana-launcher/package-lock.json solana-subscription-service/package-lock.json telegram-miniapp/backend-new/package-lock.json
           if git diff --cached --quiet; then
             echo 'Lockfiles already current.'
             exit 0
