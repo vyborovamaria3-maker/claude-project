@@ -81,6 +81,34 @@ function twoProportionPValue(aPositives: number, aCount: number, bPositives: num
   const z = Math.max(0, Math.abs(aRate - bRate) - correction) / standardError;
   return Math.max(0, Math.min(1, 2 * (1 - normalCdf(z))));
 }
+// Exact two-sided Fisher for sparse independent 2x2 cohorts. Huge sparse
+// cohorts deliberately return null rather than reporting an unreliable z-test.
+function exactFisherPValue(a: number, b: number, c: number, d: number): number | null {
+  const n=a+b+c+d, successes=a+c, exposed=a+b;
+  if(n>100_000)return null;
+  const logFactorial=new Float64Array(n+1);
+  for(let i=2;i<=n;i++)logFactorial[i]=logFactorial[i-1]!+Math.log(i);
+  const choose=(size:number,k:number)=>k<0||k>size?Number.NEGATIVE_INFINITY:
+    logFactorial[size]!-logFactorial[k]!-logFactorial[size-k]!;
+  const lo=Math.max(0,successes-(c+d)),hi=Math.min(exposed,successes);
+  const denominator=choose(n,successes);
+  const logProbability=(k:number)=>choose(exposed,k)+choose(n-exposed,successes-k)-denominator;
+  const observed=logProbability(a);
+  let p=0;
+  for(let k=lo;k<=hi;k++)
+    if(logProbability(k)<=observed+1e-8)p+=Math.exp(logProbability(k));
+  return Math.max(0,Math.min(1,p));
+}
+function independentComparisonPValue(a:number,exposed:number,c:number,control:number):number|null {
+  if(exposed<10||control<10)return null;
+  const total=exposed+control,successes=a+c;
+  const expected=[exposed*successes/total,control*successes/total,
+    exposed*(total-successes)/total,control*(total-successes)/total];
+  if(expected.some(value=>value<5))
+    return exactFisherPValue(a,exposed-a,c,control-c);
+  return twoProportionPValue(a,exposed,c,control);
+}
+
 function seededOrder(row: ValidatedBacktestObservation, seed: string): string {
   return createHash("sha256").update(seed + "|" + row.canonicalTokenId + "|" + row.signalAt).digest("hex");
 }
@@ -134,16 +162,16 @@ export function runSignalBacktest(
   const independentTokens = new Set(validated.map((row) => row.canonicalTokenId)).size === validated.length;
   // Random market controls can overlap selected observations; repeated tokens are not independent.
   if (selectedRate !== null && independentTokens && baselineKind === "market_average") {
-    if (baselineKind === "market_average") {
-      const interval = differenceInterval(selectedPositive, selected.length, unselectedPositive, unselected.length);
-      const scale = validated.length ? unselected.length / validated.length : 0;
-      if (interval && rate(unselectedPositive, unselected.length) !== null) {
-        ciLow = interval[0] * scale; ciHigh = interval[1] * scale;
-        pValue = twoProportionPValue(selectedPositive, selected.length, unselectedPositive, unselected.length);
+    // Selected and unselected are disjoint only for the market-average
+    // baseline; sampling the whole market as a control creates overlap.
+    if (selected.length>=10 && unselected.length>=10) {
+      const interval=differenceInterval(selectedPositive,selected.length,unselectedPositive,unselected.length);
+      const scale=validated.length?unselected.length/validated.length:0;
+      if(interval){
+        ciLow=interval[0]*scale;ciHigh=interval[1]*scale;
+        pValue=independentComparisonPValue(selectedPositive,selected.length,
+          unselectedPositive,unselected.length);
       }
-    } else {
-      const interval = differenceInterval(selectedPositive, selected.length, baselinePositive, baseline.length);
-      if (interval) { ciLow = interval[0]; ciHigh = interval[1]; pValue = twoProportionPValue(selectedPositive, selected.length, baselinePositive, baseline.length); }
     }
   }
   const truePositive = selectedPositive;

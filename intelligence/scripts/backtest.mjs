@@ -80,13 +80,14 @@ export async function selectBacktestObservations(client, args, dataCutoffAt) {
       ORDER BY canonical_token_id,(signal_at AT TIME ZONE 'UTC')::date,
         signal_at DESC,day DESC,as_of DESC
     )
-    SELECT s.canonical_token_id,s.signal_at,
+    SELECT s.canonical_token_id,s.signal_at,s.score_version,
       (s.signal_at + ($2::integer * INTERVAL '1 hour') <= $5::timestamptz) AS horizon_complete,
-      s.max_input_observed_at,o.outcome_at,o.observed_at AS outcome_observed_at,
-      s.${scoreColumn} AS score,o.label AS outcome,o.value AS outcome_value,o.evidence_ref
+       s.max_input_observed_at,o.outcome_at,o.observed_at AS outcome_observed_at,
+      o.outcome_match_count,s.${scoreColumn} AS score,o.label AS outcome,o.value AS outcome_value,o.evidence_ref
       FROM daily_snapshots s
       LEFT JOIN LATERAL (
-        SELECT outcome_at,observed_at,label,value,evidence_ref
+        SELECT outcome_at,observed_at,label,value,evidence_ref,
+          COUNT(*) OVER() AS outcome_match_count
         FROM token_outcomes o
         WHERE o.canonical_token_id=s.canonical_token_id AND o.outcome_kind=$1
           AND o.outcome_at>s.signal_at
@@ -124,14 +125,19 @@ async function main() {
     // Fail closed: neither incomplete horizons nor missing outcomes may disappear from the denominator.
     const incompleteHorizonCount=selected.rows.filter((row)=>row.horizon_complete!==true).length;
     const missingOutcomeCount=selected.rows.filter((row)=>row.outcome_at===null||row.outcome_at===undefined).length;
+    const ambiguousOutcomeCount=selected.rows.filter(row=>Number(row.outcome_match_count)>1).length;
     const coverage={eligibleCount:selected.rows.length,
       completedHorizonCount:selected.rows.length-incompleteHorizonCount,
       labeledCount:selected.rows.length-missingOutcomeCount,
-      incompleteHorizonCount,missingOutcomeCount};
-    if(incompleteHorizonCount||missingOutcomeCount){
+      incompleteHorizonCount,missingOutcomeCount,ambiguousOutcomeCount};
+    if(incompleteHorizonCount||missingOutcomeCount||ambiguousOutcomeCount){
       process.stderr.write(JSON.stringify({outcomeCoverage:coverage})+"\n");
-      throw new Error(incompleteHorizonCount?"backtest_incomplete_horizon":"backtest_incomplete_outcome_coverage");
+      throw new Error(incompleteHorizonCount?"backtest_incomplete_horizon":
+        missingOutcomeCount?"backtest_incomplete_outcome_coverage":"backtest_ambiguous_outcome_labels");
     }
+    const versions=[...new Set(selected.rows.map(row=>row.score_version))];
+    if(versions.length!==1||typeof versions[0]!=="string"||!versions[0])
+      throw new Error("backtest_mixed_score_versions");
     const observations = selected.rows.map((row) => ({
       canonicalTokenId: row.canonical_token_id,
       signalAt: row.signal_at,
@@ -151,7 +157,7 @@ async function main() {
       runId: result.runId, signalName: args.signal, outcomeKind: args.outcome,
       fromAt, toAt, horizonHours: args.horizonHours, threshold: args.threshold,
       baselineKind: args.baseline, metrics, observations: result.observations,
-      dataCutoffAt, featureVersion: null, modelId: null,
+      dataCutoffAt, featureVersion: versions[0], modelId: null,
     });
     await client.query("COMMIT");
     process.stdout.write(JSON.stringify({ runId: result.runId, signal: args.signal, outcome: args.outcome, from: args.from, to: args.to, metrics })+"\n");

@@ -13,7 +13,7 @@ export async function importNewTelegramSnapshots(source,destination,limit=2){
  try{
   await tx.query('BEGIN');
   const ready=(await tx.query("SELECT to_regclass('ai_source_watch_cursors') IS NOT NULL AS ready")).rows[0]?.ready;
-  if(!ready)throw new Error('ai_watch_migration_010_required');
+  if(!ready)throw new Error('ai_watch_migration_015_required');
   await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",['ai-watch-tg|'+identity]);
   const existing=(await tx.query("SELECT observed_at::text AS at,source_id::text,message_id::text FROM ai_source_watch_cursors WHERE source_identity=$1 FOR UPDATE",[identity])).rows[0];
   if(!existing){

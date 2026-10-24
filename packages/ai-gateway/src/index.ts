@@ -190,6 +190,30 @@ function normalizeProvider(input: AiProviderDefinition): NormalizedProvider {
   };
 }
 
+async function boundedProviderJson(response: Response): Promise<unknown> {
+  const maxBytes=16*1024*1024;
+  const length=response.headers.get("content-length");
+  const reader=response.body?.getReader();
+  if(!reader)throw new AiGatewayError("ai_provider_response_invalid");
+  try {
+    if(length!==null&&/^\d+$/.test(length)&&Number(length)>maxBytes)
+      throw new AiGatewayError("ai_provider_response_too_large");
+    const chunks:Uint8Array[]=[];
+    let bytes=0;
+    for(;;){
+      const {done,value}=await reader.read();
+      if(done)break;
+      bytes+=value.byteLength;
+      if(bytes>maxBytes)throw new AiGatewayError("ai_provider_response_too_large");
+      chunks.push(value);
+    }
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  } finally {
+    try{await reader.cancel();}catch{}
+    reader.releaseLock();
+  }
+}
+
 function responseContent(payload: unknown): string {
   if (!payload || typeof payload !== "object") throw new AiGatewayError("ai_provider_response_invalid");
   const choices = (payload as { choices?: unknown }).choices;
@@ -359,6 +383,7 @@ export function createAiGateway(options: AiGatewayOptions) {
             headers: { "content-type": "application/json", authorization: "Bearer " + provider.apiKey },
             body: JSON.stringify(body),
             signal: requestSignal,
+            redirect: "error",
           });
         } catch {
           if (signal?.aborted) throw new AiGatewayError("ai_request_aborted");
@@ -369,6 +394,8 @@ export function createAiGateway(options: AiGatewayOptions) {
         if (!response.ok) {
           lastStatus = response.status;
           const retryable = response.status === 429 || response.status >= 500;
+          // Release rejected response streams before retrying or returning.
+          try { await response.body?.cancel(); } catch {}
           if (retryable && attempt < maxAttempts) {
             await sleep(Math.max(100, retryAfterMs(response) || 100 * (2 ** (attempt - 1))));
             continue;
@@ -379,7 +406,10 @@ export function createAiGateway(options: AiGatewayOptions) {
           throw new AiGatewayError(code, response.status, retryable);
         }
         let payload: unknown;
-        try { payload = await response.json(); } catch { throw new AiGatewayError("ai_provider_response_invalid"); }
+        try { payload = await boundedProviderJson(response); } catch (error) {
+          if(error instanceof AiGatewayError)throw error;
+          throw new AiGatewayError("ai_provider_response_invalid");
+        }
         const usage = tokenUsage(payload);
         const actualCost = estimateCost(provider, usage.inputTokens, usage.outputTokens, task);
         state.estimatedCostUsd += actualCost ?? reservation ?? 0;

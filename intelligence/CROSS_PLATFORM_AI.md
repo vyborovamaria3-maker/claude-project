@@ -6,7 +6,7 @@ This document describes the additive implementation in the existing Intelligence
 
 For collector-backed AI execution, typed persistence, verified explanations and the AI API, also apply migration009 and follow [AI_PIPELINE.md](AI_PIPELINE.md). The models are invoked by ETL only with the explicit AI runtime configuration; older collectors can use the bounded read-only snapshot worker.
 
-Apply 001 through 006, then 008 (historical alert status). Migration 003 (Feature Store) is required for the features API. Migration 007 is optional and requires the pgvector extension; apply it only after 006 on a PostgreSQL server that supports pgvector. Do not modify old checksum-tracked migrations.
+Apply 001 through 006, then 008 (alert history), 009 (typed AI), 010 (governance), 011 (policy preregistration), 012 (shared AI budget), 013 (invalidation retry scheduling), 014 (privacy evidence indexes). Migration 003 (Feature Store) is required for the features API. Migration 007 is optional and requires the pgvector extension; apply it only after 006 on a PostgreSQL server that supports pgvector. Do not modify old checksum-tracked migrations.
 
 ## Data correctness
 
@@ -62,3 +62,21 @@ npm --prefix intelligence run dispatch-telegram-alerts
 ```
 
 The dispatcher claims alerts with row locks, marks them as sending, posts plain text without parse mode, then marks successful deliveries. Failed attempts return to open; after 10 attempts they are left for manual review. A stale sending claim can be retried after 10 minutes. Delivery is at-least-once, not exactly-once: if Telegram accepts a message but the database status update fails, a retry can duplicate it. A stable alert ID is included in messages to identify duplicates. New alerts for an active token/type incident are suppressed until the prior incident is explicitly resolved. Run the dispatcher from a scheduler if recurring delivery is required. The bot token is never logged or written to PostgreSQL.
+
+## Governance V2.2 (migration 010)
+
+- `available_at` is a stored generated column on cross-platform snapshots, feature snapshots and alert rows. It cannot be backdated by a writer; historical selection must respect the actual availability of all inputs.
+- `analytics_coverage_assessments` separates collection, identity, computation and outcome completeness. Complete requires verified counts, a method and evidence; unknown counts must never be advertised as complete.
+- `signal_validation_registry` links a signal version to a completed backtest, method, deterministic reproducibility hash and deployment window. In-sample `k_fold` is not an accepted time-series deployment method. The alert persistence gate verifies registry state and at least 20 backtest samples; no registry entry means no validated alert. A future dedicated walk-forward/holdout producer must still be implemented before production validation status is granted.
+- `analytics_invalidation_queue` and `analytics_invalidation_log` provide idempotent enqueue/audit primitives. The queue is not yet automatically populated by all upstream edits, and no recomputation worker is supplied by this migration.
+- `score_interpretation` marks values heuristic. API score metadata is also explicitly labeled `not_probability`.
+- `entity_external_mappings` is an evidence-backed ID bridge, not a heuristic mapping by ticker/username.
+- `event_text_snapshots` permits encrypted short-lived data only; a retention/purge key-management service is required prior to use. Existing read-only source text adapters remain active.
+- `gateway_auth_log` is a database contract, not proof of a deployed authenticated cross-host gateway.
+- Existing `intelligence_inbox` is NOT duplicated; its compound primary key already handles replay.
+\n**Correlation alert semantics:** a significant exploratory event/outcome
+association now emits `correlation_candidate`, never `validated_correlation`.
+A caller-supplied `correlationValidation` flag and an unrelated feature
+backtest are insufficient to certify a specific event/outcome pair. Forced
+`validated_correlation` writes fail closed until correlation-scoped held-out
+provenance and a registry join are implemented.\n

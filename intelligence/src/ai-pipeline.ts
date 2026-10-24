@@ -4,12 +4,13 @@ import {toUtcIso} from "@claude-project/contracts";
 import type {PgTransaction} from "./entity-registry.js";
 import {isLowValueTelegramPost,type AiMessageContext} from "./ai-message-input.js";
 import {createAiAnalysisService} from "./ai-analysis.js";
+import {recordAiCost} from "./governance.js";
 
 type Client=PgTransaction & {release():void};
 export type AiPool={connect():Promise<Client>};
 export type AiModels={sentiment?:string;narrative?:string;explanation?:string};
 const SAFE_GATEWAY_ERRORS=new Set(["ai_provider_network_error","ai_provider_http_error","ai_provider_auth_failed",
-  "ai_provider_rate_limited","ai_provider_response_invalid","ai_provider_rate_limit_exhausted",
+  "ai_provider_rate_limited","ai_provider_response_invalid","ai_provider_response_too_large","ai_provider_rate_limit_exhausted",
   "ai_provider_cost_budget_exhausted","ai_provider_capacity_exhausted","ai_request_aborted","ai_provider_request_failed"]);
 function analysisErrorCode(error:unknown):string{
   if(error instanceof AiGatewayError&&SAFE_GATEWAY_ERRORS.has(error.code))return error.code;
@@ -77,7 +78,7 @@ export async function readCollectorContext(pool:AiPool,source:Source,ref:string,
 }
 
 /** Runs AFTER normal collector delivery/ACK. AI failure never changes source delivery. */
-export async function runAiAnalysisBatch(input:{destination:AiPool;source:Source;readText:(ref:string,at:Date|string)=>Promise<string|null>;
+export async function runAiAnalysisBatch(input:{destination:AiPool;source:Source;readText:(ref:string,at:Date|string,kind?:string,eventKey?:string)=>Promise<string|null>;
   readContext?:(ref:string,at:Date|string)=>Promise<AiMessageContext[]>;
   gateway:AiGateway;models:AiModels;limit?:number;signal?:AbortSignal;refresh?:(token:string,day:string)=>Promise<void>}){
   const limit=input.limit??2;
@@ -111,7 +112,7 @@ export async function runAiAnalysisBatch(input:{destination:AiPool;source:Source
         if(input.signal?.aborted)break;
         const eventKey=String(row.event_key),kind=String(row.source_event_kind),ref=String(row.evidence_source_id);
         try{
-          const text=await input.readText(ref,row.observed_at as Date);
+          const text=await input.readText(ref,row.observed_at as Date,kind,eventKey);
           if(text===null){stats.unavailable++;throw new Error("source_revision_unavailable");}
           if(input.source==="tg"&&isLowValueTelegramPost(text)){
             await client.query(`INSERT INTO ai_message_attempts(source_system,source_event_kind,event_key,task,model_id,attempts,next_attempt_at,error_code)
@@ -150,6 +151,10 @@ export async function runAiAnalysisBatch(input:{destination:AiPool;source:Source
             ON CONFLICT DO NOTHING`,[input.source,kind,eventKey,ref,
             JSON.stringify(tokens.rows.map(t=>t.canonical_id)),createHash("sha256").update(text).digest("hex"),task,
             modelId,output.modelVersion,output.providerId,output.traceId,JSON.stringify(result),row.observed_at]);
+          await recordAiCost(client,{requestId:output.traceId,providerId:output.providerId,
+            modelId,task,sourceSystem:input.source,sourceEventKey:eventKey,
+            inputTokens:output.inputTokens,outputTokens:output.outputTokens,
+            estimatedCostUsd:output.estimatedCostUsd,status:"completed"});
           await client.query(`DELETE FROM ai_message_attempts WHERE source_system=$1 AND source_event_kind=$2 AND event_key=$3 AND task=$4 AND model_id=$5`,
             [input.source,kind,eventKey,task,modelId]);
           for(const token of tokens.rows)await client.query(`INSERT INTO ai_refresh_pending(canonical_token_id,day)
@@ -190,7 +195,12 @@ export async function runAiAnalysisBatch(input:{destination:AiPool;source:Source
         const refs=await client.query("SELECT evidence_refs FROM token_alerts WHERE alert_id=$1",[alert.alert_id]);
         const output=await service.explainSignal({modelId:input.models.explanation,alertId:Number(alert.alert_id),facts:{},
           evidenceRefs:refs.rows[0]?.evidence_refs as string[]});
-        await service.saveSignalExplanation(output);stats.explained++;
+        await service.saveSignalExplanation(output);
+        await recordAiCost(client,{requestId:output.traceId,providerId:output.providerId,
+          modelId:input.models.explanation,task:"explanation",
+          inputTokens:output.inputTokens,outputTokens:output.outputTokens,
+          estimatedCostUsd:output.estimatedCostUsd,status:"completed"});
+        stats.explained++;
         }catch{
         stats.failed++;
         await client.query(`INSERT INTO ai_explanation_attempts(alert_id,model_id,attempts,next_attempt_at)

@@ -53,7 +53,16 @@ test("real refresh is eligible only at its write time; horizons and labels start
     assert.equal(selected.rows[0].signal_at.toISOString(),saved.created_at.toISOString());
     assert.equal(selected.rows[0].outcome_at.toISOString(),outcomeAt.toISOString());
     assert.equal(selected.rows[0].outcome,false);
+    assert.equal(Number(selected.rows[0].outcome_match_count),1);
     assert.equal(selected.rows[0].horizon_complete,true);
+    // Conflicting labels from different versions in the same horizon must
+    // make the cohort ambiguous rather than silently choosing a winner.
+    await client.query(`INSERT INTO token_outcomes
+      (canonical_token_id,outcome_kind,outcome_at,observed_at,label,source_system,label_version,created_at)
+      VALUES ($1,'price_2x_24h',$2,$2,true,'derived','revised',$2)`,[token,outcomeAt]);
+    const conflicting=await selectBacktestObservations(client,args(signalDay),
+      new Date(saved.created_at.getTime()+7200000));
+    assert.equal(Number(conflicting.rows[0].outcome_match_count),2);
     const early=await selectBacktestObservations(client,args(signalDay),saved.as_of);
     assert.equal(early.rows.length,0,"snapshot must not be backdated to its input cutoff");
     const immature=await selectBacktestObservations(client,args(signalDay),new Date(saved.created_at.getTime()+1800000));

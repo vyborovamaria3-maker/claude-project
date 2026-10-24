@@ -12,6 +12,7 @@ on:
     paths:
       - "intelligence/**"
       - "packages/contracts/**"
+      - "packages/ai-gateway/**"
       - ".github/workflows/intelligence-foundation.yml"
 
 jobs:

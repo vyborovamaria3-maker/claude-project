@@ -26,7 +26,8 @@ async function fixture(t){
   t.after(async()=>{await source.end();await destination.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);
     await admin.query(`DROP SCHEMA ${schema}_source CASCADE`);await admin.end();});
   for(const file of ["001_entity_registry.sql","002_timeline.sql","003_feature_store.sql","004_token_link_observations.sql",
-    "005_blockchain_swap_evidence_revisions.sql","006_cross_platform_analytics.sql","008_alert_status_history.sql","009_ai_analysis.sql"])
+    "005_blockchain_swap_evidence_revisions.sql","006_cross_platform_analytics.sql","008_alert_status_history.sql",
+    "009_ai_analysis.sql","010_intelligence_governance.sql"])
     await destination.query(await readFile(new URL("../migrations/"+file,import.meta.url),"utf8"));
   await source.query(`CREATE TABLE twitter_tweets(tweet_id TEXT PRIMARY KEY,author_id TEXT,text TEXT,updated_at BIGINT,posted_at BIGINT);
     CREATE TABLE tg_sources(id BIGINT PRIMARY KEY,peer_id TEXT);
@@ -275,7 +276,7 @@ test("runtime source filter -> context -> gateway failure/retry -> storage -> re
 
 
 test("Telegram watch cursor drains bursts across restart and rolls back failed pages atomically",{skip:!url},async t=>{
- const f=await fixture(t);await f.destination.query(await readFile(new URL('../migrations/010_ai_watch_cursor.sql',import.meta.url),'utf8'));
+ const f=await fixture(t);await f.destination.query(await readFile(new URL('../migrations/015_ai_watch_cursor.sql',import.meta.url),'utf8'));
  assert.equal((await importNewTelegramSnapshots(f.source,f.destination,2)).initialized,true);
  assert.equal((await f.destination.query('SELECT count(*) FROM timeline_events')).rows[0].count,'0','startup must not bill historical messages');
  const timestamp=new Date(f.ms+1000).toISOString().replace('Z','456Z');
@@ -294,7 +295,7 @@ test("Telegram watch cursor drains bursts across restart and rolls back failed p
 });
 
 test("one waiting AI watch automatically processes later arrivals and does not rebill after restart",{skip:!url},async t=>{
- const f=await fixture(t);await f.destination.query(await readFile(new URL('../migrations/010_ai_watch_cursor.sql',import.meta.url),'utf8'));
+ const f=await fixture(t);await f.destination.query(await readFile(new URL('../migrations/015_ai_watch_cursor.sql',import.meta.url),'utf8'));
  const sourceUrl=new URL(url),destUrl=new URL(url);
  sourceUrl.searchParams.set('options',f.source.options.options);destUrl.searchParams.set('options',f.destination.options.options);
  const env={TG_SOURCE_DATABASE_URL:sourceUrl.href,INTELLIGENCE_DATABASE_URL:destUrl.href,
