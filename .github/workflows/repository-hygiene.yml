@@ -22,3 +22,5 @@ jobs:
           node-version: 20
       - name: Check repository hygiene
         run: npm run hygiene:check
+      - name: Verify release image trigger safety
+        run: node --test scripts/release-trigger-policy.test.mjs
