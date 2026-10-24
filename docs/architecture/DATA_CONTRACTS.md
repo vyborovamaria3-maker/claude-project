@@ -109,3 +109,16 @@ Scope: source-code/SQL inventory on `main`; **not a query of the user's running 
 - Next.js `solana-launcher/app/api/integrations/tg-collector` is an interface into TG's own DB; this is **not** proof that Node Intelligence token timeline is populated.
 
 Source references: [TG SQL 011](../../tg-collector/sql/011_token_intelligence.sql), [rollups SQL 003](../../tg-collector/sql/003_graph_rollups.sql), [TG migration runner](../../tg-collector/src/db.ts), [worker loop](../../tg-collector/src/runtime/worker-loop.ts), [analytics refresh](../../tg-collector/src/analytics/refresh.ts), [market analysis](../../tg-collector/src/analytics/market-data.ts), [TG outbox](../../tg-collector/src/persistence/outbox.ts), [shared IDs](../../packages/contracts/src/canonical-ids.ts). See [TG live test register](LIVE_TESTS.md) and [known gaps](KNOWN_GAPS.md).
+
+
+## Cross-source identity and storage status — 2026-10-24 delta
+
+The inventory above was written against `main` as of 2026-10-20 and partly extended in the TG documentation audit of 2026-10-22. On 2026-10-24, `main` was observed at `8f79ce9284e42e35de78e0e983c6ba460677ef58`. This delta does not supersede native schema documents or assert a production DB inspection.
+
+- [PR #165](https://github.com/vyborovamaria3-maker/claude-project/pull/165) proposes `canonicalTokenIdFromNative` and X/TG/chain mint identity tests; **OPEN** against `main`, not yet a deployed production contract. Independent social evidence and retractable source revisions remain necessary.
+- [PR #166](https://github.com/vyborovamaria3-maker/claude-project/pull/166) supplies an opt-in AI read model on top of the #165 feature branch; **OPEN**. [PR #167](https://github.com/vyborovamaria3-maker/claude-project/pull/167) separately targets main with overlapping analytics/AI gateway capabilities; **OPEN**. Reconcile authentication and schema ownership before shipping either design ([review issue #176](https://github.com/vyborovamaria3-maker/claude-project/issues/176)).
+- The Node and Python Intelligence runtimes remain different deploy and data/permission boundaries. A runtime sharing the `intelligence/` directory does not imply common tables, migrations or privilege scope.
+- This repository has multiple PostgreSQL, SQLite and Redis roles. **“9 databases” is unverified** until [#172](https://github.com/vyborovamaria3-maker/claude-project/issues/172) enumerates actual physical instances/owners/environment. Counting source schemas, product databases, CI fixtures and Redis as interchangeable DBs is incorrect.
+- No source outbox opt-in, consumer supervision, production migration, private provider credential or live source identity can be inferred from this documentation change. Require [#173](https://github.com/vyborovamaria3-maker/claude-project/issues/173), [#174](https://github.com/vyborovamaria3-maker/claude-project/issues/174), [#175](https://github.com/vyborovamaria3-maker/claude-project/issues/175) and actual [LIVE_TESTS](LIVE_TESTS.md) evidence.
+
+For planned boundary choices, see [ADR-0001](ARCHITECTURE_DECISIONS/0001-independent-evidence-and-runtime-boundaries.md). All changes remain proposal-level until accepted by maintainers.
