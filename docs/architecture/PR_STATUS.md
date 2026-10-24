@@ -1,20 +1,20 @@
-# PR_STATUS — GitHub PR inventory (2026-10-24)
+# PR_STATUS — GitHub PR inventory (2026-10-24, after #165 merge)
 
-Snapshot of the public GitHub REST `pulls?state=all` listing read on 2026-10-24 for [vyborovamaria3-maker/claude-project](https://github.com/vyborovamaria3-maker/claude-project/pulls). **GitHub is authoritative** for current status, CI and merge base. This is a *point-in-time index*, not a claim of code readiness, test results or review approval.
+Point-in-time snapshot of the public [GitHub PR listing](https://github.com/vyborovamaria3-maker/claude-project/pulls). **GitHub is authoritative** for current status, CI, review and merge base; this file can become stale after every update.
 
-- Retrieved **168 unique PRs** through paged REST enumeration; **12 open**, **121 merged**, **35 closed without merge**. Missing PR numbers need not indicate missing rows (GitHub issues share numbering).
-- A merged PR may target **another feature/integration branch**, not `main`. For current main membership inspect the integration carrier and commit ancestry.
-- For reviews, use the PR checks on the **latest head SHA**, not old screenshots or successful runs from another branch.
-- Current dependency concern: [#166](https://github.com/vyborovamaria3-maker/claude-project/pull/166) targets the #165 feature branch; [#167](https://github.com/vyborovamaria3-maker/claude-project/pull/167) overlaps the AI/read-model domain. Architecture and security review required before choosing a merge sequence.
-- Important historical integrations: [#127](https://github.com/vyborovamaria3-maker/claude-project/pull/127) (autoposting, no live X proof), [#133](https://github.com/vyborovamaria3-maker/claude-project/pull/133) (main integration carrier), [#142](https://github.com/vyborovamaria3-maker/claude-project/pull/142) (sentiment models merged to an integration branch), [#164](https://github.com/vyborovamaria3-maker/claude-project/pull/164) (TG contract/gap/live-register documentation), [#169](https://github.com/vyborovamaria3-maker/claude-project/pull/169) (security fixes merged to main).
+- Retrieved **173 unique PRs** using paged GitHub API enumeration: **12 open**, **125 merged**, **36 closed without merge**.
+- [#165](https://github.com/vyborovamaria3-maker/claude-project/pull/165) is **MERGED to main** as `0bfd1c71c438d2f32a93652f4b6a2670c38d7b9b`, incorporating [#184](https://github.com/vyborovamaria3-maker/claude-project/pull/184), a real isolated PG/SQLite regression against *synthetic preverified* evidence. **Not a live release.**
+- [#166](https://github.com/vyborovamaria3-maker/claude-project/pull/166) remains a **draft targeting the original #165 feature branch** rather than `main`; after merging #165, do not blindly retarget without checking delta/rebase/dependencies. [#167](https://github.com/vyborovamaria3-maker/claude-project/pull/167) remains a separate draft against `main` with overlapping AI/analytics. Reconcile designs under [#176](https://github.com/vyborovamaria3-maker/claude-project/issues/176).
+- [#183](https://github.com/vyborovamaria3-maker/claude-project/pull/183) was **closed unmerged** after its JSONB regression exposed a contract bug already fixed by #165. [#184](https://github.com/vyborovamaria3-maker/claude-project/pull/184) superseded it and merged into #165.
+- No main protection/admin rules, real X/TG/RPC deployment or backup restore is inferred from PR status.
 
 ## Open PRs (12)
 
-| PR | Title | Target branch | GitHub state | Last update (UTC) |
+| PR | Title | Target branch | State | Last update (UTC) |
 | --- | --- | --- | --- | --- |
+| [#185](https://github.com/vyborovamaria3-maker/claude-project/pull/185) | docs: reconcile native mint verification and CI status after #165 merge | `main` | OPEN | 2026-10-24 |
 | [#167](https://github.com/vyborovamaria3-maker/claude-project/pull/167) | feat(intelligence): cross-platform analytics and API AI gateway | `main` | OPEN DRAFT | 2026-10-24 |
 | [#166](https://github.com/vyborovamaria3-maker/claude-project/pull/166) | feat(ai): governed multi-source read model for external AI API | `feature/canonical-token-native-adapter-20261022` | OPEN DRAFT | 2026-10-22 |
-| [#165](https://github.com/vyborovamaria3-maker/claude-project/pull/165) | feat(contracts): normalize native TG/X/chain mint identifiers | `main` | OPEN DRAFT | 2026-10-22 |
 | [#162](https://github.com/vyborovamaria3-maker/claude-project/pull/162) | Dataset: import Solana memecoin research trades into isolated SQLite tables | `feat/blockchain-finality-witness-quorum-20261022` | OPEN DRAFT | 2026-10-22 |
 | [#161](https://github.com/vyborovamaria3-maker/claude-project/pull/161) | Integrate public Telegram datasets into TG Collector | `main` | OPEN | 2026-10-22 |
 | [#159](https://github.com/vyborovamaria3-maker/claude-project/pull/159) | Blockchain: signed two-witness finality reports with atomic nonce replay protection | `feat/blockchain-durable-finality-watch-20261022` | OPEN DRAFT | 2026-10-22 |
@@ -25,12 +25,17 @@ Snapshot of the public GitHub REST `pulls?state=all` listing read on 2026-10-24 
 | [#153](https://github.com/vyborovamaria3-maker/claude-project/pull/153) | Blockchain: exact fee evidence, native balance checks, inventory quality and DEX adversarial tests | `main` | OPEN DRAFT | 2026-10-21 |
 | [#151](https://github.com/vyborovamaria3-maker/claude-project/pull/151) | TG Collector: quarantine repetitive VIP milestone spam channels after 120-post preview | `audit/arch-01-03-integration-20261020` | OPEN DRAFT | 2026-10-20 |
 
-## Closed / merged PRs (156)
+## Closed / merged PRs (161)
 
-| PR | Title | Target branch | GitHub state | Last update (UTC) |
+| PR | Title | Target branch | State | Last update (UTC) |
 | --- | --- | --- | --- | --- |
+| [#184](https://github.com/vyborovamaria3-maker/claude-project/pull/184) | test(intelligence): exercise real outbox JSONB, ACK rollback and cross-source evidence (#173) | `feature/canonical-token-native-adapter-20261022` | MERGED | 2026-10-24 |
+| [#183](https://github.com/vyborovamaria3-maker/claude-project/pull/183) | test(intelligence): verify cross-source evidence rollback, retraction and replay (#173) | `main` | CLOSED UNMERGED | 2026-10-24 |
+| [#182](https://github.com/vyborovamaria3-maker/claude-project/pull/182) | docs: refresh architecture evidence, test register and ADRs | `main` | MERGED | 2026-10-24 |
+| [#181](https://github.com/vyborovamaria3-maker/claude-project/pull/181) | Docs/platform readiness 20261024 | `main` | MERGED | 2026-10-24 |
 | [#169](https://github.com/vyborovamaria3-maker/claude-project/pull/169) | fix(security): patch OpenTelemetry, ip-address and Zod | `main` | MERGED | 2026-10-24 |
 | [#168](https://github.com/vyborovamaria3-maker/claude-project/pull/168) | fix: repair Solana dependency security audits | `main` | MERGED | 2026-10-23 |
+| [#165](https://github.com/vyborovamaria3-maker/claude-project/pull/165) | feat(contracts): normalize native TG/X/chain mint identifiers | `main` | MERGED | 2026-10-24 |
 | [#164](https://github.com/vyborovamaria3-maker/claude-project/pull/164) | docs(audit): TG Collector sprint 0 data contracts, gaps and test register | `main` | MERGED | 2026-10-24 |
 | [#163](https://github.com/vyborovamaria3-maker/claude-project/pull/163) | Integrate Telegram datasets into collector queue | `main` | MERGED | 2026-10-22 |
 | [#160](https://github.com/vyborovamaria3-maker/claude-project/pull/160) | Integrate public Telegram datasets into TG Collector | `main` | CLOSED UNMERGED | 2026-10-22 |
@@ -186,8 +191,6 @@ Snapshot of the public GitHub REST `pulls?state=all` listing read on 2026-10-24 
 | [#2](https://github.com/vyborovamaria3-maker/claude-project/pull/2) | Codex/admin login error | `main` | CLOSED UNMERGED | 2026-09-03 |
 | [#1](https://github.com/vyborovamaria3-maker/claude-project/pull/1) | Fix production registry and social intelligence build | `main` | MERGED | 2026-08-13 |
 
-## Release/merge evidence checklist
+## Release-review checklist
 
-For every release-critical PR, separately record owner, exact head SHA, required checks, failed job links, dependency/target branch, source DB migration impact, secrets/config exposure, rollback and live test provenance in GitHub PR conversation or a release issue. **Do not** infer a production deploy from `merged_at`; do not infer a main merge from `merged_at` where base is not `main`.
-
-See [known gaps](KNOWN_GAPS.md), [live tests](LIVE_TESTS.md) and [delivery plan](DELIVERY_PLAN_20261024.md).
+For any release-critical PR document full head SHA, branch, reviewer, scope, required checks, secrets/DB safety, dependency/target branch, rollback and real evidence. A merged PR can target an **intermediate branch** rather than `main`, and no offline CI implies real production operations. For operator-required work see [KNOWN_GAPS](KNOWN_GAPS.md), [LIVE_TESTS](LIVE_TESTS.md) and [DELIVERY_PLAN](DELIVERY_PLAN_20261024.md).
