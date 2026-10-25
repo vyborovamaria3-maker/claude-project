@@ -211,15 +211,18 @@ function main(argv = process.argv.slice(2)) {
   feeRegistry(registry); // validate before creating an output file
   const Database=require("better-sqlite3");
   const source=new Database(sourcePath,{readonly:true,fileMustExist:true});
-  let dest;
+  let dest, ownsOutput=false;
   try {
     source.pragma("query_only=ON");
+    const fd=fs.openSync(outPath,"wx");
+    ownsOutput=true;
+    fs.closeSync(fd);
     dest=new Database(outPath,{fileMustExist:false});
     const report=project(source,dest,{limit:opts.limit,registry});
     return {...report,output:outPath};
   } catch (e) {
     dest?.close(); dest=null;
-    if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
+    if (ownsOutput && fs.existsSync(outPath)) fs.unlinkSync(outPath);
     throw e;
   } finally { dest?.close(); source.close(); }
 }

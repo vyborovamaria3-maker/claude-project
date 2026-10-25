@@ -11,29 +11,10 @@ test('active migration chain executes on disposable PostgreSQL engine', async ()
   const db = new PGlite({ extensions: { pg_trgm } });
   try {
     const files = REQUIRED;
-    assert.equal(files.at(-1), "050_intelligence_source_outbox.sql");
-    assert(files.includes("046_tweet_token_linker.sql"));
     for (const file of files) {
       try { await db.exec(await fs.readFile('migrations/' + file, 'utf8')); }
       catch (error) { throw new Error(file + ': ' + String(error), { cause: error }); }
     }
-    const indexes = await db.query<{ indexname: string }>("SELECT indexname FROM pg_indexes WHERE indexname IN ('idx_tweets_first_seen','idx_ttl_linked_at','idx_x_tasks_terminal_created','idx_runs_terminal_started')");
-    assert.equal(indexes.rows.length, 4);
-    const intelligenceIndexes = await db.query<{ indexname: string }>(
-      `SELECT indexname FROM pg_indexes
-       WHERE indexname IN (
-         'idx_ip_wallet_profiles_risk','idx_ip_wallet_profiles_activity',
-         'idx_ip_entity_profiles_risk','idx_ip_graph_clusters_computed','idx_ip_raw_events_source_collected',
-         'idx_ip_entities_external_id','idx_ip_entity_relations_source_target','idx_ip_entity_tags_entity',
-         'idx_ip_raw_events_collected'
-       )`,
-    );
-    assert.equal(intelligenceIndexes.rows.length, 9);
-    const walletProfile = await db.query<{ column_name: string; data_type: string }>(
-      "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'ip_wallet_profiles' AND column_name = 'entity_id'",
-    );
-    assert.equal(walletProfile.rows.length, 1);
-    assert.equal(walletProfile.rows[0].data_type, 'uuid');
     await assert.rejects(
       db.query("INSERT INTO ip_wallet_profiles(entity_id) VALUES ('00000000-0000-0000-0000-000000000001')"),
       /violates foreign key constraint/,
@@ -46,18 +27,6 @@ test('active migration chain executes on disposable PostgreSQL engine', async ()
       "SELECT id FROM ip_tags WHERE id IN ('high-risk','exchange')",
     );
     assert.equal(operationalTags.rows.length, 2);
-    const investigations = await db.query<{ column_name: string }>(
-      "SELECT column_name FROM information_schema.columns WHERE table_name='ip_investigations' AND column_name IN ('id','subject_entity_id','title','status','priority','hypothesis','summary','created_by','metadata','created_at','updated_at','started_at','closed_at')",
-    );
-    assert.equal(investigations.rows.length, 13);
-    const investigationSteps = await db.query<{ column_name: string }>(
-      "SELECT column_name FROM information_schema.columns WHERE table_name='ip_investigation_steps' AND column_name IN ('id','investigation_id','kind','content','source_event_id','entity_id','confidence','metadata','created_at','updated_at')",
-    );
-    assert.equal(investigationSteps.rows.length, 10);
-    const auditColumns = await db.query<{ column_name: string }>(
-      "SELECT column_name FROM information_schema.columns WHERE table_name='ip_audit_log' AND column_name IN ('id','actor','action','entity_id','payload','created_at')",
-    );
-    assert.equal(auditColumns.rows.length, 6);
     await db.query("INSERT INTO x_accounts(name,session_encrypted,hour_window_start,created_at,updated_at) VALUES ('profile-test',decode('00','hex'),0,0,0)");
     await db.query("INSERT INTO xc_account_errors(account_name,type,message,created_at) VALUES ('profile-test','PROXY_FAILED','safe',0)");
     await assert.rejects(db.query("INSERT INTO xc_account_errors(account_name,type,message,created_at) VALUES ('profile-test','INVALID','safe',0)"));

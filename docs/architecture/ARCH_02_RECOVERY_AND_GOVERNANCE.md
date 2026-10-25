@@ -81,3 +81,47 @@ bash /opt/potapoff-deploy/scripts/verify-backup-restore.sh /opt/potapoff-deploy/
 - [ ] Согласован порядок зависимых PR, миграций, zero-data-loss rollback и восстановление после ошибок.
 
 До выполнения чеклиста **ARCH-02 не считать закрытым**, даже при успешных CI-тестах с синтетическими данными.
+
+
+## 7. Operator recovery evidence and release-trigger correction — 2026-10-24
+
+**Current, independently verified GitHub evidence (do not confuse image publication with deployment):**
+
+- [POTAPoff backup run 39389328246](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/39389328246), 2026-10-20: **FAILED** in `Create database backup`; job log reports `Host key verification failed` and an offending previously stored ECDSA key. No successful production backup/restore after that was established by this audit.
+- [POTAPoff production deploy run 39209623066](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/39209623066), 2026-10-19: **FAILED** at `Upload deployment configuration`, with the same SSH trust error. No newer successful production deployment was found in workflow-run listings during the 2026-10-24 audit.
+- [POTAPoff release images run 40082327583](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/40082327583), 2026-10-24: **SUCCESS** for main SHA `e9231d0228723e9eb337a728008d161146ca03c8`. This publishes SHA-tagged build artifacts; **it does not show production was deployed**.
+- `main` returned `protected:false`. Repository administrator must configure branch protection or rulesets separately ([#170](https://github.com/vyborovamaria3-maker/claude-project/issues/170)); this repository code change **cannot** install those settings.
+
+**Safe operator sequence (requires verified host ownership and access; NOT executed by this audit):**
+
+1. Using a trusted cloud provider console (NOT the SSH connection displaying the warning), verify the host identity, intended DNS/IP/port, and whether a planned host-key rotation or server rebuild occurred. Treat an unexplained changed SSH host key as a potential incident and investigate before proceeding.
+2. On that trusted console, read the exact host public key and calculate `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256`. Compare against a separately trusted record. Do not use `ssh-keyscan` as evidence of authenticity or disable `StrictHostKeyChecking`.
+3. Only after the operator confirms a legitimate rotation, update **both** scoped GitHub Secrets `SERVER_SSH_KNOWN_HOSTS` (correct `[hostname]:port` format when port is not 22) and `SERVER_SSH_HOST_KEY_SHA256`. Remove the stale conflicting key from the secret contents; do not blindly delete all SSH trust entries.
+4. Run `SSH connection check` manually on `main`. Capture run URL and sanitized result; verify it uses the pinned SSH helper and the approved target.
+5. Run `POTAPoff backup` manually. Check its exit code and location of a completed, checksum-verified backup (no paths, credentials or archive contents in public issue comments).
+6. On the trusted host, run `verify-backup-restore.sh` against the approved completed backup. It restores into a *disposable no-network Docker* PostgreSQL instance, not into production. Preserve a sanitized checksum/row-count/result summary, and additionally cover independent X/TG PostgreSQL and chain SQLite stores; these are **not** backed up by the POTAPoff server workflow automatically.
+7. Only then consider a controlled deployment using an exact reviewed main SHA with a documented rollback, current Security Gates, and a production smoke test. Verify which `workflow_run` triggers/approvals actually fired; a successful `POTAPoff release images` workflow is not permission to claim deployment succeeded.
+
+**Scoped prevention change:** the release-images workflow now ignores **documentation-only pushes** under `docs/**` and `**/*.md(x)`. A mixed docs + code/config/workflow push still triggers the existing main/CI/image gates. `workflow_dispatch` remains available for an explicitly authorized main release. This removes unnecessary production image publication from readme/architecture-only merges, but does **not** fix the SSH trust incident or restore backups by itself.
+
+**Required outcome:** [#172](https://github.com/vyborovamaria3-maker/claude-project/issues/172) stays OPEN until real backup **and restore** evidence exists; do not close [#175](https://github.com/vyborovamaria3-maker/claude-project/issues/175) based only on synthetic CI or published images.
+
+
+### Release SHA drift guard for docs-only pushes
+
+The release trigger filter must be paired with the production deploy SHA contract. When image build for code commit **A** finishes after a docs-only commit **B** (current main), GitHub's `workflow_run` uses the default-branch `GITHUB_SHA=B`, while the successful release event carries `head_sha=A`. It would be unsafe either to deploy images tagged `B` (which do not exist) or to allow arbitrary code drift.
+
+`.github/scripts/verify-release-sha-drift.sh` verifies live `origin/main` over a fresh fetch, that `A` is an ancestor of both the event SHA and current main, and that all final changed paths from `A` to current main match the **same narrow documentation-only allowlist** as the release trigger (`docs/**`, `*.md`, `*.mdx`). A non-documentation change **fails closed**. Manual production dispatch requires exact equality between event, release and current main (the operator must first create reviewed images for the current SHA). If a production event follows a published release with docs-only changes, its deploy job checks out **A**, loads image tags `:A`, stages admin artifact as `A`, and invokes the remote script with **A** — never with `B`.
+
+The check is repeated before accessing production and immediately before invoking the remote deploy script. Synthetic local-Git tests cover A→B(docs), A→B(docs)→C(docs), code drift, mixed docs/code, invalid SHA, non-main and manual mode. These tests **do not** invoke production or prove that SSH, external backups or real deploy succeeded. Concurrent code commits *after the final guard but before the remote deploy completes* are an inherent TOCTOU window; the running deployment remains pinned to the exact reviewed release artifacts. For stronger rollout synchronization, require operator-controlled deployment locks / environment approval and verify deployed SHA explicitly.
+
+Production SSH recovery, real backup/restore, and main branch protection remain operator/admin-owned P0 issues; this guard neither changes their permissions nor bypasses pinned keys.
+
+
+### Production auto-deploy safety switch (default off)
+
+The `POTAPoff production deploy` `workflow_run` path is intentionally **disabled by default**. An automatically completed release build may start production only when repository Actions variable `POTAPOFF_AUTODEPLOY_ENABLED` is exactly the string `true` (the job-level `require-main.if` checks this along with the successful main-branch release). If the variable is absent, `false`, or any other value, all dependent jobs are skipped and production SSH credentials are not accessed. Publishing GHCR artifacts is never deployment authorization on its own.
+
+**Operator approval sequence:** confirm the genuine SSH host fingerprint through an independent trusted channel; repair pinned GitHub Secrets without disabling strict checking; successfully run manual SSH check, production backup, disposable verified product/admin restore, and production predeploy and smoke tests; configure required `main` branch reviews and repository/environment protection. **Only then** explicitly set `POTAPOFF_AUTODEPLOY_ENABLED=true` under GitHub Settings → Secrets and variables → Actions → Variables (with suitable environment/repository control and independent review). Remove/disable the variable to pause further automatic deployments. `workflow_dispatch` remains available for an operator's intentional manual deployment, still subject to strict release SHA/SSH/predeploy checks.
+
+Until that approval, merging release-workflow corrections can still publish images, **but must not attempt automatic production deployment**.

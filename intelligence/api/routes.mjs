@@ -35,7 +35,7 @@ export function parseApiRequest(raw,now=new Date()){
     if(url.search)throw new TypeError("unexpected_query");
     return {kind:"health"};
   }
-  const match=/^\/api\/intelligence\/v1\/tokens\/([^/]+)\/(timeline|links|swap-evidence)$/.exec(url.pathname);
+  const match=/^\/api\/intelligence\/v1\/tokens\/([^/]+)\/(timeline|links|swap-evidence|evidence)$/.exec(url.pathname);
   if(!match)return null;
   let tokenId;
   try{tokenId=decodeURIComponent(match[1]);}
@@ -131,6 +131,31 @@ export async function queryTokenApi(pool,request){
       scope:"intelligence_destination_database_only",
       sourceCollectorsChecked:false,
       historicalCompleteness:"unknown",
+    };
+  }
+  if(request.kind==="evidence"){
+    // Two independent evidence contracts, one validated canonical ID and
+    // identical as-of boundaries. Do not misrepresent raw Blockchain swap
+    // observations as verified social mentions, finalized trades or PnL.
+    // Independent bounded pages and truncation keep provenance intact.
+    const [linkRows,swapRows]=await Promise.all([
+      queryActiveTokenLinks(pool,request.tokenId,
+        request.occurredBefore,request.knownAt,request.limit+1),
+      queryActiveBlockchainSwapEvidence(pool,request.tokenId,
+        request.occurredBefore,request.knownAt,request.limit+1),
+    ]);
+    return {
+      ...responseBase(request,[],linkRows.length>request.limit||swapRows.length>request.limit),
+      socialLinks:linkRows.slice(0,request.limit).map(row=>normalizeLink(row,request.tokenId)),
+      blockchainSwapEvidence:swapRows.slice(0,request.limit)
+        .map(row=>normalizeSwapEvidence(row,request.tokenId)),
+      sourceScope:"separate_social_and_chain_evidence",
+      independentLimitPerSourceType:request.limit,
+      socialLinksTruncated:linkRows.length>request.limit,
+      blockchainSwapEvidenceTruncated:swapRows.length>request.limit,
+      editDeleteCoverage:"not_guaranteed_for_legacy_source_history",
+      blockchainFinality:"not_independently_verified",
+      tradeStatus:"not_a_confirmed_trade_tape",
     };
   }
   if(request.kind==="timeline"){
