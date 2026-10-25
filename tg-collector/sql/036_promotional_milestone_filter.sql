@@ -1,6 +1,6 @@
 -- Screening is source-level, not destructive message deletion. Each source
 -- gets one bounded preview of up to 120 latest public posts before backfill.
--- Existing sources are screened on their first post-migration worker turn.
+-- Screening runs only with TG_PROMOTIONAL_SCREENING_ENABLED=true.
 ALTER TABLE tg_sources
   ADD COLUMN IF NOT EXISTS spam_kind TEXT
     CONSTRAINT tg_sources_spam_kind_check

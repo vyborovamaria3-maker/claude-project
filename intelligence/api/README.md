@@ -12,7 +12,7 @@
 - Нет CORS и поддержки OPTIONS/POST. Возвращаются `Cache-Control: no-store`, `nosniff`, запрет embedding и `Referrer-Policy: no-referrer`.
 - Ограничены 60 запросов в минуту на процесс, 8 параллельных, 10 секунд на запрос и 5 секунд серверного PostgreSQL statement timeout.
 - Доступ только к **отдельной базе Intelligence**, через `INTELLIGENCE_DATABASE_URL`. В рабочем окружении DB-роль должна иметь только `SELECT` на нужные представления/таблицы, **не** доступ к источникам. В соединении включён `default_transaction_read_only=on`.
-- До запуска требуются миграции Intelligence **001–006 и 008**, включая Feature Store (003), token links (004), swap evidence revisions (005), кросс-платформенные таблицы (006) и историю статусов оповещений (008). Миграция 007 нужна только для pgvector embeddings. Для существующих оповещений история начинается с момента применения 008; более ранние переходы восстановить нельзя.
+- Базовый API требует миграции **001, 002, 004, 005**. При INTELLIGENCE_CROSS_PLATFORM_ENABLED=true дополнительно требуются **003, 006, 008, 009**. Миграция 007 нужна только для pgvector embeddings. История статусов начинается с применения 008; прежние переходы восстановить нельзя.
 - Ошибки запроса/базы обезличены: ни SQL, ни DSN, ни сообщение Twitter/Telegram, ни тело сырой транзакции, ни RPC provider response не возвращаются и не печатаются.
 - Все запросы используют канонический `solana:<full-mint>` и строгие UTC-временные границы. SQL использует параметризацию существующего Intel слоя.
 
@@ -66,7 +66,7 @@ npm run api:local
 
 ## Cross-platform analytics routes (migrations 006 and 008)
 
-Migration 003 (Feature Store) and migration 006 (cross-platform analytics) are now required by readiness. Migration 007 is optional for API startup and is required only for pgvector embeddings.
+Migration 003 (Feature Store), 006 (cross-platform analytics), 008 and 009 are required only when INTELLIGENCE_CROSS_PLATFORM_ENABLED=true (default false). Migration 007 is optional for API startup and is required only for pgvector embeddings.
 
 | Method | Endpoint | Required query | Purpose |
 | --- | --- | --- | --- |
@@ -82,7 +82,7 @@ These endpoints return normalized metrics only, not raw Telegram messages, tweet
 Blockchain semantics: `chainTransactions` counts normalized `chain_transaction` events. `chainSwapEvidenceCount` counts only currently consistent, supported wallet/signature revisions known by `asOf`; it is not a confirmed settled-trade count. `chainTrades` is derived only from explicit `trade_executed` Timeline events. `chainVolumeUsd` stays null unless every counted trade has a valid numeric volume; coverage metadata alone cannot prove that Timeline mirrors the settled trade tape. `firstTradeAt` remains null when no explicit trade event is available.
 # Collector-backed AI routes
 
-Migration009 is required for the current API readiness check. `GET /api/intelligence/v1/ai?asOf=<UTC>&source=x` reads typed stored results, including unattributed source messages. The token-specific `/tokens/<id>/ai` route requires source-backed token attribution and respects invalidations. `/signals` includes only fact-grounded explanations saved by `asOf`. See [../AI_PIPELINE.md](../AI_PIPELINE.md) for execution and secret configuration. Raw message text is not returned.
+Migration 009 is required when cross-platform routes are explicitly enabled. `GET /api/intelligence/v1/ai?asOf=<UTC>&source=x` reads typed stored results, including unattributed source messages. The token-specific `/tokens/<id>/ai` route requires source-backed token attribution and respects invalidations. `/signals` includes only fact-grounded explanations saved by `asOf`. See [../AI_PIPELINE.md](../AI_PIPELINE.md) for execution and secret configuration. Raw message text is not returned.
 
 ## ARCH-AI-01 — отделённый read-only контракт для внешнего ИИ
 
