@@ -14,6 +14,7 @@ on:
       - "solana-launcher/scripts/blockchain-fee-*.cjs"
       - "solana-launcher/scripts/blockchain-collector-baseline.cjs"
       - "solana-launcher/scripts/blockchain-dex-adversarial-test.cjs"
+      - "solana-launcher/scripts/blockchain-four-routes-regression.cjs"
       - "solana-launcher/scripts/blockchain-wallet-cache*.cjs"
       - "solana-launcher/scripts/blockchain-collector-regression.mjs"
       - "solana-launcher/scripts/blockchain-inventory-decoder.cjs"
@@ -61,4 +62,5 @@ jobs:
       - run: npm ci --legacy-peer-deps --no-audit --no-fund
       - run: npm run blockchain:test
       - run: npm run blockchain:integration-test
+      - run: python3 -m pip install pyarrow==25.0.1
       - run: python3 -m unittest scripts/test_import_solana_memecoin_dataset.py

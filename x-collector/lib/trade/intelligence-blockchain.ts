@@ -3,7 +3,7 @@ import {z} from 'zod';
 import type {PoolClient} from 'pg';
 import {resolveEntity,link} from './intelligence-store';
 import {normalizeAddress,normalizeTransactionHash} from '../intelligence/chain-adapter';
-const Transaction=z.object({chain:z.enum(['ethereum','solana','bitcoin']),hash:z.string().min(1).max(200),from:z.string(),to:z.string(),token:z.string().nullable(),amount:z.string().regex(/^\d+(\.\d+)?$/).max(100),timestamp:z.string().datetime(),source:z.string().url(),payload:z.record(z.unknown())});
+const Transaction=z.object({chain:z.enum(['ethereum','solana','bitcoin']),hash:z.string().min(1).max(200),from:z.string(),to:z.string(),token:z.string().nullable(),amount:z.string().regex(/^\d+(\.\d+)?$/).max(100),timestamp:z.string().datetime(),source:z.string().url(),payload:z.record(z.string(), z.unknown())});
 function decimal(value:string){const [whole,fraction='']=value.split('.');return whole.replace(/^0+(?=\d)/,'')+(fraction.replace(/0+$/,'')?'.'+fraction.replace(/0+$/,''):'');}
 // Caller supplies a confirmed chain observation, not a wallet string from a bio.
 export async function ingestTransaction(c:Pick<PoolClient,'query'>,input:unknown){

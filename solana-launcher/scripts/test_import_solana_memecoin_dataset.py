@@ -4,6 +4,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 MODULE_PATH = Path(__file__).with_name("import_solana_memecoin_dataset.py")
 SPEC = importlib.util.spec_from_file_location("memecoin_importer", MODULE_PATH)
@@ -147,6 +148,59 @@ class DatasetImporterTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual((saved[0],saved[1]), ("1" * 64,1))
         self.assertEqual(self.conn.execute("SELECT amount_usd FROM external_memecoin_trades").fetchone()[0], 1.0)
+
+    def test_backup_is_readonly_verified_and_preserves_existing_destination(self):
+        self.conn.commit()
+        backup = self.db_path.with_name("backup.db")
+        before = self.db_path.read_bytes()
+        IMPORTER.backup_database(self.db_path, backup)
+        saved = sqlite3.connect(backup)
+        try:
+            self.assertEqual(saved.execute("PRAGMA quick_check").fetchone()[0], "ok")
+            self.assertEqual(saved.execute("SELECT signature FROM token_trades").fetchone()[0], "real-signature")
+        finally:
+            saved.close()
+        self.assertEqual(self.db_path.read_bytes(), before)
+        with self.assertRaises(FileExistsError):
+            IMPORTER.backup_database(self.db_path, backup)
+
+    def test_concurrent_backup_creator_is_never_overwritten(self):
+        backup = self.db_path.with_name("racing-backup.db")
+        original_exists = Path.exists
+        raced = False
+
+        def exists(candidate):
+            nonlocal raced
+            if candidate == backup and not raced:
+                raced = True
+                backup.write_bytes(b"other-process-backup")
+                return False
+            return original_exists(candidate)
+
+        with patch.object(Path, "exists", exists):
+            with self.assertRaises(FileExistsError):
+                IMPORTER.backup_database(self.db_path, backup)
+        self.assertEqual(backup.read_bytes(), b"other-process-backup")
+
+    def test_real_parquet_streaming_preserves_source_rows_and_hash(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        rows = [{"wallet": "w", "token_address": "m", "side": "buy",
+                 "amount_usd": 1.5, "ts": self.now}] * 2
+        source = self.db_path.with_name("trades-000.parquet")
+        pq.write_table(pa.Table.from_pylist(rows), source, row_group_size=1)
+        info = IMPORTER.parquet_info(source)
+        self.assertEqual(info["rows"], 2)
+        report = IMPORTER.import_file_rows(
+            self.conn, self.dataset_id, source.name,
+            IMPORTER.iter_parquet_rows(source, batch_size=1), info["sha256"], 2, self.now,
+        )
+        self.assertEqual(report["imported_rows"], 2)
+        self.assertEqual(IMPORTER.sha256_file(source), info["sha256"])
+        self.assertEqual([row[0] for row in self.conn.execute(
+            "SELECT source_row FROM external_memecoin_trades ORDER BY source_row"
+        )], [0, 1])
 
 
 if __name__ == "__main__":

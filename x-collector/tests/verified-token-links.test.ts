@@ -7,6 +7,7 @@ import {
   buildVerifiedXTweetTokenLinkOutboxEvent,
   emitXVerifiedTokenLinkOutbox,xVerifiedTokenLinksEnabled,
   emitXTokenLinksInvalidation,buildXTokenLinksInvalidatedOutboxEvent,
+  effectiveXTokenSourceRevision,
 } from "../src/collector/persistence/verified-token-links";
 
 const mint="So11111111111111111111111111111111111111112";
@@ -84,6 +85,46 @@ test("X verified link writer is offline by default and uses caller transaction o
     if(oldLink===undefined)delete process.env.X_INTELLIGENCE_TOKEN_LINKS_ENABLED;
     else process.env.X_INTELLIGENCE_TOKEN_LINKS_ENABLED=oldLink;
   }
+});
+
+test("X effective persisted tweet source revision invalidates same-body clock or author corrections",()=>{
+  const previous={
+    text,author_id:input.authorId,posted_at:String(input.postedAt.getTime()),
+  };
+  const identical={text,authorId:input.authorId,postedAt:input.postedAt.getTime()};
+  assert.deepEqual(effectiveXTokenSourceRevision(previous,identical),{
+    changed:false,authorId:input.authorId,postedAt:input.postedAt.getTime(),
+  });
+  // Collector COALESCEs these optional values during UPSERT. A new null
+  // must not create a phantom edit, but a previous timestamp remains bound.
+  assert.deepEqual(effectiveXTokenSourceRevision(previous,{
+    ...identical,authorId:null,postedAt:null,
+  }),{changed:false,authorId:input.authorId,postedAt:input.postedAt.getTime()});
+  for(const incoming of [
+    {...identical,text:text+" changed"},
+    {...identical,authorId:"1234567890123456"},
+    {...identical,postedAt:input.postedAt.getTime()+1000},
+  ]){
+    assert.equal(effectiveXTokenSourceRevision(previous,incoming).changed,true,
+      "changed persisted revision must retract every previously verified mint");
+  }
+  const clockOnly=effectiveXTokenSourceRevision(previous,{
+    ...identical,postedAt:input.postedAt.getTime()+1000,
+  });
+  assert.equal(clockOnly.postedAt,input.postedAt.getTime()+1000);
+  const authorOnly=effectiveXTokenSourceRevision(previous,{
+    ...identical,authorId:"1234567890123456",
+  });
+  assert.equal(authorOnly.authorId,"1234567890123456");
+  assert.equal(effectiveXTokenSourceRevision({
+    text,author_id:null,posted_at:null,
+  },{text,authorId:null,postedAt:null}).changed,false);
+  assert.equal(effectiveXTokenSourceRevision({
+    text,author_id:null,posted_at:null,
+  },{text,authorId:input.authorId,postedAt:input.postedAt.getTime()}).changed,true);
+  assert.throws(()=>effectiveXTokenSourceRevision(previous,{
+    ...identical,postedAt:Number.MAX_SAFE_INTEGER,
+  }),/Invalid X source publication clock/);
 });
 
 test("X source verified link is atomic and deduplicated in PGlite",async()=>{

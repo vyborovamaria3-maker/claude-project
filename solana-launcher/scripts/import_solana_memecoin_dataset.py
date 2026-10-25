@@ -505,13 +505,27 @@ def backup_database(db_path: Path, backup_path: Path) -> None:
     if db_path.resolve() == backup_path.resolve():
         raise ValueError("Backup path must differ from database path")
     backup_path.parent.mkdir(parents=True, exist_ok=True)
-    source = sqlite3.connect(str(db_path), timeout=30)
-    target = sqlite3.connect(str(backup_path), timeout=30)
+    # Reserve exclusively: a concurrent backup creator must never be overwritten.
+    with backup_path.open("xb"):
+        pass
+    source = target = None
     try:
+        source = sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30)
+        target = sqlite3.connect(str(backup_path), timeout=30)
         source.backup(target)
+        if target.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+            raise RuntimeError("Backup integrity check failed")
+    except BaseException:
+        if target is not None:
+            target.close()
+            target = None
+        backup_path.unlink(missing_ok=True)
+        raise
     finally:
-        target.close()
-        source.close()
+        if target is not None:
+            target.close()
+        if source is not None:
+            source.close()
 
 
 def canonical_counts(conn: sqlite3.Connection) -> dict[str, int]:
