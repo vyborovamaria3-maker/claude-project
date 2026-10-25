@@ -263,7 +263,7 @@ test("runtime source filter -> context -> gateway failure/retry -> storage -> re
   await f.destination.query("UPDATE ai_message_attempts SET next_attempt_at=clock_timestamp()-INTERVAL '1 second' WHERE attempts=1");
   assert.equal((await runtime.run('tg')).analyzed,1);assert.equal(calls,3,'retry only the failed task');
   const saved=(await f.destination.query('SELECT result FROM ai_message_analyses')).rows;assert.equal(saved.length,2);
-  const apiToken='synthetic-runtime-api-token-1234567890';api=createIntelligenceApi({pool:f.destination,token:apiToken});await new Promise(resolve=>api.listen(0,'127.0.0.1',resolve));
+  const apiToken='synthetic-runtime-api-token-1234567890';api=createIntelligenceApi({crossPlatformEnabled:true,pool:f.destination,token:apiToken});await new Promise(resolve=>api.listen(0,'127.0.0.1',resolve));
   const base=`http://127.0.0.1:${api.address().port}/api/intelligence/v1/ai`;
   const response=await fetch(base+'?source=tg&asOf='+new Date().toISOString(),{headers:{Authorization:'Bearer '+apiToken}});
   assert.equal(response.status,200);const body=await response.json();assert.equal(body.items.length,2);

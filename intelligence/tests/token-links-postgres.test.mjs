@@ -218,7 +218,12 @@ test("real PostgreSQL: late arrivals, edit retractions, historical as-of and rep
 
     const changes=await pool.query(`SELECT reason,count(*)::integer AS n
       FROM analytics_invalidation_queue GROUP BY reason ORDER BY reason`);
-    assert.ok(changes.rows.some(row=>row.reason==="link_invalidated"&&row.n===1));
+    assert.ok(changes.rows.some(row=>row.reason==="link_invalidated"&&row.n===2));
+    const retractions=await pool.query(`SELECT source_system,count(*)::integer AS n
+      FROM analytics_invalidation_queue WHERE reason='link_invalidated'
+      GROUP BY source_system ORDER BY source_system`);
+    assert.deepEqual(retractions.rows,[{source_system:"tg",n:1},{source_system:"x",n:1}],
+      "one recomputation per independent source retraction; duplicates do not enqueue again");
     assert.equal((await pool.query("SELECT count(*)::integer AS n FROM analytics_invalidation_log")).rows[0].n,
       (await pool.query("SELECT count(*)::integer AS n FROM analytics_invalidation_queue")).rows[0].n);
   }finally{
