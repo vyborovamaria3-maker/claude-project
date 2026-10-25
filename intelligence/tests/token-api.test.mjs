@@ -286,7 +286,7 @@ test("HTTP API enforces Bearer, no cookie/CORS, safe responses and read-only que
     const backtests=await fetch(origin+"/api/intelligence/v1/backtest?signal=attention_score",{headers:headers()});
     assert.equal(backtests.status,200);
     assert.equal((await backtests.json()).items[0].metrics.sampleSize,100);
-    assert.equal(pool.logs.length,10);
+    assert.equal(pool.logs.length,12);
     assert.equal(pool.logs[0].params[0],id);
     assert.equal(pool.logs[0].params[3],2,"fetch limit+1 for truncation detection");
   });

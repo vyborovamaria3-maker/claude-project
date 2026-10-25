@@ -138,3 +138,8 @@ Memecoin Intelligence, admin/подписки, raw source DBs, аккаунты 
 Это требует самостоятельной политики доступа и отдельного релизного gate.
 `historicalCompleteness=unknown` и `sourceCollectorLiveness=not_checked`
 не означают отсутствие активности в источниках.
+
+Cross-platform routes require INTELLIGENCE_CROSS_PLATFORM_ENABLED=true (default false).
+Only this opt-in requires migrations 003, 006, 008 and 009; the original API keeps its original
+readiness contract. On-demand provider execution has a separate explicit opt-in and requires the
+ordinary service credential. The aggregate-only AI credential cannot start paid work.

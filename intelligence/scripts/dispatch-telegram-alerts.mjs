@@ -48,7 +48,7 @@ async function main() {
       SET status='sending',delivery_attempts=alert.delivery_attempts+1,delivery_attempted_at=NOW()
       FROM picked WHERE alert.alert_id=picked.alert_id
       RETURNING alert.alert_id,alert.canonical_token_id,alert.alert_type,alert.severity,
-        alert.triggered_at,alert.score,alert.score_version,alert.evidence_refs`,[limit]);
+        alert.triggered_at,alert.score,alert.score_version,alert.evidence_refs,alert.delivery_attempts`,[limit]);
       rows=claimed.rows;
       await client.query("COMMIT");
     } catch(error) {
@@ -73,10 +73,10 @@ async function main() {
         sent=false;
       }
       if(sent) {
-        await pool.query("UPDATE token_alerts SET status='delivered',delivered_at=NOW() WHERE alert_id=$1 AND status='sending'",[row.alert_id]);
+        await pool.query("UPDATE token_alerts SET status='delivered',delivered_at=NOW() WHERE alert_id=$1 AND status='sending' AND delivery_attempts=$2",[row.alert_id,row.delivery_attempts]);
         delivered++;
       } else {
-        await pool.query("UPDATE token_alerts SET status='open' WHERE alert_id=$1 AND status='sending'",[row.alert_id]);
+        await pool.query("UPDATE token_alerts SET status='open' WHERE alert_id=$1 AND status='sending' AND delivery_attempts=$2",[row.alert_id,row.delivery_attempts]);
         failed++;
       }
     }
