@@ -64,3 +64,12 @@ test('request parser validates JSON shapes and stops a chunked body at its limit
  await assert.rejects(readTokenAnalysisRequest({headers:new Headers(),body}),/request_too_large/);
  assert.equal(cancelled,true);
 });
+test('request-only panel does not depend on legacy sources and never analyzes on mount',async()=>{
+ const panel=await readFile(new URL('../components/trade/SocialIntelligencePanel.tsx',import.meta.url),'utf8');
+ const page=await readFile(new URL('../app/trade/analysis/social/page.tsx',import.meta.url),'utf8');
+ const start=panel.indexOf('      if(requestOnly){'),end=panel.indexOf('      const { x: xParams',start),branch=panel.slice(start,end);
+ assert.ok(start>0);assert.match(branch,/body:JSON.stringify\(\{mint:contract\}\)/);assert.match(branch,/return;/);
+ assert.ok(start<panel.indexOf('const chainPromise'));
+ assert.match(panel,/if \(!requestOnly && initialMint/);assert.match(panel,/if\(requestOnly\)return;/);
+ assert.match(panel,/requestOnly && <TokenRequestPanel/);assert.match(page,/requestOnly=\{process.env.INTELLIGENCE_AI_ON_DEMAND_ENABLED === "true"\}/);
+});

@@ -63,7 +63,7 @@ import {
 
 const BACKEND = (process.env.NEXT_PUBLIC_BACKEND_URL || "/fastapi").replace(/\/$/, "");
 
-export default function SocialIntelligencePanel() {
+export default function SocialIntelligencePanel({ requestOnly = false }: { requestOnly?: boolean } = {}) {
   const router = useRouter();
   const params = useSearchParams();
   const initialMintRef = useRef(params.get("mint")?.trim() || "");
@@ -76,7 +76,7 @@ export default function SocialIntelligencePanel() {
   const [tg, setTg] = useState<SocialTimeline | null>(null);
   const [market, setMarket] = useState<Market | null>(null);
   const [chain, setChain] = useState<ChainAnalysis | null>(null);
-  const [ai, setAi] = useState<AiEnvelope | null>(null);
+  const [ai, setAi] = useState<TokenRequestEnvelope | null>(null);
   const [snapshot, setSnapshot] = useState<AnalysisSnapshot | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [loading, setLoading] = useState(false);
@@ -86,10 +86,11 @@ export default function SocialIntelligencePanel() {
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
+    if(requestOnly)return;
     void fetchJson<{ items: Channel[] }>(`${BACKEND}/api/v1/telegram/channels?limit=100`)
       .then((value) => setChannels(Array.isArray(value.items) ? value.items : []))
       .catch(() => {});
-  }, []);
+  }, [requestOnly]);
 
   const run = useCallback(
     async (next: string) => {
@@ -116,6 +117,20 @@ export default function SocialIntelligencePanel() {
       setAi(null);
       setSnapshot(null);
       router.replace(`/trade/analysis/social?mint=${encodeURIComponent(contract)}`, { scroll: false });
+
+      if(requestOnly){
+        try{
+          const answer=await fetchJson<TokenRequestEnvelope>("/api/trade/social-ai",controller.signal,{
+            method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({mint:contract}),
+          });
+          if(!controller.signal.aborted)setAi(answer);
+        }catch{
+          if(!controller.signal.aborted)setError("Не удалось подготовить проверенный ответ. Проверьте адрес и повторите запрос.");
+        }finally{
+          if(!controller.signal.aborted){setLoading(false);setChainLoading(false);}
+        }
+        return;
+      }
 
       const { x: xParams, tg: tgParams } = buildSocialSourceParams(contract, options);
 
@@ -210,11 +225,11 @@ export default function SocialIntelligencePanel() {
 
       if (!controller.signal.aborted) setLoading(false);
     },
-    [channels, options, router],
+    [channels, options, router, requestOnly],
   );
 
   useEffect(() => {
-    if (initialMint && MINT_RE.test(initialMint)) void run(initialMint);
+    if (!requestOnly && initialMint && MINT_RE.test(initialMint)) void run(initialMint);
     return () => abortRef.current?.abort();
     // Initial URL mint is intentionally analyzed only once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -236,26 +251,26 @@ export default function SocialIntelligencePanel() {
         <div>
           <div className="flex items-center gap-2">
             <Network className="h-5 w-5 text-primary" />
-            <h1 className="text-lg font-semibold text-content">Social Intelligence · X + Telegram + Graph + Qwen</h1>
+            <h1 className="text-lg font-semibold text-content">{requestOnly ? "Анализ токена · Twitter + Telegram + блокчейн" : "Social Intelligence · X + Telegram + Graph + Qwen"}</h1>
           </div>
-          <p className="mt-1 text-xs text-content-muted">Все deterministic-параметры, entity graph, cross-platform evidence и AI-гипотезы в одном snapshot.</p>
+          <p className="mt-1 text-xs text-content-muted">{requestOnly ? "Анализ запускается только по кнопке и использует собранные данные трёх источников." : "Все deterministic-параметры, entity graph, cross-platform evidence и AI-гипотезы в одном snapshot."}</p>
         </div>
         {mint && <div className="font-mono text-[10px] text-content-faint">{mint.slice(0, 8)}…{mint.slice(-7)}</div>}
       </header>
 
       <form onSubmit={submit} className="surface-panel rounded-2xl border border-bg-border p-4">
-        <div className="grid gap-3 lg:grid-cols-[1.5fr_.55fr_.55fr_.45fr]">
+        <div className={requestOnly ? "grid gap-3 lg:grid-cols-[1fr_auto]" : "grid gap-3 lg:grid-cols-[1.5fr_.55fr_.55fr_.45fr]"}>
           <Field label="Solana mint / CA">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-content-faint" />
               <input value={query} onChange={(event) => setQuery(event.target.value)} className={`${siteDesign.controls.inputClassName} pl-9 font-mono`} placeholder="Вставь contract" />
             </div>
           </Field>
-          <Field label="Ticker"><input value={options.symbol} onChange={(event) => setOptions((value) => ({ ...value, symbol: event.target.value }))} className={siteDesign.controls.inputClassName} placeholder="BONK" /></Field>
-          <Field label="Период"><select value={options.lookback} onChange={(event) => setOptions((value) => ({ ...value, lookback: event.target.value as Lookback }))} className={siteDesign.controls.inputClassName}>{[["1", "1 час"], ["6", "6 часов"], ["24", "24 часа"], ["72", "3 дня"], ["168", "7 дней"], ["720", "30 дней"], ["all", "Всё"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
+          {!requestOnly && <><Field label="Ticker"><input value={options.symbol} onChange={(event) => setOptions((value) => ({ ...value, symbol: event.target.value }))} className={siteDesign.controls.inputClassName} placeholder="BONK" /></Field>
+          <Field label="Период"><select value={options.lookback} onChange={(event) => setOptions((value) => ({ ...value, lookback: event.target.value as Lookback }))} className={siteDesign.controls.inputClassName}>{[["1", "1 час"], ["6", "6 часов"], ["24", "24 часа"], ["72", "3 дня"], ["168", "7 дней"], ["720", "30 дней"], ["all", "Всё"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field></>}
           <div className="flex items-end"><button disabled={loading} className={`${siteDesign.controls.primaryActionClassName} w-full`}>{loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radar className="h-4 w-4" />} Анализ</button></div>
         </div>
-        <details className="mt-3">
+        {!requestOnly && <details className="mt-3">
           <summary className="cursor-pointer text-[11px] font-semibold text-content-muted">Фильтры источников</summary>
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
             <Field label="X posts"><input type="number" min={10} max={100} value={options.xLimit} onChange={(event) => setOptions((value) => ({ ...value, xLimit: Math.max(10, Math.min(100, numberOr(event.target.value))) }))} className={siteDesign.controls.inputClassName} /></Field>
@@ -265,13 +280,14 @@ export default function SocialIntelligencePanel() {
             <Check label="Exclude suspicious X" value={options.xExcludeSuspicious} set={(checked) => setOptions((value) => ({ ...value, xExcludeSuspicious: checked }))} />
             <Check label="Explicit TG calls" value={options.tgExplicitCallsOnly} set={(checked) => setOptions((value) => ({ ...value, tgExplicitCallsOnly: checked }))} />
           </div>
-        </details>
+        </details>}
       </form>
 
       {error && <Notice tone="danger" text={error} />}
       {warnings.length > 0 && <Notice tone="warning" text={warnings.join(" · ")} />}
 
-      {(x || tg) && <>
+      {requestOnly && <TokenRequestPanel ai={ai} loading={loading} error={error} />}
+      {!requestOnly && (x || tg) && <>
         <MainFindings derived={derived} x={x} tg={tg} chain={chain} market={market} snapshot={snapshot} />
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 xl:grid-cols-9">
           <Kpi label="Social score" value={score(derived.socialScore)} icon={<Gauge />} />
@@ -298,6 +314,30 @@ export default function SocialIntelligencePanel() {
       </>}
     </div>
   );
+}
+
+type TokenRequestEnvelope = AiEnvelope & {tokenAnalysis?:{
+  asOf:string;cached:boolean;facts:Record<string,string|number|null>;
+  sourceStatus:Record<string,{queried:boolean;truncated:boolean}>;
+}};
+function TokenRequestPanel({ai,loading,error}:{ai:TokenRequestEnvelope|null;loading:boolean;error:string|null}){
+ const report=ai?.tokenAnalysis;
+ return <section className="surface-panel rounded-2xl border border-bg-border p-4" data-testid="token-request-report">
+  <h2 className="text-sm font-semibold text-content">Ответ ИИ</h2>
+  <p className="mt-3 whitespace-pre-line text-sm leading-6 text-content-soft">{loading?"Читаем Twitter, Telegram и блокчейн. Готовим ответ…":error?"Ответ не получен. Повторный запрос запускается только по кнопке.":ai?.result?.summary||"Введите адрес токена и нажмите «Анализ»."}</p>
+  {report&&<>
+   <div className="mt-4 grid gap-3 sm:grid-cols-3">{[
+    ["x","Twitter","x.sampledMessages","Сообщений в выборке"],
+    ["tg","Telegram","tg.sampledMessages","Сообщений после фильтра"],
+    ["blockchain","Блокчейн","chain.sampledStoredTradeRows","Сохранённых записей сделок"],
+   ].map(([source,label,key,caption])=><div key={source} className="rounded-xl border border-bg-border p-3">
+    <h3 className="text-xs font-semibold text-content">{label}</h3>
+    <div className="mt-2 text-lg text-content">{report.sourceStatus[source]?.queried?report.facts[key]??"—":"—"}</div>
+    <p className="text-xs text-content-muted">{caption}{report.sourceStatus[source]?.truncated?" · выборка ограничена":""}</p>
+   </div>)}</div>
+   <p className="mt-3 text-xs text-content-faint">{report.cached?"Сохранённый ответ — нового обращения к ИИ не было.":"Ответ получен по вашему запросу."} Фоновый анализ выключен.</p>
+  </>}
+ </section>;
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
