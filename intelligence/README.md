@@ -3,7 +3,7 @@
 The Intelligence modules are built independently of collector databases.
 Only the test workflow opens a disposable PostgreSQL 16 instance.
 
-Migration order: 001_entity_registry.sql, 002_timeline.sql, optional 003_feature_store.sql, mandatory 004_token_link_observations.sql before source delivery. ARCH-06b revision events additionally require 005_blockchain_swap_evidence_revisions.sql before enabling Blockchain token events. Do not start the ETL supervisor against a target missing 004 (or 005 when ARCH-06b events are enabled).
+Migration order: 001_entity_registry.sql, 002_timeline.sql, 003_feature_store.sql, 004_token_link_observations.sql, 005_blockchain_swap_evidence_revisions.sql, then 006_cross_platform_analytics.sql and 008_alert_status_history.sql and 009_ai_analysis.sql, then 010_intelligence_governance.sql, 011_validation_preregistration.sql, 012_ai_shared_budget.sql, and 013_invalidation_retry_schedule.sql, followed by 014_privacy_evidence_indexes.sql. Migration 007_feature_embeddings_pgvector.sql is optional and requires pgvector on the PostgreSQL server. The analytics API requires 003, 004, 005, 006 and 008. Do not start the ETL supervisor against a target missing 004 (or 005 when ARCH-06b events are enabled).
 
 - Ingest RegistryEvent after claiming a source outbox event; source ACK only after
   destination transaction commits. Consumer runDeliveryBatch remains a bounded,
@@ -17,8 +17,11 @@ Migration order: 001_entity_registry.sql, 002_timeline.sql, optional 003_feature
   inputs are rejected. Duplicate identical snapshots are accepted as no-op;
   conflicting revisions require a NEW explicit feature version or new as_of.
 - A historical offline recomputation at an earlier as_of is NOT a proof that a
-  trading signal was actually available at that moment. A future production
-  backtest must separately use feature publication times and observed labels.
+  trading signal was actually available at that moment. API and backtest reads
+  also require snapshot/result creation timestamps to be no later than the
+  requested as_of; this intentionally excludes late backfills from historical
+  signal evaluation. A future production backtest must separately use feature
+  publication times and observed labels.
 
 CI builds the shared contract, event-outbox and Intelligence modules and tests
 PostgreSQL transaction/replay, timeline cutoffs and feature schema invariants.
@@ -30,6 +33,8 @@ Local commands (Node 22+):
   npm --prefix packages/contracts run check
   npm install --prefix packages/event-outbox --ignore-scripts --no-package-lock
   npm --prefix packages/event-outbox run check
+  npm install --prefix packages/ai-gateway --no-package-lock
+  npm --prefix packages/ai-gateway run check
   npm install --prefix intelligence --ignore-scripts --no-package-lock
   npm --prefix intelligence run check
 
@@ -126,3 +131,61 @@ not heartbeat-protected; keep its batch size small on slow destinations.
 Cross-source timeline identity remains blocked by the missing evidence-based
 token-link producer; the synthetic token-linked ARCH-03 integration test
 does not establish real token recognition.
+
+
+## Cross-platform analytics and API-backed AI
+
+The cross-platform layer is additive. It uses the existing entity registry and timeline and stores immutable point-in-time snapshots in token_daily_cross_platform. A missing source remains null unless an explicit complete record exists in source_coverage_windows; absence of events alone is not evidence of zero activity. Initial score formulas are heuristics, not validated trading predictors. Momentum remains null until valid interval z-scores are supplied.
+
+model_registry is the execution gate: intelligence/src/ai-analysis.ts only invokes a model with a matching task and status active. Provider API keys stay in the AI Gateway process environment and are never stored in PostgreSQL. packages/ai-gateway supports configured HTTPS OpenAI-compatible chat and embedding APIs; no local LLM is started or selected by the new Intelligence layer.
+
+Build/test order:
+```sh
+npm install --prefix packages/ai-gateway --no-package-lock
+npm --prefix packages/ai-gateway run check
+npm install --prefix packages/contracts --no-package-lock
+npm install --prefix packages/event-outbox --no-package-lock
+npm install --prefix intelligence --no-package-lock
+npm --prefix intelligence run check
+```
+
+A historical backtest requires explicit outcome labels in token_outcomes and valid source coverage. Example:
+```sh
+npm --prefix intelligence run backtest -- --signal attention_score --outcome price_2x_24h --from 2025-01-01 --to 2025-09-30 --threshold 2.0 --horizon-hours 24
+```
+The command fails when labels are missing or the complete outcome horizon has not elapsed; it prints cohort coverage counts instead of reporting selective precision. Statistical significance is not reported for repeated-token or overlapping random-control observations without an independent design. Migration 007 must be applied before using putFeatureEmbedding.
+
+Telegram legacy automatic mode requires migration 015 and a supervised `analyze-ai --source tg --watch` process with AI/source snapshot opt-in. It starts at current source high water, drains new observations with a durable transactional cursor and skips startup history. See AI_PIPELINE.md for timestamp polling limitations and configuration; collector startup alone does not activate AI.
+
+On-demand token analysis: migration 016 plus `INTELLIGENCE_AI_ON_DEMAND_ENABLED=true` enables authenticated empty-body POST `.../tokens/<encoded solana:mint>/analyze`. It reads the existing X/TG PostgreSQL stores and Solana SQLite token_trades cache for that mint only, makes at most one uncached AI attempt, verifies selected fact IDs and saves the report. Set the separate `INTELLIGENCE_AI_DATABASE_URL` writer and `INTELLIGENCE_AI_TOKEN_MODEL_ID`; keep background `INTELLIGENCE_AI_ENABLED`, ETL and supervisor opt-ins disabled for request-only operation. See AI_PIPELINE.md for bounds, source semantics and cache behavior.
+
+## Без сервера: локальный отчёт по одному Solana mint (2026-10-25)
+
+Для этого сценария **не нужен** production-сервер, публичный API, Telegram/X-аккаунт, Solana RPC или модель OpenAI. Только Node 22+ и установленные зависимости workspace; режим `--demo` также не требует PostgreSQL.
+
+```bash
+# Разрешённый демонстрационный сценарий: только маркированная СИНТЕТИЧЕСКАЯ фикстура.
+npm --prefix intelligence run token:report -- \
+  --mint So11111111111111111111111111111111111111112 --demo --json
+```
+
+Для чтения **собственной локальной тестовой** PostgreSQL-базы Intelligence с миграциями 001/002/004/005 и подтверждёнными source-qualified записями:
+
+```bash
+INTELLIGENCE_LOCAL_READ_ENABLED=true \
+INTELLIGENCE_DATABASE_URL=postgresql://localhost:5432/intelligence_test \
+npm --prefix intelligence run token:report -- \
+  --mint So11111111111111111111111111111111111111112 \
+  --known-at 2026-10-20T03:00:00Z \
+  --occurred-before 2026-10-19T22:00:00Z --limit 20 --json
+```
+
+Токен можно передать в сыром виде или как канонический `solana:<mint>`. Время задаётся **UTC**. Без `--known-at` берётся текущее локальное время вызова, `occurred-before` по умолчанию совпадает с ним. Для воспроизводимости указывайте оба явно.
+
+Защитные свойства: соединение **только с PostgreSQL loopback** (`localhost`, `127.0.0.1`, `::1`) и только с `INTELLIGENCE_LOCAL_READ_ENABLED=true`; обязательная валидация миграций, PostgreSQL `REPEATABLE READ READ ONLY` для совместного snapshot связей и timeline, строгий `as-of`, лимиты 1–100 и повторный allowlist полей вывода. Содержимое постов, private wallet IDs, SQL, credentials, дополнительные поля строк и исходные provider payload в отчёт не включаются. Ошибки соединения не печатают строку БД. Исходные коллекторы и Outbox вообще не читаются и не изменяются этой командой.
+
+В отчёте **разделены** проверенные источником связи X/TG с SPL mint и blockchain provider-parsed swap revisions. Последние **не доказывают финальность**, trade tape или PnL. Числа — только **ограниченные выборки**, не полная статистика. При пустом результате полнота покрытия всё равно `unknown`, отсутствие данных **не равно нулевой активности**. Никакая AI-модель не вызывается: `ai: not_run_no_external_model`. `--demo` маркируется `SYNTHETIC_FIXTURE_NO_DATABASE` и не считается результатом наблюдения реальных источников.
+
+Проверки: `npm --prefix intelligence test` запускает `tests/local-token-report.test.mjs` вместе с остальными Intelligence тестами; PG интеграционные проверки требуют только `INTELLIGENCE_TEST_DB_URL` для одноразовой тестовой БД. Реальная работа на аккаунтах X/TG, блокчейн-провайдерах и production без разрешения не запускается.
+
+Связанные задачи: [#173](https://github.com/vyborovamaria3-maker/claude-project/issues/173) — достоверное происхождение; [#177](https://github.com/vyborovamaria3-maker/claude-project/issues/177) — UX одного токена; [#176](https://github.com/vyborovamaria3-maker/claude-project/issues/176) — отдельный дизайн AI API. Черновики [#166](https://github.com/vyborovamaria3-maker/claude-project/pull/166) и [#167](https://github.com/vyborovamaria3-maker/claude-project/pull/167) **не включаются** автоматически.

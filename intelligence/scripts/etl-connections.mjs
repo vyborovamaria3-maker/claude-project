@@ -9,8 +9,8 @@ import {
  * Reuse exactly the same source connections for the finite CLI and the local
  * supervisor. Never run migrations or open provider / browser connections.
  */
-export function requiredEnv(name) {
-  const value=process.env[name]?.trim();
+export function requiredEnv(name,env=process.env) {
+  const value=env[name]?.trim();
   if(!value)throw new Error("missing required source/destination configuration: "+name);
   return value;
 }
@@ -75,9 +75,9 @@ export async function checkDestination(pool,options={}){
   }
 }
 
-export function destinationConnection(){
+export function destinationConnection(env=process.env){
   return new pg.Pool({
-    connectionString:requiredEnv("INTELLIGENCE_DATABASE_URL"),
+    connectionString:requiredEnv("INTELLIGENCE_DATABASE_URL",env),
     max:3,connectionTimeoutMillis:5000,
     query_timeout:30_000,statement_timeout:30_000,
   });

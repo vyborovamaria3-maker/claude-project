@@ -123,6 +123,15 @@ class Settings(BaseSettings):
     telegram_public_web_seed_database: str = Field(
         default="data/tgdataset/telegram_seed_database.json", alias="TG_PUBLIC_WEB_SEED_DATABASE"
     )
+    telegram_dataset_import_enabled: bool = Field(
+        default=True, alias="TG_DATASET_IMPORT_ENABLED"
+    )
+    telegram_public_web_dataset_paths: str = Field(
+        default="", alias="TG_PUBLIC_WEB_DATASET_PATHS"
+    )
+    telegram_teragram_output_dir: str = Field(
+        default="data/teragram", alias="TG_TERAGRAM_OUTPUT_DIR"
+    )
     telegram_public_web_seed_database_limit: int = Field(
         default=12, ge=0, le=100, alias="TG_PUBLIC_WEB_SEED_DATABASE_LIMIT"
     )
@@ -146,6 +155,21 @@ class Settings(BaseSettings):
     )
     telegram_public_web_refresh_unavailable_seconds: int = Field(
         default=3600, ge=300, alias="TG_PUBLIC_WEB_REFRESH_UNAVAILABLE_SECONDS"
+    )
+    telegram_dataset_sync_enabled: bool = Field(
+        default=False, alias="TG_DATASET_SYNC_ENABLED"
+    )
+    telegram_dataset_sync_interval_seconds: int = Field(
+        default=86400, ge=3600, le=604800, alias="TG_DATASET_SYNC_INTERVAL_SECONDS"
+    )
+    telegram_dataset_sync_max_channels: int = Field(
+        default=1000, ge=1, le=20000, alias="TG_DATASET_SYNC_MAX_CHANNELS"
+    )
+    telegram_dataset_sync_topics: str = Field(
+        default="crypto,finance", alias="TG_DATASET_SYNC_TOPICS"
+    )
+    telegram_dataset_local_path: str = Field(
+        default="data/tgdataset", alias="TG_DATASET_LOCAL_PATH"
     )
     phantom_nonce_ttl_minutes: int = Field(default=5, alias="PHANTOM_NONCE_TTL_MINUTES")
     telegram_auth_max_age_hours: int = Field(default=24, alias="TELEGRAM_AUTH_MAX_AGE_HOURS")

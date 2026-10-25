@@ -5,6 +5,7 @@ import { ingestRegistryEvent, validateRegistryEvent, type PgTransaction, type Re
 import { ingestTimelineEvent } from "./timeline.js";
 import { ingestTokenLinkObservation } from "./token-links.js";
 import { ingestBlockchainSwapRevision } from "./blockchain-swaps.js";
+import {queueAnalyticsInvalidation} from "./governance.js";
 
 export type OutboxSource = {
   claim(options: ClaimOptions): Promise<ClaimedEvent[]>;
@@ -92,6 +93,60 @@ function extractEnvelope(event: ClaimedEvent): RegistryOutboxPayload {
   return {...raw, registryEvent: registry, timelineEvent: timeline};
 }
 
+/**
+ * Optional additive migration 010 hook. Revisions and link retractions enqueue
+ * recomputation for previously evidence-linked tokens, but never guess tokens
+ * from source content. The queued work is audited; a separate backfill-aware
+ * worker must compute/publish the new historical snapshot.
+ */
+async function queueAffectedTokensForRecalculation(
+  tx:PgTransaction,event:ClaimedEvent,body:RegistryOutboxPayload,
+):Promise<void> {
+  if(!["x","tg"].includes(event.sourceSystem))return;
+  if(!["tweet_observed","message_observed","message_deleted",
+      "token_link_verified","token_links_invalidated"].includes(event.eventKind))return;
+  const present=await tx.query("SELECT to_regclass('analytics_invalidation_queue') IS NOT NULL AS ready");
+  if(present.rows[0]?.ready!==true)return; // Staged migration: old collectors remain backward-compatible.
+  const evidenceRef=body.registryEvent.evidenceRef.sourceId;
+  const previous=await tx.query(`SELECT DISTINCT canonical_token_id FROM token_link_observations
+    WHERE source_system=$1 AND evidence_source_id=$2 AND state='verified'
+      AND canonical_token_id IS NOT NULL`,[event.sourceSystem,evidenceRef]);
+  const tokens=new Set(previous.rows.map(row=>String(row.canonical_token_id)));
+  if(event.eventKind==="token_link_verified") {
+    const payload=event.payload as Record<string,unknown>;
+    const link=payload.tokenLink;
+    if(link && typeof link==="object" && typeof (link as Record<string,unknown>).canonicalTokenId==="string")
+      tokens.add((link as {canonicalTokenId:string}).canonicalTokenId);
+  }
+  const reason=event.eventKind==="token_links_invalidated"?"link_invalidated":
+    event.eventKind==="message_deleted"?"delete":
+    event.eventKind==="token_link_verified"?"backfill":"edit";
+  for(const canonicalTokenId of tokens)
+    await queueAnalyticsInvalidation(tx,{
+      canonicalTokenId,sourceSystem:event.sourceSystem as "x"|"tg",
+      eventKind:event.eventKind,eventKey:event.eventKey,reason,
+    });
+}
+
+/** Revoke stored social ciphertext in the same destination transaction as a
+ * verified deletion/edit tombstone. Older migration versions keep working. */
+async function revokeRetiredTextSnapshots(
+  tx:PgTransaction,event:ClaimedEvent,body:RegistryOutboxPayload,
+):Promise<void> {
+  if(!["x","tg"].includes(event.sourceSystem)||
+     !["message_deleted","token_links_invalidated"].includes(event.eventKind))return;
+  const present=await tx.query("SELECT to_regclass('event_text_snapshots') IS NOT NULL AS ready");
+  if(present.rows[0]?.ready!==true)return;
+  await tx.query(`UPDATE event_text_snapshots s
+    SET text_ciphertext=NULL,purged_at=clock_timestamp()
+    FROM intelligence_inbox original
+    WHERE original.source_system=$1 AND original.evidence_source_id=$2
+      AND s.source_system=original.source_system
+      AND s.source_event_kind=original.event_kind
+      AND s.event_key=original.event_key AND s.purged_at IS NULL`,[
+      event.sourceSystem,body.registryEvent.evidenceRef.sourceId,
+    ]);
+}
 /** The only transaction boundary: destination COMMIT BEFORE source ACK. */
 async function writeDestination(
   pool: DestinationPool, event: ClaimedEvent,
@@ -117,6 +172,10 @@ async function writeDestination(
     }
     if (body.timelineEvent) {
       await ingestTimelineEvent(client,event.sourceSystem,event.eventKind,body.timelineEvent);
+    }
+    if(fresh){
+      await revokeRetiredTextSnapshots(client,event,body);
+      await queueAffectedTokensForRecalculation(client,event,body);
     }
     await client.query("COMMIT");open=false;
     return fresh;

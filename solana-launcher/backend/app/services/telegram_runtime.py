@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from pathlib import Path
 from time import monotonic
 from typing import Any
 
@@ -9,6 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
 from app.services.social_intelligence import evaluate_calls
+from app.services.telegram_dataset_sources import (
+    DATASET_REGISTRY_SOURCES,
+    dataset_manifest,
+    import_dataset_candidates,
+    load_dataset_manifest_checkpoint,
+    save_dataset_manifest_checkpoint,
+)
 from app.services.telegram_discovery_registry import (
     due_registry_channels,
     record_discovery_results,
@@ -17,7 +25,9 @@ from app.services.telegram_discovery_registry import (
 from app.services.telegram_intelligence import TelegramIntelligenceService
 from app.services.telegram_outcomes import evaluate_outcome_windows
 from app.services.telegram_parser import normalize_telegram_target
+from app.services.telegram_public_dataset_sources import sync_public_dataset_channels
 from app.services.telegram_public_discovery import TelegramPublicWebDiscoveryCollector
+from app.services.telegram_public_web import utcnow
 
 
 class TelegramMonitorManager:
@@ -35,6 +45,9 @@ class TelegramMonitorManager:
         self._public_bootstrapped = False
         self._last_background_error: str | None = None
         self._last_refresh_due = 0
+        self._last_dataset_sync_attempt = float("-inf")
+        self._last_dataset_sync_at: str | None = None
+        self._dataset_sync_summary: dict[str, Any] = {"enabled": False, "records": {}}
         self._next_evaluation_at = 0.0
         self._last_evaluation: dict[str, Any] | None = None
         self._last_outcome_windows: dict[str, Any] | None = None
@@ -47,6 +60,8 @@ class TelegramMonitorManager:
             "candidate": 0,
             "due": 0,
         }
+        self._dataset_manifest_signature: dict[str, tuple[int, int]] | None = None
+        self._dataset_import_summary: dict[str, Any] = {"enabled": True, "source_files": []}
 
     @property
     def mtproto_configured(self) -> bool:
@@ -132,21 +147,142 @@ class TelegramMonitorManager:
         status = self.service.monitor_status()
         return bool(status.get("running"))
 
+    async def _import_dataset_sources_if_changed(self) -> None:
+        if not self.settings.telegram_dataset_import_enabled:
+            self._dataset_manifest_signature = None
+            self._dataset_import_summary = {"enabled": False, "source_files": []}
+            return
+
+        manifest = dataset_manifest(self.settings)
+        current = {path: (size, modified) for path, size, modified in manifest}
+        restored_checkpoint = self._dataset_manifest_signature is None
+        previous = self._dataset_manifest_signature
+        if previous is None:
+            previous = await load_dataset_manifest_checkpoint(self.sessionmaker)
+
+        if current == previous:
+            self._dataset_manifest_signature = current
+            if restored_checkpoint:
+                # A new process can trust only signatures persisted after a successful import.
+                # Refresh summary state without parsing the unchanged, potentially huge files.
+                self._dataset_import_summary = {
+                    "enabled": True,
+                    "source_files": [Path(path).name for path in current],
+                    "source_files_count": len(current),
+                    "changed_files": 0,
+                    "removed_files": [],
+                    "checkpoint_restored": True,
+                }
+                self._registry_summary = await registry_summary(self.sessionmaker)
+            return
+
+        changed_paths = [
+            Path(path)
+            for path, signature in current.items()
+            if previous.get(path) != signature
+        ]
+        removed_files = sorted(
+            Path(path).name for path in (set(previous) - set(current))
+        )
+        if changed_paths:
+            summary = await import_dataset_candidates(
+                self.sessionmaker, self.settings, paths=changed_paths
+            )
+        else:
+            summary = dict(self._dataset_import_summary)
+
+        summary["source_files"] = [Path(path).name for path in current]
+        summary["source_files_count"] = len(current)
+        summary["changed_files"] = len(changed_paths)
+        summary["removed_files"] = removed_files
+        # Save only after import completes. If import fails midway, the old checkpoint remains;
+        # re-import is idempotent and will retry the changed files on the next tick.
+        await save_dataset_manifest_checkpoint(self.sessionmaker, current)
+        self._dataset_manifest_signature = current
+        self._dataset_import_summary = summary
+        self._registry_summary = await registry_summary(self.sessionmaker)
+
+    async def _scan_mtproto_dataset_queue(self, *, limit: int | None = None) -> int:
+        if not self.settings.telegram_dataset_import_enabled or self.service is None:
+            return 0
+        batch_limit = max(
+            1,
+            min(
+                int(limit or self.settings.telegram_public_web_refresh_batch_size),
+                self.settings.telegram_entity_limit,
+                200,
+            ),
+        )
+        due = await due_registry_channels(
+            self.sessionmaker,
+            limit=batch_limit,
+            sources=set(DATASET_REGISTRY_SOURCES),
+        )
+        if not due:
+            return 0
+
+        graph = await self.service.scan_graph(
+            due,
+            max_depth=0,
+            post_limit=self.settings.telegram_public_web_discovery_history_limit,
+            entity_limit=len(due),
+        )
+        rows = [row for row in graph.get("results", []) if isinstance(row, dict)]
+        await record_discovery_results(
+            self.sessionmaker,
+            rows,
+            manual_channels=set(self.manual_public_channels),
+            database_channels=set(due),
+            strong_seconds=self.settings.telegram_public_web_refresh_strong_seconds,
+            normal_seconds=self.settings.telegram_public_web_refresh_normal_seconds,
+            rejected_seconds=self.settings.telegram_public_web_refresh_rejected_seconds,
+            unavailable_seconds=self.settings.telegram_public_web_refresh_unavailable_seconds,
+        )
+        resolved = [
+            normalize_telegram_target(str(row.get("username") or ""))
+            for row in rows
+            if not row.get("error") and normalize_telegram_target(str(row.get("username") or ""))
+        ]
+        if resolved:
+            await self.service.add_monitor_channels(resolved)
+        self._registry_summary = await registry_summary(self.sessionmaker)
+        self._last_refresh_due = len(due)
+        return len(due)
+
     async def _ensure_mtproto_monitor(self) -> bool:
-        channels = [
+        configured_channels = [
             normalize_telegram_target(item)
             for item in self.settings.telegram_monitor_channels.split(",")
             if normalize_telegram_target(item)
         ]
         if not (
             self.settings.telegram_autostart
-            and channels
             and self.mtproto_configured
             and self.session_configured
         ):
             return False
         if await self._mtproto_running():
+            await self._scan_mtproto_dataset_queue()
             return True
+
+        dataset_limit = min(
+            self.settings.telegram_public_web_refresh_batch_size,
+            max(0, self.settings.telegram_entity_limit - len(configured_channels)),
+            200,
+        )
+        dataset_due = (
+            await due_registry_channels(
+                self.sessionmaker,
+                limit=max(1, dataset_limit),
+                sources=set(DATASET_REGISTRY_SOURCES),
+            )
+            if self.settings.telegram_dataset_import_enabled and dataset_limit > 0
+            else []
+        )
+        channels = list(dict.fromkeys([*configured_channels, *dataset_due]))
+        if not channels:
+            return False
+
         service = await self.get_service()
         graph = await service.scan_graph(
             channels,
@@ -154,18 +290,76 @@ class TelegramMonitorManager:
             post_limit=self.settings.telegram_history_limit,
             entity_limit=self.settings.telegram_entity_limit,
         )
-        discovered = [
-            str(row.get("username") or "").strip()
-            for row in graph.get("results", [])
-            if not row.get("error") and row.get("username")
+        graph_rows = [row for row in graph.get("results", []) if isinstance(row, dict)]
+        dataset_names = set(dataset_due)
+        dataset_rows = [
+            row
+            for row in graph_rows
+            if normalize_telegram_target(str(row.get("username") or "")) in dataset_names
         ]
-        monitored = list(dict.fromkeys([*channels, *discovered]))
+        if dataset_rows:
+            await record_discovery_results(
+                self.sessionmaker,
+                dataset_rows,
+                manual_channels=set(self.manual_public_channels),
+                database_channels=dataset_names,
+                strong_seconds=self.settings.telegram_public_web_refresh_strong_seconds,
+                normal_seconds=self.settings.telegram_public_web_refresh_normal_seconds,
+                rejected_seconds=self.settings.telegram_public_web_refresh_rejected_seconds,
+                unavailable_seconds=self.settings.telegram_public_web_refresh_unavailable_seconds,
+            )
+            self._registry_summary = await registry_summary(self.sessionmaker)
+
+        discovered = [
+            normalize_telegram_target(str(row.get("username") or ""))
+            for row in graph_rows
+            if not row.get("error") and normalize_telegram_target(str(row.get("username") or ""))
+        ]
+        errored = {
+            normalize_telegram_target(str(row.get("username") or ""))
+            for row in graph_rows
+            if row.get("error") and normalize_telegram_target(str(row.get("username") or ""))
+        }
+        monitor_candidates = [
+            channel for channel in channels if channel not in errored
+        ] + discovered
+        monitored = list(dict.fromkeys(monitor_candidates))
+        if not monitored:
+            return False
         await service.start_monitor(monitored)
         return True
+
+    async def _sync_public_datasets_if_due(self) -> None:
+        if not self.settings.telegram_public_web_enabled:
+            return
+        if not getattr(self.settings, "telegram_dataset_sync_enabled", False):
+            return
+        now = monotonic()
+        interval = max(
+            3600,
+            int(getattr(self.settings, "telegram_dataset_sync_interval_seconds", 86400)),
+        )
+        if now - self._last_dataset_sync_attempt < interval:
+            return
+        self._last_dataset_sync_attempt = now
+        try:
+            self._dataset_sync_summary = await sync_public_dataset_channels(
+                self.sessionmaker, self.settings
+            )
+            self._last_dataset_sync_at = utcnow().isoformat()
+            if self._dataset_sync_summary.get("errors"):
+                # Retry failed remote sources within an hour without hammering them.
+                self._last_dataset_sync_attempt = monotonic() - max(0, interval - 3600)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._dataset_sync_summary = {"enabled": True, "error": str(exc)[:500]}
+            self._last_dataset_sync_attempt = monotonic() - max(0, interval - 3600)
 
     async def _refresh_public_web_once(self) -> None:
         if not self.settings.telegram_public_web_enabled:
             return
+
         if not self.settings.telegram_public_web_refresh_enabled:
             if not self._public_bootstrapped and self.public_web.configured_channels:
                 await self.scan_public_web(
@@ -222,9 +416,18 @@ class TelegramMonitorManager:
         self._background_running = True
         try:
             while True:
+                dataset_error: str | None = None
+                try:
+                    await self._import_dataset_sources_if_changed()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    dataset_error = f"Dataset import: {str(exc)[:400]}"
+
                 mtproto_running = False
                 mtproto_error: str | None = None
                 try:
+                    await self._sync_public_datasets_if_due()
                     mtproto_running = await self._ensure_mtproto_monitor()
                 except asyncio.CancelledError:
                     raise
@@ -242,7 +445,9 @@ class TelegramMonitorManager:
 
                 await self._evaluate_calls_if_due()
 
-                if public_error:
+                if dataset_error:
+                    self._last_background_error = dataset_error
+                elif public_error:
                     self._last_background_error = public_error
                 elif mtproto_error and not self.settings.telegram_public_web_enabled:
                     self._last_background_error = mtproto_error
@@ -344,10 +549,15 @@ class TelegramMonitorManager:
             "public_web_discovery_entity_limit": int(public_web.get("discovery_entity_limit") or 0),
             "public_web_relevance_min_score": float(public_web.get("relevance_min_score") or 0.0),
             "public_web_seed_database_channels": int(public_web.get("seed_database_channels") or 0),
+            "dataset_sync": {
+                **self._dataset_sync_summary,
+                "last_sync_at": self._last_dataset_sync_at,
+            },
             "public_web_discovered_channels": int(public_web.get("last_discovered_channels") or 0),
             "public_web_accepted_discovered": int(public_web.get("last_accepted_discovered") or 0),
             "public_web_rejected_discovered": int(public_web.get("last_rejected_discovered") or 0),
             "registry": dict(self._registry_summary),
+            "dataset_import": dict(self._dataset_import_summary),
             "refresh_due": self._last_refresh_due,
             "refresh_tick_seconds": self.settings.telegram_public_web_refresh_tick_seconds,
             "last_scan_at": public_web.get("last_scan_at"),

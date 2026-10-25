@@ -79,3 +79,7 @@ LLM_PROVIDER=openai
 - Anti-detection (14 слоев)
 - Rate limiting
 - Sleep mode
+
+## Telegram dataset integration
+
+See [TELEGRAM_DATASETS.md](TELEGRAM_DATASETS.md) for public dataset sync, local TGDataset import, provenance, and operational limits.

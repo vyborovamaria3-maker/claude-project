@@ -28,12 +28,17 @@ export async function persistMessage(
   const parsedReplyId = typeof rawReplyId === "number" ? rawReplyId : rawReplyId ? Number(rawReplyId.toString()) : null;
   const replyToMessageId = parsedReplyId !== null && Number.isSafeInteger(parsedReplyId) && parsedReplyId > 0 && parsedReplyId !== msg.id
     ? parsedReplyId : null;
-  // For historical token evidence, changed text or restoration must revoke
-  // ALL previously verified message links. Mere views/likes updates do not.
-  // The message row is locked through the same native PG transaction.
+  // Link proof is bound to text, publication time and edit revision;
+  // a same-body edit or changed timestamp must not preserve stale token
+  // attribution. Engagement-only refreshes must not revoke it.
+  const postedAt=typeof msg.date==="number"?new Date(msg.date*1000):null;
+  const editedAt=typeof msg.editDate==="number"?new Date(msg.editDate*1000):null;
   const previous=telegramOutboxEnabled()
-    ? (await tx.query<{text:string|null;deleted_at:Date|null;posted_at:Date|null}>(
-        "SELECT text,deleted_at,posted_at FROM tg_messages WHERE source_id=$1 AND message_id=$2 FOR UPDATE",
+    ? (await tx.query<{
+        text:string|null;deleted_at:Date|null;posted_at:Date|null;edited_at:Date|null;
+      }>(
+        "SELECT text,deleted_at,posted_at,edited_at FROM tg_messages " +
+        "WHERE source_id=$1 AND message_id=$2 FOR UPDATE",
         [sourceId,msg.id],
       )).rows[0]
     : undefined;
@@ -49,10 +54,10 @@ export async function persistMessage(
        forward_message_id=EXCLUDED.forward_message_id,
        reactions=EXCLUDED.reactions,engagement_observed_at=now(),collected_at=now(), analysis_version=EXCLUDED.analysis_version, deleted_at=NULL`,
     [sourceId, msg.id, msg.senderId?.toString() ?? null,
-      typeof msg.date === "number" ? new Date(msg.date * 1000) : null,
+      postedAt,
       msg.message, msg.views ?? null, msg.forwards ?? null,
       msg.replies?.replies ?? null, ANALYSIS_VERSION,
-      typeof msg.editDate === "number" ? new Date(msg.editDate * 1000) : null,
+      editedAt,
       replyToMessageId,JSON.stringify(reactionCounts(msg)),
       JSON.stringify(safeMessageEntities(msg)),msg.media?.className?.slice(0,100) ?? null,
       msg.fwdFrom?.fromName?.slice(0,256) ?? msg.forward_sender_name?.slice(0,256) ?? null,
@@ -81,7 +86,11 @@ export async function persistMessage(
    }
   }
   await replaceEvidence(tx, sourceId, msg);
-  if(previous && (previous.text!==msg.message || previous.deleted_at!==null)){
+  if(previous && (
+    previous.text!==msg.message || previous.deleted_at!==null ||
+    previous.posted_at?.getTime()!==postedAt?.getTime() ||
+    previous.edited_at?.getTime()!==editedAt?.getTime()
+  )){
     // Invalidate native confirmed status too: a newer source revision must
     // undergo another real RPC mint-account check, even when the same literal
     // address remains in edited/restored text. Candidate rows were already
@@ -99,7 +108,7 @@ export async function persistMessage(
       [sourceId,msg.id,ANALYSIS_VERSION],
     );
     const sourceRevisionSha256=createHash("sha256").update(JSON.stringify([
-      "edited",msg.message,msg.editDate??null,
+      "edited",msg.message,postedAt?.toISOString()??null,editedAt?.toISOString()??null,
     ])).digest("hex");
     await emitTgTokenLinksInvalidation(tx,sourceId,{
       messageId:msg.id,reason:"edited",sourceRevisionSha256,

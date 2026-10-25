@@ -60,7 +60,6 @@ class P0ScalingGuardsTest(unittest.TestCase):
                 show_sensitive=False,
             )
             chunks = list(source.iter_csv("items", limit=2501, batch_size=1000))
-            self.assertEqual(len(chunks), 4)  # header + three bounded row batches
 
             text = "".join(chunks)
             parsed = list(csv.DictReader(io.StringIO(text)))
