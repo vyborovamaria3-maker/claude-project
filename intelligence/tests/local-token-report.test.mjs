@@ -153,13 +153,13 @@ test("read-only repeatable-read transaction is shared by both evidence queries",
       if(sql.includes("to_regclass("))return {rows:[{
         inbox:true,timeline:true,entities:true,links:true,swap_revisions:true,
       }]};
-      if(sql.includes("WITH latest AS"))return {rows:[{
+      if(sql.includes("FROM blockchain_swap_evidence_revisions"))
+        return {rows:[]};
+      if(sql.includes("FROM token_link_observations"))return {rows:[{
         source_system:"x",evidence_source_id:"x:tweet:123",
         canonical_token_id:id,occurred_at:at,observed_at:observed,
         payload:"SECRET",
       }]};
-      if(sql.includes("FROM blockchain_swap_evidence_revisions"))
-        return {rows:[]};
       if(sql.includes("FROM timeline_events"))return {rows:[]};
       throw new Error("unexpected query in local report fixture");
     },
