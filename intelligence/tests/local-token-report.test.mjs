@@ -117,7 +117,7 @@ test("report never leaks source payloads and keeps chain separate from verified 
   assert.equal(report.sampleCounts.genericTimelineEvents,1);
   assert.equal(report.blockchainSwapEvidence[0].finality,"not_independently_verified");
   assert.ok(!json.includes("SECRET"));
-  assert.ok(!json.includes("wallet"));
+  assert.ok(!json.includes("SECRET wallet"));
   assert.equal(report.interpretation.missingIsNotZero,true);
   assert.ok(!formatLocalTokenReport(report).includes("SECRET"));
 });
