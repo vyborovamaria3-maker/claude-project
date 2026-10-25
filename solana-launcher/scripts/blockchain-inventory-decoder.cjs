@@ -8,20 +8,22 @@ const MINT_TYPES = new Set(["mintTo", "mintToChecked"]);
 const TOKEN_PROGRAMS = new Set(["spl-token", "spl-token-2022", "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"]);
 const BURN_TYPES = new Set(["burn", "burnChecked"]);
 
+function exactRaw(value) {
+  if (typeof value === "string" && /^\d{1,40}$/.test(value)) return value;
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return String(value);
+  return null; // Never stringify an unsafe floating-point token amount.
+}
+function exactDecimals(value) {
+  const v = typeof value === "string" && /^\d{1,3}$/.test(value) ? Number(value) : value;
+  return Number.isInteger(v) && v >= 0 && v <= 255 ? v : null;
+}
 function amountParts(info) {
   const tokenAmount = info?.tokenAmount || info?.amount;
   if (tokenAmount && typeof tokenAmount === "object") {
-    const raw = tokenAmount.amount ?? tokenAmount.tokenAmount;
-    const decimals = Number(tokenAmount.decimals);
-    if (raw != null && Number.isFinite(decimals) && decimals >= 0) {
-      return { raw: String(raw), decimals };
-    }
+    return { raw: exactRaw(tokenAmount.amount ?? tokenAmount.tokenAmount),
+      decimals: exactDecimals(tokenAmount.decimals) };
   }
-  const raw = info?.amount;
-  if (raw != null && /^\d+$/.test(String(raw))) {
-    return { raw: String(raw), decimals: Number.isFinite(Number(info.decimals)) ? Number(info.decimals) : null };
-  }
-  return { raw: null, decimals: null };
+  return { raw: exactRaw(info?.amount), decimals: exactDecimals(info?.decimals) };
 }
 
 function decodeInventoryMovements(tx) {
@@ -29,21 +31,38 @@ function decodeInventoryMovements(tx) {
   const ops = Array.isArray(tx.decodedOperations) ? tx.decodedOperations : [];
   const balances = Array.isArray(tx.tokenBalanceDeltas) ? tx.tokenBalanceDeltas : [];
   const ownerByTokenAccount = new Map();
+  const ownerConflicts = new Set();
   const balanceByTokenAccount = new Map();
+  const balanceConflicts = new Set();
+  function putOwner(account, owner) {
+    if(!account || !owner || ownerConflicts.has(account)) return;
+    const prev=ownerByTokenAccount.get(account);
+    if(prev && prev!==owner) { ownerByTokenAccount.delete(account); ownerConflicts.add(account); }
+    else ownerByTokenAccount.set(account,owner);
+  }
+  function putBalance(account, mint, decimals) {
+    if(!account || balanceConflicts.has(account)) return;
+    const prev=balanceByTokenAccount.get(account);
+    const d=exactDecimals(decimals);
+    if(prev && ((mint && prev.mint && prev.mint!==mint) ||
+      (d!==null && prev.decimals!==null && prev.decimals!==d))) {
+      balanceByTokenAccount.delete(account);balanceConflicts.add(account);return;
+    }
+    balanceByTokenAccount.set(account,{mint:mint||prev?.mint||null,
+      decimals:d ?? prev?.decimals ?? null});
+  }
   for (const b of balances) {
     if (!b?.tokenAccount) continue;
-    if (b.owner) ownerByTokenAccount.set(b.tokenAccount, b.owner);
-    // Pre/post balance deltas may contain the same account twice; mint and
-    // decimals are stable for a token account, so retaining either is safe.
-    if (!balanceByTokenAccount.has(b.tokenAccount)) balanceByTokenAccount.set(b.tokenAccount, b);
+    putOwner(b.tokenAccount,b.owner);
+    putBalance(b.tokenAccount,b.mint,b.decimals);
   }
   // Owner-level deltas aggregate multiple token accounts. Recover account-level
   // metadata from the retained pre/post balances before inferring transfer owners.
   for (const b of [...(tx.preTokenBalances || []), ...(tx.postTokenBalances || [])]) {
     const account = Number.isInteger(b.accountIndex) ? tx.accountKeys?.[b.accountIndex] : null;
     if (!account) continue;
-    if (b.owner) ownerByTokenAccount.set(account, b.owner);
-    balanceByTokenAccount.set(account, { mint: b.mint, decimals: b.uiTokenAmount?.decimals });
+    putOwner(account,b.owner);
+    putBalance(account,b.mint,b.uiTokenAmount?.decimals);
   }
   const movements = [];
   for (let operationIndex = 0; operationIndex < ops.length; operationIndex++) {
@@ -91,7 +110,8 @@ function decodeInventoryMovements(tx) {
       authority: typeof info.authority === "string" ? info.authority : null,
       provider: "alchemy",
       decoderVersion: "inventory-v1",
-      attributionStatus: owner ? "owner_resolved" : "owner_unknown",
+      attributionStatus: owner ? "owner_resolved"
+        : ownerConflicts.has(account) ? "owner_conflict" : "owner_unknown",
     });
     if (kind === "transfer") {
       add(sourceOwner, "out", sourceAccount);
