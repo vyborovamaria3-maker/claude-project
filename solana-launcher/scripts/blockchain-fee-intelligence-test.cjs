@@ -195,6 +195,23 @@ function run() {
       assert.equal(review.prepare("SELECT count(*) n FROM fee_payer_observed_totals WHERE payer='walletA'").get().n,1);
     } finally { review.close(); }
 
+    // Another process may create the destination after the CLI preflight.
+    // Losing that race must neither open nor delete the other process's file.
+    const racingOutput=path.join(dir,"concurrent-output.db");
+    const originalExists=fs.existsSync;
+    let raced=false;
+    fs.existsSync=function(file){
+      if(file===racingOutput&&!raced){
+        raced=true;
+        fs.writeFileSync(racingOutput,"preserve-other-process-output");
+        return false;
+      }
+      return originalExists(file);
+    };
+    try {
+      assert.throws(()=>fee.main(["--db",source.name,"--out",racingOutput]),/EEXIST/);
+    } finally { fs.existsSync=originalExists; }
+    assert.equal(fs.readFileSync(racingOutput,"utf8"),"preserve-other-process-output");
   } finally {
     output.close();source.close();fs.rmSync(dir,{recursive:true,force:true});
   }

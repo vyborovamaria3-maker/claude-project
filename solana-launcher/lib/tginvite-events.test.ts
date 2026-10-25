@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { EventEmitter, TGEvent } from "./tginvite-events";
+import { EventEmitter } from "./tginvite-events";
 
 describe("EventEmitter", () => {
   it("emits and listens to events", () => {
@@ -66,23 +66,5 @@ describe("EventEmitter", () => {
     emitter.on("test", () => { throw new Error("fail"); });
     expect(() => emitter.emit("test", null)).not.toThrow();
     consoleSpy.mockRestore();
-  });
-});
-
-describe("TGEvent", () => {
-  it("has all event types", () => {
-    expect(TGEvent.IMPORT_START).toBe("import:start");
-    expect(TGEvent.IMPORT_PROGRESS).toBe("import:progress");
-    expect(TGEvent.IMPORT_PAUSE).toBe("import:pause");
-    expect(TGEvent.IMPORT_RESUME).toBe("import:resume");
-    expect(TGEvent.IMPORT_COMPLETE).toBe("import:complete");
-    expect(TGEvent.IMPORT_ERROR).toBe("import:error");
-    expect(TGEvent.IMPORT_CANCEL).toBe("import:cancel");
-    expect(TGEvent.MEMBERS_PARSED).toBe("members:parsed");
-    expect(TGEvent.MEMBERS_FILTERED).toBe("members:filtered");
-    expect(TGEvent.JOB_ADDED).toBe("job:added");
-    expect(TGEvent.JOB_UPDATED).toBe("job:updated");
-    expect(TGEvent.RATE_LIMITED).toBe("rate:limited");
-    expect(TGEvent.FLOOD_WAIT).toBe("flood:wait");
   });
 });

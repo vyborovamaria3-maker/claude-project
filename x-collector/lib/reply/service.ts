@@ -224,8 +224,8 @@ export async function createCampaign(user: string, raw: unknown) {
     .object({
       account_id: z.coerce.string().regex(/^\d+$/),
       lore_id: z.coerce.string().regex(/^\d+$/),
-      settings: Settings.default({}),
-      filters: Filters.default({}),
+      settings: Settings.prefault({}),
+      filters: Filters.prefault({}),
     })
     .strict()
     .parse(raw);
