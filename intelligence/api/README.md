@@ -1,6 +1,6 @@
 # Intelligence API — ARCH-10 read-only v1
 
-**Статус:** отдельный черновой PR поверх #141 и предыдущей архитектурной цепочки. Это **локальный API для серверного прокси**, не публичный браузерный API, не новый Collector и не автоматически включённый сервис. Никакие X/TG/Blockchain базы или аккаунты при разработке не открывались.
+**Статус на 2026-10-24:** read-only API и `/tokens/:id/evidence` включены в `main` через #165 (коммит `0bfd1c71c438d2f32a93652f4b6a2670c38d7b9b`). Это **локальный API для серверного прокси**, не публичный браузерный API, не новый Collector и не автоматически запущенный сервис. Изолированные PostgreSQL/SQLite тесты пройдены; live X/TG/chain источники, реальные права доступа и production-эксплуатация этим не подтверждаются.
 
 ## Принципы безопасности
 
@@ -21,10 +21,13 @@
 | GET | `/api/intelligence/v1/health` | **Авторизованное** подтверждение доступности только целевой PostgreSQL; не делает вид, что проверены X/TG/Blockchain |
 | GET | `/api/intelligence/v1/tokens/:id/timeline` | Исторические evidence-backed события токена из существующего Timeline; только источник, тип, evidenceId и временные метки |
 | GET | `/api/intelligence/v1/tokens/:id/links` | Действующие **как известно на момент knownAt** подтверждённые SPL-mint привязки X/TG с учётом edit/delete tombstones |
+| GET | `/api/intelligence/v1/tokens/:id/evidence` | Два **раздельных** read-only списка: `socialLinks` (TG/X, с отзывом связей) и `blockchainSwapEvidence` (поддержанные ревизии swap-доказательств); это не финализированные сделки и не PnL |
 
-Для `timeline` и `links` обязательны query params `occurredBefore` и `knownAt` в **полном UTC ISO8601** (например `2026-10-20T02:00:00.000Z`). `knownAt` не может быть позже настоящего времени, `occurredBefore <= knownAt`; `limit` необязателен, 1–100, default 50. Дубликаты/неизвестные параметры, query-string токены, неполные ID и некорректные даты отклоняются.
+Для `timeline`, `links`, `swap-evidence` и `evidence` обязательны query params `occurredBefore` и `knownAt` в **полном UTC ISO8601** (например `2026-10-20T02:00:00.000Z`). `knownAt` не может быть позже настоящего времени, `occurredBefore <= knownAt`; `limit` необязателен, 1–100, default 50. Дубликаты/неизвестные параметры, query-string токены, неполные ID и некорректные даты отклоняются.
 
 Успешный ответ — `schemaVersion: token-intelligence-v1`, `tokenId`, фильтры времени, `items`, `truncated`, `historicalCompleteness: unknown`. Ответ **не включает** сырой `timeline.payload`, `token_link_observations.details`, `eventKey`, хеш исходного текста, приватные данные провайдера, первоначальный твит/сообщение. `truncated=true` означает, что выбранный лимит отрезал результат; **отсутствие truncated не означает полноту истории**. Версия v1 намеренно не заявляет активный risk score, PnL, 100% покрытие источников, finality блокчейна, непрерывность X/TG и верификацию личности.
+
+Маршрут `evidence` использует общие `occurredBefore`/`knownAt` и отдельный лимит `limit` для каждой из двух категорий, возвращает `socialLinksTruncated` и `blockchainSwapEvidenceTruncated`. Содержимое `socialLinks` не подтверждает торговые результаты; `blockchainSwapEvidence` не является social-упоминанием или доказательством окончательной финализации. `historicalCompleteness` остаётся `unknown`. Пустые списки могут означать отсутствие доступных подтверждённых данных, а не отсутствие событий в реальности.
 
 Нельзя принимать `queryTokenTimeline` как замену `queryActiveTokenLinks`: первый содержит события, второй — историческую текущую привязку с отзыванными версиями. `links` может быть неполным для редакций до включения source tombstone producer.
 

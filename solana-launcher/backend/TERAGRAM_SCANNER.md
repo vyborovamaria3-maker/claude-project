@@ -168,22 +168,26 @@ Do not start a full TeraGram scan from a browser request. The card only reads sc
 scans remain CLI/job operations so request timeouts or duplicate button clicks cannot launch competing
 multi-terabyte jobs.
 
-## Promote TeraGram seeds to live discovery
+## Feed TeraGram and TGDataset into the live collector
 
-The current application default intentionally remains the legacy seed file until a TeraGram scan has
-completed successfully. This prevents a deployment from switching to a path that does not exist yet.
-
-After a successful scan, point live public discovery at the new file:
-
-```env
-TG_PUBLIC_WEB_SEED_DATABASE=data/teragram/telegram_seed_database.json
-```
-
-Then restart the backend service. To roll back the seed source without reverting code, restore:
+The runtime now imports compact candidate outputs from both historical datasets into the shared
+`telegram_channels` table and the existing discovery refresh queue. It detects generated files under
+`data/tgdataset/` and `data/teragram/` automatically; it does not download or scan multi-gigabyte /
+multi-terabyte source archives from a web request or from the background loop. Run the existing CLI
+scanners as explicit jobs first, then the runtime imports their outputs on its next refresh tick.
 
 ```env
+TG_DATASET_IMPORT_ENABLED=true
 TG_PUBLIC_WEB_SEED_DATABASE=data/tgdataset/telegram_seed_database.json
+TG_PUBLIC_WEB_DATASET_PATHS=
 ```
 
-This staged switch makes TeraGram the primary historical source while keeping the existing TGDataset
-output as an operational fallback until the new dataset has actually been processed.
+`TG_PUBLIC_WEB_SEED_DATABASE` remains the small bootstrap list. Full candidate JSONL files and both
+seed databases are imported independently, with duplicate usernames merged and source provenance
+retained in channel metadata. Set `TG_PUBLIC_WEB_DATASET_PATHS` to a comma- or semicolon-separated list
+of additional JSON, JSONL, NDJSON, CSV files or directories. Only public Telegram usernames are
+queued; rows explicitly marked as scams and invalid/private invite targets are skipped.
+
+Every imported candidate is historical evidence, not a live-availability claim. The existing collector
+revalidates candidates in bounded batches and saves messages through the normal Telegram persistence
+path. Keep Telegram API rate limits and account access restrictions in place.

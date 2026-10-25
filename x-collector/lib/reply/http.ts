@@ -218,7 +218,7 @@ export async function handleReplyRequest(
       const campaign = await service.campaignFor(user, match[1]);
       const filters = Filters.parse({
         ...campaign.filters_json,
-        ...z.record(z.unknown()).parse(await input()),
+        ...z.record(z.string(), z.unknown()).parse(await input()),
       });
       await q(
         "UPDATE reply_campaigns SET filters_json=$1::jsonb WHERE id=$2 AND user_id=$3",

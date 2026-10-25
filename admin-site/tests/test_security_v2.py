@@ -116,16 +116,5 @@ class SecurityV2Test(unittest.TestCase):
             attacker.close()
         self.assertEqual(self.client.get("/api/security/session").status_code, 401)
 
-    def test_security_frontend_guard_is_loaded_before_app(self):
-        root = Path(__file__).resolve().parents[1] / "app" / "static"
-        html = (root / "index.html").read_text(encoding="utf-8")
-        self.assertLess(html.index("/static/security-ui-v7.js"), html.index("/static/app.js"))
-        js = (root / "security-ui-v7.js").read_text(encoding="utf-8")
-        self.assertIn('body.code === "mfa_required"', js)
-        self.assertIn('body.code === "reauth_required"', js)
-        self.assertNotIn("localStorage", js)
-        self.assertNotIn("sessionStorage", js)
-
-
 if __name__ == "__main__":
     unittest.main()

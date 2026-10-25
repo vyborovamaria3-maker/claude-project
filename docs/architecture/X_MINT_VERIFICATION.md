@@ -1,6 +1,6 @@
 # ARCH-05b — проверка Solana mint в X Collector через Alchemy
 
-Статус: **draft PR #137**, изменения поверх #136 → #135 → #134 → #133. Данные в рабочих X/Telegram/Blockchain PostgreSQL/SQLite не изменены. Это не доказательство live-готовности.
+**Актуальный статус на 2026-10-24:** bounded X mint verifier и его offline-тесты уже присутствуют в `main`. PR #165 объединён с `main` (коммит `0bfd1c71c438d2f32a93652f4b6a2670c38d7b9b`) и добавляет совместимую проверку транспортного JSONB и X/TG/chain evidence integration. Указанные ниже ранние номера PR — историческое происхождение кода, а не текущий статус. **Никакого live X/Alchemy запуска, миграции production-БД или backup/restore эта документационная проверка не выполняла.**
 
 ## Принцип
 
