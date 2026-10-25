@@ -243,9 +243,9 @@ async def sync_public_dataset_channels(sessionmaker, settings) -> dict[str, Any]
                             limit=remaining,
                         )
                     )
-                except (httpx.HTTPError, ValueError, UnicodeDecodeError) as exc:
+                except (httpx.HTTPError, ValueError, UnicodeDecodeError, csv.Error) as exc:
                     errors.append({"source": TGATLAS_DATASET_NAME, "error": str(exc)[:300]})
-    except (httpx.HTTPError, ValueError, UnicodeDecodeError) as exc:
+    except (httpx.HTTPError, ValueError, UnicodeDecodeError, csv.Error) as exc:
         errors.append({"source": TGATLAS_DATASET_NAME, "error": str(exc)[:300]})
 
     stats = await import_dataset_channel_candidates(
@@ -340,7 +340,7 @@ def _load_local_channel_labels(root: Path) -> tuple[dict[str, str], dict[str, st
 
 
 def _iter_large_tgdataset_json(path: Path) -> Iterator[dict[str, Any]]:
-    """Stream only channel-level metadata from TGDataset's channel_id -> channel JSON map."""
+    """Stream channel metadata without retaining the nested message map."""
     try:
         import ijson
     except ImportError as exc:  # pragma: no cover - declared production dependency
@@ -351,21 +351,10 @@ def _iter_large_tgdataset_json(path: Path) -> Iterator[dict[str, Any]]:
     with path.open("rb") as source:
         current_id: str | None = None
         current: dict[str, Any] = {}
-        yielded = False
         for prefix, event, value in ijson.parse(source):
             if prefix == "" and event == "map_key":
                 current_id = str(value)
                 current = {"channel_id": current_id}
-                yielded = False
-            elif (
-                current_id is not None
-                and prefix == f"{current_id}.text_messages"
-                and event == "start_map"
-                and not yielded
-            ):
-                # TGDataset puts channel metadata before its potentially huge message map.
-                yield current
-                yielded = True
             elif current_id is not None and prefix in {
                 f"{current_id}.username",
                 f"{current_id}.title",
@@ -377,11 +366,11 @@ def _iter_large_tgdataset_json(path: Path) -> Iterator[dict[str, Any]]:
             } and event in {"string", "number", "boolean", "null"}:
                 current[prefix.rsplit(".", 1)[-1]] = value
             elif current_id is not None and prefix == current_id and event == "end_map":
-                if not yielded:
-                    yield current
+                # JSON object order is not a schema guarantee: username/scam metadata
+                # may follow the message map. ijson streams that map without retaining it.
+                yield current
                 current_id = None
                 current = {}
-                yielded = False
 
 
 def iter_local_dataset_channels(
