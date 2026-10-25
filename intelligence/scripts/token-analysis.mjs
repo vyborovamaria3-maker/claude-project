@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {parseTokenId} from '@claude-project/contracts';
-import {isLowValueTelegramPost,readCollectorContext,recordAiCost} from '../dist/index.js';
+import {isLowValueTelegramPost,isLowValueTwitterPost,twitterEvidenceKey,readCollectorContext,recordAiCost} from '../dist/index.js';
 export const TOKEN_ANALYSIS_VERSION='token-request-v1';
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export function tokenAddress(tokenId){const parsed=parseTokenId(tokenId);if(!parsed||parsed.id!==tokenId||!tokenId.startsWith('solana:'))throw new TypeError('invalid_token_id');return tokenId.slice(7);}
@@ -18,9 +18,14 @@ export async function collectTokenInputs({x,tg,chain},tokenId,at=new Date()){
  ]);
  const rows=chain.prepare(`SELECT signature,timestamp,trader,type,amount_sol,amount_tokens,inserted_at
   FROM token_trades WHERE mint=? AND timestamp<=? AND inserted_at<=? ORDER BY timestamp DESC,signature LIMIT ?`).all(mint,Math.floor(ms/1000),ms,101);
- const messages=[],seen=new Set();let filtered=0;
+ const messages=[],seen=new Set(),seenTwitter=new Set();let filtered=0,xFiltered=0,xDuplicates=0;
  for(const [source,records] of [['x',xr.rows],['tg',tr.rows]])for(const row of records.slice(0,limit)){
   if(!mentionsAddress(row.text,mint))continue;
+  if(source==='x'){
+   const key=twitterEvidenceKey(row.text);
+   if(seenTwitter.has(key)){xDuplicates++;continue;}seenTwitter.add(key);
+   if(isLowValueTwitterPost(row.text)){xFiltered++;continue;}
+  }
   if(source==='tg'&&isLowValueTelegramPost(row.text)){filtered++;continue;}
   const ref=source==='x'?`x:tweet:${row.tweet_id}`:`tg:message:${row.peer_id}:${row.message_id}`;
   if(seen.has(ref)||messages.filter(m=>m.source===source).length>=4)continue;seen.add(ref);
@@ -32,6 +37,7 @@ export async function collectTokenInputs({x,tg,chain},tokenId,at=new Date()){
   timestamp:row.timestamp,type:row.type,wallet:row.trader,amountSol:row.amount_sol,amountTokens:row.amount_tokens}));
  const facts={tokenId,'x.sampledMessages':messages.filter(m=>m.source==='x').length,
   'tg.sampledMessages':messages.filter(m=>m.source==='tg').length,'tg.filteredTemplates':filtered,
+  'x.filteredTemplates':xFiltered,'x.duplicateMessages':xDuplicates,
   'chain.sampledStoredTradeRows':trades.length,'chain.sampledWallets':new Set(trades.map(r=>r.wallet)).size,
   'chain.coverage':'unknown','social.coverage':'unknown','identity.method':'literal-address-match; stored-trade-mint'};
  return {tokenId,asOf,messages,trades,facts,sourceStatus:{x:{queried:true,truncated:xr.rows.length>limit},tg:{queried:true,truncated:tr.rows.length>limit},blockchain:{queried:true,truncated:rows.length>100,kind:'stored-trade-records-not-verified-settlement'}}};
