@@ -1,65 +1,60 @@
-from types import SimpleNamespace
+"""Subscription permissions verified through real HTTP endpoints and test DB.
+
+Internal checkout credentials may read settings and orders, but only the
+separate admin key may change settings.
+"""
 
 import pytest
-from app.api.v1.subscriptions import (
-    _require_admin_access,
-    _require_checkout_access,
-    _require_settings_read_access,
-)
-from app.core.config import Settings
-from fastapi import HTTPException
-from starlette.requests import Request
+from tests.conftest import TEST_SUBSCRIPTION_ADMIN_KEY, TEST_SUBSCRIPTION_INTERNAL_KEY
 
-SECRET = "a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9"
-CHECKOUT_KEY = "c" * 64
-ADMIN_KEY = "a" * 64
+CHECKOUT = {"X-API-Key": TEST_SUBSCRIPTION_INTERNAL_KEY}
+ADMIN = {"X-API-Key": TEST_SUBSCRIPTION_ADMIN_KEY}
+SETTINGS = "/api/v1/subscriptions/settings"
+ORDER = "/api/v1/subscriptions/orders/nonexistent-order"
 
 
-def make_settings() -> Settings:
-    return Settings(
-        secret_key=SECRET,
-        environment="development",
-        subscription_internal_key=CHECKOUT_KEY,
-        subscription_admin_key=ADMIN_KEY,
+@pytest.mark.asyncio
+async def test_checkout_can_read_settings_but_cannot_update_them(client):
+    before = await client.get(SETTINGS, headers=CHECKOUT)
+    assert before.status_code == 200
+
+    forbidden = await client.put(
+        SETTINGS,
+        headers=CHECKOUT,
+        json={**before.json(), "demo_days": 17},
     )
+    assert forbidden.status_code == 403
+
+    after = await client.get(SETTINGS, headers=CHECKOUT)
+    assert after.status_code == 200
+    assert after.json() == before.json()
 
 
-def make_request(api_key: str) -> Request:
-    settings = make_settings()
-    app = SimpleNamespace(state=SimpleNamespace(settings=settings))
-    scope = {
-        "type": "http",
-        "http_version": "1.1",
-        "method": "GET",
-        "scheme": "http",
-        "path": "/api/v1/subscriptions/settings",
-        "raw_path": b"/api/v1/subscriptions/settings",
-        "query_string": b"",
-        "headers": [(b"x-api-key", api_key.encode())],
-        "client": ("127.0.0.1", 12345),
-        "server": ("test", 80),
-        "app": app,
-    }
-    return Request(scope)
+@pytest.mark.asyncio
+async def test_admin_can_update_settings_but_cannot_access_orders(client):
+    initial = await client.get(SETTINGS, headers=ADMIN)
+    assert initial.status_code == 200
+
+    changed = await client.put(
+        SETTINGS, headers=ADMIN, json={**initial.json(), "demo_days": 17}
+    )
+    assert changed.status_code == 200
+    assert changed.json()["demo_days"] == 17
+
+    reread = await client.get(SETTINGS, headers=CHECKOUT)
+    assert reread.status_code == 200
+    assert reread.json()["demo_days"] == 17
+
+    assert (await client.get(ORDER, headers=ADMIN)).status_code == 403
+    assert (await client.get(ORDER, headers=CHECKOUT)).status_code == 404
 
 
-def test_checkout_key_can_read_settings_and_manage_orders():
-    request = make_request(CHECKOUT_KEY)
-    assert _require_checkout_access(request).subscription_internal_key == CHECKOUT_KEY
-    assert _require_settings_read_access(request).subscription_internal_key == CHECKOUT_KEY
-
-
-def test_admin_key_can_read_and_update_settings_but_not_manage_orders():
-    request = make_request(ADMIN_KEY)
-    assert _require_settings_read_access(request).subscription_admin_key == ADMIN_KEY
-    assert _require_admin_access(request).subscription_admin_key == ADMIN_KEY
-    with pytest.raises(HTTPException) as exc:
-        _require_checkout_access(request)
-    assert exc.value.status_code == 403
-
-
-def test_checkout_key_cannot_update_subscription_settings():
-    request = make_request(CHECKOUT_KEY)
-    with pytest.raises(HTTPException) as exc:
-        _require_admin_access(request)
-    assert exc.value.status_code == 403
+@pytest.mark.asyncio
+async def test_subscription_endpoints_reject_missing_credentials(client):
+    assert (await client.get(SETTINGS)).status_code == 403
+    initial = await client.get(SETTINGS, headers=CHECKOUT)
+    assert initial.status_code == 200
+    assert (
+        await client.put(SETTINGS, json={**initial.json(), "demo_days": 17})
+    ).status_code == 403
+    assert (await client.get(ORDER)).status_code == 403

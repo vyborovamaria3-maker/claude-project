@@ -111,7 +111,7 @@ function fakePool(){
   };
 }
 async function withServer(pool,fn,opts={}){
-  const server=createIntelligenceApi({token,pool,now:()=>new Date(at),...opts});
+  const server=createIntelligenceApi({token,pool,crossPlatformEnabled:true,now:()=>new Date(at),...opts});
   await new Promise(resolve=>server.listen(0,"127.0.0.1",resolve));
   try{return await fn("http://127.0.0.1:"+server.address().port,server)}
   finally{await new Promise(resolve=>server.close(resolve))}
@@ -150,6 +150,7 @@ test("strict token/time/query validation rejects aliases, encoded slashes, futur
     {kind:"ai",asOf:known,source:"x",tokenId:null,limit:50});
   assert.equal(parseApiRequest("/api/intelligence/v1/signals?asOf="+encodeURIComponent(known),now).kind,"signals");
   assert.equal(parseApiRequest("/api/intelligence/v1/backtest?signal=attention_score",now).kind,"backtest");
+  assert.equal(parseApiRequest(base+"/evidence?"+window+"&limit=3",now).kind,"evidence");
   for(const route of [
     base+"/timeline?"+window+"&limit=101",
     base+"/timeline?"+window+"&limit=0",
@@ -213,6 +214,21 @@ test("HTTP API enforces Bearer, no cookie/CORS, safe responses and read-only que
     assert.equal(swapBody.items[0].finality,"not_independently_verified");
     assert.equal(swapBody.tradeStatus,"not_a_confirmed_trade_tape");
     assert.ok(!JSON.stringify(swapBody).includes("SECRET"));
+    const evidence=await fetch(origin+base+"/evidence?"+window+"&limit=1",{
+      headers:headers(),
+    });
+    assert.equal(evidence.status,200);
+    const combined=await evidence.json();
+    assert.equal(combined.socialLinks.length,1);
+    assert.equal(combined.socialLinks[0].source,"tg");
+    assert.equal(combined.socialLinks[0].evidenceId,"tg:message:-100123:42");
+    assert.equal(combined.blockchainSwapEvidence.length,1);
+    assert.equal(combined.blockchainSwapEvidence[0].source,"blockchain");
+    assert.equal(combined.blockchainSwapEvidence[0].finality,"not_independently_verified");
+    assert.equal(combined.tradeStatus,"not_a_confirmed_trade_tape");
+    assert.equal(combined.historicalCompleteness,"unknown");
+    assert.equal(combined.independentLimitPerSourceType,1);
+    assert.ok(!JSON.stringify(combined).includes("SECRET"));
     const ready=await fetch(origin+"/api/intelligence/v1/health",{headers:headers()});
     assert.equal(ready.status,200);
     assert.equal((await ready.json()).sourceCollectorsChecked,false);
@@ -349,26 +365,8 @@ test("readiness requires destination 001/002/004; no fallback to source database
   await assert.rejects(checkApiReadiness({query:async()=>({rows:[{
     inbox:true,timeline:true,entities:true,links:true,swap_revisions:false,
   }]})}),/migration_005_required/);
-  await assert.rejects(checkApiReadiness({query:async()=>({rows:[{
-    inbox:true,timeline:true,entities:true,links:true,swap_revisions:true,feature_store:false,
-  }]})}),/migration_003_required/);
-  await assert.rejects(checkApiReadiness({query:async()=>({rows:[{
-    inbox:true,timeline:true,entities:true,links:true,swap_revisions:true,feature_store:true,
-    model_registry:false,cross_platform:false,correlations:true,alerts:true,backtests:true,
-  }]})}),/migration_006_required/);
-  await assert.rejects(checkApiReadiness({query:async()=>({rows:[{
-    inbox:true,timeline:true,entities:true,links:true,swap_revisions:true,feature_store:true,
-    model_registry:true,cross_platform:true,correlations:true,alerts:true,backtests:true,alert_status_history:false,
-  }]})}),/migration_008_required/);
-  await assert.rejects(checkApiReadiness({query:async()=>({rows:[{
-    inbox:true,timeline:true,entities:true,links:true,swap_revisions:true,feature_store:true,
-    model_registry:true,cross_platform:true,correlations:true,alerts:true,backtests:true,alert_status_history:true,
-    ai_message_analyses:false,explanation_grounding:false,
-  }]})}),/migration_009_required/);
   await assert.doesNotReject(checkApiReadiness({query:async()=>({rows:[{
-    inbox:true,timeline:true,entities:true,links:true,swap_revisions:true,feature_store:true,
-    model_registry:true,cross_platform:true,correlations:true,alerts:true,backtests:true,alert_status_history:true,
-    ai_message_analyses:true,explanation_grounding:true,
+    inbox:true,timeline:true,entities:true,links:true,swap_revisions:true,
   }]})}));
 });
 
@@ -485,6 +483,22 @@ test("real isolated PostgreSQL: token timeline and retraction-aware links are sa
       const old=await fetch(origin+base+"/links?"+earlier,{headers:headers()});
       assert.equal(old.status,200);
       assert.equal((await old.json()).items.length,1);
+      const compositeEarlier=await fetch(origin+base+"/evidence?"+earlier,{
+        headers:headers(),
+      });
+      assert.equal(compositeEarlier.status,200);
+      const compositeBeforeEdit=await compositeEarlier.json();
+      assert.equal(compositeBeforeEdit.socialLinks.length,1);
+      assert.equal(compositeBeforeEdit.blockchainSwapEvidence.length,0);
+      assert.equal(compositeBeforeEdit.tradeStatus,"not_a_confirmed_trade_tape");
+      const compositeLater=await fetch(origin+base+"/evidence?"+later,{
+        headers:headers(),
+      });
+      assert.equal(compositeLater.status,200);
+      const compositeAfterEdit=await compositeLater.json();
+      assert.equal(compositeAfterEdit.socialLinks.length,0,
+        "edited TG evidence cannot silently survive in combined projection");
+      assert.equal(compositeAfterEdit.blockchainSwapEvidence.length,0);
       const latest=await fetch(origin+base+"/links?"+later,{headers:headers()});
       assert.equal(latest.status,200);
       assert.equal((await latest.json()).items.length,0);

@@ -1153,6 +1153,12 @@ function appendDiscoveredCreatorTokens(db,scopeId,creatorAddress,transactions){
 }
 function persistInventoryMovements(db, kind, address, events) {
   const { decodeInventoryMovements } = require("./blockchain-inventory-decoder.cjs");
+  // Called within processOne's durable lease-fenced transaction, together with
+  // persistEvents(). Replacing the complete per-signature evidence projection
+  // prevents phantom SPL legs after a later RAW revision removes an instruction.
+  const clearSignature = db.prepare(
+    "DELETE FROM chain_inventory_movements WHERE target_kind=? AND target_address=? AND signature=?"
+  );
   const stmt = db.prepare(`
     INSERT INTO chain_inventory_movements
       (target_kind,target_address,signature,leg_index,slot,block_time,operation_index,
@@ -1175,7 +1181,10 @@ function persistInventoryMovements(db, kind, address, events) {
   `);
   let saved = 0;
   for (const tx of events || []) {
-    for (const [legIndex, movement] of decodeInventoryMovements(tx).entries()) {
+    if(!tx || typeof tx.signature!=="string" || !tx.signature)continue;
+    const movements=decodeInventoryMovements(tx);
+    clearSignature.run(kind,address,tx.signature);
+    for (const [legIndex, movement] of movements.entries()) {
       stmt.run({
         target_kind: kind, target_address: address, signature: movement.signature,
         leg_index: legIndex, slot: movement.slot, block_time: movement.blockTime,
@@ -1524,7 +1533,7 @@ if (require.main === module) main().catch(error => {
 });
 module.exports = {
   collect,importFolders,refreshTargets,failTask,parseArgs,resolveBudgetSettings,initDb,appendDiscovered,appendDiscoveredWallets,persistEvents,processOne,claimOne,
-  syncDexProgramSources,ensurePilotScope,addScopeMember,deferScopeMember,promoteDeferredWaves,shouldStopForRuntime,
+  persistInventoryMovements,syncDexProgramSources,ensurePilotScope,addScopeMember,deferScopeMember,promoteDeferredWaves,shouldStopForRuntime,
   appendDiscoveredCreators,appendDiscoveredCreatorTokens,savePumpFunLaunches,startCollectionRun,reserveHeliusCredits,
   recordHeliusResponse,recordHeliusError,releaseTaskForBudget,finishCollectionRun,usageStatus,currentMonthKey,status,
   reserveAlchemyCu,recordAlchemyResponse,recordAlchemyError,CURSOR_VERSION,

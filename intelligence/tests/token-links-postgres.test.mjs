@@ -5,7 +5,7 @@ import {readFile} from "node:fs/promises";
 import pg from "pg";
 import {
   buildEntityRef,buildEvidenceRef,buildVerifiedTokenLinkEvent,
-  buildTokenLinksInvalidatedEvent,formatSourceId,formatTokenId,
+  buildTokenLinksInvalidatedEvent,formatSourceId,formatAuthorId,formatTokenId,canonicalTokenIdFromNative,
 } from "@claude-project/contracts";
 import {runDeliveryBatch,queryActiveTokenLinks,queryTokenTimeline,storeEncryptedEventText,readEncryptedEventText} from "../dist/index.js";
 
@@ -110,6 +110,63 @@ test("real PostgreSQL: late arrivals, edit retractions, historical as-of and rep
     assert.equal((await queryTokenTimeline(pool,token,"2026-10-20T01:10:00Z","2026-10-20T01:10:00Z")).length,
       0,"no phantom irreversible token timeline is emitted");
 
+    // The same verified mint is a single canonical token across native TG and X
+    // evidence. A source-specific edit retracts only its own assertion.
+    assert.equal(canonicalTokenIdFromNative("solana-mainnet",mint),token);
+    assert.equal(canonicalTokenIdFromNative("solana",mint),token);
+    const xAt="2026-10-20T01:09:00Z";
+    const xRef=buildEntityRef({
+      kind:"author",canonicalId:formatAuthorId("x","9007199254740993"),
+      firstSeenAt:xAt,lastSeenAt:xAt,
+    });
+    const xEvidence=buildEvidenceRef({
+      sourceKind:"x_tweet",tweetId:"1234567890123456789",
+      observedAt:xAt,occurredAt:"2026-10-19T22:02:00Z",
+      parserVersion:"x-mint-verifier-v1",
+    });
+    const xVerified=buildVerifiedTokenLinkEvent({
+      sourceSystem:"x",sourceEntity:xRef,evidenceRef:xEvidence,
+      mint,matchedLiteralMint:mint,sourceRevisionSha256:"d".repeat(64),
+      mintVerification:{
+        chainId:"solana-mainnet",method:"spl_mint_account",
+        tokenProgram:"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        provider:"alchemy-solana-rpc",checkedAt:xAt,
+      },
+    });
+    assert.equal((await send(pool,xVerified)).delivered,1);
+    await pool.query("UPDATE token_link_observations SET inserted_at=observed_at");
+    current=await queryActiveTokenLinks(pool,token,
+      "2026-10-20T01:11:00Z","2026-10-20T01:10:00Z");
+    assert.deepEqual(new Set(current.map(row=>row.source_system)),new Set(["x","tg"]));
+    assert.deepEqual(new Set(current.map(row=>row.evidence_source_id)),
+      new Set(["x:tweet:1234567890123456789","tg:message:1234:42"]));
+    const xEditAt="2026-10-20T01:10:00Z";
+    const xEdit=buildTokenLinksInvalidatedEvent({
+      sourceSystem:"x",
+      sourceEntity:buildEntityRef({
+        kind:"author",canonicalId:formatAuthorId("x","9007199254740993"),
+        firstSeenAt:xEditAt,lastSeenAt:xEditAt,
+      }),
+      evidenceRef:buildEvidenceRef({
+        sourceKind:"x_tweet",tweetId:"1234567890123456789",
+        observedAt:xEditAt,occurredAt:"2026-10-19T22:02:00Z",
+        parserVersion:"x-mint-verifier-v1",
+      }),
+      reason:"edited",sourceRevisionSha256:"e".repeat(64),
+    });
+    assert.equal((await send(pool,xEdit)).delivered,1);
+    await pool.query("UPDATE token_link_observations SET inserted_at=observed_at");
+    current=await queryActiveTokenLinks(pool,token,
+      "2026-10-20T01:11:00Z","2026-10-20T01:11:00Z");
+    assert.deepEqual(current.map(row=>row.source_system),["tg"],
+      "X retraction must not remove an independent verified TG mention");
+    assert.equal((await send(pool,xVerified)).duplicates,1,
+      "replaying stale verified X evidence must not resurrect the link");
+    assert.equal((await send(pool,xEdit)).duplicates,1);
+    assert.equal((await queryActiveTokenLinks(pool,
+      formatTokenId("solana","EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),
+      "2026-10-20T01:11:00Z","2026-10-20T01:11:00Z")).length,0);
+
     // Same envelope identity but changed proof/evidence must be rejected.
     const forged={...restored,payload:{...restored.payload,tokenLink:{
       ...restored.payload.tokenLink,mintVerification:{
@@ -126,7 +183,7 @@ test("real PostgreSQL: late arrivals, edit retractions, historical as-of and rep
     assert.equal(result.delivered,0);
     assert.equal(result.failed,1);
     assert.equal(nack,1);
-    assert.equal((await pool.query("SELECT count(*)::integer AS n FROM token_link_observations")).rows[0].n,3);
+    assert.equal((await pool.query("SELECT count(*)::integer AS n FROM token_link_observations")).rows[0].n,5);
     // An encrypted message revision must be cryptoshredded in the SAME
     // destination transaction as a validated link retraction.
     const snapshotKey=randomBytes(32);

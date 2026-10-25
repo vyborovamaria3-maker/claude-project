@@ -60,7 +60,7 @@ export async function createPaymentHandler(req: Request, res: Response) {
       return res.status(400).json({
         success: false,
         error: 'Invalid request data',
-        details: error.errors,
+        details: error.issues,
       });
     }
     return res.status(500).json({

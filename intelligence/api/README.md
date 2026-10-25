@@ -2,6 +2,8 @@
 
 **Статус:** локальный API для серверного прокси. Автоматическое включение и публичный доступ отсутствуют. AI-конвейер проверен на небольшой выборке реальной локальной базы X в режиме read-only, с отдельной тестовой базой назначения. Рабочие базы и аккаунты не изменялись.
 
+**Статус на 2026-10-24:** read-only API и `/tokens/:id/evidence` включены в `main` через #165 (коммит `0bfd1c71c438d2f32a93652f4b6a2670c38d7b9b`). Это **локальный API для серверного прокси**, не публичный браузерный API, не новый Collector и не автоматически запущенный сервис. Изолированные PostgreSQL/SQLite тесты пройдены; live X/TG/chain источники, реальные права доступа и production-эксплуатация этим не подтверждаются.
+
 ## Принципы безопасности
 
 - Слушает **только 127.0.0.1**, фиксированное bind-правило. Сетевой доступ извне не включён даже при наличии публичного IP компьютера.
@@ -21,10 +23,13 @@
 | GET | `/api/intelligence/v1/health` | **Авторизованное** подтверждение доступности только целевой PostgreSQL; не делает вид, что проверены X/TG/Blockchain |
 | GET | `/api/intelligence/v1/tokens/:id/timeline` | Исторические evidence-backed события токена из существующего Timeline; только источник, тип, evidenceId и временные метки |
 | GET | `/api/intelligence/v1/tokens/:id/links` | Действующие **как известно на момент knownAt** подтверждённые SPL-mint привязки X/TG с учётом edit/delete tombstones |
+| GET | `/api/intelligence/v1/tokens/:id/evidence` | Два **раздельных** read-only списка: `socialLinks` (TG/X, с отзывом связей) и `blockchainSwapEvidence` (поддержанные ревизии swap-доказательств); это не финализированные сделки и не PnL |
 
-Для `timeline` и `links` обязательны query params `occurredBefore` и `knownAt` в **полном UTC ISO8601** (например `2026-10-20T02:00:00.000Z`). `knownAt` не может быть позже настоящего времени, `occurredBefore <= knownAt`; `limit` необязателен, 1–100, default 50. Дубликаты/неизвестные параметры, query-string токены, неполные ID и некорректные даты отклоняются.
+Для `timeline`, `links`, `swap-evidence` и `evidence` обязательны query params `occurredBefore` и `knownAt` в **полном UTC ISO8601** (например `2026-10-20T02:00:00.000Z`). `knownAt` не может быть позже настоящего времени, `occurredBefore <= knownAt`; `limit` необязателен, 1–100, default 50. Дубликаты/неизвестные параметры, query-string токены, неполные ID и некорректные даты отклоняются.
 
 Успешный ответ — `schemaVersion: token-intelligence-v1`, `tokenId`, фильтры времени, `items`, `truncated`, `historicalCompleteness: unknown`. Ответ **не включает** сырой `timeline.payload`, `token_link_observations.details`, `eventKey`, хеш исходного текста, приватные данные провайдера, первоначальный твит/сообщение. `truncated=true` означает, что выбранный лимит отрезал результат; **отсутствие truncated не означает полноту истории**. Сводный endpoint показывает только версионированные эвристические scores; они не являются подтверждёнными предикторами доходности. API не заявляет PnL, 100% покрытие источников, finality блокчейна, непрерывность X/TG или верификацию личности.
+
+Маршрут `evidence` использует общие `occurredBefore`/`knownAt` и отдельный лимит `limit` для каждой из двух категорий, возвращает `socialLinksTruncated` и `blockchainSwapEvidenceTruncated`. Содержимое `socialLinks` не подтверждает торговые результаты; `blockchainSwapEvidence` не является social-упоминанием или доказательством окончательной финализации. `historicalCompleteness` остаётся `unknown`. Пустые списки могут означать отсутствие доступных подтверждённых данных, а не отсутствие событий в реальности.
 
 Нельзя принимать `queryTokenTimeline` как замену `queryActiveTokenLinks`: первый содержит события, второй — историческую текущую привязку с отзыванными версиями. `links` может быть неполным для редакций до включения source tombstone producer.
 
@@ -78,3 +83,58 @@ Blockchain semantics: `chainTransactions` counts normalized `chain_transaction` 
 # Collector-backed AI routes
 
 Migration009 is required for the current API readiness check. `GET /api/intelligence/v1/ai?asOf=<UTC>&source=x` reads typed stored results, including unattributed source messages. The token-specific `/tokens/<id>/ai` route requires source-backed token attribution and respects invalidations. `/signals` includes only fact-grounded explanations saved by `asOf`. See [../AI_PIPELINE.md](../AI_PIPELINE.md) for execution and secret configuration. Raw message text is not returned.
+
+## ARCH-AI-01 — отделённый read-only контракт для внешнего ИИ
+
+Это расширение зависит от Sprint 1 / PR #165. Без явного разрешения отдельные
+AI-маршруты **отключены**. Подробная схема собственности всех баз данных,
+ограничения покрытия и план подключения:
+[AI_DATA_ACCESS_ARCHITECTURE.md](../../docs/architecture/AI_DATA_ACCESS_ARCHITECTURE.md).
+
+Новые маршруты:
+
+| Method | Endpoint | Значение |
+| --- | --- | --- |
+| GET | `/api/intelligence/v1/ai/catalog` | Декларативный каталог подключённых категорий и явно исключённых баз; **не** проверка живого состояния источников |
+| GET | `/api/intelligence/v1/tokens/:id/ai-context` | Ограниченные анонимизированные счётчики TG/X, Blockchain, legacy Timeline и проверенный по двум временным границам feature snapshot |
+
+**Изоляция токенов:** дополнительные переменные `INTELLIGENCE_AI_API_ENABLED=true`
+и `INTELLIGENCE_AI_API_TOKEN=<другой длинный секрет>` обязательны для AI
+маршрутов. Базовые `INTELLIGENCE_API_ENABLED=true`,
+`INTELLIGENCE_API_TOKEN` и `INTELLIGENCE_DATABASE_URL` остаются
+обязательными для запуска сервера. Обычный Bearer не получает AI-данные;
+AI Bearer не имеет доступа к остальным маршрутам. Секрет не отправляется
+напрямую сторонней модели: он хранится на авторизованном сервере-шлюзе,
+который забирает JSON с loopback API и передаёт модели только очищенный
+контекст. Шлюз должен отдельно проверять права конечного пользователя.
+
+`ai-context` требует `occurredBefore` и `knownAt`; `limit` — от 1
+до 100, с фактической верхней границей **50 на категорию**. Эти числа —
+**размеры наблюдаемой выборки, не полные счётчики истории**. Каждый тип
+снабжён своим флагом `truncated`. По умолчанию передаются только
+агрегаты и проверенные типизированные метрики, без исходных текстов,
+идентификаторов сообщений, адресов кошельков или свободных текстовых
+меток охвата, которые модель могла бы ошибочно воспринять как команды.
+
+Для AI дополнительно требуется миграция **003** (`chain_token_features`
+и `feature_versions`) в изолированной Intelligence PostgreSQL,
+проверяемая при запуске. Пока AI выключен, существующие API-эндпоинты
+не обязаны иметь таблицы 003. Исторические feature snapshots фильтруются
+по `as_of <= occurredBefore`, `max_input_observed_at <= knownAt` и
+`computed_at <= knownAt` в одной read-only repeatable-read транзакции.
+
+**Серверный AI gateway реализован отдельно:** `POST
+/api/ai/v1/analyze-token` на `127.0.0.1:3183`, с четвёртым
+`AI_GATEWAY_CLIENT_TOKEN` для вызывающего доверенного backend, явными
+`AI_GATEWAY_ENABLED=true` и `AI_GATEWAY_EGRESS_ENABLED=true`
+для разрешения внешнего запроса. Код провайдерского адаптера ограничен
+фиксированным HTTPS endpoint и `store:false`; **реальная модель не
+подключалась, платные запросы не выполнялись**. Полный интерфейс,
+конфигурация, ограничения безопасности и релизные блокеры —
+[ai-gateway/README.md](../ai-gateway/README.md).
+
+**Не подключено к данным ИИ:** Python Intelligence documents,
+Memecoin Intelligence, admin/подписки, raw source DBs, аккаунты и сессии.
+Это требует самостоятельной политики доступа и отдельного релизного gate.
+`historicalCompleteness=unknown` и `sourceCollectorLiveness=not_checked`
+не означают отсутствие активности в источниках.

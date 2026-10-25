@@ -1,3 +1,4 @@
+import {jsonStructurallyEqual} from "./json-structural-equality.js";
 import {
   buildEntityRef, type EntityRef,
 } from "./entity-registry.js";
@@ -161,10 +162,14 @@ export function validateVerifiedTokenLinkEvent(input: unknown): VerifiedTokenLin
     sourceRevisionSha256:link.sourceRevisionSha256,
     mintVerification:link.mintVerification,
   });
+  // Source Outboxes persist JSONB, which reorders object keys. Compare
+  // structural values instead of serialization order. This remains strict:
+  // extra/missing fields, different revision hashes and tampered mint evidence
+  // fail even if the JSON object was re-keyed by PostgreSQL.
   if (raw.eventKey!==expected.eventKey ||
-      JSON.stringify(reg.entityRefs)!==JSON.stringify(expected.payload.registryEvent.entityRefs) ||
-      JSON.stringify(reg.evidenceRef)!==JSON.stringify(expected.payload.registryEvent.evidenceRef) ||
-      JSON.stringify(link)!==JSON.stringify(expected.payload.tokenLink)) {
+      !jsonStructurallyEqual(reg.entityRefs,expected.payload.registryEvent.entityRefs) ||
+      !jsonStructurallyEqual(reg.evidenceRef,expected.payload.registryEvent.evidenceRef) ||
+      !jsonStructurallyEqual(link,expected.payload.tokenLink)) {
     throw new TypeError("Inconsistent verified token link evidence");
   }
   return raw;

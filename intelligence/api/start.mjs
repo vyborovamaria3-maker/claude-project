@@ -4,7 +4,7 @@ import {resolve} from "node:path";
 import {pathToFileURL} from "node:url";
 import pg from "pg";
 import {createTokenRequestRuntime} from "../scripts/token-request-runtime.mjs";
-import {API_HOST,createIntelligenceApi,checkApiReadiness,validateApiToken} from "./server.mjs";
+import {API_HOST,createIntelligenceApi,checkApiReadiness,checkAiReadiness,checkCrossPlatformReadiness,validateApiToken} from "./server.mjs";
 
 export function apiConfiguration(env=process.env){
   if(env.INTELLIGENCE_API_ENABLED!=="true")
@@ -16,7 +16,17 @@ export function apiConfiguration(env=process.env){
   const rawPort=env.INTELLIGENCE_API_PORT??"3182";
   if(!/^[1-9][0-9]*$/.test(rawPort)||Number(rawPort)>65535)
     throw new Error("invalid_api_port");
-  return {token,connectionString,port:Number(rawPort)};
+  const crossFlag=env.INTELLIGENCE_CROSS_PLATFORM_ENABLED??"false";
+  if(!["true","false"].includes(crossFlag))throw new Error("invalid_cross_platform_opt_in");
+  const crossPlatformEnabled=crossFlag==="true";
+  const aiFlag=env.INTELLIGENCE_AI_API_ENABLED??"false";
+  if(aiFlag!=="true"&&aiFlag!=="false")throw new Error("invalid_ai_api_opt_in");
+  const aiEnabled=aiFlag==="true";
+  const aiToken=aiEnabled?validateApiToken(env.INTELLIGENCE_AI_API_TOKEN):undefined;
+  if(aiEnabled&&aiToken===token)throw new Error("ai_api_token_must_be_distinct");
+  return {token,connectionString,port:Number(rawPort),
+    ...(aiEnabled?{aiEnabled:true,aiToken}:{}),
+    ...(crossPlatformEnabled?{crossPlatformEnabled:true}:{})};
 }
 export async function startLocalIntelligenceApi(env=process.env){
   const config=apiConfiguration(env);
@@ -32,8 +42,12 @@ export async function startLocalIntelligenceApi(env=process.env){
   let server,tokenRuntime;
   try{
     await checkApiReadiness(pool);
+    if(config.aiEnabled)await checkAiReadiness(pool);
+    if(config.crossPlatformEnabled)await checkCrossPlatformReadiness(pool);
     tokenRuntime=await createTokenRequestRuntime(env);
-    server=createIntelligenceApi({token:config.token,pool,analyzeToken:tokenRuntime?.analyze});
+    server=createIntelligenceApi({token:config.token,pool,aiEnabled:config.aiEnabled??false,
+      aiToken:config.aiToken,crossPlatformEnabled:config.crossPlatformEnabled,
+      analyzeToken:tokenRuntime?.analyze});
     if(tokenRuntime)server.once("close",()=>{void tokenRuntime.close();});
     const api=server;
     await new Promise((accept,reject)=>{

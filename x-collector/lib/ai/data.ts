@@ -30,7 +30,7 @@ export async function* exportInputs(raw:{from:string;to:string;asOf:string;batch
  }
 }
 export function inputHash(text:string){return createHash('sha256').update(text,'utf8').digest('hex');}
-const Model=z.object({name:z.string().min(1).max(120),version:z.string().min(1).max(120),task:z.string().min(1).max(120),dimensions:z.number().int().min(1).max(8192).nullable().default(null),metadata:z.record(z.unknown()).default({})}).strict();
+const Model=z.object({name:z.string().min(1).max(120),version:z.string().min(1).max(120),task:z.string().min(1).max(120),dimensions:z.number().int().min(1).max(8192).nullable().default(null),metadata:z.record(z.string(), z.unknown()).default({})}).strict();
 export async function registerModel(raw:unknown){
  const m=Model.parse(raw);
  return tx(async c=>{
@@ -39,7 +39,7 @@ export async function registerModel(raw:unknown){
   if(!found.rows.length)throw new Error('model version already registered with different configuration');
  });
 }
-const Result=z.object({postId:z.string().regex(/^\d+$/),sourceId:z.string().regex(/^[a-f0-9]{64}$/),rawHash:z.string().regex(/^[a-f0-9]{64}$/),modelName:z.string().min(1),modelVersion:z.string().min(1),inputHash:z.string().regex(/^[a-f0-9]{64}$/),result:z.record(z.unknown()),embedding:z.array(z.number().finite()).min(1).max(8192).optional()}).strict();
+const Result=z.object({postId:z.string().regex(/^\d+$/),sourceId:z.string().regex(/^[a-f0-9]{64}$/),rawHash:z.string().regex(/^[a-f0-9]{64}$/),modelName:z.string().min(1),modelVersion:z.string().min(1),inputHash:z.string().regex(/^[a-f0-9]{64}$/),result:z.record(z.string(), z.unknown()),embedding:z.array(z.number().finite()).min(1).max(8192).optional()}).strict();
 /** Immutable model output, tied to the exact captured text. No model is called by collection. */
 export async function saveResult(raw:unknown){
  const r=Result.parse(raw);

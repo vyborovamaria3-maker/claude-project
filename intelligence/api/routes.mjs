@@ -1,4 +1,5 @@
 import {parseTokenId} from "@claude-project/contracts";
+import {aiDataCatalog,queryAiTokenContext} from "./ai-context.mjs";
 import {queryTokenTimeline,queryActiveTokenLinks,queryActiveBlockchainSwapEvidence} from "../dist/index.js";
 
 const API_PREFIX="/api/intelligence/v1";
@@ -35,6 +36,10 @@ export function parseApiRequest(raw,now=new Date()){
     if(url.search)throw new TypeError("unexpected_query");
     return {kind:"health"};
   }
+  if(url.pathname===API_PREFIX+"/ai/catalog"){
+    if(url.search)throw new TypeError("unexpected_query");
+    return {kind:"ai-catalog"};
+  }
   const nowIso=safeTime(now);
   const globalMatch=/^\/api\/intelligence\/v1\/(signals|backtest|ai)$/.exec(url.pathname);
   if(globalMatch){
@@ -60,7 +65,7 @@ export function parseApiRequest(raw,now=new Date()){
     if(signal!==null&&!/^[a-z][a-z0-9_]{0,63}$/.test(signal))throw new TypeError("invalid_signal");
     return {kind,signal,limit:Number(rawLimit)};
   }
-  const match=/^\/api\/intelligence\/v1\/tokens\/([^/]+)\/(timeline|links|swap-evidence|summary|features|correlations|ai)$/.exec(url.pathname);
+  const match=/^\/api\/intelligence\/v1\/tokens\/([^/]+)\/(timeline|links|swap-evidence|evidence|ai-context|summary|features|correlations|ai)$/.exec(url.pathname);
   if(!match)return null;
   let tokenId;
   try{tokenId=decodeURIComponent(match[1]);}
@@ -70,7 +75,7 @@ export function parseApiRequest(raw,now=new Date()){
   }
   const kind=match[2];
   const query=url.searchParams;
-  const legacy=new Set(["timeline","links","swap-evidence"]);
+  const legacy=new Set(["timeline","links","swap-evidence","evidence","ai-context"]);
   const routeAllowed=legacy.has(kind)
     ? new Set(["occurredBefore","knownAt","limit"])
     : ["correlations","ai"].includes(kind) ? new Set(["asOf","limit"]) : new Set(["asOf"]);
@@ -292,6 +297,8 @@ function normalizeSummary(row,request){
   };
 }
 export async function queryTokenApi(pool,request){
+  if(request.kind==="ai-catalog")return aiDataCatalog();
+  if(request.kind==="ai-context")return queryAiTokenContext(pool,request);
   if(request.kind==="health"){
     await pool.query("SELECT 1 AS ok");
     return {
@@ -300,6 +307,31 @@ export async function queryTokenApi(pool,request){
       scope:"intelligence_destination_database_only",
       sourceCollectorsChecked:false,
       historicalCompleteness:"unknown",
+    };
+  }
+  if(request.kind==="evidence"){
+    // Two independent evidence contracts, one validated canonical ID and
+    // identical as-of boundaries. Do not misrepresent raw Blockchain swap
+    // observations as verified social mentions, finalized trades or PnL.
+    // Independent bounded pages and truncation keep provenance intact.
+    const [linkRows,swapRows]=await Promise.all([
+      queryActiveTokenLinks(pool,request.tokenId,
+        request.occurredBefore,request.knownAt,request.limit+1),
+      queryActiveBlockchainSwapEvidence(pool,request.tokenId,
+        request.occurredBefore,request.knownAt,request.limit+1),
+    ]);
+    return {
+      ...responseBase(request,[],linkRows.length>request.limit||swapRows.length>request.limit),
+      socialLinks:linkRows.slice(0,request.limit).map(row=>normalizeLink(row,request.tokenId)),
+      blockchainSwapEvidence:swapRows.slice(0,request.limit)
+        .map(row=>normalizeSwapEvidence(row,request.tokenId)),
+      sourceScope:"separate_social_and_chain_evidence",
+      independentLimitPerSourceType:request.limit,
+      socialLinksTruncated:linkRows.length>request.limit,
+      blockchainSwapEvidenceTruncated:swapRows.length>request.limit,
+      editDeleteCoverage:"not_guaranteed_for_legacy_source_history",
+      blockchainFinality:"not_independently_verified",
+      tradeStatus:"not_a_confirmed_trade_tape",
     };
   }
   if(request.kind==="timeline"){

@@ -160,3 +160,22 @@ export function parseSourceId(input: unknown): (ParsedSourceId & { id: SourceId 
     return null;
   }
 }
+
+
+/**
+ * Convert an explicitly chain-qualified native token key into the shared
+ * wire identity. This is identity normalization ONLY: it does not attest
+ * that an address is an SPL mint, that a ticker identifies a token, or that
+ * any source observed the token. Verified provenance is a separate contract.
+ *
+ * TG persists `(chain_id, mint)` with `solana-mainnet`; X and the chain
+ * collector use Solana mint strings. Do not rewrite native database keys.
+ */
+export function canonicalTokenIdFromNative(
+  nativeChain: Chain | "solana-mainnet", nativeMint: unknown,
+): TokenId {
+  const chain: Chain = nativeChain === "solana-mainnet" ? "solana" : nativeChain;
+  if (!isChain(chain)) throw new TypeError("Unsupported native token chain");
+  if (typeof nativeMint !== "string") throw new TypeError("Native token mint must be a string");
+  return formatTokenId(chain, nativeMint);
+}
