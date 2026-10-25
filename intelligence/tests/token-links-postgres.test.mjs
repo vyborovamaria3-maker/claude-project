@@ -7,7 +7,7 @@ import {
   buildEntityRef,buildEvidenceRef,buildVerifiedTokenLinkEvent,
   buildTokenLinksInvalidatedEvent,formatSourceId,formatAuthorId,formatTokenId,canonicalTokenIdFromNative,
 } from "@claude-project/contracts";
-import {runDeliveryBatch,queryActiveTokenLinks,queryTokenTimeline} from "../dist/index.js";
+import {runDeliveryBatch,queryActiveTokenLinks,queryTokenTimeline,storeEncryptedEventText,readEncryptedEventText} from "../dist/index.js";
 
 const url=process.env.INTELLIGENCE_TEST_DB_URL;
 const mint="So11111111111111111111111111111111111111112";
@@ -70,7 +70,10 @@ test("real PostgreSQL: late arrivals, edit retractions, historical as-of and rep
   try{
     await admin.query('CREATE SCHEMA "'+schema+'"');
     await admin.query('SET search_path TO "'+schema+'"');
-    for(const filename of ["001_entity_registry.sql","002_timeline.sql","004_token_link_observations.sql"]){
+    for(const filename of ["001_entity_registry.sql","002_timeline.sql","003_feature_store.sql",
+      "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql",
+      "006_cross_platform_analytics.sql","008_alert_status_history.sql","009_ai_analysis.sql",
+      "010_intelligence_governance.sql"]){
       await admin.query(await readFile(new URL("../migrations/"+filename,import.meta.url),"utf8"));
     }
     pool=new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:3});
@@ -181,6 +184,48 @@ test("real PostgreSQL: late arrivals, edit retractions, historical as-of and rep
     assert.equal(result.failed,1);
     assert.equal(nack,1);
     assert.equal((await pool.query("SELECT count(*)::integer AS n FROM token_link_observations")).rows[0].n,5);
+    // An encrypted message revision must be cryptoshredded in the SAME
+    // destination transaction as a validated link retraction.
+    const snapshotKey=randomBytes(32);
+    const messageRef="tg:message:1234:42";
+    const messageEventKey="tg:source-test:revision";
+    await pool.query(`INSERT INTO intelligence_inbox
+      (source_system,event_kind,event_key,schema_version,evidence_source_id)
+      VALUES('tg','message_observed',$1,'tg-message-v1',$2)`,
+      [messageEventKey,messageRef]);
+    await pool.query(`INSERT INTO timeline_events
+      (source_system,source_event_kind,event_key,timeline_kind,occurred_at,observed_at,
+       evidence_source_id,schema_version,payload)
+      VALUES('tg','message_observed',$1,'tg_message_published',
+       '2026-10-19T22:00:00Z','2026-10-20T01:08:00Z',$2,'timeline-v1','{}')`,
+      [messageEventKey,messageRef]);
+    const snapshot={sourceSystem:"tg",sourceEventKind:"message_observed",eventKey:messageEventKey};
+    assert.equal(await storeEncryptedEventText(pool,{...snapshot,
+      observedAt:"2026-10-20T01:08:00Z",text:"Sensitive private source revision",
+      key:snapshotKey,keyRef:"fixture-key-v1",retentionDays:7}),true);
+    assert.equal(await readEncryptedEventText(pool,snapshotKey,{...snapshot,keyRef:"fixture-key-v1"}),
+      "Sensitive private source revision");
+    // Revoke a link AFTER verified revisions exist; replay cannot enqueue twice.
+    const newerDelete=invalidated("2026-10-20T01:09:00Z");
+    assert.equal((await send(pool,newerDelete)).delivered,1);
+    assert.equal((await send(pool,newerDelete)).duplicates,1);
+    const destroyed=await pool.query(`SELECT text_ciphertext,purged_at
+      FROM event_text_snapshots WHERE event_key=$1`,[messageEventKey]);
+    assert.equal(destroyed.rows.length,1);
+    assert.equal(destroyed.rows[0].text_ciphertext,null);
+    assert.ok(destroyed.rows[0].purged_at instanceof Date);
+    assert.equal(await readEncryptedEventText(pool,snapshotKey,{...snapshot,keyRef:"fixture-key-v1"}),null);
+
+    const changes=await pool.query(`SELECT reason,count(*)::integer AS n
+      FROM analytics_invalidation_queue GROUP BY reason ORDER BY reason`);
+    assert.ok(changes.rows.some(row=>row.reason==="link_invalidated"&&row.n===2));
+    const retractions=await pool.query(`SELECT source_system,count(*)::integer AS n
+      FROM analytics_invalidation_queue WHERE reason='link_invalidated'
+      GROUP BY source_system ORDER BY source_system`);
+    assert.deepEqual(retractions.rows,[{source_system:"tg",n:1},{source_system:"x",n:1}],
+      "one recomputation per independent source retraction; duplicates do not enqueue again");
+    assert.equal((await pool.query("SELECT count(*)::integer AS n FROM analytics_invalidation_log")).rows[0].n,
+      (await pool.query("SELECT count(*)::integer AS n FROM analytics_invalidation_queue")).rows[0].n);
   }finally{
     if(pool)await pool.end();
     await admin.query("SET search_path TO public");

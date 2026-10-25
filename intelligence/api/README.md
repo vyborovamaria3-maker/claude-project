@@ -1,5 +1,7 @@
 # Intelligence API — ARCH-10 read-only v1
 
+**Статус:** локальный API для серверного прокси. Автоматическое включение и публичный доступ отсутствуют. AI-конвейер проверен на небольшой выборке реальной локальной базы X в режиме read-only, с отдельной тестовой базой назначения. Рабочие базы и аккаунты не изменялись.
+
 **Статус на 2026-10-24:** read-only API и `/tokens/:id/evidence` включены в `main` через #165 (коммит `0bfd1c71c438d2f32a93652f4b6a2670c38d7b9b`). Это **локальный API для серверного прокси**, не публичный браузерный API, не новый Collector и не автоматически запущенный сервис. Изолированные PostgreSQL/SQLite тесты пройдены; live X/TG/chain источники, реальные права доступа и production-эксплуатация этим не подтверждаются.
 
 ## Принципы безопасности
@@ -10,7 +12,7 @@
 - Нет CORS и поддержки OPTIONS/POST. Возвращаются `Cache-Control: no-store`, `nosniff`, запрет embedding и `Referrer-Policy: no-referrer`.
 - Ограничены 60 запросов в минуту на процесс, 8 параллельных, 10 секунд на запрос и 5 секунд серверного PostgreSQL statement timeout.
 - Доступ только к **отдельной базе Intelligence**, через `INTELLIGENCE_DATABASE_URL`. В рабочем окружении DB-роль должна иметь только `SELECT` на нужные представления/таблицы, **не** доступ к источникам. В соединении включён `default_transaction_read_only=on`.
-- До запуска требуется таблица `token_link_observations` (миграции Intelligence **001, 002, 004**), иначе запуск отклоняется. Отсутствие источника, базы или таблицы не превращается в пустой успешный ответ.
+- До запуска требуются миграции Intelligence **001–006 и 008**, включая Feature Store (003), token links (004), swap evidence revisions (005), кросс-платформенные таблицы (006) и историю статусов оповещений (008). Миграция 007 нужна только для pgvector embeddings. Для существующих оповещений история начинается с момента применения 008; более ранние переходы восстановить нельзя.
 - Ошибки запроса/базы обезличены: ни SQL, ни DSN, ни сообщение Twitter/Telegram, ни тело сырой транзакции, ни RPC provider response не возвращаются и не печатаются.
 - Все запросы используют канонический `solana:<full-mint>` и строгие UTC-временные границы. SQL использует параметризацию существующего Intel слоя.
 
@@ -25,7 +27,7 @@
 
 Для `timeline`, `links`, `swap-evidence` и `evidence` обязательны query params `occurredBefore` и `knownAt` в **полном UTC ISO8601** (например `2026-10-20T02:00:00.000Z`). `knownAt` не может быть позже настоящего времени, `occurredBefore <= knownAt`; `limit` необязателен, 1–100, default 50. Дубликаты/неизвестные параметры, query-string токены, неполные ID и некорректные даты отклоняются.
 
-Успешный ответ — `schemaVersion: token-intelligence-v1`, `tokenId`, фильтры времени, `items`, `truncated`, `historicalCompleteness: unknown`. Ответ **не включает** сырой `timeline.payload`, `token_link_observations.details`, `eventKey`, хеш исходного текста, приватные данные провайдера, первоначальный твит/сообщение. `truncated=true` означает, что выбранный лимит отрезал результат; **отсутствие truncated не означает полноту истории**. Версия v1 намеренно не заявляет активный risk score, PnL, 100% покрытие источников, finality блокчейна, непрерывность X/TG и верификацию личности.
+Успешный ответ — `schemaVersion: token-intelligence-v1`, `tokenId`, фильтры времени, `items`, `truncated`, `historicalCompleteness: unknown`. Ответ **не включает** сырой `timeline.payload`, `token_link_observations.details`, `eventKey`, хеш исходного текста, приватные данные провайдера, первоначальный твит/сообщение. `truncated=true` означает, что выбранный лимит отрезал результат; **отсутствие truncated не означает полноту истории**. Сводный endpoint показывает только версионированные эвристические scores; они не являются подтверждёнными предикторами доходности. API не заявляет PnL, 100% покрытие источников, finality блокчейна, непрерывность X/TG или верификацию личности.
 
 Маршрут `evidence` использует общие `occurredBefore`/`knownAt` и отдельный лимит `limit` для каждой из двух категорий, возвращает `socialLinksTruncated` и `blockchainSwapEvidenceTruncated`. Содержимое `socialLinks` не подтверждает торговые результаты; `blockchainSwapEvidence` не является social-упоминанием или доказательством окончательной финализации. `historicalCompleteness` остаётся `unknown`. Пустые списки могут означать отсутствие доступных подтверждённых данных, а не отсутствие событий в реальности.
 
@@ -61,6 +63,26 @@ npm run api:local
 
 Следующий отдельный этап: ARCH-11 — авторизованный backend proxy POTAPoff + UI, использующий только этот read-only API, не соединяющий браузер с источниками и не раскрывающий серверный токен.
 
+
+## Cross-platform analytics routes (migrations 006 and 008)
+
+Migration 003 (Feature Store) and migration 006 (cross-platform analytics) are now required by readiness. Migration 007 is optional for API startup and is required only for pgvector embeddings.
+
+| Method | Endpoint | Required query | Purpose |
+| --- | --- | --- | --- |
+| GET | `/api/intelligence/v1/tokens/:id/summary` | `asOf` | Latest cross-platform snapshot available by the requested UTC time |
+| GET | `/api/intelligence/v1/tokens/:id/features` | `asOf` | Latest point-in-time Feature Store snapshot |
+| GET | `/api/intelligence/v1/tokens/:id/correlations` | `asOf`, optional `limit` | Evaluated event/outcome correlations |
+| GET | `/api/intelligence/v1/signals` | `asOf`, optional `limit` | Non-resolved alerts known by that time |
+| GET | `/api/intelligence/v1/backtest` | optional `signal`, `limit` | Completed backtest summaries |
+
+These endpoints return normalized metrics only, not raw Telegram messages, tweet bodies, provider prompts, API keys, or full timeline payloads. As-of filters include result creation/computation timestamps as well as input-observation timestamps. Summary selection prioritizes the latest UTC day, then the latest snapshot within that day. Correlation results are returned once per statistical group, with the observation window exposed separately. Signal status is reconstructed from migration 008 onward; earlier status transitions are unavailable, and alerts without status history at the requested time are omitted. Historical completeness remains `unknown` unless separately established.
+
+
+Blockchain semantics: `chainTransactions` counts normalized `chain_transaction` events. `chainSwapEvidenceCount` counts only currently consistent, supported wallet/signature revisions known by `asOf`; it is not a confirmed settled-trade count. `chainTrades` is derived only from explicit `trade_executed` Timeline events. `chainVolumeUsd` stays null unless every counted trade has a valid numeric volume; coverage metadata alone cannot prove that Timeline mirrors the settled trade tape. `firstTradeAt` remains null when no explicit trade event is available.
+# Collector-backed AI routes
+
+Migration009 is required for the current API readiness check. `GET /api/intelligence/v1/ai?asOf=<UTC>&source=x` reads typed stored results, including unattributed source messages. The token-specific `/tokens/<id>/ai` route requires source-backed token attribution and respects invalidations. `/signals` includes only fact-grounded explanations saved by `asOf`. See [../AI_PIPELINE.md](../AI_PIPELINE.md) for execution and secret configuration. Raw message text is not returned.
 
 ## ARCH-AI-01 — отделённый read-only контракт для внешнего ИИ
 
@@ -116,3 +138,8 @@ Memecoin Intelligence, admin/подписки, raw source DBs, аккаунты 
 Это требует самостоятельной политики доступа и отдельного релизного gate.
 `historicalCompleteness=unknown` и `sourceCollectorLiveness=not_checked`
 не означают отсутствие активности в источниках.
+
+Cross-platform routes require INTELLIGENCE_CROSS_PLATFORM_ENABLED=true (default false).
+Only this opt-in requires migrations 003, 006, 008 and 009; the original API keeps its original
+readiness contract. On-demand provider execution has a separate explicit opt-in and requires the
+ordinary service credential. The aggregate-only AI credential cannot start paid work.

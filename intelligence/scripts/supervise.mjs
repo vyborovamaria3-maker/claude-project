@@ -7,6 +7,7 @@ import {
   sourceConnection, checkPgOutbox, checkDestination, destinationConnection,
 } from "./etl-connections.mjs";
 import { runSourceLoop } from "./supervisor-core.mjs";
+import { createAiRuntime } from "./ai-runtime.mjs";
 
 /**
  * Foreground-only, laptop-local ETL process. Nothing runs unless explicitly
@@ -100,6 +101,7 @@ async function main(){
     }
     destination=destinationConnection();
     await checkDestination(destination,{requireBlockchainRevisions:options.sources.includes('blockchain')});
+    const ai=await createAiRuntime(destination,Object.fromEntries(sources.filter(s=>s.connection.kind==='pg').map(s=>[s.name,s.connection.connection])));
     const report=event=>console.log(JSON.stringify({
       timestamp:new Date().toISOString(),...event,
     }));
@@ -111,9 +113,12 @@ async function main(){
           source:name,signal:stop.signal,pollMs:options.pollMs,
           paceMs:options.paceMs,maxFailures:options.maxFailures,
           maxBatches:options.maxBatches,onReport:report,
-          runBatch:()=>runDeliveryBatch(connection.port,destination,{
-            workerId,batchSize:1,leaseMs:options.leaseMs,
-          }),
+          runBatch:async()=>{
+            const stats=await runDeliveryBatch(connection.port,destination,{workerId,batchSize:1,leaseMs:options.leaseMs});
+            if(ai&&name!=='blockchain'&&!stop.signal.aborted)try{report({kind:"ai",source:name,...(await ai.run(name,stop.signal))});}
+            catch{report({kind:"ai",source:name,code:"ai_batch_failed"});}
+            return stats;
+          },
         });
       }catch(error){
         stop.abort(); // all other source loops drain their active batch

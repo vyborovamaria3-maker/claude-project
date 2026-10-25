@@ -4,6 +4,7 @@ import {
   sourceConnection, checkPgOutbox, checkDestination, destinationConnection,
 } from "./etl-connections.mjs";
 import { runDeliveryBatch } from "../dist/index.js";
+import { createAiRuntime } from "./ai-runtime.mjs";
 
 /**
  * Explicit, bounded local ETL command. No background service or automatic
@@ -99,10 +100,19 @@ async function main(){
     if(source.kind==="pg")await checkPgOutbox(source.connection);
     destination=destinationConnection();
     await checkDestination(destination,{requireBlockchainRevisions:args.source==='blockchain'});
+    const ai=await createAiRuntime(destination,source.kind==='pg'?{[args.source]:source.connection}:{});
     const stats=await runDeliveryBatch(source.port,destination,{
       workerId:randomUUID(),batchSize:args.limit,leaseMs:120_000,
     });
     console.log(JSON.stringify({source:args.source,mode:"once",...stats}));
+    if(ai&&args.source!=='blockchain'){
+      try{
+        const result=await ai.run(args.source);
+        console.log(JSON.stringify({source:args.source,mode:"ai",...result}));
+        if(result?.failed||result?.refreshFailed)process.exitCode=2;
+      }
+      catch{console.error("ai_batch_failed");process.exitCode=2;}
+    }
     if(stats.failed>0||stats.lostLeases>0)process.exitCode=2;
   }finally{
     if(destination)await destination.end();

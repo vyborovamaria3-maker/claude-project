@@ -32,7 +32,9 @@ test("Postgres feature registry and immutable point-in-time snapshots",{skip:!ur
       ...snap,features:{...snap.features,mentions_5m:99}
     }),/snapshot conflict/);
     assert.equal(await queryFeaturesAsOf(db,token,"2026-10-18T00:13:00Z"),null);
-    const row=await queryFeaturesAsOf(db,token,"2026-10-18T00:15:00Z");
+    // This snapshot was computed now, not on its retrospective asOf date.
+    assert.equal(await queryFeaturesAsOf(db,token,"2026-10-18T00:15:00Z"),null);
+    const row=await queryFeaturesAsOf(db,token,new Date().toISOString());
     assert.equal(row.features.mentions_5m,1);
     const count=await db.query("SELECT COUNT(*) FROM chain_token_features");
     assert.equal(Number(count.rows[0].count),1);

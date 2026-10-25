@@ -1,0 +1,26 @@
+{
+  "retained": [
+    "Wallet maintenance is temporary. Customer balances will NOT be affected.",
+    "Tenfold already, and we are not done yet.",
+    "Losses occur. Do not let a bad trading day take over your life.",
+    "Old coins are ignored. Why has this one not reached a larger valuation?",
+    "I would not be surprised to see a new all-time high.",
+    "Why not this other project? lol. The buyback wallet still has funds.",
+    "Our launch failed, but we will improve the next one.",
+    "I did not even know a competing project existed.",
+    "I bought a small speculative position, although I have not researched the company much.",
+    "There are many bots, but perhaps it still gets attention. Small speculation for me.",
+    "Those assets look undervalued. Do not forget the catalysts.",
+    "The developer did not pay the listing fee; other people covered it.",
+    "I hope my bullish prediction does not come true, or I will be insufferable about being right.",
+    "Seems so easy, right? Apparently not, because almost no developer manages it. lol.",
+    "I wondered where that extra cash came from. Another profitable exit this week.",
+    "Is this a major project informally mentioning a tiny coin? Interesting if true."
+  ],
+  "excluded": [
+    "x2.5 from VIP · Entry: $10K\nEXAMPLE | #EXAMPLE\nCA: SAMPLE_ONLY\n├ MC: $25K\n└ DEX NOT PAID\nGMGN BOT",
+    "#EXAMPLE · VIP: x7\n├ Growth: x3\n└ DEX NOT PAID\nGet VIP access",
+    "🏆 VERIFIED AXIOSCAN 1D #RESULTS\nTOP MOVE: 50x\nBEST HIT RATE: 40%",
+    "#SAMPLE · VIP: x4\n├ MC: $10K\n└ DEX PAID\nGet VIP access"
+  ]
+}

@@ -46,7 +46,7 @@ function response(res,status,body,headers={}){
  * queries. Caller injects an Intelligence-only read-only PostgreSQL pool. */
 export function createIntelligenceApi({
   token,pool,aiEnabled=false,aiToken,now=()=>new Date(),
-  requestsPerMinute=MAX_REQUESTS_PER_MINUTE,maxInFlight=MAX_IN_FLIGHT,
+  requestsPerMinute=MAX_REQUESTS_PER_MINUTE,maxInFlight=MAX_IN_FLIGHT,analyzeToken,crossPlatformEnabled=false,
 }){
   const verifier=sha(validateApiToken(token));
   if(typeof aiEnabled!=="boolean")throw new TypeError("invalid_ai_opt_in");
@@ -82,6 +82,22 @@ export function createIntelligenceApi({
           {"WWW-Authenticate":"Bearer realm=\"intelligence\""});
         return;
       }
+      // Paid work is possible only through an explicit authenticated POST.
+      const tokenRequest=/^\/api\/intelligence\/v1\/tokens\/([^/]+)\/analyze$/.exec(req.url);
+      if(req.method==='POST'&&tokenRequest){
+        if(!ordinaryAuthorized){response(res,404,{error:'not_found'});return;}
+        if(!analyzeToken){response(res,503,{error:'token_analysis_disabled'});return;}
+        if(req.headers['transfer-encoding']!==undefined||
+          (req.headers['content-length']!==undefined&&req.headers['content-length']!=='0')){
+          response(res,400,{error:'request_body_forbidden'});return;
+        }
+        let tokenId;
+        try{tokenId=decodeURIComponent(tokenRequest[1]);parseApiRequest('/api/intelligence/v1/tokens/'+encodeURIComponent(tokenId)+'/ai?asOf='+now().toISOString(),now());}
+        catch{response(res,400,{error:'invalid_token_id'});return;}
+        try{response(res,200,await analyzeToken(tokenId));}
+        catch{response(res,503,{error:'token_analysis_unavailable'});}
+        return;
+      }
       if(req.method!=="GET"){
         response(res,405,{error:"method_not_allowed"},{"Allow":"GET"});return;
       }
@@ -94,6 +110,9 @@ export function createIntelligenceApi({
       try{route=parseApiRequest(req.url,now())}
       catch{response(res,400,{error:"invalid_request"});return}
       if(route===null){
+        response(res,404,{error:"not_found"});return;
+      }
+      if(!crossPlatformEnabled&&["summary","features","correlations","signals","backtest","ai"].includes(route.kind)){
         response(res,404,{error:"not_found"});return;
       }
       const isAiRoute=route.kind==="ai-catalog"||route.kind==="ai-context";
@@ -145,4 +164,15 @@ export async function checkAiReadiness(pool){
   );
   if(!result.rows[0]?.feature_versions||!result.rows[0]?.feature_store)
     throw new Error("intelligence_ai_api_migration_003_required");
+}
+
+export async function checkCrossPlatformReadiness(pool){
+  const names=["chain_token_features","model_registry","token_daily_cross_platform",
+    "token_correlations","token_alerts","backtest_runs","token_alert_status_history","ai_message_analyses"];
+  for(const name of names){
+    const result=await pool.query("SELECT to_regclass($1) IS NOT NULL AS ready",[name]);
+    if(!result.rows[0]?.ready)throw new Error("cross_platform_migrations_required");
+  }
+  const result=await pool.query("SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('signal_explanations') AND attname='grounding' AND NOT attisdropped) AS ready");
+  if(!result.rows[0]?.ready)throw new Error("cross_platform_migration_009_required");
 }
