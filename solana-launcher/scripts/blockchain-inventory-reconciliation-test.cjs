@@ -37,6 +37,9 @@ function run(){
   assert.equal(good.financialLedgerEligible,false);
   assert.equal(good.authority,"diagnostic_only");
   assert.equal(good.fullHistoryComplete,false);
+  const noTime=tx("unknown-time");noTime.slot=null;noTime.timestamp=null;
+  assert.ok(decodeInventoryMovements(noTime).every(m=>m.slot===null && m.blockTime===null),
+    "Missing RPC timing must remain unknown, not slot zero or Unix epoch");
 
   const large=reconcileInventoryEvidence(tx("large",{
     preA:"90071992547409931234567890",postA:"90071992547409931234567859",

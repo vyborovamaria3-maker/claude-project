@@ -23,6 +23,15 @@ function decode(row) {
   if(row.block_time!=null&&time!=null&&row.block_time!==time)throw Error("raw_block_time_mismatch");
   const event=saved.raw?normalizeFullTransaction(saved.raw):null;
   if(!event || event.signature!==row.signature)throw Error("non_alchemy_or_unsupported_raw");
+  const rpcSignature=saved.raw.transaction?.transaction?.signatures?.[0] ??
+    saved.raw.transaction?.signatures?.[0];
+  if(rpcSignature!==row.signature)throw Error("raw_rpc_signature_mismatch");
+  // The normalized envelope and retained RPC response must describe the same
+  // slot/time. Finality witnesses bind row.slot, while lifecycle uses event.slot.
+  if((row.slot!=null && event.slot!==row.slot) ||
+     (saved.slot!=null && event.slot!==saved.slot))throw Error("raw_rpc_slot_mismatch");
+  if((row.block_time!=null && event.timestamp!==row.block_time) ||
+     (time!=null && event.timestamp!==time))throw Error("raw_rpc_block_time_mismatch");
   return event;
 }
 function analyze(db,{limit=200}={}) {

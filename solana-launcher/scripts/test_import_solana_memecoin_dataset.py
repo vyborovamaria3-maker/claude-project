@@ -202,6 +202,43 @@ class DatasetImporterTests(unittest.TestCase):
             "SELECT source_row FROM external_memecoin_trades ORDER BY source_row"
         )], [0, 1])
 
+    def test_source_mutation_rolls_back_rows_and_ledger_before_replay(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        original = {"wallet": "w", "token_address": "m", "side": "buy",
+                    "amount_usd": 1, "ts": self.now}
+        self.import_rows("trades-000.parquet", [original], "1" * 64)
+        source = self.db_path.with_name("trades-000.parquet")
+        pq.write_table(pa.Table.from_pylist([dict(original, amount_usd=9)]), source)
+        original_bytes = source.read_bytes()
+        info = {"source_file": source.name, **IMPORTER.parquet_info(source)}
+        reader = IMPORTER.iter_parquet_rows
+
+        def changed_reader(path):
+            yield from reader(path)
+            path.write_bytes(b"source changed after rows were read")
+
+        with patch.object(IMPORTER, "iter_parquet_rows", changed_reader):
+            with self.assertRaisesRegex(RuntimeError, "changed during import"):
+                IMPORTER.run_import(source.parent, self.db_path, [info],
+                                    self.db_path.with_name("before-mutation.db"))
+        self.assertEqual(self.conn.execute(
+            "SELECT amount_usd FROM external_memecoin_trades"
+        ).fetchone()[0], 1)
+        self.assertEqual(self.conn.execute(
+            "SELECT source_sha256 FROM external_memecoin_import_files"
+        ).fetchone()[0], "1" * 64)
+        source.write_bytes(original_bytes)
+        report = IMPORTER.import_file_rows(
+            self.conn, self.dataset_id, source.name, reader(source),
+            info["sha256"], info["rows"], self.now,
+        )
+        self.assertEqual(report["status"], "imported", "Restored input must not skip stale-hash rows")
+        self.assertEqual(self.conn.execute(
+            "SELECT amount_usd FROM external_memecoin_trades"
+        ).fetchone()[0], 9)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

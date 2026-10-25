@@ -18,7 +18,7 @@ import sqlite3
 import subprocess
 import sys
 from decimal import Decimal
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 SOURCE_REPO = "ian05012/solana-memecoin-dataset"
 SOURCE_COMMIT = "7070d00e1e4492f8604d988549d91785cc5f43f7"
@@ -365,6 +365,8 @@ def import_file_rows(
     source_sha256: str,
     source_rows: int,
     imported_at: int,
+    *,
+    verify_source: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Import/re-import one source file atomically; source-row IDs preserve partial fills."""
     if source_file not in FILE_TABLE:
@@ -378,6 +380,8 @@ def import_file_rows(
         (dataset_id, source_file),
     ).fetchone()
     if previous and previous[0] == source_sha256 and previous[1] == source_rows and previous[2] == source_rows and previous[3] == "complete":
+        if verify_source is not None:
+            verify_source()
         return {"source_file": source_file, "source_rows": source_rows, "imported_rows": source_rows,
                 "incomplete_rows": int(previous[4]), "status": "skipped_unchanged"}
     table = FILE_TABLE[source_file]
@@ -404,6 +408,10 @@ def import_file_rows(
             inserted += len(batch)
         if inserted != source_rows:
             raise ValueError(f"{source_file}: metadata says {source_rows} rows but reader yielded {inserted}; transaction rolled back")
+        # The source may have changed since preflight. Validate while replacement
+        # rows and their ledger entry can still roll back together.
+        if verify_source is not None:
+            verify_source()
         conn.execute(
             """INSERT INTO external_memecoin_import_files
                (dataset_id,source_file,source_sha256,source_rows,imported_rows,incomplete_rows,status,imported_at)
@@ -571,12 +579,15 @@ def run_import(source_dir: Path, db_path: Path, files: list[dict[str, Any]], bac
                  expected_total,_json(manifest),now,now),
             )
         for item in files:
+            def verify_source() -> None:
+                if sha256_file(item["path"]) != item["sha256"]:
+                    raise RuntimeError(f"{item['source_file']} changed during import; shard transaction rolled back")
+
             report = import_file_rows(
                 conn, DATASET_ID, item["source_file"], iter_parquet_rows(item["path"]),
                 item["sha256"], item["rows"], int(dt.datetime.now(dt.timezone.utc).timestamp()),
+                verify_source=verify_source,
             )
-            if sha256_file(item["path"]) != item["sha256"]:
-                raise RuntimeError(f"{item['source_file']} changed during import; catalog remains incomplete and rerun will replace that shard")
             file_reports.append(report)
             print(json.dumps({"file": report}, ensure_ascii=False), flush=True)
         create_indexes(conn)

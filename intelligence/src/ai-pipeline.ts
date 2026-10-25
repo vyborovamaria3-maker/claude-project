@@ -6,7 +6,7 @@ import {isLowValueTelegramPost,type AiMessageContext} from "./ai-message-input.j
 import {createAiAnalysisService} from "./ai-analysis.js";
 import {recordAiCost} from "./governance.js";
 
-type Client=PgTransaction & {release():void};
+type Client=PgTransaction & {release(discard?:boolean):void};
 export type AiPool={connect():Promise<Client>};
 export type AiModels={sentiment?:string;narrative?:string;explanation?:string};
 const SAFE_GATEWAY_ERRORS=new Set(["ai_provider_network_error","ai_provider_http_error","ai_provider_auth_failed",
@@ -86,7 +86,7 @@ export async function runAiAnalysisBatch(input:{destination:AiPool;source:Source
   const stats={analyzed:0,filtered:0,failed:0,unavailable:0,busy:false,explained:0,refreshed:0,refreshFailed:0};
   const client=await input.destination.connect();
   const lock="intelligence-ai|"+input.source;
-  let locked=false;
+  let locked=false,discard=false;
   try{
     locked=(await client.query("SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked",[lock])).rows[0]?.locked===true;
     if(!locked){stats.busy=true;return stats;}
@@ -207,7 +207,10 @@ export async function runAiAnalysisBatch(input:{destination:AiPool;source:Source
           VALUES($1,$2,1,clock_timestamp()+INTERVAL '5 minutes') ON CONFLICT(alert_id,model_id)
           DO UPDATE SET attempts=ai_explanation_attempts.attempts+1,next_attempt_at=clock_timestamp()+INTERVAL '5 minutes'`,
           [alert.alert_id,input.models.explanation]);
-        }finally{await client.query("SELECT pg_advisory_unlock(hashtextextended($1,0))",[alertLock]);}
+        }finally{
+          try{await client.query("SELECT pg_advisory_unlock(hashtextextended($1,0))",[alertLock]);}
+          catch(error){discard=true;throw error;}
+        }
       }catch{stats.failed++;}
     }
     if(input.refresh&&!input.signal?.aborted){
@@ -225,7 +228,8 @@ export async function runAiAnalysisBatch(input:{destination:AiPool;source:Source
     }
     return stats;
   }finally{
-    if(locked)await client.query("SELECT pg_advisory_unlock(hashtextextended($1,0))",[lock]);
-    client.release();
+    try{if(locked)await client.query("SELECT pg_advisory_unlock(hashtextextended($1,0))",[lock]);}
+    catch(error){discard=true;throw error;}
+    finally{client.release(discard);}
   }
 }

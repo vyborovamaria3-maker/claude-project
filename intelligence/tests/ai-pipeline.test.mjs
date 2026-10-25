@@ -1,13 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {randomUUID} from "node:crypto";
+import {randomUUID,randomBytes} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import pg from "pg";
 import {createAiGateway} from "@claude-project/ai-gateway";
 import {readCollectorMessage,readCollectorContext,isLowValueTelegramPost,runAiAnalysisBatch,registerModel,refreshTokenDailyCrossPlatform,
-  evaluateCrossPlatformAlerts,persistAlertCandidates,ingestRegistryEvent,ingestTimelineEvent} from "../dist/index.js";
+  evaluateCrossPlatformAlerts,persistAlertCandidates,ingestRegistryEvent,ingestTimelineEvent,storeEncryptedEventText,readEncryptedEventText} from "../dist/index.js";
 import {analyzeOnce} from "../scripts/analyze-ai.mjs";
-import {importNewTelegramSnapshots} from "../scripts/ai-source-watch.mjs";
+import {importNewTelegramSnapshots,buildTelegramWatchEvent} from "../scripts/ai-source-watch.mjs";
 import {createAiRuntime} from "../scripts/ai-runtime.mjs";
 import {buildTgSnapshotEvent} from "../scripts/backfill-core.mjs";
 import {createIntelligenceApi} from "../api/server.mjs";
@@ -16,6 +16,16 @@ import {parseApiRequest,queryTokenApi} from "../api/routes.mjs";
 
 const url=process.env.INTELLIGENCE_TEST_DB_URL;
 const token="solana:So11111111111111111111111111111111111111112";
+test("AI batch releases its borrowed connection when advisory unlock fails",async()=>{
+ let released=false;
+ const destination={connect:async()=>({release(discard){assert.equal(discard,true);released=true;},async query(sql){
+  if(sql.includes('pg_try_advisory_lock'))return {rows:[{locked:true}]};
+  if(sql.includes('pg_advisory_unlock'))throw new Error('disconnected during unlock');
+  return {rows:[]};
+ }})};
+ await assert.rejects(runAiAnalysisBatch({destination,source:'x',models:{},gateway:{},readText:async()=>null}),/disconnected during unlock/);
+ assert.equal(released,true);
+});
 async function fixture(t){
   const admin=new pg.Pool({connectionString:url});
   const schema="ai_"+randomUUID().replaceAll("-","");
@@ -216,6 +226,38 @@ test("template posts never bill AI, are durably excluded, and do not block the n
 test("format filter rejects known scanner cards but retains conversational warnings and jokes",()=>{
  for(const text of ['🫡 Gamble Found! 🟩 The Ice Age Lion ($Sparta) MC: 15K','🚀 Token started migration to Raydium','🔥$REKT: $251K >> $1M3 | Х5 | 1m','0xee9fcc99971e3da8dd8c97557387bd7b88927777','├ MC: 10K\n├ VOL: 20K\n└ HOLDERS: 100'])assert.equal(isLowValueTelegramPost(text),true,text);
  for(const text of ['it still holding well wow','thought id come back to it getting rugged','Don’t screw up my DCA’s lmao tryna bid better dips 😂','I ignore Gamble Found! posts; they are bot spam','Other UMI dumping hard expecting this one to hold the cat meta'])assert.equal(isLowValueTelegramPost(text),false,text);
+});
+
+test("Telegram watch produces a deletion tombstone even after source text is erased",()=>{
+ const event=buildTelegramWatchEvent({peer_id:'-100123',message_id:'7',text:null,
+  deleted_at:'2026-10-20T01:00:00Z',cursor_at:'2026-10-20 01:00:00.000123+00'});
+ assert.equal(event.eventKind,'message_deleted');assert.equal(event.payload.timelineEvent,undefined);
+ assert.equal(event.payload.registryEvent.evidenceRef.sourceId,'tg:message:-100123:7');
+ assert.equal(event.payload.registryEvent.evidenceRef.observedAt,'2026-10-20T01:00:00.000Z');
+ assert.equal(buildTelegramWatchEvent({peer_id:'bad',message_id:'7',deleted_at:new Date()}),null);
+});
+
+test("legacy TG watch revokes deleted analysis/text and queues direct token recomputation",{skip:!url},async t=>{
+ const f=await fixture(t);
+ await f.destination.query(await readFile(new URL('../migrations/015_ai_watch_cursor.sql',import.meta.url),'utf8'));
+ await importNewTelegramSnapshots(f.source,f.destination,2);
+ await f.source.query("INSERT INTO tg_messages VALUES(1,8,'A useful launch observation',$1,$1,NULL)",[new Date(f.ms+1000)]);
+ assert.equal((await importNewTelegramSnapshots(f.source,f.destination,2)).imported,1);
+ const event=(await f.destination.query("SELECT event_key,observed_at FROM timeline_events WHERE evidence_source_id='tg:message:-100123:8'")).rows[0];
+ await f.destination.query(`INSERT INTO timeline_event_entities VALUES('tg','message_observed',$1,'token',$2)`,[event.event_key,token]);
+ const identity={sourceSystem:'tg',sourceEventKind:'message_observed',eventKey:event.event_key,keyRef:'test-key'};
+ const key=randomBytes(32);
+ await storeEncryptedEventText(f.destination,{...identity,key,observedAt:event.observed_at,text:'A useful launch observation'});
+ assert.equal((await runAiAnalysisBatch({...f,source:'tg',readText:(ref,at)=>readCollectorMessage(f.source,'tg',ref,at)})).analyzed,2);
+ // deleted_at alone changes: neither collected_at nor edited_at moves.
+ await f.source.query("UPDATE tg_messages SET text=NULL,deleted_at=clock_timestamp() WHERE message_id=8");
+ assert.equal((await importNewTelegramSnapshots(f.source,f.destination,2)).imported,1);
+ assert.equal(await readEncryptedEventText(f.destination,key,identity),null);
+ assert.equal((await f.destination.query('SELECT text_ciphertext FROM event_text_snapshots')).rows[0].text_ciphertext,null);
+ assert.equal((await f.destination.query("SELECT 1 FROM analytics_invalidation_queue WHERE reason='delete' AND canonical_token_id=$1",[token])).rows.length,1);
+ const visible=await queryTokenApi(f.destination,{kind:'ai',tokenId:null,source:'tg',asOf:new Date().toISOString(),limit:20});
+ assert.equal(visible.items.length,0);
+ assert.equal((await importNewTelegramSnapshots(f.source,f.destination,2)).imported,0);
 });
 
 

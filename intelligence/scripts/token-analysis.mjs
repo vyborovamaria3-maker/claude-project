@@ -81,5 +81,5 @@ export async function analyzeTokenOnDemand({destination,sources,gateway,modelId,
    grounding:{version:TOKEN_ANALYSIS_VERSION,selectedFactsVerified:true,stance:'model-classification-not-fact',coverage:'unknown'},provider,cached:false};
   await tx.query('INSERT INTO token_ai_requests(canonical_token_id,input_sha256,model_id,report) VALUES($1,$2,$3,$4::jsonb)',[tokenId,fingerprint,modelId,JSON.stringify(report)]);
   return report;
- }finally{if(locked)await tx.query('SELECT pg_advisory_unlock(hashtextextended($1,0))',['token-request|'+tokenId]);tx.release();}
+ }finally{let discard=false;try{if(locked)await tx.query('SELECT pg_advisory_unlock(hashtextextended($1,0))',['token-request|'+tokenId]);}catch(error){discard=true;throw error;}finally{tx.release(discard);}}
 }

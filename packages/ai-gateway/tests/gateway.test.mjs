@@ -90,7 +90,7 @@ test("embeddings validate vector dimensions and preserve provider ordering", asy
 
 test("embeddings bill actual prompt token usage instead of a character estimate", async () => {
   const gateway=createAiGateway({providers:[provider({inputCostPer1kUsd:0.02,outputCostPer1kUsd:0.05,
-    maxEstimatedCostUsd:0.01})],defaultProviderId:"primary",
+    maxEstimatedCostUsd:0.2})],defaultProviderId:"primary",
     fetchImpl:async()=>response({data:[{index:0,embedding:[1,0]}],usage:{prompt_tokens:100}})});
   const result=await gateway.createEmbeddings({texts:["hello"],expectedDimensions:2});
   assert.ok(Math.abs(result.estimatedCostUsd-0.002)<1e-12);
@@ -108,12 +108,37 @@ test("embeddings reject missing and duplicate indices instead of returning spars
 test("concurrent requests reserve estimated provider budget before yielding", async () => {
   let calls=0,markStarted,release;
   const started=new Promise(resolve=>{markStarted=resolve;}), blocked=new Promise(resolve=>{release=resolve;});
-  const gateway=createAiGateway({providers:[provider({inputCostPer1kUsd:1,outputCostPer1kUsd:1,maxEstimatedCostUsd:0.004,maxConcurrent:2})],
+  const gateway=createAiGateway({providers:[provider({inputCostPer1kUsd:1,outputCostPer1kUsd:1,maxEstimatedCostUsd:12,maxConcurrent:2})],
     defaultProviderId:"primary",fetchImpl:async()=>{calls++;markStarted();await blocked;return response({choices:[{message:{content:"ok"}}],usage:{prompt_tokens:2,completion_tokens:1}});}});
   const first=gateway.chatCompletion({messages:[{role:"user",content:"hello"}],maxTokens:1}); await started;
   await assert.rejects(gateway.chatCompletion({messages:[{role:"user",content:"hello"}],maxTokens:1}),
     error=>error instanceof AiGatewayError&&error.code==="ai_provider_cost_budget_exhausted");
   release(); await first; assert.equal(calls,1); assert.equal(gateway.getMetrics()[0].reservedCostUsd,0);
+});
+
+test("uncertain failures retain their allowance and each retry must fit the remaining budget", async () => {
+  for (const fail of [async()=>{throw new Error("timeout after remote billing");},
+    async()=>response({error:"unavailable"},503),async()=>new Response("invalid json")]) {
+    let calls=0;
+    const gateway=createAiGateway({providers:[provider({inputCostPer1kUsd:1,outputCostPer1kUsd:1,
+      maxEstimatedCostUsd:12})],defaultProviderId:"primary",maxAttempts:2,sleep:async()=>{},
+      fetchImpl:async()=>{calls++;return fail();}});
+    await assert.rejects(gateway.chatCompletion({messages:[{role:"user",content:"hello"}],maxTokens:1}));
+    assert.equal(calls,1,"a retry cannot reuse the failed attempt's allowance");
+    await assert.rejects(gateway.chatCompletion({messages:[{role:"user",content:"hello"}],maxTokens:1}),
+      error=>error.code==="ai_provider_cost_budget_exhausted");
+    assert.equal(calls,1);assert.equal(gateway.getMetrics()[0].reservedCostUsd,0);
+    assert.ok(gateway.getMetrics()[0].estimatedCostUsd>8);
+  }
+});
+
+test("multilingual prompts reserve UTF-8 bytes and protocol overhead before sending",async()=>{
+  let calls=0;
+  const gateway=createAiGateway({providers:[provider({inputCostPer1kUsd:1,outputCostPer1kUsd:1,
+    maxEstimatedCostUsd:9})],defaultProviderId:"primary",fetchImpl:async()=>{calls++;throw new Error("must not send");}});
+  await assert.rejects(gateway.chatCompletion({messages:[{role:"user",content:"界".repeat(1000)}],maxTokens:1}),
+    error=>error.code==="ai_provider_cost_budget_exhausted");
+  assert.equal(calls,0);
 });
 
 test("metric callback failures do not turn successful provider calls into failures", async () => {

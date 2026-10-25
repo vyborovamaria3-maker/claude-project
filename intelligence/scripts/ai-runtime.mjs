@@ -1,34 +1,19 @@
 import {createAiGatewayFromEnv} from "@claude-project/ai-gateway";
 import {readCollectorMessage,readCollectorContext,runAiAnalysisBatch,registerModel,refreshTokenDailyCrossPlatform,parseSnapshotEncryptionKey,readEncryptedEventText,reserveSharedAiBudget,settleSharedAiBudget} from "../dist/index.js";
 
-/** Explicit API opt-in, separate from collector ACK/lease handling. */
-export async function createAiRuntime(destination,sources,env=process.env){
-  if(env.INTELLIGENCE_AI_ENABLED!=="true")return null;
-  const definitions=JSON.parse(env.INTELLIGENCE_AI_MODELS_JSON??"[]");
-  if(!Array.isArray(definitions)||!definitions.length||definitions.length>3)throw new Error("ai_models_required");
-  const models={};
-  for(const def of definitions){
-    if(!def||!["sentiment","narrative","explanation"].includes(def.task)||models[def.task])throw new Error("invalid_ai_models");
-    models[def.task]=def.modelId;
-  }
-  const limit=Number(env.INTELLIGENCE_AI_BATCH_SIZE??"2");
-  if(!Number.isSafeInteger(limit)||limit<1||limit>8)throw new Error("invalid_ai_batch_size");
-  const snapshotMode=env.INTELLIGENCE_AI_TEXT_SNAPSHOTS_ENABLED==="true";
-  const snapshotKey=snapshotMode?parseSnapshotEncryptionKey(env.INTELLIGENCE_TEXT_ENCRYPTION_KEY_B64):null;
-  const snapshotKeyRef=snapshotMode?env.INTELLIGENCE_TEXT_KEY_REF:null;
-  if(snapshotMode&&(!snapshotKeyRef||!/^[a-zA-Z0-9._:-]{1,128}$/.test(snapshotKeyRef)))
-    throw new Error("ai_snapshot_key_ref_required");
+/** One shared budget policy for background and explicit on-demand calls. */
+export function createBudgetedAiGateway(destination,env=process.env){
   const gateway=createAiGatewayFromEnv(env,{maxAttempts:1});
   const sharedMode=env.INTELLIGENCE_AI_SHARED_BUDGET_ENABLED==="true";
   const dailyLimit=Number(env.INTELLIGENCE_AI_SHARED_DAILY_BUDGET_USD);
   const configured=sharedMode?JSON.parse(env.AI_PROVIDERS_JSON??"[]"):[];
-  const prices=new Map(configured.map(item=>[item.id,item]));
   if(sharedMode&&(!Number.isFinite(dailyLimit)||dailyLimit<=0||dailyLimit>100_000||
      !Array.isArray(configured)||!configured.length||
      configured.some(item=>!item||typeof item.id!=="string"||
        !Number.isFinite(item.inputCostPer1kUsd)||item.inputCostPer1kUsd<0||
        !Number.isFinite(item.outputCostPer1kUsd)||item.outputCostPer1kUsd<0)))
     throw new Error("ai_shared_budget_configuration_invalid");
+  const prices=new Map(configured.map(item=>[item.id,item]));
   const reservationCost=(provider,request,task)=>{
     const config=prices.get(provider);
     if(!config)throw new Error("ai_shared_budget_unknown_provider");
@@ -37,7 +22,7 @@ export async function createAiRuntime(destination,sources,env=process.env){
     const bytes=task==="chat"?Buffer.byteLength(JSON.stringify(request.messages),"utf8"):
       Buffer.byteLength(JSON.stringify(request.texts),"utf8");
     const inputTokensUpper=bytes+8192;
-    const outputTokensUpper=task==="chat"?Number(request.maxTokens??256):0;
+    const outputTokensUpper=task==="chat"?Number(request.maxTokens??Math.min(1000,config.maxOutputTokens??2000)):0;
     if(!Number.isSafeInteger(outputTokensUpper)||outputTokensUpper<0||
        outputTokensUpper>Number(config.maxOutputTokens??8192))
       throw new Error("ai_shared_budget_output_bound_invalid");
@@ -74,6 +59,28 @@ export async function createAiRuntime(destination,sources,env=process.env){
       }
     },
   }:gateway;
+  return budgetGateway;
+}
+
+/** Explicit API opt-in, separate from collector ACK/lease handling. */
+export async function createAiRuntime(destination,sources,env=process.env){
+  if(env.INTELLIGENCE_AI_ENABLED!=="true")return null;
+  const definitions=JSON.parse(env.INTELLIGENCE_AI_MODELS_JSON??"[]");
+  if(!Array.isArray(definitions)||!definitions.length||definitions.length>3)throw new Error("ai_models_required");
+  const models={};
+  for(const def of definitions){
+    if(!def||!["sentiment","narrative","explanation"].includes(def.task)||models[def.task])throw new Error("invalid_ai_models");
+    models[def.task]=def.modelId;
+  }
+  const limit=Number(env.INTELLIGENCE_AI_BATCH_SIZE??"2");
+  if(!Number.isSafeInteger(limit)||limit<1||limit>8)throw new Error("invalid_ai_batch_size");
+  const snapshotMode=env.INTELLIGENCE_AI_TEXT_SNAPSHOTS_ENABLED==="true";
+  const snapshotKey=snapshotMode?parseSnapshotEncryptionKey(env.INTELLIGENCE_TEXT_ENCRYPTION_KEY_B64):null;
+  const snapshotKeyRef=snapshotMode?env.INTELLIGENCE_TEXT_KEY_REF:null;
+  if(snapshotMode&&(!snapshotKeyRef||!/^[a-zA-Z0-9._:-]{1,128}$/.test(snapshotKeyRef)))
+    throw new Error("ai_snapshot_key_ref_required");
+  const budgetGateway=createBudgetedAiGateway(destination,env);
+  const sharedMode=env.INTELLIGENCE_AI_SHARED_BUDGET_ENABLED==="true";
   const client=await destination.connect();
   try{
     const tables=await client.query("SELECT to_regclass('ai_message_analyses') IS NOT NULL AS ready, to_regclass('ai_cost_ledger') IS NOT NULL AS ledger_ready");

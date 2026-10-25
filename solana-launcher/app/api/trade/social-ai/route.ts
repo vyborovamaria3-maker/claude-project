@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import {PublicKey} from "@solana/web3.js";
 import {requireProdAuth} from "@/lib/routeAuth";
 import {checkRateLimit,getClientIp} from "@/lib/rateLimit";
-import {requestTokenAnalysis} from "@/lib/token-intelligence/on-demand-proxy.mjs";
+import {readTokenAnalysisRequest,requestTokenAnalysis} from "@/lib/token-intelligence/on-demand-proxy.mjs";
 import type { AnalysisSnapshot } from "@/lib/trade/intelligence-agent";
 import {
   enrichSnapshotWithMemory,
@@ -402,18 +402,25 @@ function plannerCandidates(report: AdvancedReport | null) {
 
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
-  let body: RequestBody;
-  try { body = (await req.json()) as RequestBody; } catch { return NextResponse.json({ error: "invalid_json" }, { status: 400 }); }
-  const mint = String(body.mint || "").trim();
   if(process.env.INTELLIGENCE_AI_ON_DEMAND_ENABLED==='true'){
     const auth=await requireProdAuth(req);if(auth)return auth;
     const rate=checkRateLimit('token-ai:'+getClientIp(req as unknown as Request),5,60);
     if(!rate.success)return NextResponse.json({error:'rate_limited'},{status:429});
-    try{if(new PublicKey(mint).toBase58()!==mint)throw new Error('invalid_mint');}
-    catch{return NextResponse.json({error:'invalid_mint'},{status:400});}
+    let mint: string;
+    try{
+      ({mint}=await readTokenAnalysisRequest(req));
+      if(new PublicKey(mint).toBase58()!==mint)throw new Error('invalid_mint');
+    }catch(error){
+      const tooLarge=error instanceof Error&&error.message==='request_too_large';
+      return NextResponse.json({error:tooLarge?'request_too_large':'invalid_mint'},{status:tooLarge?413:400});
+    }
     try{return NextResponse.json(await requestTokenAnalysis(mint),{headers:{'Cache-Control':'private, no-store'}});}
     catch{return NextResponse.json({error:'token_analysis_unavailable',available:false},{status:503});}
   }
+  let body: RequestBody;
+  try { body = (await req.json()) as RequestBody; } catch { return NextResponse.json({ error: "invalid_json" }, { status: 400 }); }
+  if(!body||typeof body!=='object'||Array.isArray(body))return NextResponse.json({error:'invalid_json'},{status:400});
+  const mint = String(body.mint || "").trim();
   const timeline = Array.isArray(body.timeline) ? body.timeline : [];
   if (!mint) return NextResponse.json({ error: "mint_required" }, { status: 400 });
 

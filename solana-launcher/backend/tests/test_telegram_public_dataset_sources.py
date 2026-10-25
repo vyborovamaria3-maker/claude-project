@@ -242,3 +242,70 @@ def test_automatic_public_sync_defaults_off() -> None:
     from app.core.config import Settings
 
     assert Settings.model_fields["telegram_dataset_sync_enabled"].default is False
+
+
+@pytest.mark.asyncio
+async def test_large_dataset_preserves_metadata_after_messages_and_rejects_scam(tmp_path) -> None:
+    from app.services.telegram_public_dataset_sources import _iter_large_tgdataset_json
+
+    path = tmp_path / "channels.json"
+    path.write_text(
+        json.dumps({
+            "123": {
+                "username": "ScamCalls",
+                "text_messages": {"1": {"text": "nested bodies must not be retained"}},
+                "scam": True,
+            },
+            "456": {
+                "text_messages": {"1": {"username": "not_channel_metadata"}},
+                "username": "ValidCalls",
+                "title": "Valid channel",
+            },
+        }),
+        encoding="utf-8",
+    )
+    rows = list(_iter_large_tgdataset_json(path))
+    assert rows == [
+        {"channel_id": "123", "username": "ScamCalls", "scam": True},
+        {"channel_id": "456", "username": "ValidCalls", "title": "Valid channel"},
+    ]
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(TelegramChannel.__table__.create)
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        stats = await import_dataset_channel_candidates(sessionmaker, rows, source_name="local")
+        assert stats == {"received": 2, "accepted": 1, "invalid": 0, "scam_skipped": 1}
+        async with sessionmaker() as session:
+            channels = (await session.execute(select(TelegramChannel))).scalars().all()
+        assert [channel.username for channel in channels] == ["validcalls"]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_public_sync_preserves_other_source_after_csv_parser_failure(monkeypatch) -> None:
+    import csv
+    from types import SimpleNamespace
+
+    async def oversized_field(client, url):
+        field = "x" * (csv.field_size_limit() + 1)
+        return f"username,title,topic\nValidCalls,{field},crypto\n"
+
+    monkeypatch.setattr(
+        "app.services.telegram_public_dataset_sources._download_csv", oversized_field
+    )
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(TelegramChannel.__table__.create)
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        result = await sync_public_dataset_channels(sessionmaker, SimpleNamespace())
+        assert result["records"]["accepted"] == 1
+        assert len(result["errors"]) == 1
+        assert "field larger than field limit" in result["errors"][0]["error"]
+        async with sessionmaker() as session:
+            channels = (await session.execute(select(TelegramChannel))).scalars().all()
+        assert [channel.username for channel in channels] == ["smugcalls"]
+    finally:
+        await engine.dispose()

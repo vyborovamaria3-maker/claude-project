@@ -43,6 +43,15 @@ function run() {
     assert.equal(fees[0].kind,"network_total");
     assert.equal(fees[0].amountAtomic,String(tx.raw.meta.fee));
   }
+  for(const field of ["slot","blockTime"]){
+    const inconsistent=structuredClone(saved[0]);
+    inconsistent.raw[field]+=1;
+    const payload=Buffer.from(JSON.stringify(inconsistent));
+    const row={signature:inconsistent.signature,slot:inconsistent.slot,
+      block_time:inconsistent.timestamp,payload_gzip:gzipSync(payload),
+      payload_bytes:payload.length,payload_hash:createHash("sha256").update(payload).digest("hex")};
+    assert.throws(()=>fee.decodeEvidence(row),/RAW RPC .* mismatch/,field);
+  }
   assert.equal(fee.atomic("90071992547409930001").toString(),"90071992547409930001");
   assert.equal(fee.atomic(9007199254740993),null);
   assert.equal(fee.atomic(-1),null);
@@ -73,6 +82,9 @@ function run() {
 
   assert.throws(()=>fee.extractFees({...mkTx("sig-1"),raw:{...mkTx("sig-1").raw,meta:null}}));
   assert.throws(()=>fee.extractFees({...mkTx("sig-1"),raw:{...mkTx("sig-1").raw,transaction:{...mkTx("sig-1").raw.transaction,signatures:["wrong"]}}}));
+  const missingSignature=mkTx("sig-1");
+  delete missingSignature.raw.transaction.signatures;
+  assert.throws(()=>fee.extractFees(missingSignature),/RPC signature/);
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),"fee-intelligence-"));
   const source=new Database(path.join(dir,"source.db")),output=new Database(path.join(dir,"out.db"));
   try {

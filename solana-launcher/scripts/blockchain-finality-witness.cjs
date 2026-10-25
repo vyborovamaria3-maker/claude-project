@@ -43,7 +43,10 @@ function main(argv=process.argv.slice(2),{clock=Date.now}={}){
   const config=readJson(o.pins,16*1024);
   if(!config||Object.keys(config).sort().join(",")!=="recoveryEpoch,witnesses")
     throw Error("Trust config requires only recoveryEpoch and witnesses");
-  const pins=validatePins(config.witnesses);
+  // Store APIs validate the serialized trust config themselves. Compiled pins
+  // include a KeyObject and are deliberately not accepted as config entries.
+  validatePins(config.witnesses);
+  const pins=config.witnesses;
   for(const v of [o.db,o.state]){
     if(!path.isAbsolute(v))throw Error("Absolute db/state paths required");
   }

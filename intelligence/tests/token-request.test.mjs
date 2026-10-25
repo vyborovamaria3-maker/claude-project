@@ -6,6 +6,18 @@ import {createIntelligenceApi} from '../api/server.mjs';
 import {requestTokenAnalysis} from '../../solana-launcher/lib/token-intelligence/on-demand-proxy.mjs';
 const url=process.env.INTELLIGENCE_TEST_DB_URL,mint='So11111111111111111111111111111111111111112',tokenId='solana:'+mint;
 const interpretation={stance:'mixed',score:0,directionAmbiguous:true,confidence:0.7,factIds:['tokenId'],evidenceRefs:['tg:message:123:2']};
+test('on-demand request releases its client if advisory unlock disconnects',async()=>{
+ let released=false;
+ const destination={connect:async()=>({release(discard){assert.equal(discard,true);released=true;},async query(sql){
+  if(sql.startsWith('SELECT model_id'))return {rows:[{model_id:'test',provider:'test',name:'test',version:'1'}]};
+  if(sql.includes('pg_advisory_unlock'))throw new Error('disconnected during unlock');
+  return {rows:[]};
+ }})};
+ const source={query:async()=>({rows:[]})};
+ await assert.rejects(analyzeTokenOnDemand({destination,sources:{x:source,tg:source,chain:{prepare:()=>({all:()=>[]})}},
+  gateway:{},modelId:'test',tokenId}),/disconnected during unlock/);
+ assert.equal(released,true);
+});
 test('complete MonstaScan cards are excluded while human negations and comments survive',()=>{
  const card=`SAMPLE (Example)\n${mint}\n\nby MonstaScan\nCap: 1K\nVol: 2K\nBonding Curve: 50%\nTop 10 in detail\nUser |MCap |Buy |Sell |Left\nCopyright sample | pf_ultimate`;
  assert.equal(isLowValueTelegramPost(card),true);

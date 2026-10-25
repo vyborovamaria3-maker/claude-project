@@ -4,6 +4,7 @@ import {randomBytes} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import pg from "pg";
 import {reserveSharedAiBudget,settleSharedAiBudget} from "../dist/index.js";
+import {createBudgetedAiGateway} from "../scripts/ai-runtime.mjs";
 
 const dsn=process.env.INTELLIGENCE_TEST_DB_URL;
 test("shared AI budget is atomic across concurrent worker sessions",{
@@ -55,4 +56,29 @@ test("invalid request bounds never touch DB",async()=>{
   await assert.rejects(reserveSharedAiBudget(pool,{
     providerId:"test|inject",dailyLimitUsd:1,reservationUsd:0.1,
   }),/invalid_ai_budget_provider/);
+});
+
+test("the shared runtime gateway reserves before provider work and settles uncertain failures",async()=>{
+ const originalFetch=globalThis.fetch,events=[];let reservation;
+ const destination={connect:async()=>({release(){},async query(sql,args){
+  if(sql.startsWith('SELECT (clock_timestamp'))return {rows:[{day:'2026-10-25'}]};
+  if(sql.startsWith('INSERT INTO ai_budget_reservations')){
+   reservation={provider_id:args[1],budget_day:args[2],allowance_usd:args[3],status:'reserved'};events.push('reserve');
+  }
+  if(sql.startsWith('UPDATE ai_daily_budgets SET reserved'))return {rows:[{provider_id:'test'}]};
+  if(sql.startsWith('SELECT provider_id,budget_day,allowance_usd,status'))return {rows:[reservation]};
+  if(sql.startsWith('UPDATE ai_budget_reservations'))events.push('settle');
+  return {rows:[]};
+ }})};
+ const env={AI_GATEWAY_ENABLED:'true',AI_DEFAULT_PROVIDER:'test',TEST_AI_KEY:'synthetic-only',
+  AI_PROVIDERS_JSON:JSON.stringify([{id:'test',baseUrl:'https://budget.example.test/v1',apiKeyEnv:'TEST_AI_KEY',
+   chatModel:'test',maxOutputTokens:512,inputCostPer1kUsd:0.01,outputCostPer1kUsd:0.01}]),
+  INTELLIGENCE_AI_SHARED_BUDGET_ENABLED:'true',INTELLIGENCE_AI_SHARED_DAILY_BUDGET_USD:'1'};
+ globalThis.fetch=async()=>{events.push('provider');throw new Error('uncertain remote failure');};
+ try{
+  const gateway=createBudgetedAiGateway(destination,env);
+  await assert.rejects(gateway.chatCompletion({messages:[{role:'user',content:'hello'}]}),/network_error/);
+  assert.deepEqual(events,['reserve','provider','settle']);
+  assert.ok(reservation.allowance_usd>0.087,'reserve the actual 512-token default, not 256');
+ }finally{globalThis.fetch=originalFetch;}
 });

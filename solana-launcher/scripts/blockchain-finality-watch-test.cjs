@@ -100,6 +100,9 @@ function run(){
       outbox.length>1?1:0);
     assert.throws(()=>review(state,{limit:1000}),/Invalid review pagination/);
     assert.equal(reviewMain(["--state",statePath,"--limit","1"]).shown,1);
+    const nextCliPage=reviewMain(["--state",statePath,"--limit","1","--after-id",String(reviewList.nextAfterId)]);
+    assert.deepEqual(nextCliPage.entries,review(state,{limit:1,afterId:reviewList.nextAfterId}).entries);
+    assert.ok(nextCliPage.entries.every(entry=>entry.id>reviewList.nextAfterId));
     const count=outbox.length;
     summary=watchOnce(source,state,{kind:"wallet",address:wallet,limit:2,clock:now});
     assert.equal(summary.invalidationsQueued,0,"Identical RAW evidence must not enqueue duplicates");

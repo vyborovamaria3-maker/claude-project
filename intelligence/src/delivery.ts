@@ -26,13 +26,15 @@ export type DeliveryStats = {
   lostLeases: number;
 };
 
+type DeliveryEvent = Pick<ClaimedEvent,"sourceSystem"|"eventKind"|"eventKey"|"schemaVersion"|"payload">;
+
 export type RegistryOutboxPayload = {
   registryEvent: RegistryEvent;
   timelineEvent?: TimelineEvent;
 };
 
 /** Never trust payload envelope identity supplied by a source worker. */
-function extractEnvelope(event: ClaimedEvent): RegistryOutboxPayload {
+function extractEnvelope(event: DeliveryEvent): RegistryOutboxPayload {
   if (typeof event.payload !== "object" || !event.payload ||
     !Object.hasOwn(event.payload, "registryEvent")) {
     throw new TypeError("Missing registryEvent payload");
@@ -100,7 +102,7 @@ function extractEnvelope(event: ClaimedEvent): RegistryOutboxPayload {
  * worker must compute/publish the new historical snapshot.
  */
 async function queueAffectedTokensForRecalculation(
-  tx:PgTransaction,event:ClaimedEvent,body:RegistryOutboxPayload,
+  tx:PgTransaction,event:DeliveryEvent,body:RegistryOutboxPayload,
 ):Promise<void> {
   if(!["x","tg"].includes(event.sourceSystem))return;
   if(!["tweet_observed","message_observed","message_deleted",
@@ -110,7 +112,11 @@ async function queueAffectedTokensForRecalculation(
   const evidenceRef=body.registryEvent.evidenceRef.sourceId;
   const previous=await tx.query(`SELECT DISTINCT canonical_token_id FROM token_link_observations
     WHERE source_system=$1 AND evidence_source_id=$2 AND state='verified'
-      AND canonical_token_id IS NOT NULL`,[event.sourceSystem,evidenceRef]);
+      AND canonical_token_id IS NOT NULL
+    UNION SELECT entity.canonical_id FROM timeline_events timeline
+      JOIN timeline_event_entities entity ON entity.source_system=timeline.source_system
+        AND entity.source_event_kind=timeline.source_event_kind AND entity.event_key=timeline.event_key
+      WHERE timeline.source_system=$1 AND timeline.evidence_source_id=$2 AND entity.kind='token'`,[event.sourceSystem,evidenceRef]);
   const tokens=new Set(previous.rows.map(row=>String(row.canonical_token_id)));
   if(event.eventKind==="token_link_verified") {
     const payload=event.payload as Record<string,unknown>;
@@ -131,7 +137,7 @@ async function queueAffectedTokensForRecalculation(
 /** Revoke stored social ciphertext in the same destination transaction as a
  * verified deletion/edit tombstone. Older migration versions keep working. */
 async function revokeRetiredTextSnapshots(
-  tx:PgTransaction,event:ClaimedEvent,body:RegistryOutboxPayload,
+  tx:PgTransaction,event:DeliveryEvent,body:RegistryOutboxPayload,
 ):Promise<void> {
   if(!["x","tg"].includes(event.sourceSystem)||
      !["message_deleted","token_links_invalidated"].includes(event.eventKind))return;
@@ -147,36 +153,44 @@ async function revokeRetiredTextSnapshots(
       event.sourceSystem,body.registryEvent.evidenceRef.sourceId,
     ]);
 }
+/** Reuse delivery's privacy/invalidation hooks for read-only legacy source
+ * snapshots. Caller owns the transaction, including its durable watch cursor. */
+export async function ingestDestinationEvent(tx:PgTransaction,event:DeliveryEvent):Promise<boolean>{
+  const body=extractEnvelope(event);
+  const fresh=await ingestRegistryEvent(tx,body.registryEvent);
+  if(event.eventKind==="token_link_verified"||event.eventKind==="token_links_invalidated"){
+    await ingestTokenLinkObservation(tx,{
+      sourceSystem:event.sourceSystem as "x"|"tg",
+      eventKind:event.eventKind,eventKey:event.eventKey,
+      schemaVersion:"token-link-v1",payload:event.payload,
+    });
+  }
+  if(event.eventKind==="token_swap_evidence_revision"){
+    await ingestBlockchainSwapRevision(tx,{
+      sourceSystem:event.sourceSystem,eventKind:event.eventKind,
+      eventKey:event.eventKey,schemaVersion:event.schemaVersion,payload:body,
+    });
+  }
+  if (body.timelineEvent) {
+    await ingestTimelineEvent(tx,event.sourceSystem,event.eventKind,body.timelineEvent);
+  }
+  if(fresh){
+    await revokeRetiredTextSnapshots(tx,event,body);
+    await queueAffectedTokensForRecalculation(tx,event,body);
+  }
+  return fresh;
+}
+
 /** The only transaction boundary: destination COMMIT BEFORE source ACK. */
 async function writeDestination(
   pool: DestinationPool, event: ClaimedEvent,
 ): Promise<boolean> {
-  const body=extractEnvelope(event);
+  extractEnvelope(event); // Reject malformed source data before borrowing a connection.
   const client=await pool.connect();
   let open=false;
   try {
     await client.query("BEGIN"); open=true;
-    const fresh=await ingestRegistryEvent(client,body.registryEvent);
-    if(event.eventKind==="token_link_verified"||event.eventKind==="token_links_invalidated"){
-      await ingestTokenLinkObservation(client,{
-        sourceSystem:event.sourceSystem as "x"|"tg",
-        eventKind:event.eventKind,eventKey:event.eventKey,
-        schemaVersion:"token-link-v1",payload:event.payload,
-      });
-    }
-    if(event.eventKind==="token_swap_evidence_revision"){
-      await ingestBlockchainSwapRevision(client,{
-        sourceSystem:event.sourceSystem,eventKind:event.eventKind,
-        eventKey:event.eventKey,schemaVersion:event.schemaVersion,payload:body,
-      });
-    }
-    if (body.timelineEvent) {
-      await ingestTimelineEvent(client,event.sourceSystem,event.eventKind,body.timelineEvent);
-    }
-    if(fresh){
-      await revokeRetiredTextSnapshots(client,event,body);
-      await queueAffectedTokensForRecalculation(client,event,body);
-    }
+    const fresh=await ingestDestinationEvent(client,event);
     await client.query("COMMIT");open=false;
     return fresh;
   } catch(error) {

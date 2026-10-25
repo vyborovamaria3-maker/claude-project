@@ -1,8 +1,21 @@
 import {createHash} from "node:crypto";
 import {buildTgSnapshotEvent} from "./backfill-core.mjs";
-import {ingestRegistryEvent,ingestTimelineEvent} from "../dist/index.js";
+import {ingestDestinationEvent} from "../dist/index.js";
 
-const observed="GREATEST(m.collected_at,(to_jsonb(m)->>'edited_at')::timestamptz)";
+const observed="GREATEST(m.collected_at,(to_jsonb(m)->>'edited_at')::timestamptz,m.deleted_at)";
+export function buildTelegramWatchEvent(row){
+ if(row.deleted_at===null||row.deleted_at===undefined)return buildTgSnapshotEvent(row);
+ // Apply source deletions even when their collection/edit clock did not move.
+ if(!/^-?[1-9][0-9]{0,19}$/.test(row.peer_id??'')||!/^[1-9][0-9]{0,19}$/.test(String(row.message_id)))return null;
+ const observedAt=new Date(row.deleted_at).toISOString();
+ const revision=createHash('sha256').update(String(row.cursor_at)).digest('hex');
+ const eventKey=`tg:watch:${row.peer_id}:${row.message_id}:deleted:${revision}`;
+ return {sourceSystem:'tg',eventKind:'message_deleted',eventKey,schemaVersion:'tg-snapshot-v1',payload:{registryEvent:{
+  sourceSystem:'tg',eventKind:'message_deleted',eventKey,schemaVersion:'tg-snapshot-v1',
+  entityRefs:[{kind:'source',canonicalId:'tg:source:'+row.peer_id,firstSeenAt:observedAt,lastSeenAt:observedAt}],
+  evidenceRef:{sourceKind:'tg_message',sourceId:`tg:message:${row.peer_id}:${row.message_id}`,observedAt},
+ }}};
+}
 /** Start at the current high water; then atomically commit each page and its cursor. */
 export async function importNewTelegramSnapshots(source,destination,limit=2){
  if(!Number.isSafeInteger(limit)||limit<1||limit>8)throw new TypeError("invalid_ai_watch_limit");
@@ -28,10 +41,9 @@ export async function importNewTelegramSnapshots(source,destination,limit=2){
    ORDER BY ${observed},m.source_id,m.message_id LIMIT $4`,[existing.at,existing.source_id,existing.message_id,limit])).rows;
   const stats={initialized:false,visited:rows.length,imported:0,excluded:0};
   for(const row of rows){
-   const event=buildTgSnapshotEvent(row);
-   if(!event||typeof row.text!=="string"||!row.text.trim()){stats.excluded++;continue;}
-   await ingestRegistryEvent(tx,event.payload.registryEvent);
-   await ingestTimelineEvent(tx,'tg',event.eventKind,event.payload.timelineEvent);stats.imported++;
+   const event=buildTelegramWatchEvent(row);
+   if(!event||event.eventKind!=='message_deleted'&&(typeof row.text!=="string"||!row.text.trim())){stats.excluded++;continue;}
+   await ingestDestinationEvent(tx,event);stats.imported++;
   }
   if(rows.length){const last=rows.at(-1);await tx.query("UPDATE ai_source_watch_cursors SET observed_at=$2,source_id=$3,message_id=$4,updated_at=clock_timestamp() WHERE source_identity=$1",[identity,last.cursor_at,last.source_id,last.message_id]);}
   await tx.query('COMMIT');return stats;
