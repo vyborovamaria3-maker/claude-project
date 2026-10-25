@@ -155,15 +155,18 @@ function main(argv=process.argv.slice(2)){
     throw Error("Input DB must exist and output DB must not exist");
   const D=require("better-sqlite3");
   const source=new D(sourcePath,{readonly:true,fileMustExist:true});
-  let out;
+  let out,ownsOutput=false;
   try{
     source.pragma("query_only=ON");
+    const fd=fs.openSync(outPath,"wx");
+    ownsOutput=true;
+    fs.closeSync(fd);
     out=new D(outPath,{fileMustExist:false});
     const report=project(source,out,{limit:a.limit});
     return {...report,output:outPath};
   }catch(err){
     out?.close();out=null;
-    if(fs.existsSync(outPath))fs.unlinkSync(outPath);
+    if(ownsOutput&&fs.existsSync(outPath))fs.unlinkSync(outPath);
     throw err;
   }finally{out?.close();source.close();}
 }
