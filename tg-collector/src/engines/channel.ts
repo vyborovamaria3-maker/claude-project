@@ -12,7 +12,7 @@ import { catchUpFreshPosts } from "./live-during-history.js";
 import { batchSize, initialLimit, maxPages } from "../runtime/config.js";
 import type { RawTelegramMessage as TgMessage } from "../analytics/extract.js";
 import { verifiedPublicUsername } from "../validation.js";
-import {assessPromotionalChannel,PROMO_SAMPLE_LIMIT,PROMOTIONAL_MILESTONE} from "../analytics/promo-spam.js";
+import {assessPromotionalChannel,promotionalScreeningEnabled,PROMO_SAMPLE_LIMIT,PROMOTIONAL_MILESTONE} from "../analytics/promo-spam.js";
 type Source = { identifier: string; current_username: string|null; peer_id: string|null; access_hash: string|null; last_message_id: string; history_low_message_id: string; full_history:boolean;history_complete:boolean;spam_kind:string|null;spam_screened_at:Date|null };
 
 export async function processJob(client: TelegramClient, job: Job, isStopping: () => boolean): Promise<void> {
@@ -119,7 +119,7 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
 
   // Screening is deliberately BEFORE fresh catch-up, discussion discovery and
   // any history page. A rejected channel is not ingested from the preview.
-  if (!source.spam_screened_at) {
+  if (promotionalScreeningEnabled() && !source.spam_screened_at) {
     const preview=await client.getMessages(entity,{limit:PROMO_SAMPLE_LIMIT});
     const assessment=assessPromotionalChannel(preview as unknown as TgMessage[]);
     const tx=await pool.connect();

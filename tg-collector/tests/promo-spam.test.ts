@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
-import {assessPromotionalChannel,promotionalMilestoneKind,PROMO_SAMPLE_LIMIT} from "../src/analytics/promo-spam.js";
+import {assessPromotionalChannel,promotionalScreeningEnabled,promotionalMilestoneKind,PROMO_SAMPLE_LIMIT} from "../src/analytics/promo-spam.js";
 
 const axiosExamples=[
 ["14.9","7","227.24"],["12.9","6","197.38"],["10.9","5","166.79"],
@@ -60,4 +60,11 @@ test("few identical posts or short channels do not overblock",()=>{
   assert.equal(a.spam,true);
   const small=assessPromotionalChannel(axiosExamples.slice(0,10));
   assert.equal(small.spam,false,"sample smaller than 12 should be re-screened later");
+});
+
+test("automatic screening is explicit opt-in only",()=>{
+ assert.equal(promotionalScreeningEnabled({}),false);
+ assert.equal(promotionalScreeningEnabled({TG_PROMOTIONAL_SCREENING_ENABLED:"false"}),false);
+ assert.equal(promotionalScreeningEnabled({TG_PROMOTIONAL_SCREENING_ENABLED:"1"}),false);
+ assert.equal(promotionalScreeningEnabled({TG_PROMOTIONAL_SCREENING_ENABLED:"true"}),true);
 });

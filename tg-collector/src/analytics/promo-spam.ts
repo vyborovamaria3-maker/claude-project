@@ -46,3 +46,8 @@ export function assessPromotionalChannel(posts: readonly PreviewPost[]): PromoAs
   return {inspected,matches,repeatedTicker,
     spam:inspected>=12 && matches>=6 && matches/inspected>=0.10 && repeatedTicker!==null};
 }
+
+/** Live threshold validation is an operator rollout step, never an implicit default. */
+export function promotionalScreeningEnabled(env:NodeJS.ProcessEnv=process.env):boolean {
+  return env.TG_PROMOTIONAL_SCREENING_ENABLED === "true";
+}

@@ -1,3 +1,4 @@
+process.env.TG_PROMOTIONAL_SCREENING_ENABLED="true";
 import {test} from 'node:test';import assert from 'node:assert/strict';
 import {Api,type TelegramClient} from 'telegram';import bigInt from 'big-integer';import {randomUUID}from 'node:crypto';
 import {publicPostRequest,matchesSearchTerm}from '../src/runtime/message-search.js';

@@ -1,3 +1,4 @@
+import {promotionalScreeningEnabled} from "../analytics/promo-spam.js";
 import { Api, type TelegramClient } from "telegram";
 import {publicDiscoveryChannel} from "../validation.js";
 import {discoverExternalPosts,type ExternalSettings}from "./external-discovery.js";
@@ -81,7 +82,7 @@ export async function addCandidate(candidate: NonNullable<ReturnType<typeof publ
     text=EXCLUDED.text,last_seen_at=now(),source_id=EXCLUDED.source_id,
     matched_terms=(SELECT ARRAY(SELECT DISTINCT unnest(tg_discovery_mentions.matched_terms||EXCLUDED.matched_terms)))`,
     [candidate.peer,msg.id,candidate.username,candidate.title,msg.message.slice(0,8192),typeof msg.date==='number'?new Date(msg.date*1000):null,keyword,linked?.id??null]);
-   if(linked?.enabled && linked.spam_screened_at && !linked.spam_kind){
+   if(linked?.enabled && (!promotionalScreeningEnabled() || linked.spam_screened_at) && !linked.spam_kind){
      await persistMessage(tx,linked.id,msg);if(typeof msg.date==='number'){const day=utcDay(new Date(msg.date*1000));if(day)await refreshGraphDays(tx,linked.id,[day]);};}
   }
   if(external&&msg)await tx.query(`INSERT INTO tg_external_verified_posts(peer_id,message_id,provider,origin,reference_url)

@@ -1,3 +1,4 @@
+process.env.TG_PROMOTIONAL_SCREENING_ENABLED="true";
 import "dotenv/config";
 import assert from "node:assert/strict";
 import {randomUUID} from "node:crypto";

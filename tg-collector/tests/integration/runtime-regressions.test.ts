@@ -1,3 +1,4 @@
+process.env.TG_PROMOTIONAL_SCREENING_ENABLED="true";
 import { ANALYSIS_VERSION } from "../../src/analytics/extract.js";
 import { readFile } from "node:fs/promises";
 import "dotenv/config";

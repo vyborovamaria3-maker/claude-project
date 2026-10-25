@@ -774,3 +774,11 @@ automatically during migrations.
 Recommended safe order: local backup → stop Worker → migrate → backfill →
 optional entity refetch → optional tokens:resolve → analyze:refresh →
 restart Worker → run live smoke on a disposable PostgreSQL database.
+
+### Promotional screening rollout
+
+Automatic 120-post screening is off by default. Set TG_PROMOTIONAL_SCREENING_ENABLED=true
+only after reviewing the threshold against your public channels. Unit tests and disposable
+PostgreSQL tests use mocks; no authenticated Telegram account was used to validate production
+thresholds. Existing quarantine labels remain enforced even when automatic screening is off;
+use the explicit confirmed spam-clear action after manual false-positive review.
