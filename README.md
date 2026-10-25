@@ -23,7 +23,7 @@ A directory is **not necessarily a deployable app, product, or separate database
 
 ## Работа без сервера — локальный Token Intelligence (2026-10-25)
 
-Сейчас **удалённого сервера нет, деплой не требуется**. Для безопасной разработки достаточно offline CI и локальных тестовых данных. [PR #186](https://github.com/vyborovamaria3-maker/claude-project/pull/186), относящийся к production deploy, **закрыт без merge**; менять SSH/GHCR/release pipeline ради анализа mint сейчас не нужно.
+Сейчас **удалённого сервера нет, деплой не требуется**. Для безопасной разработки достаточно offline CI и локальных тестовых данных. Изменения защиты релизов из [PR #186](https://github.com/vyborovamaria3-maker/claude-project/pull/186) включены в main через [PR #188](https://github.com/vyborovamaria3-maker/claude-project/pull/188); автоматический production deploy требует явного включения. Локальный отчёт по mint не запускает деплой и не требует изменений SSH/GHCR/release pipeline.
 
 В рамках [PR #189](https://github.com/vyborovamaria3-maker/claude-project/pull/189) добавлен локальный просмотр доказательств для одного Solana mint без HTTP-сервера и AI-провайдера:
 

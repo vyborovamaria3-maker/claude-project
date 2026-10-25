@@ -23,6 +23,8 @@ test("CLI validates canonical mint and explicit UTC as-of boundaries",()=>{
     [...args,"--known-at",knownAt],[...args,"--limit","0"],
     [...args,"--limit","101"],[...args,"--limit","1.5"],
     ["--mint",mint,"--known-at","2026-12-01T00:00:00Z"],
+    ["--mint",mint,"--known-at","2026-02-30T00:00:00Z"],
+    ["--mint",mint,"--occurred-before","2026-04-31T00:00:00Z"],
     ["--mint",mint,"--known-at",knownAt,"--occurred-before","2026-10-21T04:00:00Z"],
     ["--mint",mint,"--wrong"],
   ])assert.throws(()=>parseLocalTokenArgs(bad,now));
@@ -61,6 +63,7 @@ test("synthetic demo requires neither provider, database nor HTTP listener",asyn
   assert.equal(report.interpretation.ai,"not_run_no_external_model");
   assert.equal(report.interpretation.pnl,"not_available");
   assert.equal(report.historicalCompleteness,"unknown");
+  assert.match(formatLocalTokenReport(report),/^SYNTHETIC DEMO — NO DATABASE OR REAL SOURCE OBSERVATIONS\n/);
   assert.match(formatLocalTokenReport(report),/LOCAL, OBSERVED EVIDENCE ONLY/);
   assert.match(formatLocalTokenReport(report),/finality NOT VERIFIED/);
 });
@@ -120,6 +123,7 @@ test("report never leaks source payloads and keeps chain separate from verified 
   assert.ok(!json.includes("SECRET wallet"));
   assert.equal(report.interpretation.missingIsNotZero,true);
   assert.ok(!formatLocalTokenReport(report).includes("SECRET"));
+  assert.ok(!formatLocalTokenReport(report).includes("SYNTHETIC DEMO"));
 });
 
 test("bad as-of, wrong mint, unverified sources and unexpected pagination fail closed",()=>{

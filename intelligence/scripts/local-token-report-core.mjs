@@ -138,6 +138,9 @@ export function composeLocalTokenReport(request,evidence,timeline){
 export function formatLocalTokenReport(report){
   record(report,"report");
   const out=[
+    ...(report.syntheticFixture===true?[
+      "SYNTHETIC DEMO — NO DATABASE OR REAL SOURCE OBSERVATIONS",
+    ]:[]),
     "TOKEN INTELLIGENCE — LOCAL, OBSERVED EVIDENCE ONLY",
     "Mint: "+report.tokenId,
     "Occurred before: "+report.occurredBefore,

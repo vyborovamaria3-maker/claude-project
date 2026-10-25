@@ -22,6 +22,10 @@ function iso(value,name){
     throw new TypeError("invalid_"+name);
   const d=new Date(value);
   if(!Number.isFinite(d.getTime()))throw new TypeError("invalid_"+name);
+  const canonical=value.includes(".")
+    ?value.replace(/\.(\d{1,2})Z$/,(_,ms)=>"."+ms.padEnd(3,"0")+"Z")
+    :value.replace(/Z$/,".000Z");
+  if(d.toISOString()!==canonical)throw new TypeError("invalid_"+name);
   return d.toISOString();
 }
 export function parseLocalTokenArgs(argv,now=new Date()){
