@@ -21,6 +21,19 @@ Multi-application repository for **Solana token research, X and Telegram collect
 
 A directory is **not necessarily a deployable app, product, or separate database**. Counts such as “14 apps / 9 databases” are not maintained as verified production inventory. Refer to [data ownership and storage contracts](docs/architecture/DATA_CONTRACTS.md) instead.
 
+## Работа без сервера — локальный Token Intelligence (2026-10-25)
+
+Сейчас **удалённого сервера нет, деплой не требуется**. Для безопасной разработки достаточно offline CI и локальных тестовых данных. [PR #186](https://github.com/vyborovamaria3-maker/claude-project/pull/186), относящийся к production deploy, **закрыт без merge**; менять SSH/GHCR/release pipeline ради анализа mint сейчас не нужно.
+
+В рамках [PR #189](https://github.com/vyborovamaria3-maker/claude-project/pull/189) добавлен локальный просмотр доказательств для одного Solana mint без HTTP-сервера и AI-провайдера:
+
+```sh
+npm --prefix intelligence run token:report -- \
+  --mint So11111111111111111111111111111111111111112 --demo --json
+```
+
+`--demo` выводит **явно синтетические** X/TG/blockchain фикстуры и не подключается к БД, RPC или аккаунтам. Для фактической локальной тестовой БД есть отдельный **явно разрешаемый** read-only PostgreSQL режим с loopback-only подключением. Он не запускает коллекторы. См. [инструкцию Intelligence](intelligence/README.md). Отсутствие результатов не означает отсутствие активности; финальность транзакций, PnL и прогнозная пригодность AI не подтверждаются.
+
 ## Source → Intelligence architecture
 
 ```text
