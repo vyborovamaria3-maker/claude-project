@@ -4,6 +4,14 @@ on:
   push:
     branches:
       - main
+    # Publishing immutable production images (and the downstream deploy
+    # workflow) must not be triggered by documentation-only updates.
+    # GitHub paths-ignore applies only if *all* changed files match.
+    # Mixed docs + runtime changes continue through the full release gate.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "**/*.mdx"
   workflow_dispatch:
 
 permissions:

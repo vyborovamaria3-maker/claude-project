@@ -94,8 +94,10 @@ Thumbs.db
 **/.repair-backups/
 **/.tmp-*/
 
-# Oversized raw datasets (GB-scale, GitHub rejects >100MB files)
+# Oversized raw datasets and generated candidate indexes (keep these out of Git)
 solana-launcher/backend/data/tgdataset/
+solana-launcher/backend/data/teragram/
+solana-launcher/backend/data/telegram-datasets/
 
 # Windows reserved device name
 NUL

@@ -12,6 +12,7 @@ from app.models.social_intelligence import TelegramChannel
 from app.services.telegram_parser import normalize_telegram_target
 
 _REGISTRY_PAGE_SIZE = 5000
+_DATASET_SOURCES = frozenset({"tgdataset", "teragram", "custom"})
 
 
 def _utcnow() -> datetime:
@@ -171,7 +172,7 @@ async def record_discovery_results(
             if username in manual:
                 source = "manual"
             elif username in database:
-                source = "tgdataset"
+                source = str(old_registry.get("source") or "tgdataset")
             elif not result.get("discovered_from"):
                 source = str(old_registry.get("source") or "registry")
 
@@ -224,6 +225,7 @@ async def due_registry_channels(
     sessionmaker: async_sessionmaker[AsyncSession],
     *,
     limit: int = 25,
+    sources: set[str] | None = None,
 ) -> list[str]:
     now = _utcnow()
     safe_limit = max(1, min(int(limit), 200))
@@ -234,6 +236,28 @@ async def due_registry_channels(
         registry = meta.get("discovery_registry") if isinstance(meta, dict) else None
         if not isinstance(registry, dict):
             continue
+        if sources is not None:
+            registry_source = str(registry.get("source") or "")
+            if registry_source not in sources:
+                dataset_meta = meta.get("dataset_import") if isinstance(meta, dict) else None
+                dataset_sources = (
+                    dataset_meta.get("sources")
+                    if isinstance(dataset_meta, dict)
+                    else None
+                )
+                has_dataset_provenance = (
+                    isinstance(dataset_sources, dict) and bool(dataset_sources)
+                )
+                is_dataset_queue = bool(sources.intersection(_DATASET_SOURCES))
+                # A channel may first be discovered through the graph and later appear in a
+                # historical dataset. Include it in the dataset queue, but never steal a
+                # manually configured channel from its manual lifecycle.
+                if not (
+                    is_dataset_queue
+                    and has_dataset_provenance
+                    and registry_source != "manual"
+                ):
+                    continue
         username = normalize_telegram_target(channel.username or "")
         if not username:
             continue

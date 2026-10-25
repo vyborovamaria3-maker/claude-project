@@ -164,6 +164,21 @@ function integration(){
     }finally{projected.close();}
     assert.deepEqual(fs.readFileSync(sourcePath),bytes,"Read-only history must not edit source bytes");
     assert.throws(()=>historyMain(["--db",sourcePath,"--out",outPath]),/must not exist/);
+    const racingOutput=path.join(dir,"concurrent-output.db");
+    const originalExists=fs.existsSync;
+    let raced=false;
+    fs.existsSync=function(file){
+      if(file===racingOutput&&!raced){
+        raced=true;
+        fs.writeFileSync(racingOutput,"preserve-other-process-output");
+        return false;
+      }
+      return originalExists(file);
+    };
+    try{
+      assert.throws(()=>historyMain(["--db",sourcePath,"--out",racingOutput]),/EEXIST/);
+    }finally{fs.existsSync=originalExists;}
+    assert.equal(fs.readFileSync(racingOutput,"utf8"),"preserve-other-process-output");
     const readinessDb=new Database(":memory:");
     try{
       readinessDb.exec("CREATE TABLE chain_forensic_history_coverage(possible_gap INTEGER,backfill_complete INTEGER); INSERT INTO chain_forensic_history_coverage VALUES(0,1)");

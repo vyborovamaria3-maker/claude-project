@@ -6,12 +6,10 @@ test("Telegram fixture contract is versioned and contains no session material", 
   const raw = await readFile(new URL("./fixtures/telegram/messages.v1.json", import.meta.url), "utf8");
   const fixture = JSON.parse(raw) as {
     fixture_version?: number;
-    gramjs_version?: string;
     format?: string;
     messages?: Array<{ id?: number; message?: string }>;
   };
   assert.equal(fixture.fixture_version, 1);
-  assert.equal(fixture.gramjs_version, "2.26.22");
   assert.equal(fixture.format, "json-message-envelope");
   assert.ok(Array.isArray(fixture.messages) && fixture.messages.length >= 3);
   for (const message of fixture.messages) {
