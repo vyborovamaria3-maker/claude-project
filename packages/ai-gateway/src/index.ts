@@ -251,9 +251,11 @@ function estimateCost(provider: NormalizedProvider, inputTokens: number | null, 
     outputTokens * provider.outputCostPer1kUsd / 1_000;
 }
 
-function estimatedReservation(provider: NormalizedProvider, inputChars: number, outputTokens: number): number | null {
+function estimatedReservation(provider: NormalizedProvider, inputBytes: number, outputTokens: number): number | null {
   if (provider.inputCostPer1kUsd === undefined || provider.outputCostPer1kUsd === undefined) return null;
-  return Math.ceil(inputChars / 4) * provider.inputCostPer1kUsd / 1_000 +
+  // UTF-8 bytes plus protocol overhead are a conservative tokenizer proxy.
+  // A chars/4 average severely under-reserves multilingual and short inputs.
+  return (inputBytes + 8_192) * provider.inputCostPer1kUsd / 1_000 +
     outputTokens * provider.outputCostPer1kUsd / 1_000;
 }
 
@@ -354,7 +356,7 @@ export function createAiGateway(options: AiGatewayOptions) {
   ): Promise<RequestResult> {
     const state = runtime.get(provider.id)!;
     if (state.inFlight >= provider.maxConcurrent) throw new AiGatewayError("ai_provider_capacity_exhausted", null, true);
-    const reservation = estimatedReservation(provider, inputChars, outputTokenBudget);
+    const reservation = estimatedReservation(provider, Buffer.byteLength(JSON.stringify(body), "utf8"), outputTokenBudget);
     if (provider.maxEstimatedCostUsd !== undefined &&
         (reservation === null || state.estimatedCostUsd + state.reservedCostUsd + reservation > provider.maxEstimatedCostUsd)) {
       throw new AiGatewayError("ai_provider_cost_budget_exhausted");
@@ -364,6 +366,7 @@ export function createAiGateway(options: AiGatewayOptions) {
     state.inFlight++;
     state.reservedCostUsd += budgetReservation;
     let reservationReleased = false;
+    let attemptCharged = false;
     let lastStatus: number | null = null;
     try {
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -374,6 +377,24 @@ export function createAiGateway(options: AiGatewayOptions) {
           throw new AiGatewayError("ai_provider_rate_limit_exhausted", 429, true);
         }
         state.requestTimestamps.push(current);
+        if (attempt > 1) {
+          if (provider.maxEstimatedCostUsd !== undefined &&
+              state.estimatedCostUsd + state.reservedCostUsd + budgetReservation > provider.maxEstimatedCostUsd) {
+            throw new AiGatewayError("ai_provider_cost_budget_exhausted");
+          }
+          state.reservedCostUsd += budgetReservation;
+          reservationReleased = false;
+          attemptCharged = false;
+        }
+        // Once dispatched, an uncertain failure may still be billable. Each
+        // retry needs its own allowance; failed requests cannot refund it.
+        const chargeAttempt = (cost: number | null = null) => {
+          if (attemptCharged) return;
+          state.estimatedCostUsd += cost ?? reservation ?? 0;
+          state.reservedCostUsd = Math.max(0, state.reservedCostUsd - budgetReservation);
+          reservationReleased = true;
+          attemptCharged = true;
+        };
         let response: Response;
         try {
           const timeoutSignal = AbortSignal.timeout(provider.timeoutMs);
@@ -386,12 +407,14 @@ export function createAiGateway(options: AiGatewayOptions) {
             redirect: "error",
           });
         } catch {
+          chargeAttempt();
           if (signal?.aborted) throw new AiGatewayError("ai_request_aborted");
           if (attempt >= maxAttempts) throw new AiGatewayError("ai_provider_network_error", null, true);
           await sleep(Math.min(1_000, 100 * (2 ** (attempt - 1))));
           continue;
         }
         if (!response.ok) {
+          chargeAttempt();
           lastStatus = response.status;
           const retryable = response.status === 429 || response.status >= 500;
           // Release rejected response streams before retrying or returning.
@@ -407,14 +430,13 @@ export function createAiGateway(options: AiGatewayOptions) {
         }
         let payload: unknown;
         try { payload = await boundedProviderJson(response); } catch (error) {
+          chargeAttempt();
           if(error instanceof AiGatewayError)throw error;
           throw new AiGatewayError("ai_provider_response_invalid");
         }
         const usage = tokenUsage(payload);
         const actualCost = estimateCost(provider, usage.inputTokens, usage.outputTokens, task);
-        state.estimatedCostUsd += actualCost ?? reservation ?? 0;
-        state.reservedCostUsd = Math.max(0, state.reservedCostUsd - budgetReservation);
-        reservationReleased = true;
+        chargeAttempt(actualCost);
         const latencyMs = Math.max(0, now() - started);
         return { payload, traceId: randomUUID(), latencyMs, ...usage, estimatedCostUsd: actualCost };
       }
