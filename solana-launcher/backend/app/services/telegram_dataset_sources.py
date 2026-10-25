@@ -1,487 +1,587 @@
-"""Import public Telegram channel datasets into the existing collector registry.
-
-The default remote source is a small, licensed channel-metadata snapshot. The 71 GB TGDataset
-archive is intentionally not downloaded automatically; operators can point the local importer at
-an already-downloaded copy. Dataset metadata is used to queue public channels for normal
-relevance validation; message collection remains in TelegramPublicWebDiscoveryCollector.
-"""
-
 from __future__ import annotations
 
 import csv
-import io
+import hashlib
 import json
-from collections.abc import Iterator
+import re
+from collections.abc import Iterable, Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import httpx
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.services.telegram_discovery_registry import import_dataset_channel_candidates
+from app.models.social_intelligence import TelegramChannel, TelegramDatasetImportCheckpoint
 from app.services.telegram_parser import normalize_telegram_target
 
-TGATLAS_DATASET_NAME = "tgatlas-telegram-public-channels-2026-W36"
-TGATLAS_DATASET_URL = (
-    "https://huggingface.co/datasets/starnikovoleg/telegram-public-channels-2026-W36"
-)
-TGATLAS_CHANNELS_CSV_URL = (
-    "https://huggingface.co/datasets/starnikovoleg/telegram-public-channels-2026-W36/"
-    "resolve/main/channels.csv"
-)
-TGATLAS_RECOMMENDATIONS_CSV_URL = (
-    "https://huggingface.co/datasets/starnikovoleg/telegram-public-channels-2026-W36/"
-    "resolve/main/recommendations.csv"
-)
-TGATLAS_LICENSE = "CC-BY-4.0"
-SMUGCALLS_DATASET_NAME = "smugcalls-solana-memecoin-calls"
-SMUGCALLS_DATASET_URL = "https://github.com/Smurfetc/solana-memecoin-calls-dataset"
-SMUGCALLS_LICENSE = "CC0-1.0"
-MAX_REMOTE_CSV_BYTES = 8 * 1024 * 1024
-DEFAULT_TOPICS = {"crypto", "finance"}
+_BACKEND_ROOT = Path(__file__).resolve().parents[2]
+_SUPPORTED_SUFFIXES = {".csv", ".json", ".jsonl", ".ndjson"}
+_USERNAME_RE = re.compile(r"^[a-z0-9_]{5,32}$", re.IGNORECASE)
+_RESERVED_TARGETS = {
+    "addstickers",
+    "confirmphone",
+    "contact",
+    "iv",
+    "joinchat",
+    "login",
+    "proxy",
+    "setlanguage",
+    "share",
+    "socks",
+}
+_BATCH_SIZE = 500
+DATASET_REGISTRY_SOURCES = frozenset({"tgdataset", "teragram", "custom"})
+_MISSING = object()
 
 
-def _as_int(value: Any) -> int | None:
-    if isinstance(value, bool) or value is None or str(value).strip() == "":
-        return None
-    try:
-        return max(0, min(int(float(str(value).replace(",", ""))), 2_147_483_647))
-    except (TypeError, ValueError, OverflowError):
-        return None
+def utcnow() -> datetime:
+    return datetime.now(UTC)
 
 
-def _as_float(value: Any) -> float | None:
-    if isinstance(value, bool) or value is None or str(value).strip() == "":
-        return None
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    return parsed if 0 <= parsed < 1_000_000 else None
+def _public_channel_id(username: str) -> int:
+    digest = hashlib.sha256(f"telegram-public:{username.lower()}".encode()).digest()
+    value = int.from_bytes(digest[:8], "big") & ((1 << 63) - 1)
+    return -(value or 1)
 
 
-def _as_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    return str(value or "").strip().casefold() in {"1", "true", "yes", "y"}
+def _resolve_path(raw: str | Path) -> Path:
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = _BACKEND_ROOT / path
+    return path.resolve()
 
 
-def _cell(row: dict[str, Any], *names: str) -> str:
-    by_lower = {str(key).strip().casefold(): value for key, value in row.items()}
-    for name in names:
-        value = by_lower.get(name.casefold())
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    return ""
+def _configured_paths(settings: Any) -> list[Path]:
+    raw = str(getattr(settings, "telegram_public_web_dataset_paths", "") or "")
+    values = [item.strip() for item in re.split(r"[;,\n]", raw) if item.strip()]
+    return [_resolve_path(value) for value in values]
 
 
-def parse_public_channel_snapshot(
-    csv_text: str,
-    *,
-    allowed_topics: set[str] | None = None,
-    max_channels: int = 1000,
-) -> list[dict[str, Any]]:
-    """Parse the tgAtlas CSV while keeping only configured topic categories."""
-    topics = {
-        topic.strip().casefold()
-        for topic in (allowed_topics or DEFAULT_TOPICS)
-        if topic.strip()
-    }
-    limit = max(0, min(int(max_channels), 20_000))
-    if limit == 0:
-        return []
+def discover_dataset_files(settings: Any) -> list[Path]:
+    """Find generated TGDataset/TeraGram candidates plus explicitly configured datasets.
 
-    records: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for row in csv.DictReader(io.StringIO(csv_text)):
-        username = normalize_telegram_target(_cell(row, "username", "channel", "telegram"))
-        topic = _cell(row, "topic", "category").casefold()
-        if not username or (topics and topic not in topics) or username in seen:
-            continue
-        seen.add(username)
-        subscribers = _as_int(_cell(row, "subscribers", "n_subscribers", "participants"))
-        recommended_by = _as_int(_cell(row, "recommended_by", "recommendation_count"))
-        records.append(
-            {
-                "username": username,
-                "title": _cell(row, "title", "name") or username,
-                "topic": topic or "unknown",
-                "tags": [topic] if topic else [],
-                "participants": subscribers,
-                "verified": _as_bool(_cell(row, "verified")),
-                "posts_per_day": _as_float(_cell(row, "posts_per_day")),
-                "recommended_by": recommended_by,
-                "snapshot": _cell(row, "week", "measured_on"),
-                "source_name": TGATLAS_DATASET_NAME,
-                "source_url": TGATLAS_DATASET_URL,
-                "license": TGATLAS_LICENSE,
-                "attribution": "tgAtlas",
-            }
-        )
-    records.sort(
-        key=lambda row: (
-            int(row.get("recommended_by") or 0),
-            int(row.get("participants") or 0),
-            str(row.get("username") or ""),
-        ),
-        reverse=True,
-    )
-    return records[:limit]
+    Historical archives themselves are deliberately not downloaded here. The dataset scanners
+    remain explicit CLI jobs; this function consumes their compact candidate outputs.
+    """
 
+    found: dict[str, Path] = {}
 
-def parse_recommendation_edges(
-    csv_text: str,
-    *,
-    relevant_usernames: set[str],
-    existing_usernames: set[str],
-    limit: int,
-) -> list[dict[str, Any]]:
-    """Add bounded graph neighbors of relevant channels as unverified candidates."""
-    max_rows = max(0, min(int(limit), 20_000))
-    if not max_rows or not relevant_usernames:
-        return []
-
-    records: list[dict[str, Any]] = []
-    seen = set(existing_usernames)
-    for row in csv.DictReader(io.StringIO(csv_text)):
-        source = normalize_telegram_target(
-            _cell(row, "source_username", "source_channel", "source", "from_username", "from")
-        )
-        target = normalize_telegram_target(
-            _cell(
-                row,
-                "recommended_username",
-                "recommended_channel",
-                "recommended",
-                "target_username",
-                "target",
-                "to_username",
-                "to",
-            )
-        )
-        if not source or source not in relevant_usernames or not target or target in seen:
-            continue
-        seen.add(target)
-        records.append(
-            {
-                "username": target,
-                "title": target,
-                "topic": "crypto-recommendation",
-                "tags": ["crypto", "recommendation-graph"],
-                "recommended_from_dataset": source,
-                "source_name": TGATLAS_DATASET_NAME,
-                "source_url": TGATLAS_DATASET_URL,
-                "license": TGATLAS_LICENSE,
-            }
-        )
-        if len(records) >= max_rows:
-            break
-    return records
-
-
-async def _download_csv(client: httpx.AsyncClient, url: str) -> str:
-    response = await client.get(url)
-    response.raise_for_status()
-    if len(response.content) > MAX_REMOTE_CSV_BYTES:
-        raise ValueError(f"Dataset CSV exceeds {MAX_REMOTE_CSV_BYTES} bytes: {url}")
-    return response.content.decode("utf-8-sig")
-
-
-async def sync_public_dataset_channels(sessionmaker, settings) -> dict[str, Any]:
-    """Fetch configured public metadata sources and enqueue their channels idempotently."""
-    topics_raw = str(getattr(settings, "telegram_dataset_sync_topics", "crypto,finance") or "")
-    topics = {value.strip().casefold() for value in topics_raw.split(",") if value.strip()}
-    max_channels = max(
-        1,
-        min(int(getattr(settings, "telegram_dataset_sync_max_channels", 1000) or 1000), 20_000),
-    )
-    timeout = max(
-        2.0,
-        min(float(getattr(settings, "telegram_public_web_timeout_seconds", 12.0)), 60.0),
-    )
-    records: list[dict[str, Any]] = [
-        {
-            "username": "SmugCalls",
-            "title": "SmugCalls Solana Memecoin Calls",
-            "topic": "solana-memecoin-calls",
-            "tags": ["solana", "memecoin", "calls", "public-channel"],
-            "source_name": SMUGCALLS_DATASET_NAME,
-            "source_url": SMUGCALLS_DATASET_URL,
-            "license": SMUGCALLS_LICENSE,
-            "attribution": "SmugCalls / Smurfetc",
-        }
-    ]
-    errors: list[dict[str, str]] = []
-    snapshot_usernames: set[str] = set()
-
-    try:
-        async with httpx.AsyncClient(
-            timeout=timeout,
-            follow_redirects=True,
-            headers={"User-Agent": "TelegramDatasetCollector/1.0 (+public dataset ingestion)"},
-        ) as client:
-            channels_csv = await _download_csv(client, TGATLAS_CHANNELS_CSV_URL)
-            channel_budget = max(1, (max_channels * 4) // 5)
-            channels = parse_public_channel_snapshot(
-                channels_csv, allowed_topics=topics, max_channels=channel_budget
-            )
-            snapshot_usernames = {str(row["username"]) for row in channels}
-            records.extend(channels[: max(0, max_channels - len(records))])
-            remaining = max(0, max_channels - len(records))
-            if remaining:
-                try:
-                    edges_csv = await _download_csv(client, TGATLAS_RECOMMENDATIONS_CSV_URL)
-                    records.extend(
-                        parse_recommendation_edges(
-                            edges_csv,
-                            relevant_usernames=snapshot_usernames,
-                            existing_usernames={str(row["username"]) for row in records},
-                            limit=remaining,
-                        )
-                    )
-                except (httpx.HTTPError, ValueError, UnicodeDecodeError) as exc:
-                    errors.append({"source": TGATLAS_DATASET_NAME, "error": str(exc)[:300]})
-    except (httpx.HTTPError, ValueError, UnicodeDecodeError) as exc:
-        errors.append({"source": TGATLAS_DATASET_NAME, "error": str(exc)[:300]})
-
-    stats = await import_dataset_channel_candidates(
-        sessionmaker,
-        records,
-        source_name="public-telegram-datasets",
-        source_url="",
-        source_license="",
-    )
-    by_source: dict[str, int] = {}
-    for row in records:
-        source = str(row.get("source_name") or "public-telegram-datasets")
-        by_source[source] = by_source.get(source, 0) + 1
-    return {
-        "enabled": True,
-        "sources": by_source,
-        "records": stats,
-        "errors": errors,
-        "topics": sorted(topics),
-        "max_channels": max_channels,
-    }
-
-
-def _local_row(
-    row: dict[str, Any],
-    *,
-    source_name: str,
-    topic_by_id: dict[str, str] | None = None,
-    language_by_id: dict[str, str] | None = None,
-) -> dict[str, Any] | None:
-    username = normalize_telegram_target(str(row.get("username") or row.get("url") or ""))
-    if not username:
-        return None
-    channel_id = str(row.get("channel_id") or row.get("telegram_channel_id") or "").strip()
-    topic = str(
-        row.get("topic")
-        or row.get("category")
-        or (topic_by_id or {}).get(channel_id, "")
-    ).strip().casefold()
-    language = str((language_by_id or {}).get(channel_id, "")).strip().casefold()
-    raw_tags = row.get("tags")
-    tags: list[str] = []
-    if isinstance(raw_tags, list):
-        tags.extend(str(tag).strip() for tag in raw_tags if str(tag).strip())
-    if topic:
-        tags.append(topic)
-    if language:
-        tags.append(f"lang:{language}")
-    return {
-        "username": username,
-        "title": str(row.get("title") or username)[:255],
-        "about": str(row.get("description") or row.get("about") or "")[:4000],
-        "participants": row.get("n_subscribers", row.get("subscribers", row.get("participants"))),
-        "channel_id": channel_id or None,
-        "creation_date": row.get("creation_date", row.get("created")),
-        "language": language or None,
-        "verified": row.get("verified"),
-        "scam": row.get("scam", False),
-        "topic": topic,
-        "tags": tags,
-        "source_name": source_name,
-        "source_url": str(row.get("source_url") or "")[:500],
-        "license": str(row.get("license") or "")[:100],
-        "attribution": str(row.get("attribution") or "")[:150],
-        "snapshot": str(row.get("snapshot") or row.get("week") or "")[:40],
-    }
-
-
-def _load_local_channel_labels(root: Path) -> tuple[dict[str, str], dict[str, str]]:
-    """Load optional TGDataset topic/language maps without treating label lists as seeds."""
-    search_root = root if root.is_dir() else root.parent
-    topic_by_id: dict[str, str] = {}
-    language_by_id: dict[str, str] = {}
-    if not search_root.exists():
-        return topic_by_id, language_by_id
-
-    for csv_path in search_root.rglob("*.csv"):
-        name = csv_path.name.casefold()
-        if name not in {"ch_to_topic_mapping.csv", "channel_to_language_mapping.csv"}:
-            continue
-        target = topic_by_id if name == "ch_to_topic_mapping.csv" else language_by_id
+    def add_file(path: Path) -> None:
         try:
-            with csv_path.open("r", encoding="utf-8-sig", newline="") as source:
-                for row in csv.DictReader(source):
-                    channel_id = _cell(row, "ch_id", "channel_id", "id")
-                    label = _cell(row, "topic", "language", "lang")
-                    if channel_id and label:
-                        target[channel_id.strip()] = label.strip().casefold()
+            resolved = path.resolve()
+            if resolved.is_file() and resolved.suffix.lower() in _SUPPORTED_SUFFIXES:
+                found[str(resolved)] = resolved
+        except OSError:
+            return
+
+    data_root = _BACKEND_ROOT / "data"
+    tgdataset_root = data_root / "tgdataset"
+    teragram_roots = {
+        (data_root / "teragram").resolve(),
+        _resolve_path(
+            str(
+                getattr(settings, "telegram_teragram_output_dir", "data/teragram")
+                or "data/teragram"
+            )
+        ),
+    }
+
+    if tgdataset_root.is_dir():
+        for path in sorted(tgdataset_root.glob("TGDataset_*.candidates.jsonl")):
+            add_file(path)
+        add_file(tgdataset_root / "telegram_seed_database.json")
+    for teragram_root in sorted(teragram_roots):
+        if teragram_root.is_dir():
+            add_file(teragram_root / "teragram_candidates.jsonl")
+            add_file(teragram_root / "telegram_seed_database.json")
+    configured_seed = str(getattr(settings, "telegram_public_web_seed_database", "") or "").strip()
+    if configured_seed:
+        add_file(_resolve_path(configured_seed))
+
+    for configured in _configured_paths(settings):
+        if configured.is_dir():
+            for path in sorted(configured.rglob("*")):
+                add_file(path)
+        else:
+            add_file(configured)
+
+    return [found[key] for key in sorted(found)]
+
+
+def dataset_manifest(settings: Any) -> tuple[tuple[str, int, int], ...]:
+    """Return a cheap change signature so the background worker does not rescan unchanged files."""
+
+    signature: list[tuple[str, int, int]] = []
+    for path in discover_dataset_files(settings):
+        try:
+            stat = path.stat()
         except OSError:
             continue
-    return topic_by_id, language_by_id
+        signature.append((str(path), int(stat.st_size), int(stat.st_mtime_ns)))
+    return tuple(signature)
 
 
-def _iter_large_tgdataset_json(path: Path) -> Iterator[dict[str, Any]]:
-    """Stream only channel-level metadata from TGDataset's channel_id -> channel JSON map."""
-    try:
-        import ijson
-    except ImportError as exc:  # pragma: no cover - declared production dependency
-        raise RuntimeError(
-            "Large TGDataset files require ijson; install backend requirements"
-        ) from exc
+async def load_dataset_manifest_checkpoint(
+    sessionmaker: async_sessionmaker[AsyncSession],
+) -> dict[str, tuple[int, int]]:
+    """Load the last successfully imported file signatures from the persistent database."""
 
-    with path.open("rb") as source:
-        current_id: str | None = None
-        current: dict[str, Any] = {}
-        yielded = False
-        for prefix, event, value in ijson.parse(source):
-            if prefix == "" and event == "map_key":
-                current_id = str(value)
-                current = {"channel_id": current_id}
-                yielded = False
-            elif (
-                current_id is not None
-                and prefix == f"{current_id}.text_messages"
-                and event == "start_map"
-                and not yielded
-            ):
-                # TGDataset puts channel metadata before its potentially huge message map.
-                yield current
-                yielded = True
-            elif current_id is not None and prefix in {
-                f"{current_id}.username",
-                f"{current_id}.title",
-                f"{current_id}.description",
-                f"{current_id}.scam",
-                f"{current_id}.verified",
-                f"{current_id}.n_subscribers",
-                f"{current_id}.creation_date",
-            } and event in {"string", "number", "boolean", "null"}:
-                current[prefix.rsplit(".", 1)[-1]] = value
-            elif current_id is not None and prefix == current_id and event == "end_map":
-                if not yielded:
-                    yield current
-                current_id = None
-                current = {}
-                yielded = False
+    async with sessionmaker() as session:
+        rows = list(
+            (
+                await session.execute(select(TelegramDatasetImportCheckpoint))
+            )
+            .scalars()
+            .all()
+        )
+    return {
+        row.path: (int(row.file_size), int(row.modified_at_ns))
+        for row in rows
+    }
 
 
-def iter_local_dataset_channels(
-    path: str | Path,
-    *,
-    limit: int = 1000,
-    source_name: str | None = None,
-    topics: set[str] | None = None,
-) -> Iterator[dict[str, Any]]:
-    """Stream public channel metadata from CSV/JSON files or a local TGDataset directory.
+async def save_dataset_manifest_checkpoint(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    manifest: dict[str, tuple[int, int]],
+) -> None:
+    """Atomically replace persisted signatures after all changed files import successfully."""
 
-    The default limit is bounded. Pass limit=0 to scan every local record. Nested historical
-    message bodies are deliberately not loaded from TGDataset; selected channels are then
-    collected through the existing live collector, while archive messages use tgparser_import.
-    """
-    root = Path(path).expanduser()
-    if not root.exists():
-        raise FileNotFoundError(f"Local dataset path does not exist: {root}")
-    maximum = max(0, int(limit))
-    count = 0
-    topic_by_id, language_by_id = _load_local_channel_labels(root)
-    requested_topics = {value.strip().casefold() for value in topics or set() if value.strip()}
-    explicit_all_topics = bool(requested_topics & {"all", "*"})
-    topic_filter = requested_topics - {"all", "*"}
-    if (
-        not topic_filter
-        and not explicit_all_topics
-        and source_name == "tgdataset-local"
-        and topic_by_id
-    ):
-        topic_filter = {"crypto"}
-    files = [root] if root.is_file() else sorted([*root.rglob("*.csv"), *root.rglob("*.json")])
-    for file_path in files:
-        if file_path.suffix.casefold() == ".csv":
-            if file_path.name.casefold() in {
-                "ch_to_topic_mapping.csv",
-                "channel_to_language_mapping.csv",
-            }:
-                continue
-            if "labeled_data" in {part.casefold() for part in file_path.parts}:
-                continue
-            with file_path.open("r", encoding="utf-8-sig", newline="") as source:
-                for row in csv.DictReader(source):
-                    normalized = _local_row(
-                        row,
-                        source_name=source_name or f"local:{file_path.name}",
-                        topic_by_id=topic_by_id,
-                        language_by_id=language_by_id,
+    async with sessionmaker() as session:
+        rows = list(
+            (
+                await session.execute(select(TelegramDatasetImportCheckpoint))
+            )
+            .scalars()
+            .all()
+        )
+        by_hash = {row.path_hash: row for row in rows}
+        current_hashes: set[str] = set()
+        now = utcnow()
+
+        for path, (file_size, modified_at_ns) in manifest.items():
+            path_hash = hashlib.sha256(path.encode("utf-8")).hexdigest()
+            current_hashes.add(path_hash)
+            row = by_hash.get(path_hash)
+            if row is None:
+                session.add(
+                    TelegramDatasetImportCheckpoint(
+                        path_hash=path_hash,
+                        path=path,
+                        file_size=int(file_size),
+                        modified_at_ns=int(modified_at_ns),
+                        updated_at=now,
                     )
-                    if normalized and (
-                        not topic_filter or normalized.get("topic") in topic_filter
-                    ):
-                        yield normalized
-                        count += 1
-                    if maximum and count >= maximum:
-                        return
-            continue
-
-        if file_path.suffix.casefold() != ".json":
-            continue
-        if file_path.stat().st_size <= 20 * 1024 * 1024:
-            try:
-                payload = json.loads(file_path.read_text(encoding="utf-8-sig"))
-            except (OSError, json.JSONDecodeError):
+                )
                 continue
-            if isinstance(payload, dict):
-                rows = payload.get("channels", payload.get("rows"))
-                if not isinstance(rows, list):
-                    rows = [
-                        {"channel_id": key, **value}
-                        for key, value in payload.items()
-                        if isinstance(value, dict)
-                    ]
-            elif isinstance(payload, list):
-                rows = payload
-            else:
-                rows = []
-            for row in rows:
-                if not isinstance(row, dict):
+            if (
+                row.path != path
+                or row.file_size != int(file_size)
+                or row.modified_at_ns != int(modified_at_ns)
+            ):
+                row.path = path
+                row.file_size = int(file_size)
+                row.modified_at_ns = int(modified_at_ns)
+                row.updated_at = now
+
+        for row in rows:
+            if row.path_hash not in current_hashes:
+                await session.delete(row)
+        await session.commit()
+
+
+def _source_id(path: Path, settings: Any) -> str:
+    lowered = "/".join(part.lower() for part in path.parts)
+    if "tgdataset" in lowered:
+        return "tgdataset"
+    if "teragram" in lowered:
+        return "teragram"
+    configured_root = _resolve_path(
+        str(getattr(settings, "telegram_teragram_output_dir", "data/teragram") or "data/teragram")
+    )
+    try:
+        if path.resolve().is_relative_to(configured_root):
+            return "teragram"
+    except OSError:
+        pass
+    return "custom"
+
+
+def _source_file_label(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(_BACKEND_ROOT).as_posix()
+    except ValueError:
+        return "/".join(path.parts[-2:])
+
+
+def _iter_json_records(path: Path) -> Iterator[dict[str, Any]]:
+    if path.suffix.lower() in {".jsonl", ".ndjson"}:
+        with path.open("r", encoding="utf-8-sig") as handle:
+            for line in handle:
+                if not line.strip():
                     continue
-                normalized = _local_row(
-                    row,
-                    source_name=source_name or f"local:{file_path.name}",
-                    topic_by_id=topic_by_id,
-                    language_by_id=language_by_id,
-                )
-                if normalized and (
-                    not topic_filter or normalized.get("topic") in topic_filter
-                ):
-                    yield normalized
-                    count += 1
-                if maximum and count >= maximum:
-                    return
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                yield from _records_from_value(value)
+        return
+
+    ijson: Any = None
+    try:
+        import ijson as ijson_module
+    except ImportError:  # pragma: no cover - backend dependencies include ijson
+        pass
+    else:
+        ijson = ijson_module
+
+    if ijson is not None:
+        with path.open("rb") as handle:
+            for prefix in (
+                "channels.item", "data.channels.item", "data.item", "results.item", "item"
+            ):
+                handle.seek(0)
+                rows = ijson.items(handle, prefix)
+                first = next(rows, _MISSING)
+                if first is _MISSING:
+                    continue
+                yield from _records_from_value(first)
+                for row in rows:
+                    yield from _records_from_value(row)
+                return
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return
+    yield from _records_from_value(payload)
+
+
+def _records_from_value(value: Any) -> Iterator[dict[str, Any]]:
+    if isinstance(value, dict):
+        for key in ("channels", "results", "data"):
+            nested = value.get(key)
+            if isinstance(nested, list):
+                for row in nested:
+                    if isinstance(row, dict):
+                        yield row
+                return
+        yield value
+    elif isinstance(value, list):
+        for row in value:
+            if isinstance(row, dict):
+                yield row
+
+
+def _iter_records(path: Path) -> Iterator[dict[str, Any]]:
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            for row in csv.DictReader(handle):
+                if row:
+                    yield dict(row)
+        return
+    if suffix in {".json", ".jsonl", ".ndjson"}:
+        yield from _iter_json_records(path)
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "scam"}
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return max(0, int(float(value or 0)))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+    if number != number or number in {float("inf"), float("-inf")}:  # NaN/inf guard
+        return 0.0
+    return max(0.0, min(100.0, number))
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, list | tuple | set):
+        items = value
+    elif isinstance(value, str):
+        text = value.strip()
+        if text.startswith("["):
+            try:
+                decoded = json.loads(text)
+            except json.JSONDecodeError:
+                decoded = None
+            if isinstance(decoded, list):
+                items = decoded
+            else:
+                items = re.split(r"[,;|]", value)
         else:
-            for row in _iter_large_tgdataset_json(file_path):
-                normalized = _local_row(
-                    row,
-                    source_name=source_name or "tgdataset-local",
-                    topic_by_id=topic_by_id,
-                    language_by_id=language_by_id,
+            items = re.split(r"[,;|]", value)
+    else:
+        items = []
+    return list(
+        dict.fromkeys(
+            str(item).strip().lower()
+            for item in items
+            if item is not None and str(item).strip()
+        )
+    )
+
+
+def _normalize_candidate(
+    row: dict[str, Any], *, source: str, source_file: str
+) -> dict[str, Any] | None:
+    if _truthy(row.get("scam", row.get("is_scam", False))):
+        return None
+
+    raw_target = (
+        row.get("username")
+        or row.get("telegram_username")
+        or row.get("channel_username")
+        or row.get("tg_username")
+        or row.get("channel_url")
+        or row.get("telegram_url")
+        or row.get("telegram_link")
+        or row.get("url")
+        or row.get("link")
+        or row.get("channel")
+    )
+    username = normalize_telegram_target(str(raw_target or ""))
+    if not _USERNAME_RE.fullmatch(username) or username in _RESERVED_TARGETS:
+        return None
+
+    classes = _string_list(
+        row.get("classifications")
+        or row.get("categories")
+        or row.get("category")
+        or row.get("tags")
+    )
+    title = str(
+        row.get("title") or row.get("channel_name") or row.get("name") or username
+    ).strip()[:255] or username
+    description = str(row.get("description") or row.get("about") or "").strip()[:4000]
+    scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+    seed_score = _safe_float(row.get("seed_score") or row.get("score"))
+    subscribers = _safe_int(
+        row.get("n_subscribers")
+        or row.get("subscribers")
+        or row.get("participants")
+        or row.get("member_count")
+    )
+    return {
+        "username": username,
+        "title": title,
+        "description": description,
+        "seed_score": seed_score,
+        "classifications": classes,
+        "scores": scores,
+        "n_subscribers": subscribers,
+        "verified": _truthy(row.get("verified", False)),
+        "source": source,
+        "source_file": source_file,
+    }
+
+
+def _candidate_batches(
+    settings: Any, paths: Iterable[Path], stats: dict[str, int]
+) -> Iterator[list[dict[str, Any]]]:
+    batch: list[dict[str, Any]] = []
+    for path in paths:
+        source = _source_id(path, settings)
+        stats["files"] += 1
+        for raw in _iter_records(path):
+            stats["records_read"] += 1
+            candidate = _normalize_candidate(
+                raw, source=source, source_file=_source_file_label(path)
+            )
+            if candidate is None:
+                stats["records_skipped"] += 1
+                continue
+            batch.append(candidate)
+            if len(batch) >= _BATCH_SIZE:
+                yield batch
+                batch = []
+    if batch:
+        yield batch
+
+
+def _evidence(candidate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "file": candidate["source_file"],
+        "seed_score": candidate["seed_score"],
+        "classifications": candidate["classifications"],
+        "scores": candidate["scores"],
+        "n_subscribers": candidate["n_subscribers"],
+        "verified": candidate["verified"],
+        "title": candidate["title"],
+    }
+
+
+def _entry_changed(old: Any, evidence: dict[str, Any]) -> bool:
+    if not isinstance(old, dict):
+        return True
+    return any(old.get(key) != value for key, value in evidence.items())
+
+
+async def import_dataset_candidates(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    settings: Any,
+    *,
+    paths: Iterable[Path] | None = None,
+) -> dict[str, Any]:
+    """Upsert public dataset candidates into the shared Telegram channel/refresh queue.
+
+    Only public usernames are imported. Historical data is stored as provenance and never treated
+    as proof that a channel is currently available or relevant; every candidate remains due for
+    live validation by the existing collector.
+    """
+
+    selected_paths = list(paths) if paths is not None else discover_dataset_files(settings)
+    stats: dict[str, int] = {
+        "files": 0,
+        "records_read": 0,
+        "records_skipped": 0,
+        "inserted": 0,
+        "updated": 0,
+        "unchanged": 0,
+    }
+    now = utcnow()
+    now_iso = now.isoformat()
+
+    async with sessionmaker() as session:
+        for batch in _candidate_batches(settings, selected_paths, stats):
+            usernames = sorted({str(row["username"]) for row in batch})
+            existing_rows = list(
+                (
+                    await session.execute(
+                        select(TelegramChannel).where(
+                            func.lower(TelegramChannel.username).in_(usernames)
+                        )
+                    )
                 )
-                if normalized and (
-                    not topic_filter or normalized.get("topic") in topic_filter
+                .scalars()
+                .all()
+            )
+            by_username = {
+                str(row.username).lower(): row for row in existing_rows if row.username
+            }
+
+            for candidate in batch:
+                username = str(candidate["username"])
+                channel = by_username.get(username)
+                is_new = channel is None
+                if channel is None:
+                    channel = TelegramChannel(
+                        telegram_id=_public_channel_id(username),
+                        username=username,
+                        title=candidate["title"],
+                        entity_type="channel",
+                        participants=candidate["n_subscribers"],
+                        about=candidate["description"],
+                        is_active=True,
+                        first_seen_at=now,
+                        last_seen_at=now,
+                        last_scanned_at=None,
+                        meta={},
+                    )
+                    session.add(channel)
+                    by_username[username] = channel
+                    stats["inserted"] += 1
+
+                old_meta = dict(channel.meta) if isinstance(channel.meta, dict) else {}
+                dataset_meta = old_meta.get("dataset_import")
+                dataset_meta = dict(dataset_meta) if isinstance(dataset_meta, dict) else {}
+                sources = dataset_meta.get("sources")
+                sources = dict(sources) if isinstance(sources, dict) else {}
+                source_key = f"{candidate['source']}:{candidate['source_file']}"
+                evidence = _evidence(candidate)
+                old_source = sources.get(source_key)
+                changed = _entry_changed(old_source, evidence)
+                if changed:
+                    sources[source_key] = {**evidence, "imported_at": now_iso}
+                elif isinstance(old_source, dict):
+                    sources[source_key] = old_source
+
+                classifications = sorted(
+                    {
+                        label
+                        for source_row in sources.values()
+                        if isinstance(source_row, dict)
+                        for label in _string_list(source_row.get("classifications"))
+                    }
+                )
+                seed_scores = [
+                    _safe_float(source_row.get("seed_score"))
+                    for source_row in sources.values()
+                    if isinstance(source_row, dict)
+                ]
+                dataset_meta = {
+                    **dataset_meta,
+                    "sources": sources,
+                    "classifications": classifications,
+                    "seed_score": max(seed_scores, default=0.0),
+                    "last_imported_at": now_iso,
+                }
+
+                registry_value = old_meta.get("discovery_registry")
+                registry = dict(registry_value) if isinstance(registry_value, dict) else {}
+                if (
+                    not registry.get("source")
+                    or registry.get("source") in {"registry", "candidate"}
                 ):
-                    yield normalized
-                    count += 1
-                if maximum and count >= maximum:
-                    return
+                    registry["source"] = candidate["source"]
+                needs_queue = is_new or changed or not registry.get("next_check_at")
+                if needs_queue:
+                    registry.update(
+                        {
+                            "state": "candidate",
+                            "discovered_from": registry.get("discovered_from"),
+                            "depth": int(registry.get("depth") or 0),
+                            "relevance_score": max(
+                                _safe_float(registry.get("relevance_score")),
+                                candidate["seed_score"],
+                            ),
+                            "failure_count": 0,
+                            "next_check_at": now_iso,
+                            "last_error": None,
+                        }
+                    )
+
+                channel.meta = {
+                    **old_meta,
+                    "public_web": True,
+                    "dataset_import": dataset_meta,
+                    "discovery_registry": registry,
+                }
+                if candidate["description"] and not channel.about:
+                    channel.about = candidate["description"]
+                if (not channel.title or channel.title == username) and candidate["title"]:
+                    channel.title = candidate["title"]
+                channel.participants = max(
+                    _safe_int(channel.participants), candidate["n_subscribers"]
+                )
+                if needs_queue:
+                    channel.is_active = True
+                if not is_new and changed:
+                    stats["updated"] += 1
+                elif not is_new:
+                    stats["unchanged"] += 1
+
+            await session.commit()
+
+    stats["source_files_count"] = len(selected_paths)
+    return {
+        "enabled": bool(getattr(settings, "telegram_dataset_import_enabled", True)),
+        **stats,
+        "source_files": [path.name for path in selected_paths],
+        "imported_at": now_iso,
+    }

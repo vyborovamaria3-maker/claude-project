@@ -5,12 +5,19 @@ import {createRequire} from "node:module";
 import {readFile} from "node:fs/promises";
 import pg from "pg";
 import Database from "better-sqlite3";
+import {queryTokenApi} from "../api/routes.mjs";
+import {createIntelligenceApi} from "../api/server.mjs";
 import {
   SQLITE_OUTBOX_DDL,emitSqlite,claimSqlite,ackSqlite,failSqlite,
 } from "@claude-project/event-outbox";
 import {
-  runDeliveryBatch,queryActiveBlockchainSwapEvidence,ingestBlockchainSwapRevision,
+  runDeliveryBatch,queryActiveBlockchainSwapEvidence,queryActiveTokenLinks,ingestBlockchainSwapRevision,
 } from "../dist/index.js";
+import {
+  canonicalTokenIdFromNative,buildEntityRef,buildEvidenceRef,
+  buildVerifiedTokenLinkEvent,buildTokenLinksInvalidatedEvent,
+  formatAuthorId,formatSourceId,
+} from "@claude-project/contracts";
 
 const require=createRequire(import.meta.url);
 const {buildTokenSwapRevisionEvent}=require(
@@ -62,7 +69,7 @@ test("ARCH-06b: immutable PG revisions, unsupported correction, late delivery, a
     await admin.query('CREATE SCHEMA "'+schema+'"');
     await admin.query('SET search_path TO "'+schema+'"');
     for(const file of ["001_entity_registry.sql","002_timeline.sql",
-      "005_blockchain_swap_evidence_revisions.sql"]){
+      "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql"]){
       await admin.query(await readFile(new URL("../migrations/"+file,import.meta.url),"utf8"));
     }
     pool=new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:3});
@@ -192,6 +199,179 @@ test("ARCH-06b: immutable PG revisions, unsupported correction, late delivery, a
         offset===3?1:0,"conflicting mint, slot or occurrence cannot become active evidence");
       assert.equal((await active(mint,"2026-10-20T01:30:00Z")).length,0);
     }
+    // One canonical token, three INDEPENDENT evidence types:
+    // X verified literal tweet, TG verified literal message, and a separately
+    // reconciled Blockchain wallet swap raw revision. No assertion of PnL.
+    const token=canonicalTokenIdFromNative("solana-mainnet",mint2);
+    assert.equal(token,canonicalTokenIdFromNative("solana",mint2));
+    const socialTime="2026-10-20T01:24:00Z";
+    const verifySocial=(sourceSystem,evidenceRef,sourceEntity,revision)=>
+      buildVerifiedTokenLinkEvent({
+        sourceSystem,evidenceRef,sourceEntity,
+        mint:mint2,matchedLiteralMint:mint2,
+        sourceRevisionSha256:revision.repeat(64),
+        mintVerification:{
+          chainId:"solana-mainnet",method:"spl_mint_account",
+          tokenProgram:"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          provider:"alchemy-solana-rpc",checkedAt:socialTime,
+        },
+      });
+    const tgEntity=buildEntityRef({
+      kind:"source",canonicalId:formatSourceId("tg","-1001234567"),
+      firstSeenAt:socialTime,lastSeenAt:socialTime,
+    });
+    const xEntity=buildEntityRef({
+      kind:"author",canonicalId:formatAuthorId("x","9007199254740993"),
+      firstSeenAt:socialTime,lastSeenAt:socialTime,
+    });
+    const tgEvidence=buildEvidenceRef({
+      sourceKind:"tg_message",sourceAccountId:"-1001234567",messageId:"50",
+      occurredAt:"2026-10-18T01:01:00Z",observedAt:socialTime,
+      parserVersion:"tg-mint-verifier-v1",
+    });
+    const xEvidence=buildEvidenceRef({
+      sourceKind:"x_tweet",tweetId:"1234567890123456789",
+      occurredAt:"2026-10-18T01:02:00Z",observedAt:socialTime,
+      parserVersion:"x-mint-verifier-v1",
+    });
+    const tgEvent=verifySocial("tg",tgEvidence,tgEntity,"e");
+    const xEvent=verifySocial("x",xEvidence,xEntity,"f");
+    async function deliverSocial(event){
+      return runDeliveryBatch({
+        claim:async()=>[{...event,id:"synthetic",attempts:0,
+          leaseOwner:"fixture",leaseUntil:"2026-10-20T03:00:00Z"}],
+        ack:async()=>true,fail:async()=>true,
+      },pool,{workerId:"fixture",batchSize:1,leaseMs:120000});
+    }
+    assert.equal((await deliverSocial(tgEvent)).delivered,1);
+    assert.equal((await deliverSocial(xEvent)).delivered,1);
+    await pool.query("UPDATE token_link_observations SET inserted_at=observed_at");
+    const socialActive=await queryActiveTokenLinks(pool,token,
+      "2026-10-18T02:00:00Z","2026-10-20T01:30:00Z");
+    const chainActive=await queryActiveBlockchainSwapEvidence(pool,token,
+      "2026-10-18T02:00:00Z","2026-10-20T01:30:00Z");
+    assert.deepEqual(new Set(socialActive.map(row=>row.source_system)),
+      new Set(["tg","x"]));
+    assert.equal(chainActive.length,1);
+    assert.equal(chainActive[0].signature,signature);
+    assert.deepEqual(new Set(socialActive.map(row=>row.evidence_source_id)),
+      new Set(["tg:message:-1001234567:50","x:tweet:1234567890123456789"]));
+    // Exercise the REAL read-only API projection over the same destination
+    // PostgreSQL tables (not a mocked HTTP pool or fabricated response).
+    const apiRequest=(knownAt,limit=10)=>({
+      kind:"evidence",tokenId:token,
+      occurredBefore:"2026-10-18T02:00:00Z",knownAt,limit,
+    });
+    const beforeEdit=await queryTokenApi(pool,apiRequest("2026-10-20T01:25:00Z"));
+    assert.deepEqual(new Set(beforeEdit.socialLinks.map(row=>row.source)),
+      new Set(["tg","x"]));
+    assert.equal(beforeEdit.blockchainSwapEvidence.length,1);
+    assert.equal(beforeEdit.blockchainSwapEvidence[0].evidenceId,
+      "chain:tx:solana:"+signature);
+    assert.equal(beforeEdit.tradeStatus,"not_a_confirmed_trade_tape");
+    assert.equal(beforeEdit.historicalCompleteness,"unknown");
+    assert.equal(beforeEdit.blockchainFinality,"not_independently_verified");
+    const serialized=JSON.stringify(beforeEdit);
+    assert.equal(serialized.includes("sourceRevisionSha256"),false);
+    assert.equal(serialized.includes("rawSha256"),false);
+    assert.equal(serialized.includes("walletId"),false);
+    const limited=await queryTokenApi(pool,apiRequest("2026-10-20T01:25:00Z",1));
+    assert.equal(limited.socialLinks.length,1);
+    assert.equal(limited.socialLinksTruncated,true,
+      "social links and chain evidence must be bounded independently");
+    assert.equal(limited.blockchainSwapEvidence.length,1);
+    assert.equal(limited.blockchainSwapEvidenceTruncated,false);
+    // One Telegram message may reference more than one verified mint.
+    // Its later source-level tombstone MUST invalidate every mint, not just
+    // whichever token was active in a particular token-centric query.
+    const secondTg=buildVerifiedTokenLinkEvent({
+      sourceSystem:"tg",evidenceRef:tgEvidence,sourceEntity:tgEntity,
+      mint,matchedLiteralMint:mint,sourceRevisionSha256:"e".repeat(64),
+      mintVerification:{
+        chainId:"solana-mainnet",method:"spl_mint_account",
+        tokenProgram:"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        provider:"alchemy-solana-rpc",checkedAt:socialTime,
+      },
+    });
+    assert.equal((await deliverSocial(secondTg)).delivered,1);
+    await pool.query("UPDATE token_link_observations SET inserted_at=observed_at");
+    assert.deepEqual((await queryActiveTokenLinks(pool,
+      canonicalTokenIdFromNative("solana-mainnet",mint),
+      "2026-10-18T02:00:00Z","2026-10-20T01:25:00Z"))
+      .map(row=>row.source_system),["tg"]);
+    // Message edit retracts only TG. Its evidence remains immutable and
+    // does not invalidate independent X or Blockchain evidence.
+    const editAt="2026-10-20T01:26:00Z";
+    const edited=buildTokenLinksInvalidatedEvent({
+      sourceSystem:"tg",
+      sourceEntity:buildEntityRef({
+        kind:"source",canonicalId:formatSourceId("tg","-1001234567"),
+        firstSeenAt:editAt,lastSeenAt:editAt,
+      }),
+      evidenceRef:buildEvidenceRef({
+        sourceKind:"tg_message",sourceAccountId:"-1001234567",messageId:"50",
+        occurredAt:"2026-10-18T01:01:00Z",observedAt:editAt,
+        parserVersion:"tg-mint-verifier-v1",
+      }),
+      reason:"edited",sourceRevisionSha256:"a".repeat(64),
+    });
+    assert.equal((await deliverSocial(edited)).delivered,1);
+    await pool.query("UPDATE token_link_observations SET inserted_at=observed_at");
+    assert.deepEqual((await queryActiveTokenLinks(pool,token,
+      "2026-10-18T02:00:00Z","2026-10-20T01:30:00Z"))
+      .map(row=>row.source_system),["x"]);
+    assert.equal((await queryActiveBlockchainSwapEvidence(pool,token,
+      "2026-10-18T02:00:00Z","2026-10-20T01:30:00Z")).length,1);
+    const afterEdit=await queryTokenApi(pool,apiRequest("2026-10-20T01:30:00Z"));
+    assert.deepEqual(afterEdit.socialLinks.map(row=>row.source),["x"]);
+    assert.equal(afterEdit.blockchainSwapEvidence.length,1,
+      "a TG edit must never invalidate an independent Blockchain swap revision");
+    const wrongToken=await queryTokenApi(pool,{
+      ...apiRequest("2026-10-20T01:30:00Z"),
+      tokenId:canonicalTokenIdFromNative("solana-mainnet",mint),
+    });
+    assert.equal(wrongToken.socialLinks.length,0);
+    assert.equal(wrongToken.blockchainSwapEvidence.length,0);
+    // Full HTTP surface over the SAME three-source isolated PG fixture:
+    // Bearer-only, no raw data, as-of controls and independent TG tombstone.
+    const bearer="integration_case_"+("A".repeat(35));
+    const server=createIntelligenceApi({
+      token:bearer,pool,now:()=>new Date("2026-10-22T12:00:00Z"),
+    });
+    await new Promise(resolve=>server.listen(0,"127.0.0.1",resolve));
+    try{
+      const origin="http://127.0.0.1:"+server.address().port;
+      const endpoint="/api/intelligence/v1/tokens/"+encodeURIComponent(token)+"/evidence";
+      const query=knownAt=>"?occurredBefore="+encodeURIComponent("2026-10-18T02:00:00Z")+
+        "&knownAt="+encodeURIComponent(knownAt);
+      const unauth=await fetch(origin+endpoint+query("2026-10-20T01:25:00Z"));
+      assert.equal(unauth.status,401);
+      const auth={Authorization:"Bearer "+bearer};
+      const before=await fetch(origin+endpoint+query("2026-10-20T01:25:00Z"),{headers:auth});
+      assert.equal(before.status,200);
+      assert.equal(before.headers.get("cache-control"),"no-store, private");
+      const beforeBody=await before.json();
+      assert.deepEqual(new Set(beforeBody.socialLinks.map(row=>row.source)),new Set(["tg","x"]));
+      assert.equal(beforeBody.blockchainSwapEvidence.length,1);
+      assert.equal(beforeBody.blockchainSwapEvidence[0].finality,"not_independently_verified");
+      const after=await fetch(origin+endpoint+query("2026-10-20T01:30:00Z"),{headers:auth});
+      assert.equal(after.status,200);
+      const afterBody=await after.json();
+      assert.deepEqual(afterBody.socialLinks.map(row=>row.source),["x"]);
+      assert.equal(afterBody.blockchainSwapEvidence.length,1);
+      assert.equal(afterBody.historicalCompleteness,"unknown");
+      assert.equal(afterBody.tradeStatus,"not_a_confirmed_trade_tape");
+      assert.ok(!JSON.stringify(afterBody).includes("rawSha256"));
+      assert.ok(!JSON.stringify(afterBody).includes("sourceRevisionSha256"));
+    }finally{
+      await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
+    }
+    assert.equal((await deliverSocial(tgEvent)).duplicates,1);
+    assert.equal((await deliverSocial(secondTg)).duplicates,1);
+    assert.equal((await deliverSocial(edited)).duplicates,1);
+    assert.equal((await queryActiveTokenLinks(pool,
+      canonicalTokenIdFromNative("solana-mainnet",mint),
+      "2026-10-18T02:00:00Z","2026-10-20T01:30:00Z")).length,0);
     // Late-delivered contradictory evidence must not retroactively change an
     // earlier as-of view.
     assert.equal((await active(mint2,"2026-10-20T01:21:30Z")).length,1);

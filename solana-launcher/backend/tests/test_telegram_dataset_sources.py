@@ -1,220 +1,379 @@
+import asyncio
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
-from app.models.social_intelligence import TelegramChannel
+from app.models.social_intelligence import TelegramChannel, TelegramDatasetImportCheckpoint
 from app.services.telegram_dataset_sources import (
-    iter_local_dataset_channels,
-    parse_public_channel_snapshot,
-    parse_recommendation_edges,
-    sync_public_dataset_channels,
+    _normalize_candidate,
+    dataset_manifest,
+    discover_dataset_files,
+    import_dataset_candidates,
 )
 from app.services.telegram_discovery_registry import (
     due_registry_channels,
-    import_dataset_channel_candidates,
+    record_discovery_results,
 )
+from app.services.telegram_runtime import TelegramMonitorManager
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
-def test_public_snapshot_normalizes_handles_filters_topics_and_sorts() -> None:
-    csv_text = (
-        "week,measured_on,username,title,topic,subscribers,verified,"
-        "posts_per_day,recommended_by\n"
-        "2026-W36,2026-08-31,@SolanaCalls,Solana Calls,crypto,1200,1,2.5,7\n"
-        "2026-W36,2026-08-31,FinanceFeed,Finance Feed,finance,800,0,3.0,2\n"
-        "2026-W36,2026-08-31,GeneralNews,General News,regional-en,900000,1,20,99\n"
-        "2026-W36,2026-08-31,solanacalls,Duplicate,crypto,100,0,1,0\n"
-    )
-
-    rows = parse_public_channel_snapshot(csv_text, allowed_topics={"crypto", "finance"})
-
-    assert [row["username"] for row in rows] == ["solanacalls", "financefeed"]
-    assert rows[0]["participants"] == 1200
-    assert rows[0]["verified"] is True
-    assert rows[0]["license"] == "CC-BY-4.0"
+class StubSettings:
+    telegram_dataset_import_enabled = True
+    telegram_public_web_seed_database = ""
+    telegram_public_web_dataset_paths = ""
 
 
-def test_recommendation_graph_only_expands_relevant_sources_and_deduplicates() -> None:
-    csv_text = """source_username,recommended_username
-solanacalls,linkedcrypto
-solanacalls,linkedcrypto
-financefeed,financeneighbor
-unrelated,noisechannel
-"""
-    rows = parse_recommendation_edges(
-        csv_text,
-        relevant_usernames={"solanacalls"},
-        existing_usernames={"solanacalls"},
-        limit=10,
-    )
-
-    assert [row["username"] for row in rows] == ["linkedcrypto"]
-    assert rows[0]["topic"] == "crypto-recommendation"
-    assert rows[0]["recommended_from_dataset"] == "solanacalls"
-
-
-def test_local_json_dataset_import_is_bounded_and_keeps_source_metadata(tmp_path: Path) -> None:
-    path = tmp_path / "channels.json"
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps(
-            {
-                "channels": [
-                    {"username": "@AlphaCalls", "title": "Alpha Calls", "topic": "crypto"},
-                    {"username": "https://t.me/BetaCalls/1", "title": "Beta Calls"},
-                    {"title": "Missing username"},
-                ]
-            }
-        ),
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
         encoding="utf-8",
     )
 
-    rows = list(iter_local_dataset_channels(path, limit=1, source_name="unit-test-source"))
 
-    assert len(rows) == 1
-    assert rows[0]["username"] == "alphacalls"
-    assert rows[0]["source_name"] == "unit-test-source"
-    assert rows[0]["topic"] == "crypto"
+def test_dataset_file_discovery_includes_explicit_files_and_seed_database(tmp_path: Path) -> None:
+    seed = tmp_path / "seed.json"
+    seed.write_text(json.dumps({"channels": [{"username": "alpha_calls"}]}), encoding="utf-8")
+    custom = tmp_path / "custom"
+    _write_jsonl(custom / "extra.jsonl", [{"username": "beta_calls"}])
+    settings = StubSettings()
+    settings.telegram_public_web_seed_database = str(seed)
+    settings.telegram_public_web_dataset_paths = str(custom)
+
+    paths = discover_dataset_files(settings)
+    assert seed.resolve() in paths
+    assert (custom / "extra.jsonl").resolve() in paths
+    manifest = dataset_manifest(settings)
+    expected_paths = {str(seed.resolve()), str((custom / "extra.jsonl").resolve())}
+    assert {entry[0] for entry in manifest} >= expected_paths
 
 
-def test_local_tgdataset_topic_labels_filter_to_crypto(tmp_path: Path) -> None:
-    dataset_dir = tmp_path / "tgdataset"
-    labeled_dir = dataset_dir / "labeled_data"
-    labeled_dir.mkdir(parents=True)
-    (labeled_dir / "ch_to_topic_mapping.csv").write_text(
-        "ch_ID,topic\n123,Crypto\n456,Entertainment\n", encoding="utf-8"
+def test_candidate_normalization_accepts_public_urls_and_rejects_private_or_scam_rows() -> None:
+    candidate = _normalize_candidate(
+        {
+            "channel_url": "https://t.me/s/Alpha_Calls/123",
+            "classifications": "Solana;memecoin",
+            "seed_score": "72.5",
+        },
+        source="custom",
+        source_file="extra.jsonl",
     )
-    (dataset_dir / "channels.json").write_text(
-        json.dumps(
-            {
-                "123": {"username": "CryptoFeed", "title": "Crypto Feed"},
-                "456": {"username": "EntertainmentFeed", "title": "Entertainment Feed"},
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    rows = list(
-        iter_local_dataset_channels(dataset_dir, limit=10, source_name="tgdataset-local")
-    )
-
-    assert [row["username"] for row in rows] == ["cryptofeed"]
-    assert rows[0]["topic"] == "crypto"
-    assert "crypto" in rows[0]["tags"]
-
-    all_topics = list(
-        iter_local_dataset_channels(
-            dataset_dir, limit=10, source_name="tgdataset-local", topics={"all"}
+    assert candidate is not None
+    assert candidate["username"] == "alpha_calls"
+    assert candidate["classifications"] == ["solana", "memecoin"]
+    assert candidate["seed_score"] == 72.5
+    assert (
+        _normalize_candidate(
+            {"username": "https://t.me/+privateinvite", "seed_score": 99},
+            source="custom",
+            source_file="extra.jsonl",
         )
+        is None
     )
-    assert {row["username"] for row in all_topics} == {"cryptofeed", "entertainmentfeed"}
+    assert (
+        _normalize_candidate(
+            {"username": "scam_calls", "scam": "true"},
+            source="custom",
+            source_file="extra.jsonl",
+        )
+        is None
+    )
 
 
-@pytest.mark.asyncio
-async def test_dataset_candidates_share_registry_and_are_idempotent() -> None:
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as connection:
-        await connection.run_sync(TelegramChannel.__table__.create)
-    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
-    try:
-        records = [
+def test_dataset_import_merges_sources_and_queues_public_channels(tmp_path: Path) -> None:
+    tgdataset = tmp_path / "tgdataset" / "TGDataset_1.tar.gz.candidates.jsonl"
+    teragram = tmp_path / "teragram" / "telegram_seed_database.json"
+    _write_jsonl(
+        tgdataset,
+        [
             {
-                "username": "@AlphaCalls",
+                "username": "@Alpha_Calls",
                 "title": "Alpha Calls",
-                "topic": "crypto",
-                "participants": 100,
-                "verified": True,
-                "source_name": "snapshot-a",
-                "source_url": "https://example.test/dataset",
-                "license": "CC-BY-4.0",
+                "seed_score": 72,
+                "classifications": ["solana", "caller"],
+                "n_subscribers": 1200,
             },
-            {
-                "username": "https://t.me/AlphaCalls/123",
-                "title": "Changed title should not overwrite",
-                "source_name": "snapshot-a",
-            },
-            {"username": "ScamCalls", "scam": "true"},
-            {"username": "bad"},
-        ]
-        stats = await import_dataset_channel_candidates(
-            sessionmaker, records, source_name="fallback-source"
-        )
-        again = await import_dataset_channel_candidates(
-            sessionmaker, records[:1], source_name="fallback-source"
-        )
-
-        async with sessionmaker() as session:
-            channels = list((await session.execute(select(TelegramChannel))).scalars().all())
-            channel = channels[0]
-        due = await due_registry_channels(sessionmaker, limit=10)
-
-        assert stats == {"received": 4, "accepted": 2, "invalid": 1, "scam_skipped": 1}
-        assert again["accepted"] == 1
-        assert len(channels) == 1
-        assert channel.username == "alphacalls"
-        assert channel.title == "Alpha Calls"
-        assert channel.participants == 100
-        assert channel.meta["dataset_sources"] == ["snapshot-a"]
-        assert (
-            channel.meta["dataset_provenance"]["snapshot-a"]["license"]
-            == "CC-BY-4.0"
-        )
-        assert channel.meta["dataset_tags"] == ["crypto"]
-        assert channel.meta["discovery_registry"]["state"] == "candidate"
-        assert "alphacalls" in due
-    finally:
-        await engine.dispose()
-
-
-@pytest.mark.asyncio
-async def test_public_sync_stages_static_seed_and_remote_candidates(monkeypatch) -> None:
-    channels_csv = (
-        "week,measured_on,username,title,topic,subscribers,verified,"
-        "posts_per_day,recommended_by\n"
-        "2026-W36,2026-08-31,SolanaCalls,Solana Calls,crypto,1200,1,2.5,7\n"
-        "2026-W36,2026-08-31,FinanceFeed,Finance Feed,finance,800,0,3.0,2\n"
-        "2026-W36,2026-08-31,GeneralNews,General News,regional-en,900000,1,20,99\n"
+            {"username": "scam_calls", "scam": True, "seed_score": 99},
+            {"username": "bad name", "seed_score": 30},
+        ],
     )
-    edges_csv = """source_username,recommended_username
-solanacalls,linkedcrypto
-financefeed,financeneighbor
-"""
+    teragram.parent.mkdir(parents=True, exist_ok=True)
+    teragram.write_text(
+        json.dumps(
+            {
+                "source": "teragram",
+                "channels": [
+                    {
+                        "username": "https://t.me/alpha_calls",
+                        "seed_score": 88,
+                        "classifications": ["memecoin", "solana_memecoin"],
+                        "n_subscribers": 1600,
+                    },
+                    {"username": "beta_calls", "seed_score": 65, "classifications": ["caller"]},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
 
-    async def fake_download(client, url: str) -> str:
-        if url.endswith("channels.csv"):
-            return channels_csv
-        return edges_csv
+    async def run_test() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as connection:
+            await connection.run_sync(TelegramChannel.__table__.create)
+        sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            summary = await import_dataset_candidates(
+                sessionmaker,
+                StubSettings(),
+                paths=[tgdataset, teragram],
+            )
+            assert summary["files"] == 2
+            assert summary["inserted"] == 2
+            assert summary["updated"] == 1
+            assert summary["records_skipped"] == 2
 
-    monkeypatch.setattr("app.services.telegram_dataset_sources._download_csv", fake_download)
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as connection:
-        await connection.run_sync(TelegramChannel.__table__.create)
-    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+            async with sessionmaker() as session:
+                rows = list((await session.execute(select(TelegramChannel))).scalars().all())
+                by_username = {row.username: row for row in rows}
+                assert set(by_username) == {"alpha_calls", "beta_calls"}
+                alpha = by_username["alpha_calls"]
+                alpha_meta = alpha.meta["dataset_import"]
+                assert set(alpha_meta["sources"]) == {
+                    "tgdataset:tgdataset/TGDataset_1.tar.gz.candidates.jsonl",
+                    "teragram:teragram/telegram_seed_database.json",
+                }
+                assert alpha_meta["classifications"] == [
+                    "caller",
+                    "memecoin",
+                    "solana",
+                    "solana_memecoin",
+                ]
+                assert alpha_meta["seed_score"] == 88
+                assert alpha.participants == 1600
+                assert alpha.meta["discovery_registry"]["state"] == "candidate"
+                assert alpha.meta["discovery_registry"]["source"] == "tgdataset"
 
-    class StubSettings:
-        telegram_public_web_timeout_seconds = 5
-        telegram_dataset_sync_topics = "crypto,finance"
-        telegram_dataset_sync_max_channels = 10
+            due = await due_registry_channels(
+                sessionmaker,
+                limit=10,
+                sources={"tgdataset", "teragram", "custom"},
+            )
+            assert set(due) == {"alpha_calls", "beta_calls"}
 
-    try:
-        result = await sync_public_dataset_channels(sessionmaker, StubSettings())
-        async with sessionmaker() as session:
-            channels = list((await session.execute(select(TelegramChannel))).scalars().all())
-        by_username = {row.username: row for row in channels}
+            await record_discovery_results(
+                sessionmaker,
+                [{"username": "beta_calls", "posts_saved": 10}],
+                database_channels={"beta_calls"},
+            )
+            async with sessionmaker() as session:
+                beta = (
+                    await session.execute(
+                        select(TelegramChannel).where(TelegramChannel.username == "beta_calls")
+                    )
+                ).scalar_one()
+                assert beta.meta["discovery_registry"]["source"] == "teragram"
 
-        assert result["records"]["accepted"] == 5
-        assert set(by_username) == {
-            "smugcalls",
-            "solanacalls",
-            "financefeed",
-            "linkedcrypto",
-            "financeneighbor",
+            for _ in range(8):
+                await record_discovery_results(
+                    sessionmaker,
+                    [{"username": "beta_calls", "error": "channel unavailable"}],
+                )
+            async with sessionmaker() as session:
+                beta = (
+                    await session.execute(
+                        select(TelegramChannel).where(TelegramChannel.username == "beta_calls")
+                    )
+                ).scalar_one()
+                assert beta.is_active is False
+
+            await import_dataset_candidates(sessionmaker, StubSettings(), paths=[teragram])
+            async with sessionmaker() as session:
+                beta = (
+                    await session.execute(
+                        select(TelegramChannel).where(TelegramChannel.username == "beta_calls")
+                    )
+                ).scalar_one()
+                assert beta.is_active is False
+                assert beta.meta["discovery_registry"]["state"] == "unavailable"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run_test())
+
+
+
+def test_dataset_provenance_keeps_graph_discoveries_in_dataset_queue_but_not_manual_channels(
+) -> None:
+    async def run_test() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as connection:
+            await connection.run_sync(TelegramChannel.__table__.create)
+        sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+        now = datetime.now(UTC).isoformat()
+        provenance = {
+            "dataset_import": {
+                "sources": {"tgdataset:channels.jsonl": {"seed_score": 70}}
+            }
         }
-        assert by_username["solanacalls"].meta["dataset_provenance"][
-            "tgatlas-telegram-public-channels-2026-W36"
-        ]["license"] == "CC-BY-4.0"
-        assert by_username["solanacalls"].meta["dataset_provenance"][
-            "tgatlas-telegram-public-channels-2026-W36"
-        ]["attribution"] == "tgAtlas"
-    finally:
-        await engine.dispose()
+        try:
+            async with sessionmaker() as session:
+                session.add_all(
+                    [
+                        TelegramChannel(
+                            telegram_id=-101,
+                            username="graph_dataset",
+                            title="Graph dataset",
+                            entity_type="channel",
+                            participants=0,
+                            about="",
+                            is_active=True,
+                            first_seen_at=datetime.now(UTC),
+                            last_seen_at=datetime.now(UTC),
+                            last_scanned_at=None,
+                            meta={
+                                **provenance,
+                                "discovery_registry": {
+                                    "source": "graph",
+                                    "state": "candidate",
+                                    "next_check_at": now,
+                                },
+                            },
+                        ),
+                        TelegramChannel(
+                            telegram_id=-102,
+                            username="manual_dataset",
+                            title="Manual dataset",
+                            entity_type="channel",
+                            participants=0,
+                            about="",
+                            is_active=True,
+                            first_seen_at=datetime.now(UTC),
+                            last_seen_at=datetime.now(UTC),
+                            last_scanned_at=None,
+                            meta={
+                                **provenance,
+                                "discovery_registry": {
+                                    "source": "manual",
+                                    "state": "candidate",
+                                    "next_check_at": now,
+                                },
+                            },
+                        ),
+                        TelegramChannel(
+                            telegram_id=-103,
+                            username="graph_only",
+                            title="Graph only",
+                            entity_type="channel",
+                            participants=0,
+                            about="",
+                            is_active=True,
+                            first_seen_at=datetime.now(UTC),
+                            last_seen_at=datetime.now(UTC),
+                            last_scanned_at=None,
+                            meta={
+                                "discovery_registry": {
+                                    "source": "graph",
+                                    "state": "candidate",
+                                    "next_check_at": now,
+                                }
+                            },
+                        ),
+                    ]
+                )
+                await session.commit()
+
+            due = await due_registry_channels(
+                sessionmaker,
+                limit=10,
+                sources={"tgdataset", "teragram", "custom"},
+            )
+            assert due == ["graph_dataset"]
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run_test())
+
+
+def test_dataset_manifest_checkpoint_survives_restart_and_tracks_changes_and_removals(
+    tmp_path: Path,
+) -> None:
+    custom = tmp_path / "custom"
+    source = custom / "channels.jsonl"
+    _write_jsonl(source, [{"username": "alpha_calls", "seed_score": 72}])
+    settings = StubSettings()
+    settings.telegram_public_web_dataset_paths = str(custom)
+
+    async def run_test() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as connection:
+            await connection.run_sync(TelegramChannel.__table__.create)
+            await connection.run_sync(TelegramDatasetImportCheckpoint.__table__.create)
+        sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            first_process = TelegramMonitorManager(settings, sessionmaker)
+            await first_process._import_dataset_sources_if_changed()
+            assert first_process._dataset_import_summary["inserted"] == 1
+
+            async with sessionmaker() as session:
+                alpha = (
+                    await session.execute(
+                        select(TelegramChannel).where(TelegramChannel.username == "alpha_calls")
+                    )
+                ).scalar_one()
+                original_imported_at = alpha.meta["dataset_import"]["last_imported_at"]
+
+            # A fresh manager has no in-memory signature, so it must restore the database
+            # checkpoint and skip parsing an unchanged candidate file.
+            restarted_process = TelegramMonitorManager(settings, sessionmaker)
+            await restarted_process._import_dataset_sources_if_changed()
+            assert restarted_process._dataset_import_summary["checkpoint_restored"] is True
+            async with sessionmaker() as session:
+                alpha = (
+                    await session.execute(
+                        select(TelegramChannel).where(TelegramChannel.username == "alpha_calls")
+                    )
+                ).scalar_one()
+                assert (
+                    alpha.meta["dataset_import"]["last_imported_at"] == original_imported_at
+                )
+
+            _write_jsonl(
+                source,
+                [
+                    {"username": "alpha_calls", "seed_score": 72},
+                    {"username": "beta_calls", "seed_score": 65},
+                ],
+            )
+            await restarted_process._import_dataset_sources_if_changed()
+            assert restarted_process._dataset_import_summary["changed_files"] == 1
+            assert restarted_process._dataset_import_summary["inserted"] == 1
+
+            source.unlink()
+            await restarted_process._import_dataset_sources_if_changed()
+            assert (
+                restarted_process._dataset_import_summary["removed_files"] == ["channels.jsonl"]
+            )
+            async with sessionmaker() as session:
+                checkpoints = list(
+                    (
+                        await session.execute(select(TelegramDatasetImportCheckpoint))
+                    )
+                    .scalars()
+                    .all()
+                )
+                usernames = set(
+                    (
+                        await session.execute(select(TelegramChannel.username))
+                    )
+                    .scalars()
+                    .all()
+                )
+                assert checkpoints == []
+                # Removing an input file removes its checkpoint, not historical channel evidence.
+                assert usernames == {"alpha_calls", "beta_calls"}
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run_test())

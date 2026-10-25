@@ -7,7 +7,7 @@ import { detectPropagationPatterns, refreshChannelScores, refreshTokenChannelMet
 import { syncTokenNarratives } from "./narratives.js";
 import { readMintAccount } from "./solana-mint-rpc.js";
 import {retractAmbiguousTickerMentions} from "./ticker-reconcile.js";
-import {activeMintOccurrences} from "./token-candidate-occurrences.js";
+import {activeMintOccurrences,sameObservedMessageRevision} from "./token-candidate-occurrences.js";
 
 async function recomputeFirstMention(tx: import("pg").PoolClient, mint: string): Promise<void> {
   await tx.query(`DELETE FROM tg_token_first_mentions f
@@ -114,12 +114,16 @@ async function main(): Promise<void> {
         // Lock the exact source evidence before confirming mint links.
         // Otherwise an edit/delete racing the RPC resolver could publish a
         // verified event with a NEW timestamp for an OLD source revision.
-        const locked=await tx.query<{text:string|null;deleted_at:Date|null}>(
-          "SELECT text,deleted_at FROM tg_messages WHERE source_id=$1 AND message_id=$2 FOR UPDATE",
+        const locked=await tx.query<{
+          text:string|null;deleted_at:Date|null;posted_at:Date|null;
+          edited_at:Date|null;peer_id:string|null;
+        }>(
+          "SELECT m.text,m.deleted_at,m.posted_at,m.edited_at,s.peer_id::text AS peer_id " +
+          "FROM tg_messages m JOIN tg_sources s ON s.id=m.source_id " +
+          "WHERE m.source_id=$1 AND m.message_id=$2 FOR UPDATE OF m",
           [occurrence.source_id,occurrence.message_id],
         );
-        if(!locked.rows[0] || locked.rows[0].deleted_at!==null ||
-           locked.rows[0].text!==occurrence.text)continue;
+        if(!sameObservedMessageRevision(occurrence,locked.rows[0]))continue;
         await tx.query(
           "INSERT INTO tg_token_mentions(source_id,message_id,chain_id,mint,mention_type,resolution_status," +
           "confidence,message_date,analysis_version,extractor_name,orphaned) " +

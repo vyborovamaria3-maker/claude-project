@@ -123,6 +123,15 @@ class Settings(BaseSettings):
     telegram_public_web_seed_database: str = Field(
         default="data/tgdataset/telegram_seed_database.json", alias="TG_PUBLIC_WEB_SEED_DATABASE"
     )
+    telegram_dataset_import_enabled: bool = Field(
+        default=True, alias="TG_DATASET_IMPORT_ENABLED"
+    )
+    telegram_public_web_dataset_paths: str = Field(
+        default="", alias="TG_PUBLIC_WEB_DATASET_PATHS"
+    )
+    telegram_teragram_output_dir: str = Field(
+        default="data/teragram", alias="TG_TERAGRAM_OUTPUT_DIR"
+    )
     telegram_public_web_seed_database_limit: int = Field(
         default=12, ge=0, le=100, alias="TG_PUBLIC_WEB_SEED_DATABASE_LIMIT"
     )
@@ -148,7 +157,7 @@ class Settings(BaseSettings):
         default=3600, ge=300, alias="TG_PUBLIC_WEB_REFRESH_UNAVAILABLE_SECONDS"
     )
     telegram_dataset_sync_enabled: bool = Field(
-        default=True, alias="TG_DATASET_SYNC_ENABLED"
+        default=False, alias="TG_DATASET_SYNC_ENABLED"
     )
     telegram_dataset_sync_interval_seconds: int = Field(
         default=86400, ge=3600, le=604800, alias="TG_DATASET_SYNC_INTERVAL_SECONDS"

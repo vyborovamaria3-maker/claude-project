@@ -1046,6 +1046,14 @@ function appendDiscoveredWallets(db, ownerKind, ownerAddress, transactions, scop
   for (const tx of transactions) {
     if (!tx || tx.transactionError != null || tx.error != null) continue;
     if (ownerKind === "token") {
+      // Alchemy raw receipts have no enhanced swap/tokenTransfers arrays.
+      // Only explicit SPL ownership metadata creates wallet candidates; token
+      // account addresses and fee payers are not substituted for their owners.
+      if (tx.raw?.meta?.err === null) {
+        for (const balance of [...(tx.raw.meta.preTokenBalances || []), ...(tx.raw.meta.postTokenBalances || [])]) {
+          if (balance.mint === ownerAddress) add(balance.owner,500,"token_balance_owner");
+        }
+      }
       const swap=tx.events?.swap;
       const swapTouchesToken=[...(swap?.tokenInputs||[]),...(swap?.tokenOutputs||[])].some(x=>x?.mint===ownerAddress);
       if (swapTouchesToken) {
@@ -1133,17 +1141,24 @@ function appendDiscoveredCreators(db,scopeId,tokenAddress,transactions){
 }
 function appendDiscoveredCreatorTokens(db,scopeId,creatorAddress,transactions){
   const {extractPumpFunLaunches}=require("./blockchain-pumpfun-discovery.cjs");
-  const launches=extractPumpFunLaunches(transactions).filter(x=>x.creator===creatorAddress);
+  const launches=extractPumpFunLaunches(transactions).filter(x=>x.creator===creatorAddress || x.launchedBy===creatorAddress);
   if(!launches.length)return 0;
   savePumpFunLaunches(db,scopeId,launches);
   for(const launch of launches){
     deferScopeMember(db,scopeId,"creator",creatorAddress,"token",launch.mint,900,
-      "pumpfun_creator_launch","creator",creatorAddress);
+      launch.creator===creatorAddress ? "pumpfun_creator_launch" : "pumpfun_creator_initiated_launch",
+      "creator",creatorAddress);
   }
   return launches.length;
 }
 function persistInventoryMovements(db, kind, address, events) {
   const { decodeInventoryMovements } = require("./blockchain-inventory-decoder.cjs");
+  // Called within processOne's durable lease-fenced transaction, together with
+  // persistEvents(). Replacing the complete per-signature evidence projection
+  // prevents phantom SPL legs after a later RAW revision removes an instruction.
+  const clearSignature = db.prepare(
+    "DELETE FROM chain_inventory_movements WHERE target_kind=? AND target_address=? AND signature=?"
+  );
   const stmt = db.prepare(`
     INSERT INTO chain_inventory_movements
       (target_kind,target_address,signature,leg_index,slot,block_time,operation_index,
@@ -1166,7 +1181,10 @@ function persistInventoryMovements(db, kind, address, events) {
   `);
   let saved = 0;
   for (const tx of events || []) {
-    for (const [legIndex, movement] of decodeInventoryMovements(tx).entries()) {
+    if(!tx || typeof tx.signature!=="string" || !tx.signature)continue;
+    const movements=decodeInventoryMovements(tx);
+    clearSignature.run(kind,address,tx.signature);
+    for (const [legIndex, movement] of movements.entries()) {
       stmt.run({
         target_kind: kind, target_address: address, signature: movement.signature,
         leg_index: legIndex, slot: movement.slot, block_time: movement.blockTime,
@@ -1515,7 +1533,7 @@ if (require.main === module) main().catch(error => {
 });
 module.exports = {
   collect,importFolders,refreshTargets,failTask,parseArgs,resolveBudgetSettings,initDb,appendDiscovered,appendDiscoveredWallets,persistEvents,processOne,claimOne,
-  syncDexProgramSources,ensurePilotScope,addScopeMember,deferScopeMember,promoteDeferredWaves,shouldStopForRuntime,
+  persistInventoryMovements,syncDexProgramSources,ensurePilotScope,addScopeMember,deferScopeMember,promoteDeferredWaves,shouldStopForRuntime,
   appendDiscoveredCreators,appendDiscoveredCreatorTokens,savePumpFunLaunches,startCollectionRun,reserveHeliusCredits,
   recordHeliusResponse,recordHeliusError,releaseTaskForBudget,finishCollectionRun,usageStatus,currentMonthKey,status,
   reserveAlchemyCu,recordAlchemyResponse,recordAlchemyError,CURSOR_VERSION,

@@ -5,7 +5,7 @@ existing public-web collector then fetches public previews, evaluates actual mes
 Solana/memecoin relevance, and stores matching messages through the current message pipeline.
 Dataset rows are candidates, not trusted signals.
 
-## Sources enabled by TG_PUBLIC_WEB_ENABLED=true
+## Sources enabled by explicit public dataset sync
 
 - **tgAtlas public Telegram channel snapshot (2026-W36)** — channels.csv plus the public
   recommendation graph. The sync keeps TG_DATASET_SYNC_TOPICS (default crypto,finance) and stages
@@ -29,7 +29,8 @@ Telegram bot/tool directory as a channel list.
 
 ## Automatic sync
 
-When public-web collection is enabled, the runtime syncs the small public metadata sources on
+Automatic sync defaults off. When both TG_PUBLIC_WEB_ENABLED=true and
+TG_DATASET_SYNC_ENABLED=true are configured, the runtime syncs the small public metadata sources on
 startup and then at TG_DATASET_SYNC_INTERVAL_SECONDS (default 86400 seconds). Failed remote sources
 are retried after approximately one hour. Dataset candidates enter the same due registry as
 graph-discovered channels, and TG_PUBLIC_WEB_REFRESH_BATCH_SIZE limits work per refresh. Existing
@@ -71,3 +72,6 @@ import private chats.
 - For public historical message archives, use the existing bounded telegram_import_tgparser
   command after selecting the matching channel. Do not ingest an entire multi-terabyte corpus into
   the production message table without an explicit retention/storage plan.
+
+The checkpoint-aware local dataset importer remains available independently. Public sync uses a
+separate service and preserves its existing checkpoints and registry records.

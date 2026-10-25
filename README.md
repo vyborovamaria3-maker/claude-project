@@ -1,56 +1,99 @@
 # claude-project
 
-This repository contains several experiments and product codebases related to Solana tooling, Telegram integrations, internal Codex skills, and deployment helpers.
+Multi-application repository for **Solana token research, X and Telegram collection, source-evidence processing, and several independent product/tooling workspaces**. This is a **monorepo**, not a single production deployment or a claim that every component is live.
 
-## Primary deployment target
+> **Readiness snapshot (2026-10-24):** source contracts, transactional-outbox building blocks, Intelligence ingestion/timeline code, and substantial offline/CI tests exist. The end-to-end live X/TG/chain → token-level Intelligence flow, complete historical coverage, dependable deployment/restore, and trading-signal performance are **not verified as a whole**. See [known gaps](docs/architecture/KNOWN_GAPS.md), [live test register](docs/architecture/LIVE_TESTS.md), and [PR status](docs/architecture/PR_STATUS.md).
 
-The cleanest production candidate in this repository is `solana-subscription-service`.
+## System map
 
-It already includes:
+| Area | Directory | Responsibility |
+| --- | --- | --- |
+| X source | [`x-collector/`](x-collector/) | X collection, durable source records, analytics, and separate autoposting runtime |
+| Telegram source | [`tg-collector/`](tg-collector/) | Telegram ingestion, source/evidence, token candidates, and opt-in analytics/refresh |
+| Chain/product UI | [`solana-launcher/`](solana-launcher/) | Blockchain evidence and Solana/POTAPoff frontend/backend workspace |
+| Cross-source Intelligence | [`intelligence/`](intelligence/) | **Two distinct runtimes**: Node/TypeScript event-inbox, registry/timeline/features; Python document/provider NLP and scoring. Do not conflate their stores or deployment processes. |
+| Shared contracts | [`packages/contracts/`](packages/contracts/) | Validated canonical IDs, event identities, timestamps, provenance |
+| Transactional outbox | [`packages/event-outbox/`](packages/event-outbox/) | Source-local PostgreSQL/SQLite at-least-once delivery primitives (not a hosted message broker) |
+| Common packages | [`packages/db-common/`](packages/db-common/), [`packages/shared-utils/`](packages/shared-utils/) | Supporting utilities |
+| Research product | [`memecoin-intelligence/`](memecoin-intelligence/) | Separate research/graph/feature application, not automatically the Node Intelligence database |
+| Product / operations | [`admin-site/`](admin-site/), [`solana-subscription-service/`](solana-subscription-service/), [`telegram-miniapp/`](telegram-miniapp/) | Independent admin, subscription, and Telegram app scopes |
+| Supporting workspaces | [`mcp-servers/`](mcp-servers/), [`cockpit-tools/`](cockpit-tools/), [`pumpfun-chart/`](pumpfun-chart/), [`scripts/`](scripts/), [`.agents/`](.agents/) | Utilities, prototypes, automation, and developer workflows |
 
-- a multi-app Node.js workspace
-- Express API
-- Next.js web app
-- Telegram bot
-- Prisma + PostgreSQL
-- Redis for queues and session-related state
-- Dockerfiles for API, web, and bot
+A directory is **not necessarily a deployable app, product, or separate database**. Counts such as “14 apps / 9 databases” are not maintained as verified production inventory. Refer to [data ownership and storage contracts](docs/architecture/DATA_CONTRACTS.md) instead.
 
-## Repository layout
+## Работа без сервера — локальный Token Intelligence (2026-10-25)
 
-- `solana-subscription-service/`: subscription product with API, frontend, bot, Prisma, and Docker support
-- `solana-launcher/`: larger Solana product workspace with frontend, backend, analytics, and research tooling
-- `telegram-miniapp/`: Telegram mini app prototype
-- `mcp-servers/`: local MCP server implementations
-- `.agents/skills/`: custom Codex skills and references
-- `scripts/`: root utility scripts
+Сейчас **удалённого сервера нет, деплой не требуется**. Для безопасной разработки достаточно offline CI и локальных тестовых данных. Изменения защиты релизов из [PR #186](https://github.com/vyborovamaria3-maker/claude-project/pull/186) включены в main через [PR #188](https://github.com/vyborovamaria3-maker/claude-project/pull/188); автоматический production deploy требует явного включения. Локальный отчёт по mint не запускает деплой и не требует изменений SSH/GHCR/release pipeline.
 
-## Recommended deployment path
+В рамках [PR #189](https://github.com/vyborovamaria3-maker/claude-project/pull/189) добавлен локальный просмотр доказательств для одного Solana mint без HTTP-сервера и AI-провайдера:
 
-For a real test deployment with Docker and a database, deploy `solana-subscription-service` on:
+```sh
+npm --prefix intelligence run token:report -- \
+  --mint So11111111111111111111111111111111111111112 --demo --json
+```
 
-- Oracle Cloud Always Free VM
-- Coolify
-- Docker Compose
-- PostgreSQL and Redis on the same VM
+`--demo` выводит **явно синтетические** X/TG/blockchain фикстуры и не подключается к БД, RPC или аккаунтам. Для фактической локальной тестовой БД есть отдельный **явно разрешаемый** read-only PostgreSQL режим с loopback-only подключением. Он не запускает коллекторы. См. [инструкцию Intelligence](intelligence/README.md). Отсутствие результатов не означает отсутствие активности; финальность транзакций, PnL и прогнозная пригодность AI не подтверждаются.
 
-Deployment files for that flow live here:
+## Source → Intelligence architecture
 
-- `solana-subscription-service/docker-compose.prod.yml`
-- `solana-subscription-service/docs/oracle-coolify.md`
+```text
+X Collector ──────── local PostgreSQL + opt-in outbox ─┐
+Telegram Collector ── local PostgreSQL + opt-in outbox ─┼─→ Node Intelligence
+Blockchain evidence ─ local SQLite + opt-in outbox ────┘   (separate PostgreSQL)
+                                                             │
+                                                   registry / evidence / timeline
+                                                             │
+                                                versioned read-only API / UI
+```
 
-## Local publishing notes
+- An outbox is written in the **same transaction** as the source observation. Consumer ACK is allowed only after destination commit; retries and duplicate deliveries are expected and must be idempotent.
+- A matching ticker, X handle, Telegram username, address-shaped string, or wallet observation is **not** proof of the same token. `solana:<full-mint>` is a canonical ID **only for verified token links**; revisions and retractions must preserve per-source provenance.
+- `occurredAt` and `observedAt` serve different purposes. Historical “known at time” queries must not use subsequently observed information.
+- Source outbox flags and AI features are opt-in/default-off. **No live account, paid RPC, database migration, or third-party post is required by the ordinary offline checks.**
 
-The root repository intentionally ignores:
+Details: [contracts](docs/architecture/DATA_CONTRACTS.md), [outbox contract](packages/event-outbox/README.md), [Intelligence](intelligence/README.md), [architecture](docs/architecture/CURRENT_ARCHITECTURE.md).
 
-- `.env` files
-- local databases
-- build output
-- `node_modules`
-- Python cache files
-- temporary logs
-- nested throwaway repositories inside `repo/` and `work/free-test-deploy/`
+## Getting oriented / safe offline checks
 
-## Next step
+Use the README and environment requirements of **each workspace**; there is no one-command deployment of the whole monorepo. For shared foundation checks, use Node.js 22+ and separate, disposable test databases where requested:
 
-If you want to run the actual product on a free Oracle VM, start with `solana-subscription-service` instead of the whole monorepo.
+```sh
+npm install --prefix packages/contracts --ignore-scripts --no-package-lock
+npm --prefix packages/contracts run check
+npm install --prefix packages/event-outbox --ignore-scripts --no-package-lock
+npm --prefix packages/event-outbox run check
+npm install --prefix intelligence --ignore-scripts --no-package-lock
+npm --prefix intelligence run check
+```
+
+Intelligence DB integration tests can require PostgreSQL 16 and a **disposable** `INTELLIGENCE_TEST_DB_URL`. Read [intelligence/README.md](intelligence/README.md) before enabling any runtime. Passing these tests does **not** verify an external X/TG session, chain RPC, live publisher, or production backup.
+
+### Existing deployable candidate — subscriptions
+
+[`solana-subscription-service/`](solana-subscription-service/) has a standalone API/web/bot, Prisma/PostgreSQL, Redis and deployment configuration. Its deployment path is documented in [Oracle/Coolify instructions](solana-subscription-service/docs/oracle-coolify.md). It is **one independent deployment candidate**, not the prescribed entry point for deploying the entire repo or evidence that cross-source Intelligence is live.
+
+## Product direction and release gates
+
+**Proposed MVP:** a *Token Intelligence* view keyed by a verified Solana mint, displaying source-qualified X/TG observations, applicable on-chain evidence, event/observation times, provenance, and honest coverage/unknown states. This is a **proposal pending user validation**, not a proven market or a guarantee of profitable signals. Other codebases can remain modules or separate products.
+
+Before labeling the cross-source experience production-ready:
+
+1. Enforce reviewed branch/CI governance and clear the applicable Security Gates.
+2. Verify independent source DB migrations, backups **and tested restores** without using production as an audit fixture.
+3. Prove verified mint linking, per-source retractions, replay/failed-ACK/restart behavior, and a bounded supervised consumer.
+4. Record **real** opt-in X, Telegram and chain observations with timestamps, SHA, sanitized logs and operator authorization; keep unexecuted tests as `NOT RUN`.
+5. Validate auth/read scopes, observability, incident response and a complete user-facing use case; measure product utility independently of CI.
+
+## Documentation and work tracking
+
+- [DATA_CONTRACTS.md](docs/architecture/DATA_CONTRACTS.md) — independent stores, native/canonical identities, delivery semantics and explicit gaps.
+- [KNOWN_GAPS.md](docs/architecture/KNOWN_GAPS.md) — implementation versus verification, blocking conditions.
+- [LIVE_TESTS.md](docs/architecture/LIVE_TESTS.md) — offline/CI versus live evidence register and how to record an actual run.
+- [PR_STATUS.md](docs/architecture/PR_STATUS.md) — point-in-time PR inventory; GitHub is authoritative for current status.
+- [DELIVERY_PLAN_20261024.md](docs/architecture/DELIVERY_PLAN_20261024.md) — P0/P1/P2 execution order and acceptance gates.
+- [Architecture decisions](docs/architecture/ARCHITECTURE_DECISIONS/) — proposed decisions and boundaries.
+- [Deployment](docs/architecture/DEPLOYMENT.md), [Rollback](docs/architecture/ROLLBACK.md), [Security audit](SECURITY_AUDIT_REPORT.md).
+
+## Security and local-data rules
+
+Never commit `.env`, X cookies, Telegram sessions/2FA, private keys, bearer tokens, raw credentials or production database snapshots. Keep independent X/TG/chain storage ownership; do not merge or migrate data on the basis of a documentation audit. Avoid unapproved paid RPC calls, publishing, external model requests, or secret exposure. Prefer redacted evidence and explicit opt-in operator gates.

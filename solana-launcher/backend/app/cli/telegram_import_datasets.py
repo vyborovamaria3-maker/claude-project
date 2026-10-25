@@ -10,11 +10,11 @@ from typing import Any
 
 from app.core.config import get_settings
 from app.db.session import create_engine_and_sessionmaker
-from app.services.telegram_dataset_sources import (
+from app.services.telegram_discovery_registry import import_dataset_channel_candidates
+from app.services.telegram_public_dataset_sources import (
     iter_local_dataset_channels,
     sync_public_dataset_channels,
 )
-from app.services.telegram_discovery_registry import import_dataset_channel_candidates
 
 TGDATASET_URL = "https://zenodo.org/records/7640712"
 TGDATASET_LICENSE = "CC-BY-4.0"
