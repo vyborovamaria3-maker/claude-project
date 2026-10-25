@@ -210,6 +210,7 @@ export async function GET(request: NextRequest) {
     const [sources, sourceOptions, stats, runtimeState, proxy, messages] = await Promise.all([
       p.query(`SELECT s.id::text, s.identifier, s.current_username, s.peer_id, s.title, s.enabled,
         s.history_partial,s.full_history,s.history_complete,s.history_low_message_id::text, s.last_message_id::text, s.last_success_at,
+        s.spam_kind,s.spam_screened_at,s.spam_sample_size,s.spam_match_count,s.spam_reason,
         COALESCE(mc.message_count,0)::int AS message_count,
         (SELECT count(*)::int FROM tg_messages legacy
           WHERE legacy.source_id=s.id AND legacy.deleted_at IS NULL
@@ -224,6 +225,7 @@ export async function GET(request: NextRequest) {
       p.query(`SELECT id::text,identifier,current_username FROM tg_sources ORDER BY created_at DESC,id DESC`),
       p.query(`SELECT
           (SELECT count(*)::int FROM tg_sources) AS sources,
+          (SELECT count(*)::int FROM tg_sources WHERE spam_kind IS NOT NULL) AS spam_sources,
           (SELECT COALESCE(sum(message_count),0)::int FROM tg_source_message_counters) AS messages,
           (SELECT count(*)::int FROM tg_jobs WHERE state='running') AS running,
           (SELECT count(*)::int FROM tg_jobs WHERE state='failed') AS failed`),
@@ -302,17 +304,18 @@ export async function POST(request: NextRequest) {
               UPDATE tg_sources SET enabled=TRUE,
                 full_history=full_history OR $2::boolean,
                 history_partial=CASE WHEN history_complete THEN FALSE ELSE history_partial OR $2::boolean END
-              WHERE id=$1 RETURNING id::text`,[existing.rows[0].id,fullHistory])
+              WHERE id=$1 AND spam_kind IS NULL RETURNING id::text`,[existing.rows[0].id,fullHistory])
           : await tx.query<{id:string}>(`
               INSERT INTO tg_sources(identifier,full_history,history_partial) VALUES($1,$2,$2)
               ON CONFLICT(identifier) DO UPDATE SET enabled=TRUE,
                 full_history=tg_sources.full_history OR EXCLUDED.full_history,
                 history_partial=CASE WHEN tg_sources.history_complete THEN FALSE
                   ELSE tg_sources.history_partial OR EXCLUDED.full_history END
-              WHERE tg_sources.current_username IS NULL OR tg_sources.current_username=$1
+              WHERE tg_sources.spam_kind IS NULL
+                AND (tg_sources.current_username IS NULL OR tg_sources.current_username=$1)
               RETURNING id::text`,[username,fullHistory]);
         if (!source.rowCount)
-          throw new ApiError("Старый username уже закреплён за другим Telegram ID. Проверьте источник по peer_id.",409);
+          throw new ApiError("Источник с этим username уже существует, заблокирован как спам или закреплён за другим Telegram ID.",409);
         await tx.query(`
           INSERT INTO tg_jobs(source_id) VALUES($1)
           ON CONFLICT (source_id) DO NOTHING`, [source.rows[0].id]);
@@ -337,7 +340,7 @@ export async function POST(request: NextRequest) {
         const source = await tx.query<{id: string;full_history:boolean;history_complete:boolean}>(`
           SELECT s.id::text AS id,s.full_history,s.history_complete FROM tg_sources s
           JOIN tg_jobs j ON j.source_id=s.id
-          WHERE s.id=$1 AND j.state<>'running' FOR UPDATE OF s,j`, [id]);
+          WHERE s.id=$1 AND s.spam_kind IS NULL AND j.state<>'running' FOR UPDATE OF s,j`, [id]);
         if (!source.rowCount) throw new ApiError("Источник не найден или задание уже выполняется", 409);
         await tx.query(`UPDATE tg_sources SET full_history=TRUE,history_complete=FALSE,history_partial=TRUE,
           enabled=TRUE WHERE id=$1`, [id]);
@@ -410,14 +413,32 @@ export async function POST(request: NextRequest) {
     if (action === "pause" || action === "resume") {
       const enabled = action === "resume";
       const result = await p.query(
-        "UPDATE tg_sources SET enabled=$2 WHERE id=$1 RETURNING id", [id, enabled]);
-      if (!result.rowCount) throw new ApiError("Источник не найден", 404);
+        "UPDATE tg_sources SET enabled=$2 WHERE id=$1 AND (NOT $2::boolean OR spam_kind IS NULL) RETURNING id", [id, enabled]);
+      if (!result.rowCount) throw new ApiError("Источник не найден или помечен как спам. Сначала снимите метку вручную.", 409);
       if (enabled) {
         await p.query(`UPDATE tg_jobs SET state='pending', run_at=now(), locked_until=NULL,
           attempts=0, last_error=NULL WHERE source_id=$1 AND state='failed'`, [id]);
         await p.query("UPDATE tg_jobs SET run_at=now() WHERE source_id=$1 AND state='pending'", [id]);
       }
       return NextResponse.json({ ok: true, enabled }, { headers: noStore });
+    }
+    if (action === "spam-clear") {
+      // Explicit operator override for a false positive: retain historical
+      // archive, do not silently re-screen the overridden source next turn.
+      const tx=await p.connect();
+      try {
+        await tx.query("BEGIN");
+        const result=await tx.query(`UPDATE tg_sources SET spam_kind=NULL,
+          spam_reason=NULL,spam_screened_at=now(),enabled=TRUE
+          WHERE id=$1 AND spam_kind='promotional_milestone' RETURNING id`,[id]);
+        if(!result.rowCount)throw new ApiError("Метка спама не найдена",409);
+        await tx.query(`UPDATE tg_jobs SET state='pending',attempts=0,run_at=now(),
+          locked_until=NULL,last_error=NULL,updated_at=now()
+          WHERE source_id=$1 AND state='failed'`,[id]);
+        await tx.query("COMMIT");
+        return NextResponse.json({ok:true},{headers:noStore});
+      }catch(error){await tx.query("ROLLBACK");throw error;}
+      finally{tx.release();}
     }
     if (action === "sync" || action === "retry") {
       const result = await p.query(`

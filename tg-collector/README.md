@@ -718,6 +718,28 @@ are prioritized so repeatedly unavailable newer posts do not starve older ones. 
 posts remain unverified. Do not assume a successful offline backfill can
 recover Telegram entities that were never originally stored.
 
+### 120-post spam-channel preflight
+
+Before any backfill or fresh-message collection, the worker previews **up to 120
+latest public posts** once per source (including existing sources on their first
+run after migration 036). It does not save the preview as collected messages.
+A source is automatically labeled **"Спам / бесполезный"** and disabled only
+when at least 6 posts repeat the paid VIP/Growth/MC/DEX PAID milestone template,
+represent at least 10% of the preview, and at least 5 refer to the same ticker.
+One genuine announcement or routine token research does not trigger the rule.
+
+The source keeps its Telegram peer identity, stored older archive, and evidence;
+its job is marked `TG_SOURCE_SPAM_USELESS` and is no longer claimed. Dashboard
+source rows show the classification and the number of matching posts. Normal
+resume, add, and history commands cannot accidentally restart flagged sources.
+An operator can explicitly remove a false-positive label in the UI, which
+re-enables collection without silently repeating the same screening step.
+
+If a source has fewer than 12 available public posts, the verdict is deferred
+and the next worker turn rechecks it. Preview reading uses only the existing
+Telegram session, never an extra login or paid RPC. Migration 036 adds
+classification metadata but does not scan, delete or rewrite old messages.
+
 ### Strict mint verification and index migration
 
 Migration 032 clears duplicate cached current usernames and enforces their
@@ -752,3 +774,11 @@ automatically during migrations.
 Recommended safe order: local backup → stop Worker → migrate → backfill →
 optional entity refetch → optional tokens:resolve → analyze:refresh →
 restart Worker → run live smoke on a disposable PostgreSQL database.
+
+### Promotional screening rollout
+
+Automatic 120-post screening is off by default. Set TG_PROMOTIONAL_SCREENING_ENABLED=true
+only after reviewing the threshold against your public channels. Unit tests and disposable
+PostgreSQL tests use mocks; no authenticated Telegram account was used to validate production
+thresholds. Existing quarantine labels remain enforced even when automatic screening is off;
+use the explicit confirmed spam-clear action after manual false-positive review.
