@@ -126,3 +126,35 @@ not heartbeat-protected; keep its batch size small on slow destinations.
 Cross-source timeline identity remains blocked by the missing evidence-based
 token-link producer; the synthetic token-linked ARCH-03 integration test
 does not establish real token recognition.
+
+
+## Без сервера: локальный отчёт по одному Solana mint (2026-10-25)
+
+Для этого сценария **не нужен** production-сервер, публичный API, Telegram/X-аккаунт, Solana RPC или модель OpenAI. Только Node 22+ и установленные зависимости workspace; режим `--demo` также не требует PostgreSQL.
+
+```bash
+# Разрешённый демонстрационный сценарий: только маркированная СИНТЕТИЧЕСКАЯ фикстура.
+npm --prefix intelligence run token:report -- \
+  --mint So11111111111111111111111111111111111111112 --demo --json
+```
+
+Для чтения **собственной локальной тестовой** PostgreSQL-базы Intelligence с миграциями 001/002/004/005 и подтверждёнными source-qualified записями:
+
+```bash
+INTELLIGENCE_LOCAL_READ_ENABLED=true \
+INTELLIGENCE_DATABASE_URL=postgresql://localhost:5432/intelligence_test \
+npm --prefix intelligence run token:report -- \
+  --mint So11111111111111111111111111111111111111112 \
+  --known-at 2026-10-20T03:00:00Z \
+  --occurred-before 2026-10-19T22:00:00Z --limit 20 --json
+```
+
+Токен можно передать в сыром виде или как канонический `solana:<mint>`. Время задаётся **UTC**. Без `--known-at` берётся текущее локальное время вызова, `occurred-before` по умолчанию совпадает с ним. Для воспроизводимости указывайте оба явно.
+
+Защитные свойства: соединение **только с PostgreSQL loopback** (`localhost`, `127.0.0.1`, `::1`) и только с `INTELLIGENCE_LOCAL_READ_ENABLED=true`; обязательная валидация миграций, PostgreSQL `REPEATABLE READ READ ONLY` для совместного snapshot связей и timeline, строгий `as-of`, лимиты 1–100 и повторный allowlist полей вывода. Содержимое постов, private wallet IDs, SQL, credentials, дополнительные поля строк и исходные provider payload в отчёт не включаются. Ошибки соединения не печатают строку БД. Исходные коллекторы и Outbox вообще не читаются и не изменяются этой командой.
+
+В отчёте **разделены** проверенные источником связи X/TG с SPL mint и blockchain provider-parsed swap revisions. Последние **не доказывают финальность**, trade tape или PnL. Числа — только **ограниченные выборки**, не полная статистика. При пустом результате полнота покрытия всё равно `unknown`, отсутствие данных **не равно нулевой активности**. Никакая AI-модель не вызывается: `ai: not_run_no_external_model`. `--demo` маркируется `SYNTHETIC_FIXTURE_NO_DATABASE` и не считается результатом наблюдения реальных источников.
+
+Проверки: `npm --prefix intelligence test` запускает `tests/local-token-report.test.mjs` вместе с остальными Intelligence тестами; PG интеграционные проверки требуют только `INTELLIGENCE_TEST_DB_URL` для одноразовой тестовой БД. Реальная работа на аккаунтах X/TG, блокчейн-провайдерах и production без разрешения не запускается.
+
+Связанные задачи: [#173](https://github.com/vyborovamaria3-maker/claude-project/issues/173) — достоверное происхождение; [#177](https://github.com/vyborovamaria3-maker/claude-project/issues/177) — UX одного токена; [#176](https://github.com/vyborovamaria3-maker/claude-project/issues/176) — отдельный дизайн AI API. Черновики [#166](https://github.com/vyborovamaria3-maker/claude-project/pull/166) и [#167](https://github.com/vyborovamaria3-maker/claude-project/pull/167) **не включаются** автоматически.

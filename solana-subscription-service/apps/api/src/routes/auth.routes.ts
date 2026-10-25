@@ -11,7 +11,7 @@ const router = Router();
 
 const telegramBodySchema = z.object({
   initData: z.string().optional(),
-  loginData: z.record(z.unknown()).optional()
+  loginData: z.record(z.string(), z.unknown()).optional()
 });
 
 router.post(

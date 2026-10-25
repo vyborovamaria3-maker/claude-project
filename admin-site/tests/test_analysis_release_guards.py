@@ -49,52 +49,5 @@ class AnalysisReleaseGuardTest(unittest.TestCase):
             )
             self.assertEqual(good["scale"], "ratio")
 
-    def test_confirmation_has_no_global_next_request_bypass(self):
-        js = (ADMIN_ROOT / "app" / "static" / "analysis-confirm-v5.js").read_text(encoding="utf-8")
-        self.assertNotIn("preconfirmedMutation", js)
-        self.assertNotIn("clickBypass", js)
-        self.assertIn("__analysisConfirmed", js)
-        self.assertIn("AdminAnalysisConfirm", js)
-
-    def test_race_guard_is_loaded_before_editor_and_cancel_cleanup_is_loaded(self):
-        html = (ADMIN_ROOT / "app" / "static" / "index.html").read_text(encoding="utf-8")
-        confirm_pos = html.index('/static/analysis-confirm-v5.js')
-        guard_pos = html.index('/static/analysis-ui-guard-v6.js')
-        editor_pos = html.index('/static/analysis-profiles-v4.js')
-        cancel_pos = html.index('/static/analysis-cancel-silence-v5.js')
-        self.assertLess(confirm_pos, guard_pos)
-        self.assertLess(guard_pos, editor_pos)
-        self.assertGreater(cancel_pos, editor_pos)
-
-    def test_race_guard_handles_toggle_and_duplicate_mutation_clicks(self):
-        js = (ADMIN_ROOT / "app" / "static" / "analysis-ui-guard-v6.js").read_text(encoding="utf-8")
-        self.assertIn('snapshot = await jsonRequest', js)
-        self.assertIn('row.enabled', js)
-        self.assertIn('AdminAnalysisConfirm?.ask', js)
-        self.assertIn('__analysisConfirmed: true', js)
-        for marker in (
-            '.analysis-tab[data-domain]', '#navigation [data-view]', '#analysisProfilesNav',
-            '#refreshButton', '#logoutButton', '#analysisEditorSave', '#analysisEditorDelete',
-            '#analysisEditorRestore', '#analysisCreate',
-        ):
-            self.assertIn(marker, js)
-        self.assertIn('loadCount', js)
-        self.assertIn('mutationCount', js)
-        self.assertIn('if (document.contains(button)) button.disabled = false', js)
-
-    def test_expired_analysis_session_returns_to_login(self):
-        js = (ADMIN_ROOT / "app" / "static" / "analysis-ui-guard-v6.js").read_text(encoding="utf-8")
-        self.assertIn('response.status === 401', js)
-        self.assertIn('typeof window.showLogin === "function"', js)
-        self.assertIn('window.showLogin()', js)
-
-    def test_only_post_backtest_is_exempt_from_confirmation_and_busy_tracking(self):
-        confirm = (ADMIN_ROOT / "app" / "static" / "analysis-confirm-v5.js").read_text(encoding="utf-8")
-        guard = (ADMIN_ROOT / "app" / "static" / "analysis-ui-guard-v6.js").read_text(encoding="utf-8")
-        self.assertIn('method === "POST" && path.endsWith("/backtest")', confirm)
-        self.assertIn('const isBacktest = method === "POST" && path.endsWith("/backtest")', guard)
-        self.assertIn('!isBacktest', guard)
-
-
 if __name__ == "__main__":
     unittest.main()

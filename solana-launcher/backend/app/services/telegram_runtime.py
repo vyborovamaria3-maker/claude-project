@@ -25,7 +25,9 @@ from app.services.telegram_discovery_registry import (
 from app.services.telegram_intelligence import TelegramIntelligenceService
 from app.services.telegram_outcomes import evaluate_outcome_windows
 from app.services.telegram_parser import normalize_telegram_target
+from app.services.telegram_public_dataset_sources import sync_public_dataset_channels
 from app.services.telegram_public_discovery import TelegramPublicWebDiscoveryCollector
+from app.services.telegram_public_web import utcnow
 
 
 class TelegramMonitorManager:
@@ -43,6 +45,9 @@ class TelegramMonitorManager:
         self._public_bootstrapped = False
         self._last_background_error: str | None = None
         self._last_refresh_due = 0
+        self._last_dataset_sync_attempt = float("-inf")
+        self._last_dataset_sync_at: str | None = None
+        self._dataset_sync_summary: dict[str, Any] = {"enabled": False, "records": {}}
         self._next_evaluation_at = 0.0
         self._last_evaluation: dict[str, Any] | None = None
         self._last_outcome_windows: dict[str, Any] | None = None
@@ -324,9 +329,37 @@ class TelegramMonitorManager:
         await service.start_monitor(monitored)
         return True
 
+    async def _sync_public_datasets_if_due(self) -> None:
+        if not self.settings.telegram_public_web_enabled:
+            return
+        if not getattr(self.settings, "telegram_dataset_sync_enabled", False):
+            return
+        now = monotonic()
+        interval = max(
+            3600,
+            int(getattr(self.settings, "telegram_dataset_sync_interval_seconds", 86400)),
+        )
+        if now - self._last_dataset_sync_attempt < interval:
+            return
+        self._last_dataset_sync_attempt = now
+        try:
+            self._dataset_sync_summary = await sync_public_dataset_channels(
+                self.sessionmaker, self.settings
+            )
+            self._last_dataset_sync_at = utcnow().isoformat()
+            if self._dataset_sync_summary.get("errors"):
+                # Retry failed remote sources within an hour without hammering them.
+                self._last_dataset_sync_attempt = monotonic() - max(0, interval - 3600)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._dataset_sync_summary = {"enabled": True, "error": str(exc)[:500]}
+            self._last_dataset_sync_attempt = monotonic() - max(0, interval - 3600)
+
     async def _refresh_public_web_once(self) -> None:
         if not self.settings.telegram_public_web_enabled:
             return
+
         if not self.settings.telegram_public_web_refresh_enabled:
             if not self._public_bootstrapped and self.public_web.configured_channels:
                 await self.scan_public_web(
@@ -394,6 +427,7 @@ class TelegramMonitorManager:
                 mtproto_running = False
                 mtproto_error: str | None = None
                 try:
+                    await self._sync_public_datasets_if_due()
                     mtproto_running = await self._ensure_mtproto_monitor()
                 except asyncio.CancelledError:
                     raise
@@ -515,6 +549,10 @@ class TelegramMonitorManager:
             "public_web_discovery_entity_limit": int(public_web.get("discovery_entity_limit") or 0),
             "public_web_relevance_min_score": float(public_web.get("relevance_min_score") or 0.0),
             "public_web_seed_database_channels": int(public_web.get("seed_database_channels") or 0),
+            "dataset_sync": {
+                **self._dataset_sync_summary,
+                "last_sync_at": self._last_dataset_sync_at,
+            },
             "public_web_discovered_channels": int(public_web.get("last_discovered_channels") or 0),
             "public_web_accepted_discovered": int(public_web.get("last_accepted_discovered") or 0),
             "public_web_rejected_discovered": int(public_web.get("last_rejected_discovered") or 0),
