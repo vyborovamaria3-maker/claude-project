@@ -1,4 +1,4 @@
-# Architecture gaps and release gates — verified 2026-10-20
+# Architecture gaps and release gates — baseline 2026-10-20; status delta 2026-10-24
 
 Repository baseline: main `8dc7c2943ef08978f55009b15c86cd451517b654`. Evidence: inspected code/SQL, PR metadata, GitHub Actions run/jobs/logs. **Do not mark live use as PASSED based on offline CI.** The checklist below is deliberately fail-closed.
 
@@ -18,8 +18,8 @@ Statuses: **IMPLEMENTED** = source code exists; **OFFLINE TESTED** = explicit is
 | P0 | ARCH-03 integration | Existing separate X/TG PG tests and SQLite tests; CI disposable Postgres, no account/provider calls | New `cross-source-token-timeline.test.mjs` validates 3 sources against one token with time boundaries/replay; observe latest-head CI result | TEST ADDED; CI RESULT PENDING |
 | P1 | X identity coverage | No stable numeric `authorId` → source event skipped (not inferred from mutable handle) | Count exclusions, verified reconciliation/backfill of missing stable author IDs | NOT VERIFIED |
 | P1 | TG identity coverage | Missing stable numeric `peer_id` fails closed when opt-in; source revision hashing | Peer resolution, skip/failure metrics, safe deletion/retraction on links, bounded backfill | NOT VERIFIED |
-| P1 | Blockchain decoding | Raw wallet evidence and swap-only / partial decoder; `token_trades` remains legacy truth; PR #126 fixes some Pump routes but is OPEN | Token-account/transfer/burn/mint paths, finalized/reorg logic, complete cost-basis & denominator-based unknown-operation gate | Authoritative PnL BLOCKED |
-| P1 | X autopost v2 | Reliability PR #127 OPEN, separate publisher; offline tests documented in PR | Target-head CI, review/merge, bounded live confirmation with operator; prevent ambiguous post-send retries | Live X action NOT VERIFIED |
+| P1 | Blockchain decoding | Raw wallet evidence and swap-only / partial decoder; `token_trades` remains legacy truth; PR #126 changes were integrated by main carrier PR #133 on 2026-10-20; later related fixes continue | Token-account/transfer/burn/mint paths, finalized/reorg logic, complete cost-basis & denominator-based unknown-operation gate | Authoritative PnL BLOCKED |
+| P1 | X autopost v2 | Reliability PR #127 merged to integration carrier #133 and main on 2026-10-20; offline tests documented in PR | Bounded operator-approved live X post/action verification and post-send uncertainty/manual reconciliation evidence; no automated resends of ambiguous sends | MERGED; live X action NOT VERIFIED |
 | P1 | Historical materialization | Legacy X/TG/chain stores predate source outboxes | Checkpointed, dry-run-first backfill, preserved real observedAt/occurredAt, dedup and coverage | NOT IMPLEMENTED |
 | P1 | API/UI | POTAPoff X/TG/Blockchain settings exist separately | Authenticated, versioned query API and unified token timeline/evidence UI | NOT IMPLEMENTED |
 | P1 | Two Intelligence runtimes | Node cross-source delivery and Python document/provider scoring coexist under `intelligence/` | Write explicit runtime/DB naming contract, ensure build/deploy/CLI/import separation before any rename | COLLISION RISK; no forced migration |
@@ -45,7 +45,7 @@ On a clean checkout with Node 22 and disposable PostgreSQL 16:
 - No modifications to existing source DBs, live config, outbox flags, wallet/trade attribution, X/TG sessions or RPC budgets.
 - No live scraping, posting, subscriptions, token purchases or migrations.
 - No claim that synthetic prelinked token fixtures prove source-side identity inference.
-- No merge of draft PR #126/#127 or unreviewed historical migration stack.
+- This older 2026-10-20 section preceded the PR #133 integration: #126/#127 were subsequently included in main via #133. **No further live rollout, production migration or external action is authorized by this document.**
 
 ## Deployment requirements before any live producer opt-in
 
@@ -67,3 +67,60 @@ On a clean checkout with Node 22 and disposable PostgreSQL 16:
 - **ARCH-08+:** checkpointed backfill, query API/UI, quality and alerting, followed by independently evaluated signals.
 
 Related background: `CODE_REVIEW_20261018.md`, `CODEX_FINAL_INTEGRATION_PLAN_20261018.md`, and `DATA_CONTRACTS.md`. Keep status files accurate as work progresses.
+
+
+## TG Collector analytics sprint-0 delta — code audit 2026-10-22
+
+This section supplements, not replaces, the cross-source deployment blockers above. `EXISTS` means a concrete implementation or migration was inspected. No database state, local service or real Telegram session was available to this audit.
+
+| Priority | TG analytics unit | Code evidence and **confirmed** state | Gap / minimum acceptance test | Audit status |
+| --- | --- | --- | --- | --- |
+| P0 | Schema evolution | `src/db.ts` creates `schema_migrations(name,checksum,applied_at,applied_by)`, validates stored checksum before applying further numbered migrations; SQL files 001–035 exist. | Disposable clean and upgraded-DB migration replay, schema introspection and checksum tamper negative case. | EXISTS; replay NOT EXECUTED |
+| P0 | Token cross-source join | TG native `tg_tokens(chain_id,mint)`, `chain_id='solana-mainnet'`; shared contract uses canonical `solana:<mint>`. Source outbox is default-off. | Contract test with exactly same mint in TG, X, Blockchain; verified-mint-only versioned adapter and source retraction. | BLOCKED for live token join |
+| P0 | Token candidates vs token | `tg_token_candidates`, `tg_ticker_registry`, `tg_token_mentions` and on-chain mint layout resolver already exist. | Test ambiguous ticker, wrong SPL layout, stale attestation, revision retraction and high-volume sample with actual RPC permissions. | EXISTS; live coverage NOT VERIFIED |
+| P0 | History claims | Full-history pass and coverage migration sequence 023, 029, 031, 033 exists; `tg_token_first_mentions.coverage_status` exists. | Implement safe `validate:coverage` CLI only after auditing checkpoint semantics; show `partial/gap/unknown`, never fabricate expected count from sparse Telegram IDs. | PARTLY IMPLEMENTED; CLI NOT VERIFIED |
+| P0 | Market outcomes | `market-data.ts` uses DexScreener observed snapshots, tolerance windows and `outcome_status='insufficient_data'` when base price absent; run from explicit scripts. | `result_reason` taxonomy for distinct unknown reasons; stale/missing snapshots and no-peeking fixtures; test actual snapshot history coverage. | EXISTS; outcomes NOT LIVE VERIFIED |
+| P0 | Historical backtest | `backtest.ts` requires chronological `from < test-start < to` and completed 24h outcomes; stores baseline and per-signal results. | Review event-time vs observation-time leakage, selection bias, overlapping token samples, uncertainty/CI, provider history and holdout quality. | EXISTS; predictive validity NOT VERIFIED |
+| P1 | Channel score | `refreshChannelScores` calculates component scores and composite only when at least 5 outcomes and all component inputs available. | Add operator-visible missing-input reasons without fabricating score; sample-size/robustness and real-outcome checks. | EXISTS; score_reason NOT VERIFIED |
+| P1 | Velocity and scheduling | `refreshTokenVelocity` has windows 5m/15m/1h/6h/24h and independent copy clusters; SQL projects `NULL` for `z_score`. Worker loop only runs discovery and collection; analytics refresh is an explicit CLI. | Define safe bounded scheduler/refresh cadence, deterministic baseline `z_score`, query cost/time and restart recovery. | PARTIAL: no worker scheduler; `z_score` unavailable |
+| P1 | Duplicate/copy signals | `tg_message_fingerprints`, `tg_copy_clusters`, `tg_message_similarity` exist; extractor does normalized exact matching, plus candidate similarity path. | Demonstrate 100 copies counted as 100 posts but 1 independent cluster; inspect false positives and lifecycle retractions. | EXISTS; measured accuracy NOT VERIFIED |
+| P1 | Coordination/risk/bots | `tg_coordination_events`, `tg_author_bot_scores` exist; model-facing infrastructure present. | Calibrate against labeled evidence; do not equate synchronicity with conspiracy or bot-score with human identity. | EXISTS; accuracy NOT VERIFIED |
+| P1 | Natural-language narratives | `src/analytics/narratives.ts` uses `NARRATIVE_MODEL_VERSION='keyword-v1'`; narratives are attached to verified token observations. | Add benchmark with labeled multi-language Telegram content before claiming embedding/semantic detection. | KEYWORD IMPLEMENTED; embedding NOT VERIFIED |
+| P1 | TG dashboards | Next.js integration routes, source/graph API, admin controls exist. | Auth/CSRF/access smoke with local dev instance and query verification against test TG DB. | EXISTS; live UI NOT VERIFIED |
+| P1 | Operational health | Worker has advisory lock, heartbeat, FloodWait, queue lease handling; `db:metrics` is an explicit entrypoint. | Measure heartbeat freshness, delayed queue, analytics staleness and backup/restore; alert channels to be specified. | EXISTS; observability end-to-end NOT VERIFIED |
+
+### Recommended bounded next actions
+
+1. **Do not add** duplicate `tg_token_mentions`, `tg_ticker_registry`, `tg_message_fingerprints`, `tg_author_bot_scores`, `tg_token_velocity`, `tg_channel_scores`, `tg_token_outcomes` or `schema_migrations`. They exist in checked migrations.
+2. First obtain *read-only and non-secret* aggregate DB observations from a safe TG test fixture, then distinguish absent data from code failure. Never connect audit commands to the laptop production DB by default.
+3. Write tests for common token ID mapping, contradictory ticker claims, chronological first mention, empty/missing prices and duplicate-text independent cluster counts before optimizing code.
+4. Only after isolated green tests, schedule offline refresh and market outcome tasks with explicit RPC rate/budget limits and stop/backpressure semantics. Retention and other destructive jobs remain opt-in.
+5. Archive live results, environment, commit SHA and evidence links in [LIVE_TESTS.md](LIVE_TESTS.md); keep `NOT RUN` until tests genuinely execute.
+
+See [TG contracts](DATA_CONTRACTS.md). No production read, migration, mutation, live Telegram call, paid Solana RPC or secret inspection was performed for this delta.
+
+
+## Status delta — 2026-10-24 (non-live GitHub audit)
+
+**Baseline caveat:** the top P0/P1 table was originally verified against `8dc7c294...` on 2026-10-20. Historical backup/deploy failures are evidence of **those 2026-10-19 runs**, not a fresh verdict on current remote infrastructure. Current `main` was observed at `8f79ce9284e42e35de78e0e983c6ba460677ef58`; the linked [delivery plan](DELIVERY_PLAN_20261024.md) is the active remediation backlog. No user laptop, deployed DB or live provider was accessed as part of this delta.
+
+| Priority | Finding (24 Oct) | Evidence | Follow-up/status |
+| --- | --- | --- | --- |
+| P0 | Main branch `protected=false` at check time | GitHub branch API on head `8f79ce92` | [#170](https://github.com/vyborovamaria3-maker/claude-project/issues/170); **ADMIN ACTION REQUIRED**. No rules were changed. |
+| P0 | PR #167 head `f24e0e2d`: security production audits fail for legacy-miniapp and subscription-service; other reported security jobs pass | [Security Gates run](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/40071746530) | [#171](https://github.com/vyborovamaria3-maker/claude-project/issues/171); **PR BRANCH FAIL**, do not transpose to main. |
+| P0 | Source-to-Intelligence live token join + opt-in delivery remains unproven | [DATA_CONTRACTS](DATA_CONTRACTS.md), [LIVE_TESTS](LIVE_TESTS.md) | [#173](https://github.com/vyborovamaria3-maker/claude-project/issues/173), [#174](https://github.com/vyborovamaria3-maker/claude-project/issues/174), [#175](https://github.com/vyborovamaria3-maker/claude-project/issues/175); **NOT LIVE VERIFIED**. |
+| P0 | Physical DB count and deployed backup/restore state not independently verified today | Code ownership map only, historic SSH trust failures | [#172](https://github.com/vyborovamaria3-maker/claude-project/issues/172); **NEEDS INVENTORY/DRILL**; do not assert “9 DBs”. |
+| P1 | PRs #165 (canonical IDs), #166 (AI read model stacked onto #165) and #167 (AI analytics/gateway to main) remain open | [PR_STATUS](PR_STATUS.md) | [#176](https://github.com/vyborovamaria3-maker/claude-project/issues/176); **DESIGN/BASE REVIEW REQUIRED** before merge. |
+| P1 | PR #127 is **merged**, and #142 was merged into an integration branch that reached main through carrier #133. Their original PR body contains earlier “not merged” statements. | [#127](https://github.com/vyborovamaria3-maker/claude-project/pull/127), [#133](https://github.com/vyborovamaria3-maker/claude-project/pull/133), [#142](https://github.com/vyborovamaria3-maker/claude-project/pull/142) | Offline/code integration acknowledged; **no claim of live autoposting, real production sentiment or complete historical coverage**. |
+| P1 | README previously described mainly a subscription deploy candidate | Root README before documentation change | Root README revised on audit branch; **not a production-readiness proof**. |
+
+**Guidance:** historical sections above preserve original review evidence and may refer to PRs as “open” at the time of writing. Treat this delta and actual GitHub PR pages as current state. Never change a live status from `NOT RUN` to `PASSED` without the evidence schema in [LIVE_TESTS](LIVE_TESTS.md).
+
+
+## P0-04 verified evidence delta — 2026-10-24 after merge #165
+
+- **IMPLEMENTED / OFFLINE-TESTED:** [#165](https://github.com/vyborovamaria3-maker/claude-project/pull/165) merged to main as `0bfd1c71c438d2f32a93652f4b6a2670c38d7b9b` with native canonical mint adapters, verified social link/retraction code, strict JSONB validation, isolated PostgreSQL/SQLite delivery tests and authenticated read-only `/tokens/:id/evidence`. Stacked [#184](https://github.com/vyborovamaria3-maker/claude-project/pull/184) was integrated into #165 before its main merge; all relevant PR head CI workflows passed. Do not continue to label #165 “OPEN” in current status summaries; older tables above are historical snapshots.
+- **EXISTING CODE, NOT YET OPERATED LIVE:** X's [bounded Alchemy mint CLI](X_MINT_VERIFICATION.md) and TG's verified-mint resolver are opt-in and default off. An earlier statement that **no X mint verifier exists** is inaccurate; what remains unverified is real operator-controlled execution and delivery to Intelligence from production-grade, backed-up stores.
+- **NOT VERIFIED / BLOCKED ON OPERATOR:** live X/TG/chain provider observation, source migrations in actual operating environments, production-safe backup **and restore**, supervised recovery, complete source coverage and authenticated application UX. Continue [#173](https://github.com/vyborovamaria3-maker/claude-project/issues/173) as OPEN. Do not equate passing synthetic/isolated CI with live completeness or validated financial signals.
+- **DESIGN/SECURITY REVIEW STILL REQUIRED:** [#166](https://github.com/vyborovamaria3-maker/claude-project/pull/166) is still a stacked draft AI read model; [#167](https://github.com/vyborovamaria3-maker/claude-project/pull/167) overlaps read/AI analytics. Its 2026-10-24 Security Gates failure relates to that PR head; no blanket claim about current main. Reconcile through [#176](https://github.com/vyborovamaria3-maker/claude-project/issues/176), and verify all checks at the actual integration head.
+- **GOVERNANCE STILL BLOCKED:** `main` was observed `protected=false` even after #165 merge, requiring repository-admin action under [#170](https://github.com/vyborovamaria3-maker/claude-project/issues/170).

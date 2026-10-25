@@ -50,6 +50,20 @@ class TelegramChannel(Base):
     meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
+class TelegramDatasetImportCheckpoint(Base):
+    """Persist source-file signatures without re-importing unchanged datasets after restarts."""
+
+    __tablename__ = "telegram_dataset_import_checkpoints"
+
+    path_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    path: Mapped[str] = mapped_column(Text, nullable=False)
+    file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    modified_at_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+
 class TelegramUser(Base):
     __tablename__ = "telegram_users"
     __table_args__ = (

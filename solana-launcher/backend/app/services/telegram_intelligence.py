@@ -94,6 +94,7 @@ class TelegramIntelligenceService:
         self.client = TelegramClient(session, settings.telegram_api_id, settings.telegram_api_hash)
         self._handler: Callable[[Any], Awaitable[None]] | None = None
         self._monitored: list[str] = []
+        self._monitored_entities: list[Channel] = []
 
     async def connect(self) -> None:
         await self.client.connect()
@@ -602,17 +603,23 @@ class TelegramIntelligenceService:
 
     async def start_monitor(self, channels: list[str]) -> dict[str, Any]:
         if self._handler is not None:
-            return {"running": True, "channels": self._monitored}
-        cleaned = [
-            normalize_telegram_target(item) for item in channels if normalize_telegram_target(item)
-        ]
+            return await self.add_monitor_channels(channels)
+        cleaned = list(
+            dict.fromkeys(
+                normalize_telegram_target(item)
+                for item in channels
+                if normalize_telegram_target(item)
+            )
+        )
         if not cleaned:
             raise ValueError("At least one Telegram channel is required")
-        resolved = []
+        resolved: list[Channel] = []
+        resolved_names: list[str] = []
         for value in cleaned:
             entity = await self.client.get_entity(value)
             if isinstance(entity, Channel):
                 resolved.append(entity)
+                resolved_names.append(value)
         if not resolved:
             raise ValueError("No Telegram channels/groups could be resolved")
 
@@ -629,9 +636,49 @@ class TelegramIntelligenceService:
                 return
 
         self._handler = handler
+        self._monitored = resolved_names
+        self._monitored_entities = resolved
         self.client.add_event_handler(handler, events.NewMessage(chats=resolved))
-        self._monitored = cleaned
-        return {"running": True, "channels": cleaned}
+        return {"running": True, "channels": list(self._monitored)}
+
+    async def add_monitor_channels(self, channels: list[str]) -> dict[str, Any]:
+        """Add channels to the existing realtime listener without dropping current subscriptions."""
+
+        if self._handler is None:
+            return await self.start_monitor(channels)
+        cleaned = list(
+            dict.fromkeys(
+                normalize_telegram_target(item)
+                for item in channels
+                if normalize_telegram_target(item)
+            )
+        )
+        monitored_set = set(self._monitored)
+        additions = [value for value in cleaned if value not in monitored_set]
+        if not additions:
+            return {"running": True, "channels": list(self._monitored)}
+
+        resolved: list[Channel] = []
+        resolved_names: list[str] = []
+        for value in additions:
+            try:
+                entity = await self.client.get_entity(value)
+            except Exception:
+                continue
+            if isinstance(entity, Channel):
+                resolved.append(entity)
+                resolved_names.append(value)
+        if not resolved:
+            return {"running": True, "channels": list(self._monitored)}
+
+        if self._handler is not None:
+            self.client.remove_event_handler(self._handler)
+            self._monitored_entities.extend(resolved)
+            self._monitored.extend(resolved_names)
+            self.client.add_event_handler(
+                self._handler, events.NewMessage(chats=list(self._monitored_entities))
+            )
+        return {"running": True, "channels": list(self._monitored)}
 
     async def stop_monitor(self) -> dict[str, Any]:
         if self._handler is not None:
@@ -639,6 +686,7 @@ class TelegramIntelligenceService:
             self._handler = None
         previous = self._monitored
         self._monitored = []
+        self._monitored_entities = []
         return {"running": False, "channels": previous}
 
     def monitor_status(self) -> dict[str, Any]:

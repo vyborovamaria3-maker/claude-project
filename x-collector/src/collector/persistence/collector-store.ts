@@ -7,7 +7,7 @@ import { Page } from "../../../lib/archive/model";
 import {recordRaw,recordRawBatch} from '../../../lib/trade/intelligence-store';
 import type { PoolClient } from "pg";
 import { emitXTweetOutbox, xIntelligenceOutboxEnabled } from "./intelligence-outbox";
-import { emitXTokenLinksInvalidation } from "./verified-token-links";
+import { emitXTokenLinksInvalidation, effectiveXTokenSourceRevision } from "./verified-token-links";
 import {createHash} from "node:crypto";
 export interface PersistenceLease { workerId: string; attempt: number; accountName: string; accountOwner: string; }
 async function assertPersistenceLease(client: PoolClient, taskId: number | undefined, lease?: PersistenceLease) {
@@ -215,16 +215,19 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
       // Unresolved author IDs are intentionally not re-identified from handles.
       for (const t of chunk) {
         const previous=previousById.get(t.id);
-        if(previous && genuinelyWrittenIds.has(t.id) && previous.text!==t.text){
-          const authorId=t.authorId??previous.author_id;
-          if(authorId){
+        if(previous && genuinelyWrittenIds.has(t.id)){
+          // Compare the EFFECTIVE persisted revision, not just the incoming
+          // text: the UPSERT COALESCEs nullable author and publication fields.
+          // A same-body correction of author/clock must revoke old proofs.
+          const revision=effectiveXTokenSourceRevision(previous,t);
+          if(revision.changed && revision.authorId){
             const sourceRevisionSha256=createHash("sha256")
-              .update(JSON.stringify(["edited",t.text,t.postedAt??null]))
+              .update(JSON.stringify(["edited",t.text,revision.postedAt,revision.authorId]))
               .digest("hex");
             await emitXTokenLinksInvalidation(client,{
-              tweetId:t.id,authorId,reason:"edited",sourceRevisionSha256,
-              observedAt:new Date(),
-              postedAt:t.postedAt===null?null:new Date(t.postedAt),
+              tweetId:t.id,authorId:revision.authorId,reason:"edited",
+              sourceRevisionSha256,observedAt:new Date(),
+              postedAt:revision.postedAt===null?null:new Date(revision.postedAt),
             });
           }
         }

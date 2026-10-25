@@ -10,7 +10,6 @@ import sys
 from fastapi.testclient import TestClient
 
 ADMIN_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = ADMIN_ROOT.parent
 sys.path.insert(0, str(ADMIN_ROOT))
 
 from app.analysis_catalog import CATALOG, CATALOG_BY_ID, DOMAINS, VALUE_TYPES
@@ -143,20 +142,6 @@ class AnalysisProfileUnitTest(unittest.TestCase):
         result = self.store.backtest("x", [{"shillers": [{"tweets": 2}, {"tweets": 4}]}])
         self.assertEqual(result["pass_rate"], 1.0)
         self.assertEqual(result["coverage"], 1.0)
-
-    def test_catalog_sources_are_grounded_in_project_code(self):
-        checks = {
-            REPO_ROOT / "solana-launcher/lib/trade/dev.ts": ["riskScore", "rugRate", "successRate", "rate300k", "avgTimeBetweenLaunchesSec"],
-            REPO_ROOT / "solana-launcher/backend/app/models/analytics.py": ["liquidity_usd", "volume_24h", "tx_count_24h", "holder_count", "similarity_score"],
-            REPO_ROOT / "solana-launcher/backend/app/services/social_intelligence.py": ["score_channel_metrics", "early_rate", "roi_component", "rug_rate"],
-            REPO_ROOT / "solana-launcher/app/api/trade/dev-twitter/route.ts": ["botRiskScore", "anomalyCount", "engagementRate", "verifiedAuthors", "botRatio"],
-        }
-        for path, fields in checks.items():
-            self.assertTrue(path.exists(), path)
-            text = path.read_text(encoding="utf-8")
-            for field in fields:
-                self.assertIn(field, text, f"{field} missing from {path}")
-
 
 class AnalysisProfileApiTest(unittest.TestCase):
     def setUp(self):

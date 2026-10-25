@@ -31,27 +31,27 @@ describe("scoreActivity", () => {
   });
 
   it("penalizes no avatar", () => {
-    const member = makeMember();
-    const result = scoreActivity(member);
-    expect(result.score).toBeLessThan(0.5);
+    const withAvatar = makeMember({ username: "active_user", firstName: "Valid", photo: { isPersonal: false } });
+    const withoutAvatar = { ...withAvatar, photo: undefined };
+    expect(scoreActivity(withoutAvatar).score).toBeLessThan(scoreActivity(withAvatar).score);
   });
 
   it("penalizes no username", () => {
-    const member = makeMember();
-    const result = scoreActivity(member);
-    expect(result.score).toBeLessThan(0.5);
+    const withUsername = makeMember({ username: "active_user", firstName: "Valid", photo: { isPersonal: false } });
+    const withoutUsername = { ...withUsername, username: undefined };
+    expect(scoreActivity(withoutUsername).score).toBeLessThan(scoreActivity(withUsername).score);
   });
 
   it("penalizes empty name", () => {
-    const member = makeMember({ firstName: "" });
-    const result = scoreActivity(member);
-    expect(result.score).toBeLessThan(0.5);
+    const withName = makeMember({ username: "active_user", firstName: "Valid", photo: { isPersonal: false } });
+    const withoutName = { ...withName, firstName: "" };
+    expect(scoreActivity(withoutName).score).toBeLessThan(scoreActivity(withName).score);
   });
 
   it("penalizes short name", () => {
-    const member = makeMember({ firstName: "A" });
-    const result = scoreActivity(member);
-    expect(result.score).toBeLessThan(0.5);
+    const withName = makeMember({ username: "active_user", firstName: "Valid", photo: { isPersonal: false } });
+    const withShortName = { ...withName, firstName: "A" };
+    expect(scoreActivity(withShortName).score).toBeLessThan(scoreActivity(withName).score);
   });
 
   it("bonuses premium users", () => {
