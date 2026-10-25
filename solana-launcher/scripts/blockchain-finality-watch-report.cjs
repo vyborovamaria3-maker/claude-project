@@ -23,8 +23,10 @@ function review(db,{limit=50,afterId=0}={}){
 function parse(argv){
   const a={state:null,limit:50,afterId:0};
   for(let i=0;i<argv.length;i++){
-    if(["--state","--limit","--after-id"].includes(argv[i])&&argv[i+1])
-      a[argv[i++].slice(2)]=argv[i];
+    if(["--state","--limit","--after-id"].includes(argv[i])&&argv[i+1]){
+      const key=argv[i]==="--after-id"?"afterId":argv[i].slice(2);
+      a[key]=argv[++i];
+    }
     else throw Error("Usage: --state existing-watch.db [--limit 50] [--after-id 0]");
   }
   if(!a.state)throw Error("Explicit --state required");

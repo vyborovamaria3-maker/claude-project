@@ -108,6 +108,28 @@ function run(){
     assert.equal(focused.signatures.length,1);
     assert.equal(focused.sampleTruncated,false);
     assert.equal(focused.signatures[0].status,"PENDING_INDEPENDENT_FINALITY");
+    // A valid envelope checksum cannot hide disagreement with its nested RPC
+    // receipt. These fresh single-revision sources previously passed all gates.
+    for(const field of ["slot","blockTime","signature","missing_signature"]){
+      const inconsistent=new Database(":memory:");
+      try{
+        initDb(inconsistent);
+        target(inconsistent,"wallet",address);
+        const tampered=structuredClone(first);
+        if(field.endsWith("signature")){
+          tampered.raw.signature=first.signature;
+          if(field==="signature")tampered.raw.transaction.signatures[0]="2".repeat(88);
+          else delete tampered.raw.transaction.signatures;
+        }else tampered.raw[field]+=1;
+        persistEvents(inconsistent,"wallet",address,[tampered]);
+        inconsistent.prepare("UPDATE chain_forensic_history_coverage SET coverage_status='provider_exhausted',possible_gap=0,backfill_complete=1,forward_cursor_pending=0,gap_reason=NULL").run();
+        const audited=aggregate(inconsistent,{signature:first.signature}).signatures[0];
+        assert.equal(audited.status,"RECHECK_RAW_BEFORE_FINALITY",field);
+        assert.ok(audited.flags.includes("CURRENT_RAW_CORRUPT_OR_UNSUPPORTED"),field);
+        assert.throws(()=>require("./blockchain-finality-witness-store.cjs").sourceIdentity(
+          inconsistent,"wallet",address,first.signature),/not eligible/,field);
+      }finally{inconsistent.close();}
+    }
     db.close();
     const bytes=fs.readFileSync(filepath);
     const cli=main(["--db",filepath,"--signature",first.signature]);

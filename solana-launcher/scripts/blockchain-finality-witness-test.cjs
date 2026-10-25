@@ -151,6 +151,23 @@ function run(){
       /Witness journal integrity trigger missing/);
     const config=path.join(dir,"trusted-pins.json");
     fs.writeFileSync(config,JSON.stringify({recoveryEpoch:epoch,witnesses:pins}));
+    // Exercise the serialized-pin boundary through the real CLI for the whole
+    // workflow, not only a negative quorum that can hide pin validation errors.
+    const cliTx=normalizeFullTransaction(fixture[1]),cliWallet=cliTx.accountKeys[0];
+    seed(source,"wallet",cliWallet,cliTx);
+    const cliBase=["--db",sourcePath,"--state",statePath,"--pins",config];
+    const cliTarget=["--kind","wallet","--address",cliWallet,"--signature",cliTx.signature];
+    for(let idx=0;idx<2;idx++){
+      const request=cli(["issue",...cliBase,...cliTarget,"--key-id",pins[idx].keyId],
+        {clock:()=>time-1000});
+      const receiptPath=path.join(dir,"cli-receipt-"+idx+".json");
+      fs.writeFileSync(receiptPath,JSON.stringify(createReceipt(request,idx)));
+      assert.equal(cli(["accept",...cliBase,"--file",receiptPath],{clock}).status,
+        "signed_witness_observation_stored");
+    }
+    const cliQuorum=cli(["quorum",...cliBase,...cliTarget]);
+    assert.equal(cliQuorum.status,"two_pinned_witnesses_reported_finalized");
+    assert.equal(cliQuorum.acceptedWitnessCount,2);
     const bytes=fs.readFileSync(sourcePath);
     const cliResult=cli(["quorum","--db",sourcePath,"--state",statePath,"--pins",config,
       "--kind","wallet","--address",wallet,"--signature",tx.signature]);

@@ -45,7 +45,7 @@ function extractFees(tx, registry = feeRegistry()) {
   if (!meta || !Object.prototype.hasOwnProperty.call(meta, "err") || !Array.isArray(keys))
     throw new Error("Missing execution metadata or account keys");
   const innerSig = raw.transaction?.signatures?.[0] || raw.signatures?.[0];
-  if (innerSig && innerSig !== tx.signature) throw new Error("Conflicting signature");
+  if (innerSig !== tx.signature) throw new Error("Missing or conflicting RPC signature");
   const payer = address(keys[0]);
   const events = [];
   const fee = atomic(meta.fee);
@@ -104,6 +104,12 @@ function decodeEvidence(row) {
   const eventTime = tx.blockTime ?? tx.timestamp ?? null;
   if (row.block_time != null && eventTime != null && row.block_time !== eventTime)
     throw new Error("RAW block time mismatch");
+  const rawSlot=tx.raw?.slot ?? tx.raw?.transaction?.slot;
+  const rawTime=tx.raw?.blockTime ?? tx.raw?.transaction?.blockTime;
+  if(rawSlot!=null && ((row.slot!=null && row.slot!==rawSlot) ||
+      (tx.slot!=null && tx.slot!==rawSlot)))throw new Error("RAW RPC slot mismatch");
+  if(rawTime!=null && ((row.block_time!=null && row.block_time!==rawTime) ||
+      (eventTime!=null && eventTime!==rawTime)))throw new Error("RAW RPC block time mismatch");
   return {tx, hash};
 }
 function prepareOutput(db) {

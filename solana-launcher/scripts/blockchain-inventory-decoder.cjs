@@ -92,8 +92,8 @@ function decodeInventoryMovements(tx) {
     // identify the mint/amount. Keep the row with null amount for diagnostics.
     const add = (owner, direction, account) => movements.push({
       signature: tx.signature,
-      slot: Number.isFinite(Number(tx.slot)) ? Number(tx.slot) : null,
-      blockTime: Number.isFinite(Number(tx.timestamp)) ? Number(tx.timestamp) : null,
+      slot: Number.isSafeInteger(tx.slot) && tx.slot >= 0 ? tx.slot : null,
+      blockTime: Number.isSafeInteger(tx.timestamp) && tx.timestamp >= 0 ? tx.timestamp : null,
       operationIndex,
       operationType: type,
       kind,
