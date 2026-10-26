@@ -73,3 +73,14 @@ test('request-only panel does not depend on legacy sources and never analyzes on
  assert.match(panel,/if \(!requestOnly && initialMint/);assert.match(panel,/if\(requestOnly\)return;/);
  assert.match(panel,/requestOnly && <TokenRequestPanel/);assert.match(page,/requestOnly=\{process.env.INTELLIGENCE_AI_ON_DEMAND_ENABLED === "true"\}/);
 });
+
+test('new exclusion counters survive strict projection; old cached reports remain compatible',async()=>{
+ const report=fixture();report.facts['x.filteredTemplates']=9;report.facts['x.duplicateMessages']=6;
+ report.summary.push({id:'x.duplicateMessages',value:6});report.interpretation.factIds.push('x.duplicateMessages');
+ const result=await requestTokenAnalysis(mint,{env,fetchImpl:async()=>new Response(JSON.stringify(report))});
+ assert.equal(result.tokenAnalysis.facts['x.filteredTemplates'],9);assert.equal(result.tokenAnalysis.facts['x.duplicateMessages'],6);
+ assert.match(result.result.summary,/Twitter — 9; повторов Twitter — 6/);
+ for(const value of [-1,25,null,'6',{secret:'private'}]){report.facts['x.duplicateMessages']=value;await assert.rejects(requestTokenAnalysis(mint,{env,fetchImpl:async()=>new Response(JSON.stringify(report))}),/token_analysis_invalid/);}
+ const old=await requestTokenAnalysis(mint,{env,fetchImpl:async()=>new Response(JSON.stringify(fixture()))});
+ assert.equal(old.tokenAnalysis.facts['x.duplicateMessages'],0);
+});

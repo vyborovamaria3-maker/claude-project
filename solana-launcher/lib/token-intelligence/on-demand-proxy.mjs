@@ -24,6 +24,10 @@ export function projectTokenAnalysis(report,tokenId){
  for(const [key,max] of Object.entries(COUNT_LIMITS)){
   const value=input[key];if(!Number.isSafeInteger(value)||value<0||value>max)invalid();facts[key]=value;
  }
+ for(const key of ['x.filteredTemplates','x.duplicateMessages']){
+  const value=input[key]===undefined?0:input[key];
+  if(!Number.isSafeInteger(value)||value<0||value>24)invalid();facts[key]=value;
+ }
  if(input['chain.coverage']!=='unknown'||input['social.coverage']!=='unknown'||
    input['identity.method']!=='literal-address-match; stored-trade-mint')invalid();
  Object.assign(facts,{'chain.coverage':'unknown','social.coverage':'unknown',
