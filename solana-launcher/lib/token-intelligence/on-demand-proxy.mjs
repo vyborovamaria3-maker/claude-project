@@ -1,6 +1,6 @@
 import {assertMintShape,validateProxyConfiguration,SafeProxyError} from './proxy-core.mjs';
 const VERSION='token-request-v1';
-const COUNT_LIMITS={'x.sampledMessages':4,'tg.sampledMessages':4,'tg.filteredTemplates':24,
+const COUNT_LIMITS={'x.sampledMessages':4,'tg.sampledMessages':4,'tg.filteredTemplates':96,
  'chain.sampledStoredTradeRows':100,'chain.sampledWallets':100};
 function invalid(){throw new SafeProxyError('token_analysis_invalid',502);}
 function object(value){if(!value||typeof value!=='object'||Array.isArray(value))invalid();return value;}
@@ -26,7 +26,7 @@ export function projectTokenAnalysis(report,tokenId){
  }
  for(const key of ['x.filteredTemplates','x.duplicateMessages']){
   const value=input[key]===undefined?0:input[key];
-  if(!Number.isSafeInteger(value)||value<0||value>24)invalid();facts[key]=value;
+  if(!Number.isSafeInteger(value)||value<0||value>96)invalid();facts[key]=value;
  }
  if(input['chain.coverage']!=='unknown'||input['social.coverage']!=='unknown'||
    input['identity.method']!=='literal-address-match; stored-trade-mint')invalid();
@@ -110,6 +110,7 @@ export function tokenSummary(report){
    [`Исключено: рекламных и шаблонных сообщений Telegram — ${report.facts['tg.filteredTemplates']??0}, Twitter — ${report.facts['x.filteredTemplates']??0}; повторов Twitter — ${report.facts['x.duplicateMessages']??0}.`]:[]),
   ...(report.status==='no_evidence'?['После фильтрации данных для анализа не осталось. ИИ не вызывался.']:[]),
   'Оценка относится к тону сообщений; это не торговый сигнал.',
+  'В ограниченной выборке сохраняются предупреждения; соотношение мнений по всем сообщениям не оценивалось.',
   'Покрытие источников неполное; записи сделок сами по себе не подтверждают прибыльность.'].join('\n');
 }
 /** Server-side only. User auth/rate limiting is required before this call. */

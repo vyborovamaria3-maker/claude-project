@@ -11,7 +11,7 @@ export function tokenAddress(tokenId){const parsed=parseTokenId(tokenId);if(!par
 export function mentionsAddress(text,address){return typeof text==='string'&&new RegExp('(^|[^1-9A-HJ-NP-Za-km-z])'+address+'(?=$|[^1-9A-HJ-NP-Za-km-z])').test(text);}
 /** Read existing collector stores only. A literal address mention is not RPC identity proof. */
 export async function collectTokenInputs({x,tg,chain},tokenId,at=new Date()){
- const mint=tokenAddress(tokenId),asOf=at.toISOString(),ms=at.getTime(),limit=24;
+ const mint=tokenAddress(tokenId),asOf=at.toISOString(),ms=at.getTime(),limit=96;
  const [xr,tr]=await Promise.all([
   x.query(`SELECT tweet_id,text,updated_at,posted_at FROM twitter_tweets WHERE position($1 in text)>0
     AND updated_at<=$2 AND (posted_at IS NULL OR posted_at<=$2) ORDER BY updated_at DESC,tweet_id DESC LIMIT $3`,[mint,ms,limit+1]),
@@ -22,8 +22,10 @@ export async function collectTokenInputs({x,tg,chain},tokenId,at=new Date()){
  ]);
  const rows=chain.prepare(`SELECT signature,timestamp,trader,type,amount_sol,amount_tokens,inserted_at
   FROM token_trades WHERE mint=? AND timestamp<=? AND inserted_at<=? ORDER BY timestamp DESC,signature LIMIT ?`).all(mint,Math.floor(ms/1000),ms,101);
- const messages=[],seen=new Set(),seenTwitter=new Set();let filtered=0,xFiltered=0,xDuplicates=0,messageChars=0;
- for(const [source,records] of [['x',xr.rows],['tg',tr.rows]])for(const row of records.slice(0,limit)){
+ const messages=[],seen=new Set(),seenTwitter=new Set(),selectionTruncated={x:false,tg:false};let filtered=0,xFiltered=0,xDuplicates=0,messageChars=0;
+ for(const [source,records] of [['x',xr.rows],['tg',tr.rows]]){
+ const eligible=[];
+ for(const row of records.slice(0,limit)){
   if(!mentionsAddress(row.text,mint))continue;
   if(source==='x'){
    const key=twitterEvidenceKey(row.text);
@@ -32,7 +34,15 @@ export async function collectTokenInputs({x,tg,chain},tokenId,at=new Date()){
   }
   if(source==='tg'&&isLowValueTelegramPost(row.text)){filtered++;continue;}
   const ref=source==='x'?`x:tweet:${row.tweet_id}`:`tg:message:${row.peer_id}:${row.message_id}`;
-  if(seen.has(ref)||messages.filter(m=>m.source===source).length>=4)continue;seen.add(ref);
+  if(seen.has(ref))continue;seen.add(ref);eligible.push({row,ref});
+ }
+ // Reserve two places for warning/uncertainty cues. These are selection cues,
+ // not sentiment labels; negations and sarcasm still require full-text analysis.
+ const warning=item=>/\b(?:rug\w*|scam\w*|avoid|uncomfortable|pathetic|never|wouldn.t|not\s+(?:buy|safe|trust|sell))\b|не\s+(?:покуп|вер|довер)|сарказ|yeah right/iu.test(item.row.text);
+ const priority=eligible.filter(warning).slice(0,2);
+ const selected=[...priority,...eligible.filter(item=>!priority.includes(item))].slice(0,4);
+ selectionTruncated[source]=eligible.length>selected.length;
+ for(const {row,ref} of selected){
   // A clipped quote can lose the author's trailing denial or sarcasm. Reject
   // oversized selected evidence before any provider call instead of changing it.
   if(row.text.length>6000||messageChars+row.text.length>16000)throw new Error('token_ai_input_too_large');
@@ -41,6 +51,7 @@ export async function collectTokenInputs({x,tg,chain},tokenId,at=new Date()){
   messages.push({source,evidenceRef:ref,text:row.text,textHash:hash(row.text),
     observedAt:source==='x'?new Date(Number(row.updated_at)).toISOString():new Date(row.observed_at).toISOString(),context});
  }
+ }
  const trades=rows.slice(0,100).map(row=>({evidenceRef:'chain:stored-trade:'+row.signature,
   timestamp:row.timestamp,type:row.type,wallet:row.trader,amountSol:row.amount_sol,amountTokens:row.amount_tokens}));
  const facts={tokenId,'x.sampledMessages':messages.filter(m=>m.source==='x').length,
@@ -48,7 +59,7 @@ export async function collectTokenInputs({x,tg,chain},tokenId,at=new Date()){
   'x.filteredTemplates':xFiltered,'x.duplicateMessages':xDuplicates,
   'chain.sampledStoredTradeRows':trades.length,'chain.sampledWallets':new Set(trades.map(r=>r.wallet)).size,
   'chain.coverage':'unknown','social.coverage':'unknown','identity.method':'literal-address-match; stored-trade-mint'};
- return {tokenId,asOf,messages,trades,facts,sourceStatus:{x:{queried:true,truncated:xr.rows.length>limit},tg:{queried:true,truncated:tr.rows.length>limit},blockchain:{queried:true,truncated:rows.length>100,kind:'stored-trade-records-not-verified-settlement'}}};
+ return {tokenId,asOf,messages,trades,facts,sourceStatus:{x:{queried:true,truncated:xr.rows.length>limit||selectionTruncated.x},tg:{queried:true,truncated:tr.rows.length>limit||selectionTruncated.tg},blockchain:{queried:true,truncated:rows.length>100,kind:'stored-trade-records-not-verified-settlement'}}};
 }
 export function validateTokenInterpretation(value,input){
  if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join(',')!=='confidence,directionAmbiguous,evidenceRefs,factIds,score,stance')throw new Error('token_ai_output_invalid');

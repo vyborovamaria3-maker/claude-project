@@ -80,7 +80,7 @@ test('new exclusion counters survive strict projection; old cached reports remai
  const result=await requestTokenAnalysis(mint,{env,fetchImpl:async()=>new Response(JSON.stringify(report))});
  assert.equal(result.tokenAnalysis.facts['x.filteredTemplates'],9);assert.equal(result.tokenAnalysis.facts['x.duplicateMessages'],6);
  assert.match(result.result.summary,/Twitter — 9; повторов Twitter — 6/);
- for(const value of [-1,25,null,'6',{secret:'private'}]){report.facts['x.duplicateMessages']=value;await assert.rejects(requestTokenAnalysis(mint,{env,fetchImpl:async()=>new Response(JSON.stringify(report))}),/token_analysis_invalid/);}
+ for(const value of [-1,97,null,'6',{secret:'private'}]){report.facts['x.duplicateMessages']=value;await assert.rejects(requestTokenAnalysis(mint,{env,fetchImpl:async()=>new Response(JSON.stringify(report))}),/token_analysis_invalid/);}
  const old=await requestTokenAnalysis(mint,{env,fetchImpl:async()=>new Response(JSON.stringify(fixture()))});
  assert.equal(old.tokenAnalysis.facts['x.duplicateMessages'],0);
 });
