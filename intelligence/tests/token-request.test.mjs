@@ -5,7 +5,7 @@ import {collectTokenInputs,analyzeTokenOnDemand,validateTokenInterpretation,ment
 import {createIntelligenceApi} from '../api/server.mjs';
 import {requestTokenAnalysis} from '../../solana-launcher/lib/token-intelligence/on-demand-proxy.mjs';
 const url=process.env.INTELLIGENCE_TEST_DB_URL,mint='So11111111111111111111111111111111111111112',tokenId='solana:'+mint;
-const interpretation={stance:'mixed',score:0,directionAmbiguous:true,confidence:0.7,factIds:['tokenId'],evidenceRefs:['tg:message:123:2']};
+const interpretation={stance:'mixed',score:0,directionAmbiguous:true,confidence:0.7,factIds:['tokenId'],evidenceRefs:['tg:message:123:2'],caveats:[]};
 test('on-demand request releases its client if advisory unlock disconnects',async()=>{
  let released=false;
  const destination={connect:async()=>({release(discard){assert.equal(discard,true);released=true;},async query(sql){

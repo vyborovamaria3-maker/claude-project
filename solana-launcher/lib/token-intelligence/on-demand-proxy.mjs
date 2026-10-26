@@ -65,6 +65,13 @@ export function projectTokenAnalysis(report,tokenId){
   });
   interpretation={stance:value.stance,score:value.score,confidence:value.confidence,
    directionAmbiguous:value.directionAmbiguous,factIds:[...value.factIds],evidenceRefs};
+  if(value.caveats!==undefined){
+   if(!Array.isArray(value.caveats)||value.caveats.length>4)invalid();
+   interpretation.caveats=value.caveats.map(row=>{
+    object(row);if(!allowed.has(row.evidenceRef)||!evidenceRefs.includes(row.evidenceRef)||typeof row.quote!=='string'||row.quote.trim().length<3||row.quote.length>240)invalid();
+    return {evidenceRef:row.evidenceRef,quote:row.quote};
+   });
+  }
  }
  if((report.status==='no_evidence')!==(interpretation===null))invalid();
  const sourceStatus={};
@@ -106,6 +113,7 @@ export async function readTokenAnalysisRequest(request){
 export function tokenSummary(report){
  const stance={bullish:'В выбранных сообщениях выражено позитивное отношение к токену.',bearish:'В выбранных сообщениях выражено негативное отношение к токену.',neutral:'В выбранных сообщениях нет выраженного направления.',mixed:'Направление сообщений неоднозначно.',unknown:'Недостаточно сообщений для оценки тона.'}[report.interpretation?.stance]??'Недостаточно сообщений для оценки тона.';
  return [stance,`Выборка: Telegram — ${report.facts['tg.sampledMessages']??0}, Twitter — ${report.facts['x.sampledMessages']??0}; сохранённых записей сделок — ${report.facts['chain.sampledStoredTradeRows']??0}.`,
+  ...(report.interpretation?.caveats?.length?['Оговорки авторов (цитаты из сообщений, не проверенные факты):',...report.interpretation.caveats.map(row=>`«${row.quote}» — ${row.evidenceRef}`)]:['Отдельные оговорки не выделены; это не подтверждает отсутствие рисков.']),
   ...((report.facts['tg.filteredTemplates']??0)+(report.facts['x.filteredTemplates']??0)+(report.facts['x.duplicateMessages']??0)>0?
    [`Исключено: рекламных и шаблонных сообщений Telegram — ${report.facts['tg.filteredTemplates']??0}, Twitter — ${report.facts['x.filteredTemplates']??0}; повторов Twitter — ${report.facts['x.duplicateMessages']??0}.`]:[]),
   ...(report.status==='no_evidence'?['После фильтрации данных для анализа не осталось. ИИ не вызывался.']:[]),

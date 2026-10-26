@@ -84,3 +84,11 @@ test('new exclusion counters survive strict projection; old cached reports remai
  const old=await requestTokenAnalysis(mint,{env,fetchImpl:async()=>new Response(JSON.stringify(fixture()))});
  assert.equal(old.tokenAnalysis.facts['x.duplicateMessages'],0);
 });
+test('author caveats reach the visible summary, stay bounded and do not leak nested fields',async()=>{
+ const report=fixture();report.interpretation.caveats=[{evidenceRef:'x:tweet:123',quote:'I like it, but liquidity is low',privateField:'must-not-return'}];
+ const result=await requestTokenAnalysis(mint,{env,fetchImpl:async()=>new Response(JSON.stringify(report))});
+ assert.match(result.result.summary,/I like it, but liquidity is low/);assert.match(result.result.summary,/не проверенные факты/);assert.equal(JSON.stringify(result).includes('must-not-return'),false);
+ for(const caveats of [null,[{evidenceRef:'x:tweet:999',quote:'low liquidity'}],[{evidenceRef:'x:tweet:123',quote:'x'.repeat(241)}]]){
+  report.interpretation.caveats=caveats;await assert.rejects(requestTokenAnalysis(mint,{env,fetchImpl:async()=>new Response(JSON.stringify(report))}),/token_analysis_invalid/);
+ }
+});
