@@ -2,6 +2,12 @@ export type AiMessageContext = Readonly<{evidenceRef:string;text:string;postedAt
 
 /** Conservative format filter, not a claim that every promotional author is a bot. */
 export function isLowValueTelegramPost(text:string):boolean {
+  // Explicit human framing outside a quoted card must not disappear merely
+  // because the quote contains scanner fields or begins with a bot heading.
+  if(/^(?:I (?:do not|don't|would not|wouldn't|am not) (?:buy|trust)|Do not (?:buy|trust)|Don't (?:buy|trust)|This (?:card|scanner|claim) is (?:false|misleading)|Yeah right[,!]).+$/im.test(text))return false;
+  if(/^\s*\$\S+\s+\d+(?:\.\d+)?x from called[^\n]*\n[\d.,]+[KM]?\s*➡️?\s*[\d.,]+[KM]? now\s*\n+Ads:[^\n]+\s*$/iu.test(text))return true;
+  if(/^(?:[\p{Extended_Pictographic}\uFE0F\s]*\$\w+\s*·\s*Solana|\d+(?:\.\d+)?x\.|\$\w+ (?:just )?\d+(?:\.\d+)?x['’]d\.)/iu.test(text)&&
+    /\n[\p{Extended_Pictographic}\uFE0F\s]*Chart & Trade:\s*https:\/\/gmgn\.ai\/[^\s]+\s*\n+Join the VIP Signal group\s*$/iu.test(text))return true;
   // Entire metric/affiliate card only; surrounding human criticism must survive.
   if(/^[^\n]{0,12}\$\w+\s*\|\s*MC:[^\n]+\r?\nVol:[^\n]+\|\s*Top 10:[^\n]+\|\s*Holders:[^\n]+\s*\n+[1-9A-HJ-NP-Za-km-z]{32,44}\s*\n+Safer & Quality -> Join Private\s*\n+[^\n]*Snip:[^\n]+\n+Check the CHART - Find ur entry, don't fomo\s*!+\s*\n+Ads:[^\n]+\s*$/iu.test(text))return true;
   if(/^[\p{Extended_Pictographic}\uFE0F\s]*(?:Gamble Found!|token (?:started migration|migration completed)|Alpha One (?:Alert|Ai Agent)|New Signal from Alpha|Achievement Unlocked)/iu.test(text))return true;
@@ -28,6 +34,8 @@ export function isLowValueTwitterPost(text:string):boolean {
   // discussion/denial breaks the shape, even when quoting one of these cards.
   const lines=text.replace(/\p{Extended_Pictographic}|\uFE0F/gu,'').split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
   const plain=lines.join('\n');
+  if(/^(?:@\w+\s+)*(?:https?:\/\/\S+\s*)+$/u.test(plain))return true;
+  if(/^\d+(?:\.\d+)?x up from my call on \$\w+\nCA(?:&gt;){2}\n[1-9A-HJ-NP-Za-km-z]{32,44}\n(?:#\w+\s*)+(?:https?:\/\/\S+\s*)*$/iu.test(plain))return true;
   if(/^(?:@\w+\s+)*(?:solana:)?[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(plain))return true;
   if(/^\$\w+ IS PRINTING!\nMy Alpha TG fam is catching massive moves!\s*Copy trading with us means staying in the game\.\nReady for the next alpha\?\nCA:\s*[1-9A-HJ-NP-Za-km-z]{32,44}\s+https?:\/\/\S+$/iu.test(plain)||
     /^Secured a massive move with \$\w+\nEntered at \$[\d.]+k, now sitting at \$[\d.]+k, marking an incredible [\d.]+x return!\nDon't miss the next one-catch these opportunities first in my private TG!\nCa:\s*[1-9A-HJ-NP-Za-km-z]{32,44}\n(?:#\w+\s*)+(?:https?:\/\/\S+\s*)*$/iu.test(plain))return true;
@@ -40,5 +48,9 @@ export function isLowValueTwitterPost(text:string):boolean {
 
 /** Short-link tracking differences do not create independent social evidence. */
 export function twitterEvidenceKey(text:string):string {
-  return text.normalize('NFKC').replace(/https?:\/\/t\.co\/[^\s]+/gi,'[short-link]').replace(/\s+/gu,' ').trim();
+  const normalized=text.normalize('NFKC');
+  // Without a literal token identity, different links can be different news or
+  // evidence. Do not collapse those just because their captions are identical.
+  const withIdentity=/(?:^|[^1-9A-HJ-NP-Za-km-z])[1-9A-HJ-NP-Za-km-z]{32,44}(?=$|[^1-9A-HJ-NP-Za-km-z])|\b0x[a-fA-F0-9]{40}\b/u.test(normalized);
+  return (withIdentity?normalized.replace(/https?:\/\/t\.co\/[^\s]+/gi,'[short-link]'):normalized).replace(/\s+/gu,' ').trim();
 }

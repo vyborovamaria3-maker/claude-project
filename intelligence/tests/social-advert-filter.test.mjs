@@ -49,3 +49,31 @@ test('private-group sales pitches and address-only replies are excluded, substan
  assert.equal(isLowValueTwitterPost('@example solana:'+mint),true);
  assert.equal(isLowValueTwitterPost('Make sure you buy the right token and not a scam one. solana:'+mint),false);
 });
+
+test('short ROI advertisements and complete VIP campaign cards are excluded but human framing survives',()=>{
+ const cards=[`$EXAMPLE 2.5x from called 💹\n10.0K ➡️ 25.0K now\n\nAds: Join our example channel - @example`, `5X. 🫡\n\n$EXAMPLE called at $10K, now $50K.\n\nStill holding my bag.\n\n📈 Chart & Trade: https://gmgn.ai/sol/token/example\n\nJoin the VIP Signal group`];
+ for(const card of cards){assert.equal(isLowValueTelegramPost(card),true);assert.equal(isLowValueTelegramPost('I do not trust this claim.\n'+card),false);assert.equal(isLowValueTelegramPost(card+'\nThis claim is misleading.'),false);}
+ const scanner='Gamble Found!\nMC: 10K\nVOL: 20K\nHOLDERS: 100';
+ assert.equal(isLowValueTelegramPost(scanner),true);
+ for(const text of [scanner+'\nDo not buy this; the wallet numbers are wrong.', 'I would not buy this.\n'+scanner,scanner+'\nYeah right, another "safe" moonshot.'])assert.equal(isLowValueTelegramPost(text),false);
+ assert.equal(isLowValueTelegramPost('MC: 10K, VOL: 20K, HOLDERS: 100. I compared the BOT figures.\nDo not trust these numbers.'),false);
+});
+test('short Twitter call cards and link-only replies are excluded, criticism and novel links retained',()=>{
+ const card=`2x up from my call on $EXAMPLE\nCA&gt;&gt;\n\n${mint}\n\n#solana #memecoin https://t.co/example`;
+ assert.equal(isLowValueTwitterPost(card),true);assert.equal(isLowValueTwitterPost(card+'\nI did not make any profit.'),false);
+ assert.equal(isLowValueTwitterPost('@example https://t.co/one'),true);
+ assert.equal(isLowValueTwitterPost('I would not buy this. https://t.co/one'),false);
+ assert.notEqual(twitterEvidenceKey('Read the evidence https://t.co/one'),twitterEvidenceKey('Read the evidence https://t.co/two'));
+ assert.notEqual(twitterEvidenceKey('@example https://t.co/one'),twitterEvidenceKey('@example https://t.co/two'));
+ assert.equal(twitterEvidenceKey('I would not buy '+mint+' https://t.co/one'),twitterEvidenceKey('I would not buy '+mint+' https://t.co/two'));
+});
+
+test('token analysis cache invalidates when policy, context or source evidence changes',async()=>{
+ const {tokenAnalysisFingerprint}=await import('../scripts/token-analysis.mjs');
+ const model={model_id:'sample',version:'1'},input={tokenId:'solana:'+mint,asOf:'2026-10-20T00:00:00Z',messages:[{text:'I would not buy '+mint,context:[]}]};
+ const key=tokenAnalysisFingerprint(model,input,'policy-one');
+ assert.equal(key,tokenAnalysisFingerprint(model,{...input,asOf:'2026-10-21T00:00:00Z'},'policy-one'));
+ assert.notEqual(key,tokenAnalysisFingerprint(model,input,'policy-two'));
+ assert.notEqual(key,tokenAnalysisFingerprint(model,{...input,messages:[{text:'I would buy '+mint,context:[]}]},'policy-one'));
+ assert.notEqual(key,tokenAnalysisFingerprint(model,{...input,messages:[{...input.messages[0],context:[{text:'Earlier context contradicts the feared outcome'}]}]},'policy-one'));
+});
