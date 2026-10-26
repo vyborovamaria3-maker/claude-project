@@ -72,3 +72,12 @@ test('explicit token POST joins independent source stores, grounds/persists, cac
  await Promise.all([1,2,3].map(()=>analyzeTokenOnDemand({destination,sources,gateway,modelId:'token-test',tokenId})));assert.equal(calls,2,'new revision invalidates cache; concurrent identical requests share one call');
  await assert.rejects(analyzeTokenOnDemand({destination,sources:{...sources,x:{query:async()=>{throw new Error('source failure');}}},gateway,modelId:'token-test',tokenId}));assert.equal(calls,2,'source failure must not be treated as empty data or call AI');
 });
+
+test('ambiguous model output still requires verifiable fact IDs and supplied social evidence',()=>{
+ const input={facts:{'x.sampledMessages':2,'tg.sampledMessages':0},messages:[{evidenceRef:'x:tweet:1'},{evidenceRef:'x:tweet:2'}],trades:[]};
+ const value={stance:'mixed',score:0,directionAmbiguous:true,confidence:0.8,factIds:[],evidenceRefs:['x:tweet:1','x:tweet:2']};
+ assert.throws(()=>validateTokenInterpretation(value,input),/facts_invalid/);
+ const valid={...value,factIds:['x.sampledMessages','tg.sampledMessages']};
+ assert.equal(validateTokenInterpretation(valid,input).score,0);
+ assert.throws(()=>validateTokenInterpretation({...valid,evidenceRefs:['x:tweet:999']},input),/evidence_invalid/);
+});

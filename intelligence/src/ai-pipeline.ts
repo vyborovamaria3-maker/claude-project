@@ -52,7 +52,7 @@ export async function readCollectorMessage(pool:AiPool,source:Source,ref:string,
   finally{client.release();}
 }
 
-/** Only earlier messages in the same source, already available at the analysis cutoff. */
+/** Prefer an explicit reply parent; otherwise use bounded earlier same-source context. */
 export async function readCollectorContext(pool:AiPool,source:Source,ref:string,observedAt:Date|string):Promise<AiMessageContext[]> {
   if(source!=="tg")return [];
   const match=/^tg:message:(-?[1-9][0-9]{0,24}):([1-9][0-9]{0,24})$/.exec(ref);
@@ -60,12 +60,19 @@ export async function readCollectorContext(pool:AiPool,source:Source,ref:string,
   const at=toUtcIso(observedAt),client=await pool.connect();
   try{
     await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    // JSON lookup also supports legacy schemas without reply metadata. A
+    // declared but unavailable parent must never be replaced by its neighbors.
     const rows=await client.query(`SELECT m.message_id,m.text,m.posted_at,GREATEST(m.collected_at,(to_jsonb(m)->>'edited_at')::timestamptz) AS collected_at FROM tg_messages m
       JOIN tg_sources s ON s.id=m.source_id
       JOIN tg_messages target ON target.source_id=m.source_id AND target.message_id=$2
       WHERE s.peer_id=$1 AND target.deleted_at IS NULL AND target.collected_at<=$3
+        AND GREATEST(target.collected_at,(to_jsonb(target)->>'edited_at')::timestamptz)<=$3
+        AND target.posted_at<=$3
         AND m.message_id<target.message_id AND m.posted_at<=target.posted_at
-        AND m.posted_at>=target.posted_at-INTERVAL '30 minutes' AND m.collected_at<=$3
+        AND ((to_jsonb(target)->>'reply_to_message_id') IS NULL
+          AND m.posted_at>=target.posted_at-INTERVAL '30 minutes'
+          OR m.message_id=(to_jsonb(target)->>'reply_to_message_id')::bigint)
+        AND m.collected_at<=$3
         AND GREATEST(m.collected_at,(to_jsonb(m)->>'edited_at')::timestamptz)<=$3
         AND m.deleted_at IS NULL AND length(m.text) BETWEEN 1 AND 1200
       ORDER BY m.posted_at DESC,m.message_id DESC LIMIT 12`,[match[1],match[2],at]);

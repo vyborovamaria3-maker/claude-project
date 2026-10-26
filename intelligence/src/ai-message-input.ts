@@ -4,7 +4,16 @@ export type AiMessageContext = Readonly<{evidenceRef:string;text:string;postedAt
 export function isLowValueTelegramPost(text:string):boolean {
   // Explicit human framing outside a quoted card must not disappear merely
   // because the quote contains scanner fields or begins with a bot heading.
-  if(/^(?:I (?:do not|don't|would not|wouldn't|am not) (?:buy|trust)|Do not (?:buy|trust)|Don't (?:buy|trust)|This (?:card|scanner|claim) is (?:false|misleading)|Yeah right[,!]).+$/im.test(text))return false;
+  if(/^(?:I (?:do not|don't|would not|wouldn't|will not|won't|am not) (?:buy|trust)|I lost money|Never again\b|Do not (?:buy|trust)|Don't (?:buy|trust)|This (?:card|scanner|claim) is (?:false|misleading)|Yeah right[,!]|Sure buddy[,!]|(?:Я )?(?:не покупаю|не верю|потерял|потеряла)|Не (?:покупайте|доверяйте)|Ага[,!]).+$/imu.test(text))return false;
+  const plain=text.replace(/\p{Extended_Pictographic}|\uFE0F|\u200E/gu,'').split(/\r?\n/).map(line=>line.trim()).join('\n').trim();
+  if(/^Call by\b/i.test(plain)&&/Market Cap:/i.test(plain)&&
+    /\nMake a call here[^\n]*@Solbix_bot(?:\s*\nTrade with Axiom[^\n]*)?\s*$/i.test(plain))return true;
+  if(/^\[New All-Time High\] Token Alert!\s*\n+[^\n]+\n+Token Contract: [1-9A-HJ-NP-Za-km-z]{32,44}\s*\n+Current MC: [^\n]+\nFirst Call MC: [^\n]+\n\+\d+(?:\.\d+)?% since first call\s*$/i.test(plain))return true;
+  if(/^X\d+(?:\.\d+)? profit reached for [^\n]+\n+[1-9A-HJ-NP-Za-km-z]{32,44}\s*\n+Entry MC: [^\n]+\nCurrent MC: [^\n]+\n+Enable Auto Trading\s*\nStatistic for the last 24 hours\s*$/i.test(plain))return true;
+  if(/^VIP Forward to display Winning - DO NOT BUY\s*\n+\$\w+\s*\n+Entry MC: [^\n]+\n+[1-9A-HJ-NP-Za-km-z]{32,44}\s*\n+Call From: [^\n]+ VIP\s*$/i.test(plain))return true;
+  if(/^\$\w+ on SOL \$[^\n]+\n+[1-9A-HJ-NP-Za-km-z]{32,44}\s*\n/.test(plain)&&
+    /Automated by Token Ping\s*\n[^\n]*\nRobinhood calls only: here\s*$/i.test(plain))return true;
+  if(/^[^\n]+\n+CA: [1-9A-HJ-NP-Za-km-z]{32,44}\s*\n+MC: [^\n]+\n+Full metrics · contact @\w+\s*\n[^\n]*(?:TROJAN|BLOOM)\s*$/i.test(plain))return true;
   if(/^\s*\$\S+\s+\d+(?:\.\d+)?x from called[^\n]*\n[\d.,]+[KM]?\s*➡️?\s*[\d.,]+[KM]? now\s*\n+Ads:[^\n]+\s*$/iu.test(text))return true;
   if(/^(?:[\p{Extended_Pictographic}\uFE0F\s]*\$\w+\s*·\s*Solana|\d+(?:\.\d+)?x\.|\$\w+ (?:just )?\d+(?:\.\d+)?x['’]d\.)/iu.test(text)&&
     /\n[\p{Extended_Pictographic}\uFE0F\s]*Chart & Trade:\s*https:\/\/gmgn\.ai\/[^\s]+\s*\n+Join the VIP Signal group\s*$/iu.test(text))return true;
@@ -34,6 +43,8 @@ export function isLowValueTwitterPost(text:string):boolean {
   // discussion/denial breaks the shape, even when quoting one of these cards.
   const lines=text.replace(/\p{Extended_Pictographic}|\uFE0F/gu,'').split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
   const plain=lines.join('\n');
+  if(/^(?:Take a closer look at [^\n]+\$\w+ token\. Explore its airdrop page, Solana memecoin culture and crypto with \$SOL\.|Discover more about [^\n]+\$\w+ token! Browse the airdrop page and explore Solana memecoin crypto with \$SOL\.)\nCA=[1-9A-HJ-NP-Za-km-z]{32,44}\nhttps?:\/\/\S+$/i.test(plain))return true;
+  if(/^\$\w+ is [^\n]+!\nAped at just \$[^\n]+on my Alpha TG,[^\n]+\nWant to catch plays early\?[^\n]+DM me to join the TG[^\n]+\nCA: [1-9A-HJ-NP-Za-km-z]{32,44}\n(?:#\w+\s*)+(?:https?:\/\/\S+\s*)*$/i.test(plain))return true;
   if(/^(?:@\w+\s+)*(?:https?:\/\/\S+\s*)+$/u.test(plain))return true;
   if(/^\d+(?:\.\d+)?x up from my call on \$\w+\nCA(?:&gt;){2}\n[1-9A-HJ-NP-Za-km-z]{32,44}\n(?:#\w+\s*)+(?:https?:\/\/\S+\s*)*$/iu.test(plain))return true;
   if(/^(?:@\w+\s+)*(?:solana:)?[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(plain))return true;
