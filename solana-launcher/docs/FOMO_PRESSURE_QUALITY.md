@@ -80,9 +80,9 @@ by the evaluator; explicitly partial coverage can be evaluated but must be repor
 
 From `solana-launcher`, export the signal history:
 
-`@sh
+~~~sh
 npm run fomo:snapshots:export -- --from 2026-10-27 --to 2026-12-31 --output ./data/fomo-snapshots.jsonl
-`
+~~~
 
 The export includes the snapshot/source hashes, score version, as-of timestamps, coverage flags, and source metadata, but leaves
 price outcomes null. **It is not directly backtest-ready** until a separate price-outcome joiner supplies a fixed-horizon return,
