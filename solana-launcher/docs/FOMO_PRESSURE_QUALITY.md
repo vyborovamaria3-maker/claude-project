@@ -104,7 +104,7 @@ npm run fomo:price-join -- \
 
 The joiner calls the local `/api/token-history` route using deep 5-minute candles by default. Use
 `--base-url http://127.0.0.1:3000` if the app is served elsewhere, or `--timeframe 1m` for finer candles.
-Only supported non-mock sources are accepted. It uses the first complete candle open at or after the signal (maximum
+Only Pump.fun and Bitquery sources are accepted; the current GeckoTerminal fallback is excluded because its response does not prove the pool's base-token orientation. Mock and unsupported sources are rejected. It uses the first complete candle open at or after the signal (maximum
 5-minute entry delay), then the nearest complete candle close to `signalAt + horizon` (maximum 5-minute offset).
 Every candle between entry and exit must be present at the chosen interval. Gaps are excluded; prices are never interpolated,
 and missing candles are never treated as zero returns.
