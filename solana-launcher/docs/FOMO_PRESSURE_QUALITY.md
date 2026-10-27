@@ -52,69 +52,55 @@ the proportion of all posts or accounts observed.
 ## FOMO Pressure / Quality historical evaluation
 
 The FOMO-specific evaluator is separate from the cross-platform `attention_score` backtest:
-`scripts/fomo-backtest.mjs` compares recorded `fomoPressure` and `fomoQuality` values
-against fixed-horizon price outcomes. It does not recalculate past FOMO values from
-today's social data.
+`scripts/fomo-backtest.mjs` compares recorded point-in-time `fomoPressure` and `fomoQuality` values
+against fixed-horizon price outcomes. It never recalculates past FOMO values from today's social data.
 
-### Input format
+### Snapshot capture
 
-Provide a UTF-8 JSONL file with one point-in-time record per token snapshot. Required fields:
+The Social Intelligence UI now triggers `POST /api/trade/fomo-snapshot` after both X and Telegram responses are available.
+The route fetches the canonical source responses server-side, computes scores server-side at a fixed `signalAt`,
+and stores snapshots in the local `data/trade.db` SQLite database. The browser submits only the mint, not scores.
+Capture attempts (including failures) are recorded separately. A unique 15-minute token/version bucket prevents duplicate
+captures and preserves the first snapshot in that bucket.
 
-- `canonicalTokenId`, `signalAt`, `maxInputObservedAt`, `scoreVersion`
-- `fomoPressure` and `fomoQuality` in 0–100, `qualityCoverage` in 0–1
-- `signalCoverage.x`, `signalCoverage.tg` equal to `complete`, and
-  `signalCoverage.knownAt` no later than `signalAt`
-- `outcomeAt`, `outcomeObservedAt`, `outcomeEvidenceRef`,
-  `forwardReturnPct`, `maxDrawdownPct`
-- `outcomeCoverage.price=complete` and `outcomeCoverage.knownAt` after the
-  outcome horizon and no later than the data cutoff
+The capture uses a fixed query configuration (24-hour lookback, bounded X sample of up to 40 posts, Telegram timeline
+limit 200) so scores remain comparable across UI filter changes. Bump `FOMO_SCORE_VERSION` in
+`lib/trade/fomo-snapshot.ts` when the formula or capture query configuration changes.
 
-`maxInputObservedAt` must be no later than `signalAt`. The outcome timestamp must
-be within five minutes of the configured fixed horizon. `maxDrawdownPct` is signed
-and non-positive (for example, `-18.5` means an 18.5% drawdown).
+For each snapshot the database stores the FOMO Pressure and Quality scores, Quality component coverage, score version,
+signal time, maximum input-observed time, per-source sample counts, truncation/cache flags, source response timestamps,
+source-response SHA-256 hashes, a combined input hash, a snapshot hash, and bounded metadata. Raw tweet/message bodies
+are not persisted by this capture feature. Future-dated social events are rejected.
 
-Example record shape (illustrative only, not real project data):
+**X and Telegram coverage is always labelled partial** because the current APIs return bounded/filtered samples rather than
+proof of exhaustive platform history. "Not truncated" does not mean "complete coverage." Unknown source coverage is rejected
+by the evaluator; explicitly partial coverage can be evaluated but must be reported as sample-conditional, not population-wide.
 
-```json
-{
-  "canonicalTokenId": "example-token-id",
-  "signalAt": "2025-01-01T00:00:00.000Z",
-  "maxInputObservedAt": "2025-01-01T00:00:00.000Z",
-  "scoreVersion": "fomo-pressure-quality-v1",
-  "fomoPressure": 82,
-  "fomoQuality": 61,
-  "qualityCoverage": 1,
-  "signalCoverage": {
-    "x": "complete",
-    "tg": "complete",
-    "knownAt": "2025-01-01T00:00:00.000Z"
-  },
-  "outcomeAt": "2025-01-02T00:00:00.000Z",
-  "outcomeObservedAt": "2025-01-02T00:01:00.000Z",
-  "outcomeEvidenceRef": "price-candle-reference",
-  "forwardReturnPct": 12.4,
-  "maxDrawdownPct": -8.1,
-  "outcomeCoverage": {
-    "price": "complete",
-    "knownAt": "2025-01-02T00:01:00.000Z"
-  }
-}
-```
+### Exporting captured snapshots
 
-Run after collecting real point-in-time score snapshots and matured outcomes:
+From `solana-launcher`, export the signal history:
 
-```sh
-npm run fomo:backtest -- --input ./data/fomo-snapshots.jsonl --from 2025-01-01 --to 2025-06-30 --cutoff-at 2025-07-02T00:00:00Z --horizon-hours 24 --pressure-threshold 70 --quality-threshold 60 --min-quality-coverage 0.75 --target-return-pct 10 --adverse-drawdown-pct -20 --output ./data/fomo-backtest-report.json
-```
+`@sh
+npm run fomo:snapshots:export -- --from 2026-10-27 --to 2026-12-31 --output ./data/fomo-snapshots.jsonl
+`
 
-The report contains sample/coverage counts, mean and median forward returns, positive-return
-and target-hit rates, adverse-drawdown rates, and Spearman rank correlations for both scores.
-It also compares high-pressure observations with high- and low-quality subgroups. The
-runner selects the latest snapshot per token/UTC day, rejects mixed score versions, requires
-complete source and price coverage, and fails closed on look-ahead or incomplete outcomes.
-It does not emit row-level token data, p-values, or independent-sample confidence intervals.
+The export includes the snapshot/source hashes, score version, as-of timestamps, coverage flags, and source metadata, but leaves
+price outcomes null. **It is not directly backtest-ready** until a separate price-outcome joiner supplies a fixed-horizon return,
+drawdown, evidence reference, and verified outcome coverage. The current token-trade cache does not by itself prove continuous
+price coverage, so missing candles must not be treated as zero returns or as a complete outcome.
 
-**Current data limitation:** the UI's FOMO scores are calculated from live social inputs.
-This PR adds the evaluator and tests, not a historical score-capture pipeline. A real
-backtest cannot run until point-in-time FOMO scores and their matching matured price
-outcomes have actually been stored/exported. Never pair current scores with past prices.
+### Backtest contract
+
+The JSONL evaluator requires `canonicalTokenId`, `signalAt`, `maxInputObservedAt`,
+`scoreVersion`, both scores, and source-coverage status/known-at time, plus a matured fixed-horizon price outcome.
+`maxInputObservedAt` must be no later than `signalAt`. Outcome timestamp must be within five minutes of the
+configured horizon; the outcome must have been observed and its price coverage known by the configured cutoff. Unknown source
+coverage and incomplete outcome labels fail closed.
+
+Reports include mean/median forward returns, positive-return and target-hit rates, adverse-drawdown rates, cohort comparisons,
+and Spearman rank correlations. Repeated observations for the same token can be dependent; no naive p-values or independent-sample
+confidence intervals are reported. Partial source coverage can bias the captured sample and must remain visible in interpretation.
+
+**Data limitation:** snapshots begin accumulating only when this branch/version is running and tokens are analyzed in the UI. This
+does not reconstruct historical FOMO scores. Do not pair current scores with past prices, and do not claim predictive performance
+until enough point-in-time snapshots have matured and have matching price outcomes with defensible coverage.
