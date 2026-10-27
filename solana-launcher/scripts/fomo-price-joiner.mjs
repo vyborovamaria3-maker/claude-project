@@ -326,12 +326,17 @@ export function calculateOutcomeLabel(raw, history, options) {
   };
 }
 
-async function fetchPriceHistory(baseUrl, mint, timeframe, intervalSeconds) {
+export function buildPriceHistoryUrl(baseUrl, mint, timeframe) {
   const url = new URL("/api/token-history", baseUrl);
   url.searchParams.set("mint", mint);
   url.searchParams.set("tf", timeframe);
   url.searchParams.set("deep", "1");
   url.searchParams.set("source", "bitquery");
+  return url;
+}
+
+async function fetchPriceHistory(baseUrl, mint, timeframe, intervalSeconds) {
+  const url = buildPriceHistoryUrl(baseUrl, mint, timeframe);
 
   const response = await fetch(url, {
     headers: { Accept: "application/json" },
