@@ -31,6 +31,7 @@ async function fixture(t,{legacy=false}={}){
 test('TG reply context retains the exact same-source parent older than the neighbor window',{skip:!url},async t=>{
  const source=await fixture(t),context=await readCollectorContext(source,'tg',ref,at);
  assert.deepEqual(context.map(row=>row.evidenceRef),['tg:message:-100123:1']);
+ assert.equal(context[0].relation,'reply_parent');
  assert.equal(context[0].text,'Actual bearish parent, two hours earlier');
  assert.ok(context[0].postedAt<new Date(Date.parse(targetAt)-30*60*1000).toISOString());
 });
@@ -64,5 +65,6 @@ test('legacy TG schema without reply metadata retains bounded chronological neig
  const source=await fixture(t,{legacy:true});
  const context=await readCollectorContext(source,'tg',ref,at);
  assert.deepEqual(context.map(row=>row.evidenceRef),['tg:message:-100123:18','tg:message:-100123:19']);
+ assert.ok(context.every(row=>row.relation==='earlier_neighbour'));
  assert.deepEqual(await readCollectorContext(source,'x','x:tweet:20',at),[]);
 });

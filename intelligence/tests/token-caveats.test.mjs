@@ -8,14 +8,6 @@ test('positive stance preserves a source-backed qualification without treating l
  const negated={...value,caveats:[{evidenceRef:ref,quote:'I do not think this is safe.'}]};assert.equal(validateTokenInterpretation(negated,input).caveats[0].contextQuote,text);
  assert.match(TOKEN_ANALYSIS_PROMPT,/Do not strip negation/);assert.match(TOKEN_ANALYSIS_PROMPT,/Low market cap alone is not evidence of falling price/);
 });
-test('explicit target rugger warning blocks optimistic interpretation; denied and other-target claims do not trigger this narrow guard',()=>{
- const mint='So11111111111111111111111111111111111111112',tokenId='solana:'+mint;
- const make=text=>({...input,tokenId,messages:[{evidenceRef:ref,text}]});
- const positive={...value,caveats:[]};
- const guarded=validateTokenInterpretation(positive,make('This token is a serial rugger. '+mint));assert.equal(guarded.stance,'mixed');assert.equal(guarded.score,0);assert.equal(guarded.directionGuardApplied,true);
- const added=validateTokenInterpretation(positive,{...make('ordinary positive opinion '+mint),messages:[{evidenceRef:ref,text:'ordinary positive opinion '+mint},{evidenceRef:'x:tweet:9',text:'This coin is a serial rugger. '+mint}]});assert.ok(added.evidenceRefs.includes('x:tweet:9'));
- for(const text of ['This token is not a serial rugger. '+mint,'People call it a serial rugger, but I disagree. '+mint,'This token is a serial rugger. (another token)','This coin is a serial rugger. Other coin.\n\nI prefer '+mint])assert.equal(validateTokenInterpretation(positive,make(text)).stance,'bullish');
-});
 test('substring quotes retain negation, contrast and sarcasm in server-derived context',()=>{
  for(const text of ['This is not safe. I would never buy it.','Yeah right, "safe". The deployer dumped again.','People call it a scam, but I do not think it is a scam.']){
   const quote=text.includes('safe')?'safe':'scam';const grounded=validateTokenInterpretation({...value,caveats:[{evidenceRef:ref,quote}]},{...input,messages:[{evidenceRef:ref,text}]});

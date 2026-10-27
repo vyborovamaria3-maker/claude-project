@@ -47,7 +47,8 @@ export function projectTokenAnalysis(report,tokenId){
    contextEvidence:row.contextEvidence.map(context=>{
     object(context);const evidenceRef=ref(context.evidenceRef,row.source);
     if(row.source!=='tg'||!evidenceRef.startsWith(row.evidenceRef.split(':').slice(0,3).join(':')+':'))invalid();
-    return {evidenceRef,textHash:hash(context.textHash)};
+    if(context.relation!==undefined&&!['reply_parent','earlier_neighbour','unverified'].includes(context.relation))invalid();
+    return {evidenceRef,textHash:hash(context.textHash),...(context.relation!==undefined?{relation:context.relation}:{})};
    })};
  });
  let interpretation=null;
@@ -65,6 +66,19 @@ export function projectTokenAnalysis(report,tokenId){
   });
   interpretation={stance:value.stance,score:value.score,confidence:value.confidence,
    directionAmbiguous:value.directionAmbiguous,factIds:[...value.factIds],evidenceRefs};
+  if(value.messageViews!==undefined||value.aggregationMethod!==undefined){
+   if(value.aggregationMethod!=='message_views'||!Array.isArray(value.messageViews)||value.messageViews.length!==evidence.length||value.messageViews.length>8)invalid();
+   const seen=new Set();
+   interpretation.messageViews=value.messageViews.map(view=>{
+    object(view);const target=evidence.find(row=>row.evidenceRef===view.evidenceRef);
+    if(!target||seen.has(view.evidenceRef)||!evidenceRefs.includes(view.evidenceRef)||!['token','other','unclear'].includes(view.target)||!['bullish','bearish','neutral','unknown'].includes(view.stance)||!['literal','ironic','negated','conditional','unclear'].includes(view.reading)||!Array.isArray(view.contextRefs)||view.contextRefs.length>2||new Set(view.contextRefs).size!==view.contextRefs.length||view.contextRefs.some(id=>!target.contextEvidence.some(c=>c.evidenceRef===id))||((view.target==='unclear'||view.reading==='unclear')&&view.stance!=='unknown'))invalid();
+    seen.add(view.evidenceRef);return {evidenceRef:view.evidenceRef,target:view.target,stance:view.stance,reading:view.reading,contextRefs:[...view.contextRefs]};
+   });
+   interpretation.aggregationMethod='message_views';
+   const relevant=interpretation.messageViews.filter(v=>v.target!=='other'),directions=new Set(relevant.map(v=>v.stance).filter(s=>s==='bullish'||s==='bearish'));
+   const expected=!relevant.length?'unknown':relevant.some(v=>v.target==='unclear'||v.stance==='unknown'||v.reading==='unclear')||directions.size>1?'mixed':directions.size?[...directions][0]:'neutral';
+   if(value.stance!==expected||value.directionAmbiguous!==['mixed','unknown'].includes(expected)||(['mixed','neutral','unknown'].includes(expected)&&value.score!==0))invalid();
+  }
   if(value.directionGuardApplied!==undefined){
    if(value.directionGuardApplied!==true||value.stance!=='mixed'||value.score!==0||value.directionAmbiguous!==true)invalid();
    interpretation.directionGuardApplied=true;
@@ -120,10 +134,12 @@ export async function readTokenAnalysisRequest(request){
  return {mint:assertMintShape(body.mint.trim())};
 }
 export function tokenSummary(report){
- const stance={bullish:'В выбранных сообщениях выражено позитивное отношение к токену.',bearish:'В выбранных сообщениях выражено негативное отношение к токену.',neutral:'В выбранных сообщениях нет выраженного направления.',mixed:'Направление сообщений неоднозначно.',unknown:'Недостаточно сообщений для оценки тона.'}[report.interpretation?.stance]??'Недостаточно сообщений для оценки тона.';
+ const stance={bullish:'В выбранных сообщениях выражено позитивное отношение к токену.',bearish:'В выбранных сообщениях выражено негативное отношение к токену.',neutral:'В выбранных сообщениях нет выраженного направления.',mixed:'Направление сообщений неоднозначно.',unknown:'Направление сообщений по этому токену не установлено.'}[report.interpretation?.stance]??'Недостаточно сообщений для оценки тона.';
  const caveatLines=[...new Set((report.interpretation?.caveats??[]).map(row=>`«${row.contextQuote??row.quote}» — ${row.evidenceRef}${row.contextComplete===true?'':row.contextQuote?' · показан фрагмент сообщения; полный контекст не восстановлен':' · контекст цитаты не сохранён в старом ответе'}`))];
+ const viewTone={bullish:'позитивный',bearish:'негативный',neutral:'без направления',unknown:'направление не установлено'},viewReading={literal:'буквально',ironic:'ирония / сарказм',negated:'с учётом отрицания',conditional:'условный сценарий',unclear:'смысл неясен'},viewTarget={token:'о запрошенном токене',other:'о другом объекте',unclear:'цель неясна'};
  return [stance,`Выборка: Telegram — ${report.facts['tg.sampledMessages']??0}, Twitter — ${report.facts['x.sampledMessages']??0}; сохранённых записей сделок — ${report.facts['chain.sampledStoredTradeRows']??0}.`,
   ...(report.interpretation?.directionGuardApplied?['Позитивная оценка модели снята консервативной проверкой: в исходном тексте есть прямое предупреждение о serial rugger. Это не подтверждение обвинения.']:[]),
+  ...(report.interpretation?.messageViews?['Разбор каждого сообщения ИИ (интерпретация):',...report.interpretation.messageViews.map(view=>`${view.evidenceRef}: ${viewTarget[view.target]}; ${viewReading[view.reading]}; ${viewTone[view.stance]}${view.contextRefs.length?'; учтён контекст '+view.contextRefs.join(', '):''}.`),'Общий итог учитывает противоречия между этими оценками, а не число позитивных постов.']:[]),
   ...(caveatLines.length?['Оговорки авторов в контексте (слова авторов, не проверенные факты):',...caveatLines]:['Отдельные оговорки не выделены; это не подтверждает отсутствие рисков.']),
   ...((report.facts['tg.filteredTemplates']??0)+(report.facts['x.filteredTemplates']??0)+(report.facts['x.duplicateMessages']??0)>0?
    [`Исключено: рекламных и шаблонных сообщений Telegram — ${report.facts['tg.filteredTemplates']??0}, Twitter — ${report.facts['x.filteredTemplates']??0}; повторов Twitter — ${report.facts['x.duplicateMessages']??0}.`]:[]),

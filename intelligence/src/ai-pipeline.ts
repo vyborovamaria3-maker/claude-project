@@ -62,7 +62,8 @@ export async function readCollectorContext(pool:AiPool,source:Source,ref:string,
     await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
     // JSON lookup also supports legacy schemas without reply metadata. A
     // declared but unavailable parent must never be replaced by its neighbors.
-    const rows=await client.query(`SELECT m.message_id,m.text,m.posted_at,GREATEST(m.collected_at,(to_jsonb(m)->>'edited_at')::timestamptz) AS collected_at FROM tg_messages m
+    const rows=await client.query(`SELECT m.message_id,m.text,m.posted_at,GREATEST(m.collected_at,(to_jsonb(m)->>'edited_at')::timestamptz) AS collected_at,
+      CASE WHEN (to_jsonb(target)->>'reply_to_message_id') IS NOT NULL THEN 'reply_parent' ELSE 'earlier_neighbour' END AS relation FROM tg_messages m
       JOIN tg_sources s ON s.id=m.source_id
       JOIN tg_messages target ON target.source_id=m.source_id AND target.message_id=$2
       WHERE s.peer_id=$1 AND target.deleted_at IS NULL AND target.collected_at<=$3
@@ -79,7 +80,7 @@ export async function readCollectorContext(pool:AiPool,source:Source,ref:string,
     await client.query("COMMIT");
     return rows.rows.filter(row=>typeof row.text==="string"&&row.text.trim()&&!isLowValueTelegramPost(row.text))
       .slice(0,2).reverse().map(row=>({evidenceRef:`tg:message:${match[1]}:${row.message_id}`,
-        text:row.text as string,postedAt:sourceTime(row.posted_at),observedAt:sourceTime(row.collected_at)}));
+        text:row.text as string,postedAt:sourceTime(row.posted_at),observedAt:sourceTime(row.collected_at),relation:row.relation as 'reply_parent'|'earlier_neighbour'}));
   }catch(error){try{await client.query("ROLLBACK");}catch{}throw error;}
   finally{client.release();}
 }

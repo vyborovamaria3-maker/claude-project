@@ -23,6 +23,13 @@ test('on-demand UI uses a fixed authenticated POST, drops arbitrary upstream fie
  report.summary[0].value='forged';await assert.rejects(requestTokenAnalysis(mint,{env,fetchImpl}),/token_analysis_invalid/);
  await assert.rejects(requestTokenAnalysis('../bad',{env,fetchImpl}));assert.equal(calls,2);
 });
+test('per-message model interpretation is displayed, bounded, and cannot hide an inconsistent global stance',async()=>{
+ const report=fixture();report.interpretation.messageViews=[{evidenceRef:'x:tweet:123',target:'token',stance:'bullish',reading:'negated',contextRefs:[],privateField:'must-not-return'}];report.interpretation.aggregationMethod='message_views';
+ const fetchImpl=async()=>new Response(JSON.stringify(report));const result=await requestTokenAnalysis(mint,{env,fetchImpl});assert.match(result.result.summary,/с учётом отрицания/);assert.equal(JSON.stringify(result).includes('must-not-return'),false);
+ for(const mutate of [r=>r.interpretation.messageViews=[],r=>r.interpretation.messageViews[0].contextRefs=['x:tweet:999'],r=>r.interpretation.messageViews[0].stance='bearish',r=>r.interpretation.messageViews[0].reading='secret']){
+  const bad=structuredClone(report);mutate(bad);await assert.rejects(requestTokenAnalysis(mint,{env,fetchImpl:async()=>new Response(JSON.stringify(bad))}),/token_analysis_invalid/);
+ }
+});
 test('conservative warning adjustment is visible and inconsistent adjustment metadata is rejected',async()=>{
  const report=fixture();Object.assign(report.interpretation,{stance:'mixed',score:0,directionAmbiguous:true,directionGuardApplied:true});const fetchImpl=async()=>new Response(JSON.stringify(report));
  assert.match((await requestTokenAnalysis(mint,{env,fetchImpl})).result.summary,/оценка модели снята/);
