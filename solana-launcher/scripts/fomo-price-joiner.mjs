@@ -331,6 +331,7 @@ async function fetchPriceHistory(baseUrl, mint, timeframe, intervalSeconds) {
   url.searchParams.set("mint", mint);
   url.searchParams.set("tf", timeframe);
   url.searchParams.set("deep", "1");
+  url.searchParams.set("source", "bitquery");
 
   const response = await fetch(url, {
     headers: { Accept: "application/json" },
