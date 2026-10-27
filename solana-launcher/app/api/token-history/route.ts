@@ -561,11 +561,29 @@ export async function GET(req: NextRequest) {
   const timeframe = req.nextUrl.searchParams.get("tf") ?? "1m";
   const forceMock = req.nextUrl.searchParams.get("mock") === "true";
   const deep = req.nextUrl.searchParams.get("deep") === "1";
+  const requestedSource = req.nextUrl.searchParams.get("source");
   
+  if (requestedSource && requestedSource !== "bitquery") {
+    return NextResponse.json({ error: "unsupported_price_source" }, { status: 400 });
+  }
+  if (requestedSource === "bitquery" && forceMock) {
+    return NextResponse.json({ error: "mock_price_source_not_allowed" }, { status: 400 });
+  }
   if (!mint) {
     return NextResponse.json({ error: "mint required" }, { status: 400 });
   }
   
+  // Explicit provider mode for auditable price labels: never silently fall back to another currency/source.
+  if (requestedSource === "bitquery") {
+    const bitqueryCandles = await fetchFromBitquery(mint, timeframe);
+    if (bitqueryCandles.length > 0) {
+      return NextResponse.json({ candles: bitqueryCandles, source: "bitquery" }, {
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
+    return NextResponse.json({ candles: [], source: "bitquery", error: "source_unavailable" }, { status: 503 });
+  }
+
   // Only use mock if explicitly requested via ?mock=true
   if (forceMock) {
     const mockCount = Math.floor((TF_TIME_WINDOWS[timeframe] || 86400000) / ((TF_MAP[timeframe]?.agg || 1) * 60000));
