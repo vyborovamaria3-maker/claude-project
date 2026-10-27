@@ -240,6 +240,7 @@ export function calculateOutcomeLabel(raw, history, options) {
   if (!ACCEPTED_SOURCES.has(history.source)) {
     return { status: "excluded", reason: "unsupported_price_source" };
   }
+  if (history.priceUnit !== "USD") return { status: "excluded", reason: "unverified_price_unit" };
   if (!history.evidenceRef) return { status: "excluded", reason: "price_evidence_missing" };
   if (history.fetchedAtMs > cutoffAtMs) {
     return { status: "excluded", reason: "price_outcome_not_known_by_cutoff" };
@@ -353,6 +354,7 @@ async function fetchPriceHistory(baseUrl, mint, timeframe, intervalSeconds) {
   }
 
   const source = typeof payload.source === "string" ? payload.source : "unknown";
+  const priceUnit = typeof payload.priceUnit === "string" ? payload.priceUnit : "unknown";
   const candles = normalizeCandles(payload.candles, intervalSeconds, fetchedAtMs);
   const evidenceBase = {
     recordType: "price_evidence",
@@ -360,6 +362,7 @@ async function fetchPriceHistory(baseUrl, mint, timeframe, intervalSeconds) {
     canonicalTokenId: "solana:" + mint,
     mint,
     source,
+    priceUnit,
     poolAddress: typeof payload.poolAddress === "string" ? payload.poolAddress : null,
     mock: payload.mock === true || source === "mock",
     requestUrl: url.toString(),
