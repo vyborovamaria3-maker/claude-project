@@ -289,11 +289,13 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
       {requestOnly && <TokenRequestPanel ai={ai} loading={loading} error={error} />}
       {!requestOnly && (x || tg) && <>
         <MainFindings derived={derived} x={x} tg={tg} chain={chain} market={market} snapshot={snapshot} />
-        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 xl:grid-cols-9">
+        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 xl:grid-cols-11">
           <Kpi label="Social score" value={score(derived.socialScore)} icon={<Gauge />} />
           <Kpi label="X score" value={score(derived.xScore)} icon={<Twitter />} />
           <Kpi label="TG score" value={score(derived.tgScore)} icon={<Send />} />
           <Kpi label="Organic" value={score(derived.organic)} icon={<Sparkles />} />
+          <Kpi label="FOMO pressure" value={score(derived.fomoPressure)} icon={<Zap />} />
+          <Kpi label="FOMO quality" value={score(derived.fomoQuality)} icon={<Sparkles />} />
           <Kpi label="Manipulation" value={score(derived.manipulation)} icon={<ShieldAlert />} />
           <Kpi label="Social risk" value={score(derived.socialRisk)} icon={<ShieldAlert />} />
           <Kpi label="Early" value={score(derived.early)} icon={<Zap />} />
