@@ -51,8 +51,8 @@ the proportion of all posts or accounts observed.
 
 ## FOMO Pressure / Quality historical evaluation
 
-The FOMO-specific evaluator is separate from the cross-platform \`attention_score\` backtest:
-\`scripts/fomo-backtest.mjs\` compares recorded \`fomoPressure\` and \`fomoQuality\` values
+The FOMO-specific evaluator is separate from the cross-platform `attention_score` backtest:
+`scripts/fomo-backtest.mjs` compares recorded `fomoPressure` and `fomoQuality` values
 against fixed-horizon price outcomes. It does not recalculate past FOMO values from
 today's social data.
 
@@ -60,22 +60,22 @@ today's social data.
 
 Provide a UTF-8 JSONL file with one point-in-time record per token snapshot. Required fields:
 
-- \`canonicalTokenId\`, \`signalAt\`, \`maxInputObservedAt\`, \`scoreVersion\`
-- \`fomoPressure\` and \`fomoQuality\` in 0–100, \`qualityCoverage\` in 0–1
-- \`signalCoverage.x\`, \`signalCoverage.tg\` equal to \`complete\`, and
-  \`signalCoverage.knownAt\` no later than \`signalAt\`
-- \`outcomeAt\`, \`outcomeObservedAt\`, \`outcomeEvidenceRef\`,
-  \`forwardReturnPct\`, \`maxDrawdownPct\`
-- \`outcomeCoverage.price=complete\` and \`outcomeCoverage.knownAt\` after the
+- `canonicalTokenId`, `signalAt`, `maxInputObservedAt`, `scoreVersion`
+- `fomoPressure` and `fomoQuality` in 0–100, `qualityCoverage` in 0–1
+- `signalCoverage.x`, `signalCoverage.tg` equal to `complete`, and
+  `signalCoverage.knownAt` no later than `signalAt`
+- `outcomeAt`, `outcomeObservedAt`, `outcomeEvidenceRef`,
+  `forwardReturnPct`, `maxDrawdownPct`
+- `outcomeCoverage.price=complete` and `outcomeCoverage.knownAt` after the
   outcome horizon and no later than the data cutoff
 
-\`maxInputObservedAt\` must be no later than \`signalAt\`. The outcome timestamp must
-be within five minutes of the configured fixed horizon. \`maxDrawdownPct\` is signed
-and non-positive (for example, \`-18.5\` means an 18.5% drawdown).
+`maxInputObservedAt` must be no later than `signalAt`. The outcome timestamp must
+be within five minutes of the configured fixed horizon. `maxDrawdownPct` is signed
+and non-positive (for example, `-18.5` means an 18.5% drawdown).
 
 Example record shape (illustrative only, not real project data):
 
-\`\`\`json
+```json
 {
   "canonicalTokenId": "example-token-id",
   "signalAt": "2025-01-01T00:00:00.000Z",
@@ -99,13 +99,13 @@ Example record shape (illustrative only, not real project data):
     "knownAt": "2025-01-02T00:01:00.000Z"
   }
 }
-\`\`\`
+```
 
 Run after collecting real point-in-time score snapshots and matured outcomes:
 
-\`\`\`sh
+```sh
 npm run fomo:backtest -- --input ./data/fomo-snapshots.jsonl --from 2025-01-01 --to 2025-06-30 --cutoff-at 2025-07-02T00:00:00Z --horizon-hours 24 --pressure-threshold 70 --quality-threshold 60 --min-quality-coverage 0.75 --target-return-pct 10 --adverse-drawdown-pct -20 --output ./data/fomo-backtest-report.json
-\`\`\`
+```
 
 The report contains sample/coverage counts, mean and median forward returns, positive-return
 and target-hit rates, adverse-drawdown rates, and Spearman rank correlations for both scores.
