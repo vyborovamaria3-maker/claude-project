@@ -200,6 +200,27 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
       });
       setSnapshot(nextSnapshot);
 
+      // Capture is server-computed from canonical X/Telegram responses; the browser never submits scores.
+      if (nextX && nextTg) {
+        void fetch("/api/trade/fomo-snapshot", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ mint: contract }),
+        })
+          .then(async (response) => {
+            const payload = await response.json().catch(() => ({})) as { error?: unknown; status?: unknown };
+            if (!response.ok) {
+              throw new Error(typeof payload.error === "string" ? payload.error : "capture_unavailable");
+            }
+            return payload;
+          })
+          .catch((captureError: unknown) => {
+            if (abortRef.current !== controller) return;
+            const message = captureError instanceof Error ? captureError.message : "capture_unavailable";
+            setWarnings((value) => upsertWarning(value, "FOMO capture: " + message));
+          });
+      }
+
       if (nextSnapshot.evidence.length) {
         try {
           const qwen = await fetchJson<AiEnvelope>("/api/trade/social-ai", controller.signal, {
