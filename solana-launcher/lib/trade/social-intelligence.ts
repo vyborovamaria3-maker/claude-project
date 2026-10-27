@@ -249,6 +249,9 @@ export type DerivedSocial = {
   early: number;
   alpha: number;
   socialScore: number;
+  fomoPressure: number;
+  fomoQuality: number;
+  fomoQualityCoverage: number;
   price: PriceSocial;
 };
 
@@ -657,8 +660,9 @@ export function deriveSocialMetrics(
   ai: AiEnvelope | null,
   channels: Channel[],
   options: SocialOptions,
+  asOf = Date.now(),
 ): DerivedSocial {
-  const now = Date.now();
+  const now = asOf;
   const tweets = x?.topTweets || [];
   const telegramItems = (tg?.timeline || []).filter(
     (item) => !item.platform || item.platform.toLowerCase() === "telegram",
@@ -906,10 +910,21 @@ export function deriveSocialMetrics(
     { value: positiveSentiment, weight: 0.25 },
     { value: tgAvailable ? callDensity : null, weight: 0.20 },
   ]).score;
+  // Preserve the legacy FOMO formula exactly; Pressure is an explicit alias.
+  const fomoPressure = fomo;
   const manipulation = weightedScore([
     { value: paid, weight: 0.65 },
     { value: coordinationScore, weight: 0.35 },
   ]).score;
+  const hasSocialEvidence = (xAvailable && xMentions > 0)
+    || (tgAvailable && tgMentions > 0);
+  const fomoQuality = weightedScore([
+    { value: hasSocialEvidence ? organic : null, weight: 0.45 },
+    { value: hasSocialEvidence ? 100 - manipulation : null, weight: 0.25 },
+    { value: both ? cross : null, weight: 0.15 },
+    { value: xAvailable && xMentions > 0 ? authorRatio : null, weight: 0.075 },
+    { value: tgAvailable && tgMentions > 0 ? tgDiffusion : null, weight: 0.075 },
+  ], 0.25);
   const socialRisk = weightedScore([
     { value: manipulation, weight: 0.45 },
     { value: xAvailable ? botRisk : null, weight: 0.25 },
@@ -1151,7 +1166,10 @@ export function deriveSocialMetrics(
       title: "Growth / Quality / Manipulation",
       rows: [
         metric("Hype score", score(hype), "heuristic from sampled acceleration, sample/exact density and X engagement"),
-        metric("FOMO score", score(fomo), "heuristic; not outcome probability"),
+        metric("FOMO score", score(fomo), "legacy heuristic; unchanged formula; not outcome probability"),
+        metric("FOMO Pressure", score(fomoPressure), "same value as legacy FOMO score; measures attention intensity, not price probability"),
+        metric("FOMO Quality", score(fomoQuality.score), "heuristic of organicity, manipulation risk, cross-platform support and source diversity; not a price probability"),
+        metric("FOMO Quality feature coverage", pct(fomoQuality.coverage * 100), "available weight of configured quality components; not population coverage"),
         metric("Organic score", score(organic), "deterministic heuristic; independent from Qwen"),
         metric("Paid promotion risk", score(paid), "deterministic proxy; no payment proof"),
         metric("Manipulation score", score(manipulation), "deterministic heuristic; independent from Qwen"),
@@ -1242,6 +1260,9 @@ export function deriveSocialMetrics(
     groups,
     xScore,
     tgScore,
+    fomoPressure,
+    fomoQuality: fomoQuality.score,
+    fomoQualityCoverage: fomoQuality.coverage,
     organic,
     manipulation,
     socialRisk,

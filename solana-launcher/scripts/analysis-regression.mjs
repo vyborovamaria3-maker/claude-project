@@ -36,6 +36,19 @@ assert(
   "the full parameter table must remain visible in Social Intelligence",
 );
 assert(
+  metricsSource.includes("const fomoPressure = fomo;"),
+  "FOMO Pressure must preserve the legacy FOMO formula as an explicit alias",
+);
+assert(
+  metricsSource.includes('metric("FOMO Quality"'),
+  "FOMO Quality must be present in the derived parameter table",
+);
+assert(
+  panelSource.includes('Kpi label="FOMO pressure"')
+    && panelSource.includes('Kpi label="FOMO quality"'),
+  "both FOMO Pressure and FOMO Quality must be visible in the Social Intelligence KPI strip",
+);
+assert(
   panelSource.includes('from "@/lib/trade/intelligence-agent"'),
   "Social Intelligence must build snapshots through the intelligence-agent alias",
 );

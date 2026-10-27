@@ -119,6 +119,9 @@
       "labels": [
         "Hype score",
         "FOMO score",
+        "FOMO Pressure",
+        "FOMO Quality",
+        "FOMO Quality feature coverage",
         "Organic score",
         "Paid promotion risk",
         "Manipulation score",
