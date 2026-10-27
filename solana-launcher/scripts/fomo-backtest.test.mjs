@@ -68,7 +68,7 @@ function options(overrides = {}) {
 
 test("compares high-pressure tokens with high- and low-quality cohorts", () => {
   const dataset = [
-    row({ token: "a", pressure: 90, quality: 90, forwardReturn: 20, drawdown: -10 }),
+    row({ token: "a", pressure: 90, quality: 90, forwardReturn: 20, drawdown: -10, xCoverage: "partial", tgCoverage: "partial" }),
     row({ token: "b", pressure: 85, quality: 30, forwardReturn: -30, drawdown: -40 }),
     row({ token: "c", pressure: 40, quality: 80, forwardReturn: 10, drawdown: -5 }),
     row({ token: "d", pressure: 45, quality: 40, qualityCoverage: 0.4, forwardReturn: -5, drawdown: -12 }),
@@ -76,6 +76,7 @@ test("compares high-pressure tokens with high- and low-quality cohorts", () => {
   const report = evaluateFomoDataset(dataset, options(), "test-hash");
 
   assert.equal(report.sample.selectedTokenDays, 4);
+  assert.equal(report.sample.partialSourceCoverageTokenDays, 1);
   assert.equal(report.metrics.pressureHigh.count, 2);
   assert.equal(report.metrics.qualityHigh.count, 2);
   assert.equal(report.metrics.pressureHighQualityHigh.count, 1);
@@ -134,12 +135,15 @@ test("fails closed when the selected token-day lacks a completed outcome", () =>
   );
 });
 
-test("fails closed when X or Telegram coverage is not complete", () => {
-  const incomplete = row({ xCoverage: "partial" });
+test("rejects unknown source coverage but accepts explicitly partial samples", () => {
+  const unknown = row({ xCoverage: "unknown" });
   assert.throws(
-    () => evaluateFomoDataset([incomplete], options()),
-    /incomplete_signal_source_coverage/,
+    () => evaluateFomoDataset([unknown], options()),
+    /unknown_signal_source_coverage/,
   );
+  const partial = row({ xCoverage: "partial", tgCoverage: "partial" });
+  const report = evaluateFomoDataset([partial], options());
+  assert.equal(report.sample.partialSourceCoverageTokenDays, 1);
 });
 
 test("requires the outcome at the requested fixed horizon", () => {
