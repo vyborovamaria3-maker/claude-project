@@ -65,11 +65,20 @@ export function projectTokenAnalysis(report,tokenId){
   });
   interpretation={stance:value.stance,score:value.score,confidence:value.confidence,
    directionAmbiguous:value.directionAmbiguous,factIds:[...value.factIds],evidenceRefs};
+  if(value.directionGuardApplied!==undefined){
+   if(value.directionGuardApplied!==true||value.stance!=='mixed'||value.score!==0||value.directionAmbiguous!==true)invalid();
+   interpretation.directionGuardApplied=true;
+  }
   if(value.caveats!==undefined){
    if(!Array.isArray(value.caveats)||value.caveats.length>4)invalid();
    interpretation.caveats=value.caveats.map(row=>{
     object(row);if(!allowed.has(row.evidenceRef)||!evidenceRefs.includes(row.evidenceRef)||typeof row.quote!=='string'||row.quote.trim().length<3||row.quote.length>240)invalid();
-    return {evidenceRef:row.evidenceRef,quote:row.quote};
+    const projected={evidenceRef:row.evidenceRef,quote:row.quote};
+    if(row.contextQuote!==undefined||row.contextComplete!==undefined){
+     if(typeof row.contextQuote!=='string'||row.contextQuote.length>1600||!row.contextQuote.includes(row.quote)||typeof row.contextComplete!=='boolean')invalid();
+     projected.contextQuote=row.contextQuote;projected.contextComplete=row.contextComplete;
+    }
+    return projected;
    });
   }
  }
@@ -112,8 +121,10 @@ export async function readTokenAnalysisRequest(request){
 }
 export function tokenSummary(report){
  const stance={bullish:'В выбранных сообщениях выражено позитивное отношение к токену.',bearish:'В выбранных сообщениях выражено негативное отношение к токену.',neutral:'В выбранных сообщениях нет выраженного направления.',mixed:'Направление сообщений неоднозначно.',unknown:'Недостаточно сообщений для оценки тона.'}[report.interpretation?.stance]??'Недостаточно сообщений для оценки тона.';
+ const caveatLines=[...new Set((report.interpretation?.caveats??[]).map(row=>`«${row.contextQuote??row.quote}» — ${row.evidenceRef}${row.contextComplete===true?'':row.contextQuote?' · показан фрагмент сообщения; полный контекст не восстановлен':' · контекст цитаты не сохранён в старом ответе'}`))];
  return [stance,`Выборка: Telegram — ${report.facts['tg.sampledMessages']??0}, Twitter — ${report.facts['x.sampledMessages']??0}; сохранённых записей сделок — ${report.facts['chain.sampledStoredTradeRows']??0}.`,
-  ...(report.interpretation?.caveats?.length?['Оговорки авторов (цитаты из сообщений, не проверенные факты):',...report.interpretation.caveats.map(row=>`«${row.quote}» — ${row.evidenceRef}`)]:['Отдельные оговорки не выделены; это не подтверждает отсутствие рисков.']),
+  ...(report.interpretation?.directionGuardApplied?['Позитивная оценка модели снята консервативной проверкой: в исходном тексте есть прямое предупреждение о serial rugger. Это не подтверждение обвинения.']:[]),
+  ...(caveatLines.length?['Оговорки авторов в контексте (слова авторов, не проверенные факты):',...caveatLines]:['Отдельные оговорки не выделены; это не подтверждает отсутствие рисков.']),
   ...((report.facts['tg.filteredTemplates']??0)+(report.facts['x.filteredTemplates']??0)+(report.facts['x.duplicateMessages']??0)>0?
    [`Исключено: рекламных и шаблонных сообщений Telegram — ${report.facts['tg.filteredTemplates']??0}, Twitter — ${report.facts['x.filteredTemplates']??0}; повторов Twitter — ${report.facts['x.duplicateMessages']??0}.`]:[]),
   ...(report.status==='no_evidence'?['После фильтрации данных для анализа не осталось. ИИ не вызывался.']:[]),

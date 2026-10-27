@@ -23,6 +23,21 @@ test('on-demand UI uses a fixed authenticated POST, drops arbitrary upstream fie
  report.summary[0].value='forged';await assert.rejects(requestTokenAnalysis(mint,{env,fetchImpl}),/token_analysis_invalid/);
  await assert.rejects(requestTokenAnalysis('../bad',{env,fetchImpl}));assert.equal(calls,2);
 });
+test('conservative warning adjustment is visible and inconsistent adjustment metadata is rejected',async()=>{
+ const report=fixture();Object.assign(report.interpretation,{stance:'mixed',score:0,directionAmbiguous:true,directionGuardApplied:true});const fetchImpl=async()=>new Response(JSON.stringify(report));
+ assert.match((await requestTokenAnalysis(mint,{env,fetchImpl})).result.summary,/оценка модели снята/);
+ report.interpretation.stance='bullish';await assert.rejects(requestTokenAnalysis(mint,{env,fetchImpl}),/token_analysis_invalid/);
+});
+test('caveat UI shows negation context instead of isolated substring; legacy and partial context are disclosed',async()=>{
+ const report=fixture();report.interpretation.caveats=[{evidenceRef:'x:tweet:123',quote:'safe',contextQuote:'Yeah right, safe. This is not safe.',contextComplete:true}];
+ const fetchImpl=async()=>new Response(JSON.stringify(report));let result=await requestTokenAnalysis(mint,{env,fetchImpl});assert.match(result.result.summary,/This is not safe/);assert.doesNotMatch(result.result.summary,/«safe»/);
+ report.interpretation.caveats.push({...report.interpretation.caveats[0],quote:'not safe'});result=await requestTokenAnalysis(mint,{env,fetchImpl});assert.equal(result.result.summary.split('Yeah right, safe. This is not safe.').length,2);report.interpretation.caveats.pop();
+ report.interpretation.caveats[0].contextComplete=false;result=await requestTokenAnalysis(mint,{env,fetchImpl});assert.match(result.result.summary,/полный контекст не восстановлен/);
+ delete report.interpretation.caveats[0].contextQuote;delete report.interpretation.caveats[0].contextComplete;result=await requestTokenAnalysis(mint,{env,fetchImpl});assert.match(result.result.summary,/контекст цитаты не сохранён/);
+ for(const extra of [{contextQuote:'unrelated',contextComplete:true},{contextQuote:'safe',contextComplete:'true'},{contextQuote:'safe'+'x'.repeat(1600),contextComplete:false}]){
+  Object.assign(report.interpretation.caveats[0],extra);await assert.rejects(requestTokenAnalysis(mint,{env,fetchImpl}),/token_analysis_invalid/);
+ }
+});
 test('social AI on-demand branch requires user auth and rate limit before proxy; no client snapshot is forwarded',async()=>{
  const source=await readFile(new URL('../app/api/trade/social-ai/route.ts',import.meta.url),'utf8');
  const branch=source.slice(source.indexOf("if(process.env.INTELLIGENCE_AI_ON_DEMAND_ENABLED==='true')"),source.indexOf('  const timeline ='));
