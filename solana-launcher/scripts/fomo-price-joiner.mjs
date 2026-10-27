@@ -96,6 +96,8 @@ export function parseArgs(argv, now = Date.now()) {
   const timeframe = parsed.timeframe ?? "5m";
   const intervalSeconds = timeframe === "1m" ? 60 : timeframe === "5m" ? 300 : null;
   if (intervalSeconds === null) throw new TypeError("invalid_timeframe");
+  const maxSourceHorizonHours = timeframe === "1m" ? 72 : 360;
+  if (horizonHours > maxSourceHorizonHours) throw new TypeError("horizon_exceeds_source_window");
 
   return {
     input: resolve(parsed.input),
