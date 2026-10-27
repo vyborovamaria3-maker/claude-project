@@ -218,8 +218,8 @@ function selectLatestTokenDays(rows, from, to) {
 }
 
 function validateSelectedOutcome(row, options, cutoffAtMs) {
-  if (row.signalCoverage.x !== "complete" || row.signalCoverage.tg !== "complete") {
-    throw new TypeError("incomplete_signal_source_coverage");
+  if (row.signalCoverage.x === "unknown" || row.signalCoverage.tg === "unknown") {
+    throw new TypeError("unknown_signal_source_coverage");
   }
   const expectedOutcomeAt = row.signalAtMs + options.horizonHours * 60 * 60 * 1000;
   if (row.signalAtMs + options.horizonHours * 60 * 60 * 1000 > cutoffAtMs) {
@@ -377,7 +377,9 @@ export function evaluateFomoDataset(rawRows, options, datasetSha256 = null) {
       selectedTokenDays: selected.length,
       duplicateSnapshotsRemoved: inRangeCount - selected.length,
       uniqueTokens: new Set(selected.map((row) => row.canonicalTokenId)).size,
-      sourceCoverage: "X and Telegram complete at signal time; price outcome complete and observed by cutoff",
+      sourceCoverage: "unknown X/TG coverage is rejected; partial coverage is accepted and explicitly counted; no population-completeness claim",
+      completeSourceCoverageTokenDays: selected.filter((row) => row.signalCoverage.x === "complete" && row.signalCoverage.tg === "complete").length,
+      partialSourceCoverageTokenDays: selected.filter((row) => row.signalCoverage.x === "partial" || row.signalCoverage.tg === "partial").length,
     },
     metrics: {
       allEligible: summarizeCohort(selected, options),
@@ -398,6 +400,7 @@ export function evaluateFomoDataset(rawRows, options, datasetSha256 = null) {
       "Descriptive historical association only; not a causal estimate or a profitability guarantee.",
       "Repeated observations for the same token can be dependent; no naive p-values or independent-sample confidence intervals are reported.",
       "FOMO scores must be recorded point-in-time. Do not pair today's scores with past price returns.",
+      "Partial X/Telegram coverage means results describe the captured sample, not the full platform population; sample selection can bias outcomes.",
       "Score and source-coverage versions must match the recorded snapshot; X/Telegram inputs known after signal time are rejected.",
       "Forward return is measured at the fixed horizon (outcome timestamp tolerance: 5 minutes); max drawdown is a signed percentage at or below zero.",
     ],
