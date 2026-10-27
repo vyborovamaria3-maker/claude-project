@@ -151,7 +151,8 @@ export function buildFomoSnapshotRecord(args: {
   const tgCoverage = "partial" as const;
   const xLastUpdatedAt = rawLastUpdatedAt == null ? signalAt : rawLastUpdatedAt;
   const xEventTimes = timestampList(x.topTweets.map((item) => item.timestamp));
-  const xObservedAt = Math.max(xLastUpdatedAt, xEventTimes.length ? Math.max(...xEventTimes) : 0);
+  const latestXEventAt = xEventTimes.length ? Math.max(...xEventTimes) : 0;
+  const xObservedAt = xLastUpdatedAt >= latestXEventAt ? xLastUpdatedAt : signalAt;
   const tgObservedAt = signalAt;
 
   const xInputSha256 = sha256(stableStringify(x));
