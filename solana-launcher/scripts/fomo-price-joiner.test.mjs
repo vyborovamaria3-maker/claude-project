@@ -36,7 +36,7 @@ function snapshot(overrides = {}) {
   };
 }
 
-function history({ gaps = false, source = "pumpfun", mock = false, fetchedAtMs = FETCHED_MS } = {}) {
+function history({ gaps = false, source = "bitquery", mock = false, fetchedAtMs = FETCHED_MS } = {}) {
   const intervalSeconds = 300;
   const candles = [];
   const start = Math.floor(SIGNAL_MS / 1000 / intervalSeconds) * intervalSeconds;
@@ -116,7 +116,15 @@ test("rejects mock candles and unsupported sources", () => {
     "mock_price_source_rejected",
   );
   assert.equal(
+    calculateOutcomeLabel(snapshot(), history({ source: "pumpfun" }), options()).reason,
+    "unsupported_price_source",
+  );
+  assert.equal(
     calculateOutcomeLabel(snapshot(), history({ source: "unknown" }), options()).reason,
+    "unsupported_price_source",
+  );
+  assert.equal(
+    calculateOutcomeLabel(snapshot(), history({ source: "geckoterminal" }), options()).reason,
     "unsupported_price_source",
   );
   assert.equal(
