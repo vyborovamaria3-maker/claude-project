@@ -89,6 +89,46 @@ price outcomes null. **It is not directly backtest-ready** until a separate pric
 drawdown, evidence reference, and verified outcome coverage. The current token-trade cache does not by itself prove continuous
 price coverage, so missing candles must not be treated as zero returns or as a complete outcome.
 
+### Joining price outcomes
+
+Start the local Next.js app with real provider credentials/configuration (the joiner rejects mock candles), then run:
+
+~~~sh
+npm run fomo:price-join -- \
+  --input ./data/fomo-snapshots.jsonl \
+  --output ./data/fomo-labelled.jsonl \
+  --evidence-output ./data/fomo-price-evidence.jsonl \
+  --audit-output ./data/fomo-price-join-audit.json \
+  --horizon-hours 24
+~~~
+
+The joiner calls the local `/api/token-history` route using deep 5-minute candles by default. Use
+`--base-url http://127.0.0.1:3000` if the app is served elsewhere, or `--timeframe 1m` for finer candles.
+Only supported non-mock sources are accepted. It uses the first complete candle open at or after the signal (maximum
+5-minute entry delay), then the nearest complete candle close to `signalAt + horizon` (maximum 5-minute offset).
+Every candle between entry and exit must be present at the chosen interval. Gaps are excluded; prices are never interpolated,
+and missing candles are never treated as zero returns.
+
+The labelled output contains **only rows with a matured horizon and complete contiguous price bars**. All excluded snapshots
+and reason codes are recorded in the audit JSON. The evidence JSONL stores the returned price candles, source, retrieval time,
+timeframe, and a SHA-256 evidence hash; keep this file with the labelled output. `outcomeObservedAt` and
+`outcomeCoverage.knownAt` record when this join run observed and validated the prices, not when the historical
+trades originally happened. The audit report's `cutoffAt` is the dataset cutoff to pass to the backtest.
+
+Example backtest using the cutoff recorded in the audit report:
+
+~~~sh
+npm run fomo:backtest -- \
+  --input ./data/fomo-labelled.jsonl \
+  --from 2026-10-27 --to 2026-12-31 \
+  --cutoff-at 2026-12-31T23:59:59.000Z \
+  --horizon-hours 24
+~~~
+
+Replace the example cutoff and dates with values from your actual join report and dataset. The joiner's OHLC drawdown estimate is
+conservative: within each candle it assumes the high happened before the low. This is not tick-level path reconstruction, and
+a contiguous provider response is evidence of continuity only for the labelled interval, not proof of completeness outside it.
+
 ### Backtest contract
 
 The JSONL evaluator requires `canonicalTokenId`, `signalAt`, `maxInputObservedAt`,
