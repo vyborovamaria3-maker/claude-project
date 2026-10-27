@@ -660,8 +660,9 @@ export function deriveSocialMetrics(
   ai: AiEnvelope | null,
   channels: Channel[],
   options: SocialOptions,
+  asOf = Date.now(),
 ): DerivedSocial {
-  const now = Date.now();
+  const now = asOf;
   const tweets = x?.topTweets || [];
   const telegramItems = (tg?.timeline || []).filter(
     (item) => !item.platform || item.platform.toLowerCase() === "telegram",
