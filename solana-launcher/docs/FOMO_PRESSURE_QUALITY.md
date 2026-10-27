@@ -104,7 +104,7 @@ npm run fomo:price-join -- \
 
 The joiner calls the local `/api/token-history` route using deep 5-minute candles by default. Use
 `--base-url http://127.0.0.1:3000` if the app is served elsewhere, or `--timeframe 1m` for finer candles.
-Only Bitquery's USD-denominated candles are accepted. The local app must have `BITQUERY_API_KEY` configured. The joiner requests Bitquery explicitly so the route cannot silently fall back to Pump.fun or GeckoTerminal. The current bounded query supports horizons up to 72 hours with `1m` candles or 360 hours with `5m` candles; longer horizons need a wider historical data source. Pump.fun is rejected until its candle units are explicitly normalized to USD; GeckoTerminal is rejected because the fallback does not prove the pool's base-token orientation. Mock and unsupported sources are rejected. It uses the first complete candle open at or after the signal (maximum
+Only Bitquery's candles explicitly tagged `priceUnit: USD` are accepted. The local app must have `BITQUERY_API_KEY` configured. The joiner requests Bitquery explicitly so the route cannot silently fall back to Pump.fun or GeckoTerminal. The current bounded query supports horizons up to 72 hours with `1m` candles or 360 hours with `5m` candles; longer horizons need a wider historical data source. Pump.fun is rejected until its candle units are explicitly normalized to USD; GeckoTerminal is rejected because the fallback does not prove the pool's base-token orientation. Mock and unsupported sources are rejected. It uses the first complete candle open at or after the signal (maximum
 5-minute entry delay), then the nearest complete candle close to `signalAt + horizon` (maximum 5-minute offset).
 Every candle between entry and exit must be present at the chosen interval. Gaps are excluded; prices are never interpolated,
 and missing candles are never treated as zero returns.
@@ -127,7 +127,7 @@ npm run fomo:backtest -- \
 
 Adjust the example date range to the snapshots you intend to evaluate; the cutoff is read directly from the join audit report. The joiner's OHLC drawdown estimate is
 conservative: within each candle it assumes the high happened before the low. This is not tick-level path reconstruction, and
-a contiguous provider response is evidence of continuity only for the labelled interval, not proof of completeness outside it.
+a contiguous provider response is evidence of continuity only for the labelled interval, not proof of completeness outside it. Returns are gross price changes and do not model fees, slippage, liquidity constraints, or whether a token can actually be sold.
 
 ### Backtest contract
 
