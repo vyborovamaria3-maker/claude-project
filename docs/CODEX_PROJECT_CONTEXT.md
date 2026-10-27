@@ -109,3 +109,9 @@ Subscription workspace follow-up: apply the same Next.js/ESLint 16.4.2 patch to 
 - On-demand token interpretation may include up to four source-backed author caveats (exact quote <=240 characters, cited target evidence only). New provider outputs require the field; old cached reports remain readable. UI labels quotes as author claims, not verified risk facts; unchanged 512 output-token cap and no background analysis.
 
 - Token caveat projection includes bounded contextQuote/contextComplete derived from stored target text, not model prose. New fingerprint includes context policy version; legacy cached quotes are labelled context-unavailable. Context snippets do not certify semantic correctness or external facts. Paid message/output caps unchanged. A narrow explicit-rugger warning guard is disclosed when it changes model direction; it is not a general sarcasm detector. Identical displayed context is deduplicated.
+
+
+### 2026-10-27 — PR195 resumable FOMO price outcomes
+- Added bounded SQLite outcome queue over the PR's existing pressure/quality snapshots. Mature-only selection, per-mint fetch sharing, reusable hash-verified evidence, immutable horizon/timeframe labels and checkpointed exclusions/15-minute retries. No new scores, raw social-body storage, price interpolation or zero-return imputation.
+- Fenced singleton lease prevents duplicate/stale-worker writes; transactionally stores evidence+label+attempt. Read-only status and paired JSONL label/evidence export reuse the existing fixed-horizon joiner/backtest contract.
+-43 Node regression tests and6 Vitest tests passed; strict frontend TypeScript and analysis/live-intelligence/KOL regressions passed. Validation uses synthetic fixture prices only. Existing running collectors and unrelated dirty checkout were preserved; work is isolated at exact PR headc503cc2c.

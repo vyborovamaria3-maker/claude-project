@@ -41,31 +41,8 @@ function iso(value) {
   return value == null ? null : new Date(value).toISOString();
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
-  const db = new Database(args.db, { readonly: true, fileMustExist: true });
-  try {
-    const table = db.prepare(
-      "SELECT 1 AS found FROM sqlite_master WHERE type='table' AND name='fomo_score_snapshots'",
-    ).get();
-    if (!table) throw new Error("fomo_snapshot_schema_missing");
-
-    const clauses = [];
-    const params = [];
-    if (args.from) {
-      clauses.push("signal_at >= ?");
-      params.push(Date.parse(args.from + "T00:00:00.000Z"));
-    }
-    if (args.to) {
-      clauses.push("signal_at < ?");
-      params.push(Date.parse(args.to + "T00:00:00.000Z") + 24 * 60 * 60 * 1000);
-    }
-    const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
-    const rows = db.prepare(
-      `SELECT * FROM fomo_score_snapshots ${where} ORDER BY signal_at,canonical_token_id LIMIT ?`,
-    ).all(...params, args.limit);
-
-    const output = rows.map((row) => JSON.stringify({
+export function snapshotExportRow(row) {
+  return {
       canonicalTokenId: row.canonical_token_id,
       mint: row.mint,
       signalAt: iso(row.signal_at),
@@ -92,7 +69,35 @@ async function main() {
       forwardReturnPct: null,
       maxDrawdownPct: null,
       outcomeCoverage: { price: "unknown", knownAt: null },
-    })).join("\n") + (rows.length ? "\n" : "");
+
+  };
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const db = new Database(args.db, { readonly: true, fileMustExist: true });
+  try {
+    const table = db.prepare(
+      "SELECT 1 AS found FROM sqlite_master WHERE type='table' AND name='fomo_score_snapshots'",
+    ).get();
+    if (!table) throw new Error("fomo_snapshot_schema_missing");
+
+    const clauses = [];
+    const params = [];
+    if (args.from) {
+      clauses.push("signal_at >= ?");
+      params.push(Date.parse(args.from + "T00:00:00.000Z"));
+    }
+    if (args.to) {
+      clauses.push("signal_at < ?");
+      params.push(Date.parse(args.to + "T00:00:00.000Z") + 24 * 60 * 60 * 1000);
+    }
+    const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
+    const rows = db.prepare(
+      `SELECT * FROM fomo_score_snapshots ${where} ORDER BY signal_at,canonical_token_id LIMIT ?`,
+    ).all(...params, args.limit);
+
+    const output = rows.map((row) => JSON.stringify(snapshotExportRow(row))).join("\n") + (rows.length ? "\n" : "");
 
     if (args.output) await writeFile(args.output, output, "utf8");
     else process.stdout.write(output);

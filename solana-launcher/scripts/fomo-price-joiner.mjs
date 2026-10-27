@@ -338,17 +338,17 @@ export function buildPriceHistoryUrl(baseUrl, mint, timeframe) {
   return url;
 }
 
-async function fetchPriceHistory(baseUrl, mint, timeframe, intervalSeconds) {
+export async function fetchPriceHistory(baseUrl, mint, timeframe, intervalSeconds, fetcher = fetch, clock = Date.now) {
   const url = buildPriceHistoryUrl(baseUrl, mint, timeframe);
 
-  const response = await fetch(url, {
+  const response = await fetcher(url, {
     headers: { Accept: "application/json" },
     cache: "no-store",
     signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) throw new Error("price_source_unavailable");
   const payload = await response.json();
-  const fetchedAtMs = Date.now();
+  const fetchedAtMs = clock();
   if (!payload || typeof payload !== "object" || !Array.isArray(payload.candles)) {
     throw new Error("invalid_price_response");
   }
@@ -380,6 +380,22 @@ async function fetchPriceHistory(baseUrl, mint, timeframe, intervalSeconds) {
     evidenceRef: "fomo-price-evidence:sha256:" + evidenceSha256,
     evidenceRecord: { ...evidenceBase, evidenceSha256 },
   };
+}
+
+export function restorePriceHistory(record) {
+  if (!record || typeof record !== "object") throw new TypeError("invalid_saved_evidence");
+  const { evidenceSha256, ...base } = record;
+  if (typeof evidenceSha256 !== "string" || sha256(stableStringify(base)) !== evidenceSha256) {
+    throw new TypeError("saved_evidence_hash_mismatch");
+  }
+  const intervalSeconds = base.timeframe === "1m" ? 60 : base.timeframe === "5m" ? 300 : null;
+  if (!intervalSeconds || base.intervalSeconds !== intervalSeconds || !BASE58_MINT.test(base.mint)
+    || base.canonicalTokenId !== "solana:" + base.mint || base.recordType !== "price_evidence" || base.schemaVersion !== 1) {
+    throw new TypeError("invalid_saved_evidence");
+  }
+  const fetchedAtMs = timestampMs(base.fetchedAt, "saved_evidence_fetched_at");
+  return { ...base, evidenceSha256, fetchedAtMs, candles: normalizeCandles(base.candles, intervalSeconds, fetchedAtMs),
+    evidenceRef: "fomo-price-evidence:sha256:" + evidenceSha256, evidenceRecord: record };
 }
 
 function safeFailureCode(error) {

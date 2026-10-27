@@ -144,3 +144,24 @@ confidence intervals are reported. Partial source coverage can bias the captured
 **Data limitation:** snapshots begin accumulating only when this branch/version is running and tokens are analyzed in the UI. This
 does not reconstruct historical FOMO scores. Do not pair current scores with past prices, and do not claim predictive performance
 until enough point-in-time snapshots have matured and have matching price outcomes with defensible coverage.
+
+
+## Resumable price-outcome queue
+
+`npm run fomo:outcomes -- --db ./data/trade.db --base-url http://127.0.0.1:3100 --horizon-hours 24 --timeframe 5m --limit 25`
+
+This bounded one-shot worker reads the existing immutable snapshots directly. It does not capture new social data or reconstruct historical scores. Run it periodically with your existing scheduler, or repeat manually. A read-only inventory is available with `npm run fomo:outcomes -- --db ./data/trade.db --horizon-hours 24 --status`.
+
+The worker waits for a matured horizon before requesting prices, groups requests by mint, and stores successful labels and hashed candle evidence transactionally in the same SQLite database. A second run skips completed labels. Other horizons can reuse already stored evidence if those candles prove complete coverage for the requested interval. All original source/unit/gap/look-ahead checks from the joiner remain in effect.
+
+Tables `fomo_price_outcomes`, `fomo_price_evidence`, and `fomo_price_attempts` preserve the result, its source proof, and exclusion/retry reasons. Missing prices are not zero returns. Temporary source failures and incomplete price coverage retry after15 minutes. Unknown immutable signal coverage and snapshots outside the bounded provider window are explicit exclusions. The source-window exclusion can be avoided only if suitable verified evidence was already saved; a wider historical provider is needed otherwise. A single fenced90-second lease prevents parallel workers and stale owners from publishing duplicate results. Checkpoints and labels survive process restarts.
+
+Export accepted labels and their evidence together:
+
+~~~sh
+npm run fomo:outcomes -- --db ./data/trade.db --base-url http://127.0.0.1:3100 --horizon-hours 24 --output ./data/fomo-labelled.jsonl --evidence-output ./data/fomo-price-evidence.jsonl
+~~~
+
+The console report includes `cutoffAt`, per-run request/cache counts, accumulated label/attempt counts and immature snapshots. Use that cutoff with the existing `fomo:backtest` command. Keep the evidence export next to the labels; export verifies its SHA-256 and rejects changed snapshot identities. Each horizon/timeframe has independent labels. Already accepted outcomes are not overwritten by later API responses. Export paths must not collide with the source database.
+
+Validation uses generated test candles only: no live historical performance is claimed. Real labels still require captured point-in-time signals that have matured and a running USD Bitquery endpoint with configured credentials. These are gross OHLC returns, not executable trading PNL.
