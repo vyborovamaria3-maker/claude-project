@@ -59,6 +59,7 @@ function history({ gaps = false, source = "bitquery", mock = false, fetchedAtMs 
   }
   return {
     source,
+    priceUnit: "USD",
     mock,
     fetchedAtMs,
     intervalSeconds,
@@ -127,6 +128,10 @@ test("rejects mock candles and unsupported sources", () => {
   assert.equal(
     calculateOutcomeLabel(snapshot(), history({ source: "geckoterminal" }), options()).reason,
     "unsupported_price_source",
+  );
+  assert.equal(
+    calculateOutcomeLabel(snapshot(), { ...history(), priceUnit: "SOL" }, options()).reason,
+    "unverified_price_unit",
   );
   assert.equal(
     calculateOutcomeLabel(snapshot(), history({ source: "geckoterminal" }), options()).reason,
