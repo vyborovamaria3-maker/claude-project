@@ -202,6 +202,22 @@ test("validates required CLI paths, cutoff and timeframe", () => {
     "--timeframe", "1h",
   ], FETCHED_MS), /invalid_timeframe/);
   assert.throws(() => parseArgs([
+    "--input", "signals.jsonl",
+    "--output", "labelled.jsonl",
+    "--evidence-output", "price-evidence.jsonl",
+    "--audit-output", "audit.json",
+    "--horizon-hours", "73",
+    "--timeframe", "1m",
+  ], FETCHED_MS), /horizon_exceeds_source_window/);
+  assert.throws(() => parseArgs([
+    "--input", "signals.jsonl",
+    "--output", "labelled.jsonl",
+    "--evidence-output", "price-evidence.jsonl",
+    "--audit-output", "audit.json",
+    "--horizon-hours", "361",
+    "--timeframe", "5m",
+  ], FETCHED_MS), /horizon_exceeds_source_window/);
+  assert.throws(() => parseArgs([
     "--input", "same.jsonl",
     "--output", "same.jsonl",
     "--evidence-output", "price-evidence.jsonl",
