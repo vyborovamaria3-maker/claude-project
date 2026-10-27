@@ -202,7 +202,15 @@ export function normalizeCandles(rawCandles, intervalSeconds, fetchedAtMs) {
     }
     const existing = byTime.get(candle.time);
     if (existing) {
-      if (stableStringify(existing) !== stableStringify(candle)) {
+      const comparable = {
+        time: existing.time,
+        open: existing.open,
+        high: existing.high,
+        low: existing.low,
+        close: existing.close,
+        volume: existing.volume,
+      };
+      if (stableStringify(comparable) !== stableStringify(candle)) {
         throw new TypeError("conflicting_duplicate_price_candle");
       }
       continue;
