@@ -21,6 +21,12 @@ test('Twitter context survives API projection without claiming legacy links are 
  assert.equal(result.tokenAnalysis.evidence[0].contextEvidence[0].relation,'linked_post');assert.match(result.result.summary,/связь ответа не подтверждена/);assert.equal(JSON.stringify(result).includes('must-not-return'),false);
  for(const relation of ['earlier_neighbour','invalid']){report.evidence[0].contextEvidence[0].relation=relation;await assert.rejects(requestTokenAnalysis(mint,{env,fetchImpl:async()=>new Response(JSON.stringify(report))}),/token_analysis_invalid/)}
 });
+test('missing Twitter context and model-use receipts remain explicit and cannot be forged',async()=>{
+ const report=fixture();Object.assign(report.evidence[0],{contextAvailability:'unavailable',unavailableContextRefs:['x:tweet:122'],hasUnseenMedia:true});
+ report.interpretation.messageViews=[{evidenceRef:'x:tweet:123',target:'token',stance:'bullish',reading:'literal',contextRefs:[],contextUse:'not_needed'}];report.interpretation.aggregationMethod='message_views';
+ const result=await requestTokenAnalysis(mint,{env,fetchImpl:async()=>new Response(JSON.stringify(report))});assert.match(result.result.summary,/Связанный контекст недоступен/);assert.match(result.result.summary,/содержимое медиа не передано/);assert.equal(result.tokenAnalysis.evidence[0].contextAvailability,'unavailable');
+ for(const change of [r=>r.evidence[0].hasUnseenMedia='yes',r=>r.evidence[0].contextAvailability='available',r=>r.evidence[0].unavailableContextRefs=['tg:message:123:1'],r=>r.interpretation.messageViews[0].contextUse='used',r=>r.interpretation.messageViews[0].contextUse='insufficient']){const bad=structuredClone(report);change(bad);await assert.rejects(requestTokenAnalysis(mint,{env,fetchImpl:async()=>new Response(JSON.stringify(bad))}),/token_analysis_invalid/)}
+});
 
 test('on-demand UI uses a fixed authenticated POST, drops arbitrary upstream fields and rejects ungrounded summary',async()=>{
  let calls=0;

@@ -54,7 +54,7 @@ export async function readCollectorMessage(pool:AiPool,source:Source,ref:string,
 
 /** Prefer an explicit reply parent; otherwise use bounded earlier same-source context. */
 export async function readCollectorContext(pool:AiPool,source:Source,ref:string,observedAt:Date|string):Promise<AiMessageContext[]> {
-  if(source==='x')return readTwitterContext(pool,ref,observedAt);
+  if(source==='x')return (await readTwitterContextState(pool,ref,observedAt)).context;
   const match=/^tg:message:(-?[1-9][0-9]{0,24}):([1-9][0-9]{0,24})$/.exec(ref);
   if(!match)throw new TypeError("Invalid AI context evidence");
   const at=toUtcIso(observedAt),client=await pool.connect();
@@ -86,36 +86,39 @@ export async function readCollectorContext(pool:AiPool,source:Source,ref:string,
 }
 
 /** Observation-backed links only. A legacy visible link is not proof of a reply. */
-async function readTwitterContext(pool:AiPool,ref:string,observedAt:Date|string):Promise<AiMessageContext[]> {
+export type TwitterContextState={context:AiMessageContext[];contextAvailability:'unknown'|'none'|'available'|'partial'|'unavailable';unavailableContextRefs:string[];hasUnseenMedia?:boolean};
+export async function readTwitterContextState(pool:AiPool,ref:string,observedAt:Date|string):Promise<TwitterContextState> {
   const match=/^x:tweet:([1-9][0-9]{0,24})$/.exec(ref);
   if(!match)throw new TypeError('Invalid AI context evidence');
   const at=toUtcIso(observedAt),client=await pool.connect();
   try{
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     const available=await client.query("SELECT to_regclass('twitter_tweet_observations') AS observations");
-    if(!available.rows[0]?.observations){await client.query('COMMIT');return [];}
+    if(!available.rows[0]?.observations){await client.query('COMMIT');return {context:[],contextAvailability:'unknown',unavailableContextRefs:[]};}
     const target=(await client.query(`SELECT o.raw,t.posted_at FROM twitter_tweets t
       JOIN LATERAL (SELECT raw FROM twitter_tweet_observations WHERE tweet_id=t.tweet_id AND observed_at<=$2 ORDER BY observed_at DESC LIMIT 1) o ON true
       WHERE t.tweet_id=$1 AND t.updated_at<=$3 AND t.posted_at<=$3 AND o.raw->>'text'=t.text`,[match[1],at,Date.parse(at)])).rows[0];
-    if(!target){await client.query('COMMIT');return [];}
+    if(!target){await client.query('COMMIT');return {context:[],contextAvailability:'unknown',unavailableContextRefs:[]};}
     const raw=target.raw as Record<string,unknown>,links=new Map<string,AiMessageContext['relation']>();
-    if(raw.id!==match[1]){await client.query('COMMIT');return [];}
+    if(raw.id!==match[1]){await client.query('COMMIT');return {context:[],contextAvailability:'unknown',unavailableContextRefs:[]};}
     const add=(id:unknown,relation:AiMessageContext['relation'])=>{
       if(typeof id==='string'&&/^[1-9][0-9]{0,24}$/.test(id)&&id!==match[1]&&!links.has(id)&&links.size<18)links.set(id,relation);
     };
     add(raw.replyToPostId,'reply_parent');add(raw.quotedPostId,'quoted_post');
+    const metadataKnown=Array.isArray(raw.relatedPostIds)||links.size>0;
     if(Array.isArray(raw.relatedPostIds))for(const id of raw.relatedPostIds.slice(0,16))add(id,'linked_post');
     const context:AiMessageContext[]=[];
+    const unavailableContextRefs:string[]=[];
     for(const [id,relation] of links){
       if(context.length===2)break;
       const row=(await client.query(`SELECT raw,observed_at FROM twitter_tweet_observations
         WHERE tweet_id=$1 AND observed_at<=$2 ORDER BY observed_at DESC LIMIT 1`,[id,at])).rows[0];
       const post=row?.raw as Record<string,unknown>|undefined;
       if(!row||!post||post.id!==id||typeof post.text!=='string'||!post.text.trim()||post.text.length>1200||
-        typeof post.postedAt!=='number'||!Number.isSafeInteger(post.postedAt)||post.postedAt<0||post.postedAt>Number(target.posted_at))continue;
+        typeof post.postedAt!=='number'||!Number.isSafeInteger(post.postedAt)||post.postedAt<0||post.postedAt>Number(target.posted_at)){unavailableContextRefs.push('x:tweet:'+id);continue;}
       context.push({evidenceRef:'x:tweet:'+id,text:post.text,postedAt:sourceTime(post.postedAt),observedAt:sourceTime(row.observed_at),relation});
     }
-    await client.query('COMMIT');return context;
+    await client.query('COMMIT');return {context,unavailableContextRefs,contextAvailability:context.length?(unavailableContextRefs.length?'partial':'available'):(unavailableContextRefs.length?'unavailable':metadataKnown?'none':'unknown'),...(Array.isArray(raw.media)?{hasUnseenMedia:raw.media.length>0}:{})};
   }catch(error){try{await client.query('ROLLBACK');}catch{}throw error;}
   finally{client.release();}
 }

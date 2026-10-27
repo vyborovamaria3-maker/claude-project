@@ -55,7 +55,7 @@ test('explicit token POST joins independent source stores, grounds/persists, cac
   calls++;const request=JSON.parse(init.body),supplied=JSON.parse(request.messages[1].content);
   assert.equal(request.max_tokens,1536);
   assert.equal(supplied.facts['chain.sampledStoredTradeRows'],1);assert.equal(supplied.messages.length,2);assert.equal(supplied.messages.find(m=>m.source==='tg').context.length,1);
-  const messageViews=supplied.messages.map(m=>({evidenceRef:m.evidenceRef,target:'unclear',stance:'unknown',reading:'unclear',contextRefs:m.context.map(c=>c.evidenceRef)}));
+  const messageViews=supplied.messages.map(m=>({evidenceRef:m.evidenceRef,target:'unclear',stance:'unknown',reading:'unclear',contextRefs:m.context.map(c=>c.evidenceRef),contextUse:m.context.length?'used':'unavailable'}));
   return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({...interpretation,messageViews})}}],usage:{prompt_tokens:100,completion_tokens:50}}));
  }});
  const input=await collectTokenInputs(sources,tokenId);assert.equal(input.facts['tg.filteredTemplates'],1);

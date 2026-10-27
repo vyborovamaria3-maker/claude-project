@@ -1,0 +1,15 @@
+import test from'node:test';import assert from'node:assert/strict';import{analyzeTokenOnDemand,tokenAnalysisFingerprint}from'../scripts/token-analysis.mjs';
+const mint='So11111111111111111111111111111111111111112',text='I expect the price of '+mint+' to fall.',at=Date.now()-1000;
+test('missing X context and unseen media survive the full request/save path without masking explicit criticism',async()=>{
+ let supplied,saved,calls=0;
+ const x={query:async()=>({rows:[{tweet_id:'1',text,updated_at:at,posted_at:at}]}),connect:async()=>({release(){},async query(sql){if(sql.includes('to_regclass'))return{rows:[{observations:'twitter_tweet_observations'}]};if(sql.startsWith('SELECT o.raw'))return{rows:[{raw:{id:'1',text,relatedPostIds:['2'],media:[{type:'photo'}]},posted_at:at}]};return{rows:[]}}})};
+ const destination={connect:async()=>({release(){},async query(sql,args){if(sql.startsWith('SELECT model_id'))return{rows:[{model_id:'m',provider:'p',name:'model',version:'1'}]};if(sql.startsWith('INSERT INTO token_ai_requests'))saved=JSON.parse(args[3]);return{rows:[]}}})};
+ const gateway={chatCompletion:async request=>{calls++;supplied=JSON.parse(request.messages[1].content);return{content:JSON.stringify({messageViews:[{evidenceRef:'x:tweet:1',target:'token',stance:'bearish',reading:'literal',contextRefs:[],contextUse:'not_needed'}],caveats:[],stance:'bearish',score:-0.6,directionAmbiguous:false,confidence:0.8,factIds:['x.sampledMessages','tg.sampledMessages'],evidenceRefs:['x:tweet:1']}),traceId:'11111111-1111-4111-8111-111111111111',providerId:'p',inputTokens:1,outputTokens:1,estimatedCostUsd:0}}};
+ const report=await analyzeTokenOnDemand({destination,sources:{x,tg:{query:async()=>({rows:[]})},chain:{prepare:()=>({all:()=>[]})}},gateway,modelId:'m',tokenId:'solana:'+mint});
+ assert.equal(calls,1);assert.equal(supplied.messages[0].contextAvailability,'unavailable');assert.deepEqual(supplied.messages[0].unavailableContextRefs,['x:tweet:2']);assert.equal(supplied.messages[0].hasUnseenMedia,true);assert.equal(report.interpretation.stance,'bearish');assert.equal(saved.evidence[0].hasUnseenMedia,true);assert.equal(saved.evidence[0].contextAvailability,'unavailable');
+});
+test('context ablation and missing-source metadata cannot reuse a full-context cache entry',()=>{
+ const base={asOf:new Date().toISOString(),messages:[{evidenceRef:'x:tweet:1',text,context:[{evidenceRef:'x:tweet:2',text:'Earlier price assessment',relation:'linked_post'}]}]},without=structuredClone(base);without.messages[0].context=[];
+ assert.notEqual(tokenAnalysisFingerprint('m',base),tokenAnalysisFingerprint('m',without));const missing=structuredClone(without);Object.assign(missing.messages[0],{contextAvailability:'unavailable',unavailableContextRefs:['x:tweet:2']});assert.notEqual(tokenAnalysisFingerprint('m',without),tokenAnalysisFingerprint('m',missing));
+ const strip=input=>{const copy=structuredClone(input);delete copy.messages[0].context;return copy};assert.deepEqual(strip(base),strip(without));
+});

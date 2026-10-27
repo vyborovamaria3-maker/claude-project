@@ -9,6 +9,12 @@ test('AI message-level ironic criticism survives positive aggregate without any 
  // A keyword in the text cannot independently rewrite a classification.
  assert.equal(validateTokenInterpretation(value,{...input,messages:[{...messages[0],text:'This token is a serial rugger.'},messages[1]]}).stance,'bullish');
 });
+test('context-use receipts require owned evidence and cannot claim use of absent text',()=>{
+ const good=[{...view('x:tweet:1','bullish'),contextUse:'not_needed'},{...view('tg:message:123:2','bullish','literal','token',['tg:message:123:1']),contextUse:'used'}];
+ assert.equal(validateTokenInterpretation({...value,messageViews:good},input).messageViews[1].contextUse,'used');
+ for(const contextUse of ['used','insufficient','invented'])assert.throws(()=>validateTokenInterpretation({...value,messageViews:[{...good[0],contextUse},good[1]]},input),/context_use_invalid/);
+ for(const contextUse of ['not_needed','unavailable'])assert.throws(()=>validateTokenInterpretation({...value,messageViews:[good[0],{...good[1],contextUse}]},input),/context_use_invalid/);
+});
 test('new requests reject legacy aggregate-only output, record the failed attempt and never retry',async()=>{
  const mint='So11111111111111111111111111111111111111112';let calls=0,failed=false,released=false;
  const destination={connect:async()=>({release(){released=true;},async query(sql,args){
