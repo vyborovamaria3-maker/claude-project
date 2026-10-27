@@ -63,7 +63,7 @@ async function main() {
     }
     const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
     const rows = db.prepare(
-      `SELECT * FROM fomo_score_snapshots ${{where} ORDER BY signal_at,canonical_token_id LIMIT ${{args.limit}`,
+      `SELECT * FROM fomo_score_snapshots ${where} ORDER BY signal_at,canonical_token_id LIMIT ?`,
     ).all(...params, args.limit);
 
     const output = rows.map((row) => JSON.stringify({
