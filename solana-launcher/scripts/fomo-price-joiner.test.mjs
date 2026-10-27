@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildPriceHistoryUrl,
   calculateOutcomeLabel,
   normalizeCandles,
   parseArgs,
@@ -172,6 +173,15 @@ test("parses JSONL and rejects malformed input", () => {
   assert.equal(parseJsonl('{"a":1}\n\n{"b":2}\n').length, 2);
   assert.throws(() => parseJsonl('{"a":1}\nnot-json\n'), /invalid_jsonl_line_2/);
   assert.throws(() => parseJsonl("\n \n"), /empty_input_dataset/);
+});
+
+test("requests explicit Bitquery USD candles and never relies on auto-fallback", () => {
+  const url = buildPriceHistoryUrl("http://127.0.0.1:3000", MINT, "5m");
+  assert.equal(url.pathname, "/api/token-history");
+  assert.equal(url.searchParams.get("mint"), MINT);
+  assert.equal(url.searchParams.get("tf"), "5m");
+  assert.equal(url.searchParams.get("deep"), "1");
+  assert.equal(url.searchParams.get("source"), "bitquery");
 });
 
 test("validates required CLI paths, cutoff and timeframe", () => {
