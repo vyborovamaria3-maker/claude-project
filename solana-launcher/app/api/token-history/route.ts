@@ -347,7 +347,7 @@ async function fetchSubMinuteCandles(mint: string, bucketSec: number, timeframe:
             Trade: { Currency: { MintAddress: { is: $mint } } }
             Block: { Time: { since: "${since}" } }
           }
-          orderBy: { ascendingByField: "Block_Time" }
+          orderBy: { ${orderByField}: "Block_Time" }
           limit: { count: 1000 }
         ) {
           Block { Time }
@@ -402,12 +402,13 @@ async function fetchSubMinuteCandles(mint: string, bucketSec: number, timeframe:
   }
 }
 
-async function fetchFromBitquery(mint: string, tf: string): Promise<Candle[]> {
+async function fetchFromBitquery(mint: string, tf: string, recentOnly = false): Promise<Candle[]> {
   if (!BITQUERY_KEY) return [];
   const interval = BQ_INTERVAL[tf] ?? BQ_INTERVAL["1m"];
   const lookback = TF_TIME_WINDOWS[tf] ?? 30 * 24 * 3600 * 1000;
   const since = new Date(Date.now() - lookback).toISOString();
   const limit = BQ_LIMIT[tf] ?? 1000;
+  const orderByField = recentOnly ? "descendingByField" : "ascendingByField";
 
   const query = `
     query Ohlcv($mint: String!) {
@@ -575,7 +576,7 @@ export async function GET(req: NextRequest) {
   
   // Explicit provider mode for auditable price labels: never silently fall back to another currency/source.
   if (requestedSource === "bitquery") {
-    const bitqueryCandles = await fetchFromBitquery(mint, timeframe);
+    const bitqueryCandles = await fetchFromBitquery(mint, timeframe, true);
     if (bitqueryCandles.length > 0) {
       return NextResponse.json({ candles: bitqueryCandles, source: "bitquery" }, {
         headers: { "Cache-Control": "no-store" },
