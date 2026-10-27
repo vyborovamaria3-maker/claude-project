@@ -121,11 +121,11 @@ Example backtest using the cutoff recorded in the audit report:
 npm run fomo:backtest -- \
   --input ./data/fomo-labelled.jsonl \
   --from 2026-10-27 --to 2026-12-31 \
-  --cutoff-at 2026-12-31T23:59:59.000Z \
+  --cutoff-at "$(node -p 'JSON.parse(require("fs").readFileSync("./data/fomo-price-join-audit.json","utf8")).cutoffAt')" \
   --horizon-hours 24
 ~~~
 
-Replace the example cutoff and dates with values from your actual join report and dataset. The joiner's OHLC drawdown estimate is
+Adjust the example date range to the snapshots you intend to evaluate; the cutoff is read directly from the join audit report. The joiner's OHLC drawdown estimate is
 conservative: within each candle it assumes the high happened before the low. This is not tick-level path reconstruction, and
 a contiguous provider response is evidence of continuity only for the labelled interval, not proof of completeness outside it.
 
