@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 import Database from "better-sqlite3";
-import path from "node:path";
+import path, { resolve } from "node:path";
 import { writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const ALLOWED = new Set(["db", "output", "from", "to", "limit"]);
