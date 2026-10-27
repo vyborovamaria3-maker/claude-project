@@ -30,7 +30,7 @@ function parseArgs(argv) {
   const limit = Number(args.limit ?? "100000");
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000_000) throw new TypeError("invalid_limit");
   return {
-    db: resolve(args.db ?? process.env.SOLANA_TRADE_DB_PATH?.trim() ?? path.join("data", "trade.db")),
+    db: resolve(args.db ?? (process.env.SOLANA_TRADE_DB_PATH?.trim() || path.join("data", "trade.db"))),
     output: args.output ? resolve(args.output) : null,
     from: args.from ?? null,
     to: args.to ?? null,
