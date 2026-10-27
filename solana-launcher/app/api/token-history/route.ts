@@ -347,7 +347,7 @@ async function fetchSubMinuteCandles(mint: string, bucketSec: number, timeframe:
             Trade: { Currency: { MintAddress: { is: $mint } } }
             Block: { Time: { since: "${since}" } }
           }
-          orderBy: { ${orderByField}: "Block_Time" }
+          orderBy: { ascendingByField: "Block_Time" }
           limit: { count: 1000 }
         ) {
           Block { Time }
@@ -418,7 +418,7 @@ async function fetchFromBitquery(mint: string, tf: string, recentOnly = false): 
             Trade: { Currency: { MintAddress: { is: $mint } } }
             Block: { Time: { since: "${since}" } }
           }
-          orderBy: { ascendingByField: "Block_Time" }
+          orderBy: { ${orderByField}: "Block_Time" }
           limit: { count: ${limit} }
         ) {
           Block {
