@@ -8,7 +8,7 @@ const ALLOWED_ARGS = new Set([
   "input", "output", "evidence-output", "audit-output", "base-url",
   "cutoff-at", "horizon-hours", "timeframe",
 ]);
-const ACCEPTED_SOURCES = new Set(["pumpfun", "bitquery"]);
+const ACCEPTED_SOURCES = new Set(["bitquery"]);
 const COVERAGE_STATES = new Set(["complete", "partial", "unknown"]);
 const BASE58_MINT = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const HORIZON_TOLERANCE_MS = 5 * 60_000;
