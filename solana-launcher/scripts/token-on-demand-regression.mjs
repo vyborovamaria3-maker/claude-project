@@ -15,6 +15,13 @@ function fixture(){return {
  evidence:[{source:'x',evidenceRef:'x:tweet:123',textHash:'a'.repeat(64),observedAt:'2026-10-23T00:00:00Z',contextEvidence:[]}],
  provider:{apiKey:'must-not-return'},secret:'must-not-return'
 };}
+test('Twitter context survives API projection without claiming legacy links are reply parents',async()=>{
+ const report=fixture();report.evidence[0].contextEvidence=[{evidenceRef:'x:tweet:122',textHash:'b'.repeat(64),relation:'linked_post',privateField:'must-not-return'}];
+ const result=await requestTokenAnalysis(mint,{env,fetchImpl:async()=>new Response(JSON.stringify(report))});
+ assert.equal(result.tokenAnalysis.evidence[0].contextEvidence[0].relation,'linked_post');assert.match(result.result.summary,/связь ответа не подтверждена/);assert.equal(JSON.stringify(result).includes('must-not-return'),false);
+ for(const relation of ['earlier_neighbour','invalid']){report.evidence[0].contextEvidence[0].relation=relation;await assert.rejects(requestTokenAnalysis(mint,{env,fetchImpl:async()=>new Response(JSON.stringify(report))}),/token_analysis_invalid/)}
+});
+
 test('on-demand UI uses a fixed authenticated POST, drops arbitrary upstream fields and rejects ungrounded summary',async()=>{
  let calls=0;
  const report=fixture();

@@ -193,6 +193,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
       const archive = Page.parse({ data: chunk.filter(t => t.postedAt !== null).map(t => ({
         id:t.id,...(t.authorId ? {author_id:t.authorId} : {}),text:t.text,created_at:new Date(t.postedAt!).toISOString(),author_handle:t.authorHandle,
         metrics_observed_at:new Date(t.observedAt ?? now).toISOString(),
+        referenced_posts:[...(t.replyToPostId?[{id:t.replyToPostId,type:'replied_to'}]:[]),...(t.quotedPostId?[{id:t.quotedPostId,type:'quoted'}]:[])],
         public_metrics:{ like_count:t.likes, impression_count:t.views, retweet_count:t.retweets,reply_count:t.replies },
         ...(fromHttp ? { http_observation: t } : { browser_observation: t }),
       })) });

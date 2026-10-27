@@ -54,7 +54,7 @@ export async function readCollectorMessage(pool:AiPool,source:Source,ref:string,
 
 /** Prefer an explicit reply parent; otherwise use bounded earlier same-source context. */
 export async function readCollectorContext(pool:AiPool,source:Source,ref:string,observedAt:Date|string):Promise<AiMessageContext[]> {
-  if(source!=="tg")return [];
+  if(source==='x')return readTwitterContext(pool,ref,observedAt);
   const match=/^tg:message:(-?[1-9][0-9]{0,24}):([1-9][0-9]{0,24})$/.exec(ref);
   if(!match)throw new TypeError("Invalid AI context evidence");
   const at=toUtcIso(observedAt),client=await pool.connect();
@@ -83,6 +83,62 @@ export async function readCollectorContext(pool:AiPool,source:Source,ref:string,
         text:row.text as string,postedAt:sourceTime(row.posted_at),observedAt:sourceTime(row.collected_at),relation:row.relation as 'reply_parent'|'earlier_neighbour'}));
   }catch(error){try{await client.query("ROLLBACK");}catch{}throw error;}
   finally{client.release();}
+}
+
+/** Observation-backed links only. A legacy visible link is not proof of a reply. */
+async function readTwitterContext(pool:AiPool,ref:string,observedAt:Date|string):Promise<AiMessageContext[]> {
+  const match=/^x:tweet:([1-9][0-9]{0,24})$/.exec(ref);
+  if(!match)throw new TypeError('Invalid AI context evidence');
+  const at=toUtcIso(observedAt),client=await pool.connect();
+  try{
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const available=await client.query("SELECT to_regclass('twitter_tweet_observations') AS observations");
+    if(!available.rows[0]?.observations){await client.query('COMMIT');return [];}
+    const target=(await client.query(`SELECT o.raw,t.posted_at FROM twitter_tweets t
+      JOIN LATERAL (SELECT raw FROM twitter_tweet_observations WHERE tweet_id=t.tweet_id AND observed_at<=$2 ORDER BY observed_at DESC LIMIT 1) o ON true
+      WHERE t.tweet_id=$1 AND t.updated_at<=$3 AND t.posted_at<=$3 AND o.raw->>'text'=t.text`,[match[1],at,Date.parse(at)])).rows[0];
+    if(!target){await client.query('COMMIT');return [];}
+    const raw=target.raw as Record<string,unknown>,links=new Map<string,AiMessageContext['relation']>();
+    if(raw.id!==match[1]){await client.query('COMMIT');return [];}
+    const add=(id:unknown,relation:AiMessageContext['relation'])=>{
+      if(typeof id==='string'&&/^[1-9][0-9]{0,24}$/.test(id)&&id!==match[1]&&!links.has(id)&&links.size<18)links.set(id,relation);
+    };
+    add(raw.replyToPostId,'reply_parent');add(raw.quotedPostId,'quoted_post');
+    if(Array.isArray(raw.relatedPostIds))for(const id of raw.relatedPostIds.slice(0,16))add(id,'linked_post');
+    const context:AiMessageContext[]=[];
+    for(const [id,relation] of links){
+      if(context.length===2)break;
+      const row=(await client.query(`SELECT raw,observed_at FROM twitter_tweet_observations
+        WHERE tweet_id=$1 AND observed_at<=$2 ORDER BY observed_at DESC LIMIT 1`,[id,at])).rows[0];
+      const post=row?.raw as Record<string,unknown>|undefined;
+      if(!row||!post||post.id!==id||typeof post.text!=='string'||!post.text.trim()||post.text.length>1200||
+        typeof post.postedAt!=='number'||!Number.isSafeInteger(post.postedAt)||post.postedAt<0||post.postedAt>Number(target.posted_at))continue;
+      context.push({evidenceRef:'x:tweet:'+id,text:post.text,postedAt:sourceTime(post.postedAt),observedAt:sourceTime(row.observed_at),relation});
+    }
+    await client.query('COMMIT');return context;
+  }catch(error){try{await client.query('ROLLBACK');}catch{}throw error;}
+  finally{client.release();}
+}
+
+/** Reserve one bounded sample position for an observed relation, not a sentiment. */
+export async function twitterContextCandidates(pool:AiPool,ids:string[],observedAt:string):Promise<Set<string>> {
+  if(ids.length>96)throw new RangeError('Too many Twitter context candidates');
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN READ ONLY');
+    const available=await client.query("SELECT to_regclass('twitter_tweet_observations') AS observations");
+    if(!available.rows[0]?.observations){await client.query('COMMIT');return new Set();}
+    const rows=await client.query(`SELECT t.tweet_id FROM twitter_tweets t
+      JOIN LATERAL (SELECT raw FROM twitter_tweet_observations WHERE tweet_id=t.tweet_id AND observed_at<=$2 ORDER BY observed_at DESC LIMIT 1) o ON true
+      WHERE t.tweet_id=ANY($1::text[]) AND o.raw->>'text'=t.text AND o.raw->>'id'=t.tweet_id
+        AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(jsonb_build_array(o.raw->'replyToPostId',o.raw->'quotedPostId') ||
+          CASE WHEN jsonb_typeof(o.raw->'relatedPostIds')='array' THEN o.raw->'relatedPostIds' ELSE '[]'::jsonb END) WITH ORDINALITY link(id,ord)
+          JOIN LATERAL (SELECT raw FROM twitter_tweet_observations WHERE tweet_id=link.id AND observed_at<=$2 ORDER BY observed_at DESC LIMIT 1) p ON true
+          WHERE link.ord<=18 AND link.id ~ '^[1-9][0-9]{0,24}$' AND link.id<>t.tweet_id AND p.raw->>'id'=link.id
+            AND length(p.raw->>'text') BETWEEN 1 AND 1200
+            AND CASE WHEN p.raw->>'postedAt' ~ '^[0-9]{1,16}$' THEN (p.raw->>'postedAt')::numeric<=t.posted_at ELSE false END)`,[ids,toUtcIso(observedAt)]);
+    await client.query('COMMIT');return new Set(rows.rows.map(row=>String(row.tweet_id)));
+  }catch(error){try{await client.query('ROLLBACK');}catch{}throw error;}finally{client.release();}
 }
 
 /** Runs AFTER normal collector delivery/ACK. AI failure never changes source delivery. */

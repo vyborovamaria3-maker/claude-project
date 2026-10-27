@@ -46,8 +46,8 @@ export function projectTokenAnalysis(report,tokenId){
   return {source:row.source,evidenceRef,textHash:hash(row.textHash),observedAt,
    contextEvidence:row.contextEvidence.map(context=>{
     object(context);const evidenceRef=ref(context.evidenceRef,row.source);
-    if(row.source!=='tg'||!evidenceRef.startsWith(row.evidenceRef.split(':').slice(0,3).join(':')+':'))invalid();
-    if(context.relation!==undefined&&!['reply_parent','earlier_neighbour','unverified'].includes(context.relation))invalid();
+    if(row.source==='tg'&&!evidenceRef.startsWith(row.evidenceRef.split(':').slice(0,3).join(':')+':'))invalid();
+    if(evidenceRef===row.evidenceRef||context.relation!==undefined&&!(row.source==='tg'?['reply_parent','earlier_neighbour','unverified']:['reply_parent','quoted_post','linked_post','unverified']).includes(context.relation))invalid();
     return {evidenceRef,textHash:hash(context.textHash),...(context.relation!==undefined?{relation:context.relation}:{})};
    })};
  });
@@ -136,10 +136,13 @@ export async function readTokenAnalysisRequest(request){
 export function tokenSummary(report){
  const stance={bullish:'В выбранных сообщениях выражено позитивное отношение к токену.',bearish:'В выбранных сообщениях выражено негативное отношение к токену.',neutral:'В выбранных сообщениях нет выраженного направления.',mixed:'Направление сообщений неоднозначно.',unknown:'Направление сообщений по этому токену не установлено.'}[report.interpretation?.stance]??'Недостаточно сообщений для оценки тона.';
  const caveatLines=[...new Set((report.interpretation?.caveats??[]).map(row=>`«${row.contextQuote??row.quote}» — ${row.evidenceRef}${row.contextComplete===true?'':row.contextQuote?' · показан фрагмент сообщения; полный контекст не восстановлен':' · контекст цитаты не сохранён в старом ответе'}`))];
+ const contextRelation={reply_parent:'сохранённая связь ответа',quoted_post:'цитируемый пост',linked_post:'связанный пост; связь ответа не подтверждена',unverified:'тип связи не установлен'};
+ const twitterContext=(report.evidence??[]).filter(row=>row.source==='x').flatMap(row=>row.contextEvidence.map(c=>`Контекст ${row.evidenceRef}: ${c.evidenceRef} — ${contextRelation[c.relation]??contextRelation.unverified}.`));
  const viewTone={bullish:'позитивный',bearish:'негативный',neutral:'без направления',unknown:'направление не установлено'},viewReading={literal:'буквально',ironic:'ирония / сарказм',negated:'с учётом отрицания',conditional:'условный сценарий',unclear:'смысл неясен'},viewTarget={token:'о запрошенном токене',other:'о другом объекте',unclear:'цель неясна'};
  return [stance,`Выборка: Telegram — ${report.facts['tg.sampledMessages']??0}, Twitter — ${report.facts['x.sampledMessages']??0}; сохранённых записей сделок — ${report.facts['chain.sampledStoredTradeRows']??0}.`,
   ...(report.interpretation?.directionGuardApplied?['Позитивная оценка модели снята консервативной проверкой: в исходном тексте есть прямое предупреждение о serial rugger. Это не подтверждение обвинения.']:[]),
   ...(report.interpretation?.messageViews?['Разбор каждого сообщения ИИ (интерпретация):',...report.interpretation.messageViews.map(view=>`${view.evidenceRef}: ${viewTarget[view.target]}; ${viewReading[view.reading]}; ${viewTone[view.stance]}${view.contextRefs.length?'; учтён контекст '+view.contextRefs.join(', '):''}.`),'Общий итог учитывает противоречия между этими оценками, а не число позитивных постов.']:[]),
+  ...twitterContext,
   ...(caveatLines.length?['Оговорки авторов в контексте (слова авторов, не проверенные факты):',...caveatLines]:['Отдельные оговорки не выделены; это не подтверждает отсутствие рисков.']),
   ...((report.facts['tg.filteredTemplates']??0)+(report.facts['x.filteredTemplates']??0)+(report.facts['x.duplicateMessages']??0)>0?
    [`Исключено: рекламных и шаблонных сообщений Telegram — ${report.facts['tg.filteredTemplates']??0}, Twitter — ${report.facts['x.filteredTemplates']??0}; повторов Twitter — ${report.facts['x.duplicateMessages']??0}.`]:[]),

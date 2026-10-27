@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeXActionsProfile, normalizeXActionsTweet } from "../src/xactions/normalize";
+import {TweetSchema} from '../lib/trade/schemas';
 import { runCursorPages, HttpNoProgressError, type PageCommit } from "../src/xactions/pagination";
 import { toCollectorError, XActionsAccessDeniedError, XActionsAmbiguousForbiddenError } from "../src/xactions/errors";
 import { HttpAccountLeaseError, HttpAccountQuotaError } from "../src/xactions/account-http-quota";
@@ -18,6 +19,7 @@ test("XActions tweet normalization preserves IDs and does not invent missing met
     metrics: { views: 0, likes: 20, retweets: 0, replies: 3 },
     urls: [{ url: "https://t.co/test", expandedUrl: "https://example.com/" }],
     mentions: [{ username: "NASA" }], hashtags: ["space"],
+    inReplyTo:{tweetId:'9007199254740994'},quotedTweet:{id:'9007199254740995'},
     media: [{ type: "animated_gif", url: "https://pbs.twimg.com/a.jpg", videoUrl: "https://video.twimg.com/a.mp4" }],
   }, 1234);
   assert.equal(item.id, tweetId);
@@ -28,6 +30,10 @@ test("XActions tweet normalization preserves IDs and does not invent missing met
   assert.equal(item.retweets, null);
   assert.equal(item.replies, 3);
   assert.equal(item.observedAt, 1234);
+  assert.equal(item.replyToPostId,'9007199254740994');
+  assert.equal(item.quotedPostId,'9007199254740995');
+  assert.equal(TweetSchema.parse(item).replyToPostId,'9007199254740994');
+  assert.equal(TweetSchema.parse(item).quotedPostId,'9007199254740995');
   assert.deepEqual(item.links, ["https://example.com/"]);
   assert.deepEqual(item.media, [{ type: "video", url: "https://video.twimg.com/a.mp4" }]);
 });

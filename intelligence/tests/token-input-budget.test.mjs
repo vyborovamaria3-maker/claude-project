@@ -4,13 +4,23 @@ import {collectTokenInputs,analyzeTokenOnDemand} from '../scripts/token-analysis
 
 const mint='So11111111111111111111111111111111111111112',tokenId='solana:'+mint;
 function sources(texts){
- return {x:{query:async()=>({rows:texts.map((text,index)=>({tweet_id:String(index+1),text,updated_at:Date.now()-1000}))})},
+ return {x:{connect:async()=>({query:async()=>({rows:[]}),release(){}}),query:async()=>({rows:texts.map((text,index)=>({tweet_id:String(index+1),text,updated_at:Date.now()-1000}))})},
   tg:{query:async()=>({rows:[]})},chain:{prepare:()=>({all:()=>[]})}};
 }
 function textOfLength(length,index=0){
  const start=`Quoted claim ${index}: ${mint} `;
  return start+'x'.repeat(length-start.length);
 }
+test('Twitter context counts toward the shared text budget before any provider access',async()=>{
+ const texts=[textOfLength(5000,1),textOfLength(5000,2),textOfLength(5000,3)],source=sources(texts),posted=Date.now()-1000;
+ source.x.connect=async()=>({release(){},async query(sql,args){
+  if(sql.includes('to_regclass'))return {rows:[{observations:'twitter_tweet_observations'}]};
+  if(sql.startsWith('SELECT o.raw'))return {rows:[{raw:{id:args[0],replyToPostId:'999'},posted_at:posted}]};
+  if(sql.startsWith('SELECT raw,observed_at'))return {rows:[{raw:{id:'999',text:'c'.repeat(1200),postedAt:posted-1000},observed_at:new Date(posted)}]};
+  return {rows:[]};
+ }});
+ await assert.rejects(analyzeTokenOnDemand({sources:source,tokenId,modelId:'unused',destination:{connect(){assert.fail('must not connect destination')}},gateway:{chatCompletion(){assert.fail('must not call provider')}}}),/token_ai_input_too_large/);
+});
 async function rejectsBeforeProvider(texts){
  let connected=false,called=false;
  await assert.rejects(analyzeTokenOnDemand({sources:sources(texts),tokenId,modelId:'unused',

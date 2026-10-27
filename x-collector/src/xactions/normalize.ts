@@ -113,6 +113,8 @@ export function normalizeXActionsTweet(input: XActionsHttpTweet, observedAt = Da
     links: [...new Set(urls)], hashtags: [...new Set(input.hashtags ?? [])],
     mentions: [...new Set(mentions)], media,
     relatedPostIds: [...new Set(relatedPostIds)],
+    ...(typeof input.inReplyTo?.tweetId==='string'&&/^[1-9][0-9]{0,24}$/.test(input.inReplyTo.tweetId)?{replyToPostId:input.inReplyTo.tweetId}:{}),
+    ...(typeof input.quotedTweet?.id==='string'&&/^[1-9][0-9]{0,24}$/.test(input.quotedTweet.id)?{quotedPostId:input.quotedTweet.id}:{}),
   };
 }
 

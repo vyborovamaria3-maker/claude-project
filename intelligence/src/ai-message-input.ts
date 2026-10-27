@@ -1,4 +1,4 @@
-export type AiMessageContext = Readonly<{evidenceRef:string;text:string;postedAt:string;observedAt:string;relation?:'reply_parent'|'earlier_neighbour'}>;
+export type AiMessageContext = Readonly<{evidenceRef:string;text:string;postedAt:string;observedAt:string;relation?:'reply_parent'|'earlier_neighbour'|'quoted_post'|'linked_post'}>;
 
 /** Conservative format filter, not a claim that every promotional author is a bot. */
 export function isLowValueTelegramPost(text:string):boolean {

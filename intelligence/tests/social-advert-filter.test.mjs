@@ -17,7 +17,7 @@ test('Twitter duplicate key ignores only short-link tracking and whitespace; pre
  assert.equal(twitterEvidenceKey(call),twitterEvidenceKey(call.replace('t.co/one','t.co/different').replace(/\n/g,'  ')));
  for(const text of [call.replace('12.3X','2X'),'Not '+call,call.replace('https://t.co/one','https://example.com/evidence')])assert.notEqual(twitterEvidenceKey(call),twitterEvidenceKey(text));
 });
-const sources={x:{query:async()=>({rows:[call,watch,call.replace('t.co/one','t.co/three'),watch.replace('t.co/two','t.co/four')].map((text,i)=>({tweet_id:String(i),text,updated_at:Date.now()-1000}))})},tg:{query:async()=>({rows:[{message_id:1,peer_id:'123',text:card}]})},chain:{prepare:()=>({all:()=>[]})}};
+const sources={x:{connect:async()=>({query:async()=>({rows:[]}),release(){}}),query:async()=>({rows:[call,watch,call.replace('t.co/one','t.co/three'),watch.replace('t.co/two','t.co/four')].map((text,i)=>({tweet_id:String(i+1),text,updated_at:Date.now()-1000}))})},tg:{query:async()=>({rows:[{message_id:1,peer_id:'123',text:card}]})},chain:{prepare:()=>({all:()=>[]})}};
 test('advert-only real-shape batch yields zero social evidence and records exclusions before AI',async()=>{
  const input=await collectTokenInputs(sources,'solana:'+mint);
  assert.equal(input.messages.length,0);assert.equal(input.facts['tg.filteredTemplates'],1);assert.equal(input.facts['x.filteredTemplates'],2);assert.equal(input.facts['x.duplicateMessages'],2);
@@ -27,7 +27,7 @@ test('advert-only real-shape batch yields zero social evidence and records exclu
 });
 test('useful Twitter duplicates contribute only one independent message; negation remains distinct',async()=>{
  const text='I would not buy '+mint+' https://t.co/first';
- const input=await collectTokenInputs({...sources,x:{query:async()=>({rows:[text,text.replace('first','second'),'I would buy '+mint].map((text,i)=>({tweet_id:String(i),text,updated_at:Date.now()-1000}))})}},'solana:'+mint);
+ const input=await collectTokenInputs({...sources,x:{connect:async()=>({query:async()=>({rows:[]}),release(){}}),query:async()=>({rows:[text,text.replace('first','second'),'I would buy '+mint].map((text,i)=>({tweet_id:String(i+1),text,updated_at:Date.now()-1000}))})}},'solana:'+mint);
  assert.equal(input.messages.length,2);assert.equal(input.facts['x.duplicateMessages'],1);assert.match(input.messages[0].text,/not buy/);
 });
 

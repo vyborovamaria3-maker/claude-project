@@ -53,6 +53,8 @@ export const TweetSchema = z.object({
   hashtags: z.array(z.string()).optional(),
   media: z.array(z.object({type:z.enum(["photo","video"]),url:z.string().url().nullable()})).optional(),
   relatedPostIds: z.array(z.string().regex(/^\d+$/)).optional(),
+  replyToPostId: z.string().regex(/^[1-9][0-9]{0,24}$/).optional(),
+  quotedPostId: z.string().regex(/^[1-9][0-9]{0,24}$/).optional(),
 });
 
 export const ProfileSchema = z.object({
@@ -77,4 +79,3 @@ export function parseTaskPayload(kind: string, raw: unknown) {
     default: throw new Error(`unknown kind: ${kind}`);
   }
 }
-

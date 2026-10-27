@@ -15,7 +15,7 @@ test('new requests reject legacy aggregate-only output, record the failed attemp
   if(sql.startsWith('SELECT model_id'))return {rows:[{model_id:'test',provider:'p',name:'m',version:'1'}]};
   if(sql.includes('INSERT INTO ai_cost_ledger'))failed=args.includes('failed');return {rows:[]};
  }})};
- const sources={x:{query:async()=>({rows:[{tweet_id:'1',text:'This token is a serial rugger. '+mint,updated_at:Date.now()-1000}]})},tg:{query:async()=>({rows:[]})},chain:{prepare:()=>({all:()=>[]})}};
+ const sources={x:{connect:async()=>({query:async()=>({rows:[]}),release(){}}),query:async()=>({rows:[{tweet_id:'1',text:'This token is a serial rugger. '+mint,updated_at:Date.now()-1000}]})},tg:{query:async()=>({rows:[]})},chain:{prepare:()=>({all:()=>[]})}};
  const gateway={chatCompletion:async()=>{calls++;return {content:JSON.stringify(value),traceId:'11111111-1111-4111-8111-111111111111',providerId:'p',inputTokens:1,outputTokens:1,estimatedCostUsd:0.001};}};
  await assert.rejects(analyzeTokenOnDemand({destination,sources,gateway,modelId:'test',tokenId:'solana:'+mint}),/message_views_required/);
  assert.equal(calls,1);assert.equal(failed,true);assert.equal(released,true);
