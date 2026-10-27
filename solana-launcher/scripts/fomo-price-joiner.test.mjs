@@ -119,6 +119,10 @@ test("rejects mock candles and unsupported sources", () => {
     calculateOutcomeLabel(snapshot(), history({ source: "unknown" }), options()).reason,
     "unsupported_price_source",
   );
+  assert.equal(
+    calculateOutcomeLabel(snapshot(), history({ source: "geckoterminal" }), options()).reason,
+    "unsupported_price_source",
+  );
 });
 
 test("rejects unknown X or Telegram coverage", () => {
