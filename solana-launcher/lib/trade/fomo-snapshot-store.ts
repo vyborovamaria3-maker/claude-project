@@ -96,13 +96,14 @@ export function insertFomoSnapshotWithDb(
 ): { inserted: boolean; snapshotId: string } {
   ensureFomoSnapshotSchema(db);
   const result = db.prepare(
-    `INSERT OR IGNORE INTO fomo_score_snapshots (
+    `INSERT INTO fomo_score_snapshots (
       snapshot_id,canonical_token_id,mint,signal_at,max_input_observed_at,bucket_start_at,
       score_version,fomo_pressure,fomo_quality,quality_coverage,x_coverage,tg_coverage,
       source_coverage_known_at,x_observed_at,tg_observed_at,x_sample_count,x_matched_count,
       x_truncated,x_cached,tg_sample_count,tg_matched_count,tg_truncated,capture_config_json,
       source_meta_json,x_input_sha256,tg_input_sha256,input_sha256,snapshot_sha256,created_at
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(canonical_token_id,score_version,bucket_start_at) DO NOTHING`,
   ).run(
     record.snapshotId,
     record.canonicalTokenId,
