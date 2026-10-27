@@ -182,7 +182,7 @@ export function buildFomoSnapshotRecord(args: {
     tgResponseObservedAt: signalAt,
   };
 
-  const recordBase = {
+  const recordBase: Omit<FomoSnapshotRecord, "snapshotSha256"> = {
     snapshotId: randomUUID(),
     canonicalTokenId: "solana:" + mint,
     mint,
