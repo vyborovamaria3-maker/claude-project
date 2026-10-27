@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
 
     const [xResponse, tgResponse] = await Promise.all([
       getTwitterStats(xRequest),
-      fetchBackendSocial(request, `/api/v1/social/token/${{encodeURIComponent(mint)}`, params.tg),
+      fetchBackendSocial(request, `/api/v1/social/token/${encodeURIComponent(mint)}`, params.tg),
     ]);
     xStatus = xResponse.ok ? "available" : "unavailable";
     tgStatus = tgResponse.ok ? "available" : "unavailable";
