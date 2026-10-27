@@ -578,11 +578,11 @@ export async function GET(req: NextRequest) {
   if (requestedSource === "bitquery") {
     const bitqueryCandles = await fetchFromBitquery(mint, timeframe, true);
     if (bitqueryCandles.length > 0) {
-      return NextResponse.json({ candles: bitqueryCandles, source: "bitquery" }, {
+      return NextResponse.json({ candles: bitqueryCandles, source: "bitquery", priceUnit: "USD" }, {
         headers: { "Cache-Control": "no-store" },
       });
     }
-    return NextResponse.json({ candles: [], source: "bitquery", error: "source_unavailable" }, { status: 503 });
+    return NextResponse.json({ candles: [], source: "bitquery", priceUnit: "USD", error: "source_unavailable" }, { status: 503 });
   }
 
   // Only use mock if explicitly requested via ?mock=true
