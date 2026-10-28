@@ -1,0 +1,7 @@
+body { margin: 0; background: var(--theme-bg); color: var(--theme-content); font-family: system-ui,sans-serif; }
+.collector-console { max-width: 1480px; margin: auto; padding: 24px 16px; }
+.collector-console > header { margin-bottom: 20px; }
+.collector-console > header h1 { font-size: 24px; margin-top: 12px; }
+.collector-console > nav { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; }
+.collector-console > nav a { border: 1px solid var(--theme-bg-border); padding: 10px 16px; border-radius: 10px; }
+.collector-console > nav a[aria-current=page] { border-color: var(--theme-primary); color: var(--theme-primary); }

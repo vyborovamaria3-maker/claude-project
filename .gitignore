@@ -105,6 +105,7 @@ NUL
 # Local admin-site configuration
 admin-site/sources.json
 admin-site/logs.json
+admin-site/app/static/collector-workspaces/
 
 # Disposable local/Codespaces sentiment weights, venv and API bearer
 /.venv-sentiment/

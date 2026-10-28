@@ -95,12 +95,24 @@ jobs:
         run: npm ci --legacy-peer-deps
       - name: Security regression
         run: npm run security:test
+      - name: Administrator role and legacy navigation regression
+        run: npx vitest run --environment node lib/adminAuth.test.ts lib/tginvite-auth.test.ts lib/standaloneAdmin.test.ts lib/xcollector-register.test.ts
+      - name: Build standalone admin collector workspaces
+        run: node node_modules/vite/bin/vite.js build --configLoader native --config ../admin-site/ui/vite.config.mjs
+      - name: Standalone admin workspace typecheck
+        run: npx tsc --noEmit -p ../admin-site/ui/tsconfig.json
+      - name: Standalone admin workspace browser smoke (synthetic APIs)
+        run: |
+          npx playwright install --with-deps chromium
+          node ../admin-site/tests/collector-workspaces-browser.mjs
       - name: KOL regression
         run: npm run kols:test
       - name: TypeScript typecheck
         run: npx tsc --noEmit
       - name: Production build
         run: npm run build
+      - name: Production collector route and access smoke
+        run: node scripts/admin-routes-http-smoke.mjs
 
   admin-control-center:
     name: Control Center regression and Compose

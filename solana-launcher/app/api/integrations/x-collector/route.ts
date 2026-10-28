@@ -4,7 +4,7 @@ import {autopostCommand,publicPublishJob} from '@/lib/xcollector-autopost';
 import {startAccountLogin,finishAccountLogin,cancelAccountLogin,loginStatus} from '@/lib/xcollector-login';
 import { NextRequest, NextResponse } from 'next/server';
 import { getXCollectorSummary, runXCollectorAction, type XCollectorAction } from '@/lib/xcollector';
-import { requireProdAuth } from '@/lib/routeAuth';
+import { requireAdminAuth } from '@/lib/adminAuth';
 import { publisherStatistics, savePublisherProfile, changeCollectorAccountRole, AccountError, listCollectorAccounts, addCollectorAccount, deleteCollectorAccount } from '@/lib/xcollector-accounts';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -27,7 +27,7 @@ async function body(request: NextRequest) {
 }
 export async function GET(request: NextRequest) {
   try {
-    const auth = await requireProdAuth(request); if (auth) return auth;
+    const auth = await requireAdminAuth(request); if (auth) return auth;
     const action = new URL(request.url).searchParams.get('action');
     if (action === 'autopost-overview' || action === 'autopost-stats') {localLogin(request);return NextResponse.json(await autopostCommand({action:action==='autopost-overview'?'overview':'stats',name:new URL(request.url).searchParams.get('name')}),{headers:{'Cache-Control':'no-store'}});}
     if (action === 'autopost-audit') {localLogin(request);return NextResponse.json(await autopostCommand({action:'audit',id:new URL(request.url).searchParams.get('id')}),{headers:{'Cache-Control':'no-store'}});}
@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
 }
 export async function POST(request: NextRequest) {
   try {
-    const auth = await requireProdAuth(request); if (auth) return auth;
+    const auth = await requireAdminAuth(request); if (auth) return auth;
     if (!sameOrigin(request)) throw new AccountError('Запрос разрешён только со страницы сайта',403);
     const input = await body(request);
     if(['account-history-start','account-history-status','account-history-pause','account-history-resume','account-history-retry'].includes(input?.action)){
@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
 }
 export async function DELETE(request: NextRequest) {
   try {
-    const auth = await requireProdAuth(request); if (auth) return auth;
+    const auth = await requireAdminAuth(request); if (auth) return auth;
     if (!sameOrigin(request)) throw new AccountError('Запрос разрешён только со страницы сайта',403);
     return NextResponse.json(await deleteCollectorAccount(await body(request)));
   } catch (error) { return failure(error); }

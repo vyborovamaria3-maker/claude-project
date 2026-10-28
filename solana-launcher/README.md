@@ -308,8 +308,8 @@ MIT License - см. LICENSE file
 
 **AI Reply Guy** - Автоматизируйте ответы в X (Twitter) с профессиональным качеством! 🚀
 
-## TG Collector UI
+## Collector administration
 
-Operational collection controls live under `/admin`: X Collector at `/admin/x-collector`, TG Collector at `/admin/tg-collector`, and TG Invite at `/admin/tg-invite`. These admin routes reuse the existing X/TG components and TG Invite workspace, including their existing APIs and ownership. The product Settings page no longer shows X/TG collector controls. Existing TG Invite URLs redirect to its admin route. X Registry remains at `/admin/twitter-registry`.
+TG Invite, TG Collector and X Collector are available only in the separate Python `admin-site`, under `/collectors/tg-invite`, `/collectors/tg-collector` and `/collectors/x-collector`. Product Settings and the main sidebar show none of these operational tools. Former product routes redirect to the configured server-only `ADMIN_SITE_URL`; they return 404 when it is unset. Components and APIs are reused without copying databases, queues or Telegram sessions. X Registry remains a separate module.
 
-**Security scope:** moving Next.js UI under `/admin` does not create an independent admin role check or integrate the separate Python `admin-site` session. The standalone Control Center's X/TG screens remain separate, and it does not yet host the full TG Invite workspace. See `docs/architecture/ADMIN_WORKSPACE_MIGRATION_20261029.md` for acceptance, limitations and rollback.
+The standalone admin uses its own HttpOnly session and a bounded server-side bridge. TG Invite's existing owner identity requires an operator-supplied server token. Local API/network connectivity and live service continuity remain rollout prerequisites; the existing Next TG Collector API stays disabled in production. See `docs/architecture/ADMIN_WORKSPACE_MIGRATION_20261029.md` in the repository root.

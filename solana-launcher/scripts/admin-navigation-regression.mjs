@@ -10,25 +10,21 @@ test("settings no longer renders operational collectors", () => {
     assert.match(settings, new RegExp('id: "' + tab + '"'));
   }
 });
-test("all three operational workspaces have canonical admin routes", () => {
-  assert.match(read("app/admin/x-collector/page.tsx"), /<XCollectorTab \/>/);
-  assert.match(read("app/admin/tg-collector/page.tsx"), /<TGCollectorTab \/>/);
-  assert.match(read("app/admin/tg-invite/page.tsx"), /<TGInviteWorkspace \/>/);
-  const nav = read("components/AdminCollectorTabs.tsx");
-  for (const route of ["/admin/x-collector","/admin/tg-collector","/admin/tg-invite"]) {
-    assert.ok(nav.includes(route), route);
-    assert.ok(read("app/admin/page.tsx").includes(route), route);
+test("the product app never renders operational collector workspaces", () => {
+  for (const path of ["app/admin/page.tsx", "app/admin/x-collector/page.tsx", "app/admin/tg-collector/page.tsx", "app/admin/tg-invite/page.tsx", "app/tg-collector/page.tsx"]) {
+    assert.match(read(path), /redirectToStandaloneAdmin/);
+    assert.doesNotMatch(read(path), /XCollectorTab|TGCollectorTab|TGInviteWorkspace|AdminCollectorTabs/);
   }
 });
 test("legacy TG Invite paths redirect without rendering a second workspace", () => {
   for (const path of ["app/settings/tginvite/page.tsx","app/tginvite/page.tsx","app/launch/tginvite/page.tsx","app/trade/tginvite/page.tsx"]) {
     const content = read(path);
-    assert.match(content, /redirect\("\/admin\/tg-invite"\)/);
+    assert.match(content, /redirectToStandaloneAdmin\("tg-invite"\)/);
     assert.doesNotMatch(content, /<TGInviteWorkspace/);
   }
 });
-test("main sidebar advertises only the admin hub, not standalone operational links", () => {
+test("main sidebar has no operational collectors or admin collector hub", () => {
   const design = read("lib/siteDesign.ts");
-  assert.match(design, /href: "\/admin"/);
-  assert.doesNotMatch(design, /href: "\/tginvite"|href: "\/tg-collector"/);
+  assert.doesNotMatch(design, /href: "\/(?:admin|tginvite|tg-collector)(?:\/|\")/);
+  assert.doesNotMatch(read("components/AdminCollectorTabs.tsx"), /href: "\/admin\/(?:x-collector|tg-collector|tg-invite)"/);
 });

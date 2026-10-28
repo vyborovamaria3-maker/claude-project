@@ -1,15 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { Database, Twitter, UserPlus, ListTree } from "lucide-react";
+import { ListTree } from "lucide-react";
 import { usePathname } from "next/navigation";
 
 export default function AdminCollectorTabs() {
   const pathname = usePathname();
   const items = [
-    { href: "/admin/x-collector", label: "X Collector", icon: Twitter },
-    { href: "/admin/tg-collector", label: "TG Collector", icon: Database },
-    { href: "/admin/tg-invite", label: "TG Invite", icon: UserPlus },
     { href: "/admin/twitter-registry", label: "X Registry", icon: ListTree },
   ];
   return (

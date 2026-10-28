@@ -1,8 +1,6 @@
 // Run against an isolated local development server; every browser API call is mocked.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
-const require=createRequire(new URL('../../x-collector/package.json',import.meta.url));
-const {chromium}=require('playwright');
+import {chromium} from 'playwright';
 const base=process.env.X_COLLECTOR_SMOKE_URL||'http://127.0.0.1:3310';
 assert.equal(new URL(base).hostname,'127.0.0.1');
 const browser=await chromium.launch({headless:true});
@@ -39,7 +37,7 @@ try{
  });
  async function open(){
   try{
-   await page.goto(base+'/admin/x-collector',{waitUntil:'load',timeout:180000});
+   await page.goto(base+'/collectors/x-collector',{waitUntil:'load',timeout:180000});
    await page.getByRole('heading',{name:'X Collector',exact:true}).waitFor();
    await page.getByRole('button',{name:'Автопостинг',exact:true}).click();
    await page.getByRole('heading',{name:'Автопостинг и активность X'}).waitFor();

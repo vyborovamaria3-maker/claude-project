@@ -138,7 +138,6 @@ export const siteDesign = {
       { href: "/database/wallets", labelKey: "nav.databaseWallets", icon: "wallet", tag: "nav.database_wallets" },
       { href: "/market-overview", labelKey: "nav.marketOverview", icon: "barChart", tag: "nav.market_overview" },
       { href: "/settings", labelKey: "nav.settings", icon: "settings", tag: "nav.settings" },
-      { href: "/admin", labelKey: "nav.administration", icon: "userPlus", tag: "nav.administration" },
     ] satisfies SiteNavItem[],
   },
 

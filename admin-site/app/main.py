@@ -138,8 +138,9 @@ def create_app() -> FastAPI:
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         response.headers["Cache-Control"] = "no-store"
+        style_policy = "'self' 'unsafe-inline'" if request.url.path.startswith("/collectors/") else "'self'"
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; "
+            f"default-src 'self'; style-src {style_policy}; script-src 'self'; img-src 'self' data:; "
             "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         )
         return response

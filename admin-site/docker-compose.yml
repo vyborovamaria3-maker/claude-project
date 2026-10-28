@@ -21,7 +21,9 @@ services:
       start_period: 10s
 
   admin:
-    build: .
+    build:
+      context: ..
+      dockerfile: admin-site/Dockerfile
     image: "admin-site-admin:${ADMIN_IMAGE_TAG:-latest}"
     container_name: potapoff-admin
     restart: unless-stopped

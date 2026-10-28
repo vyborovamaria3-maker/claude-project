@@ -110,3 +110,11 @@ backend. Twitter monitoring использует этот адрес по умо
 хоста или production требуется отдельная серверная интеграция.
 
 Проверка моста: `python -m unittest discover -s tests -p test_tg_collector_admin.py`.
+
+## Полные интерфейсы TG Invite, TG Collector и X Collector
+
+Рабочие пространства находятся только в отдельной админке: `/collectors/tg-invite`, `/collectors/tg-collector`, `/collectors/x-collector`. Используются исходные React-компоненты и существующие API/хранилища; старые страницы основного сайта перенаправляют сюда через серверный `ADMIN_SITE_URL`, либо возвращают 404, если адрес не задан.
+
+UI собирается из корня репозитория командой `node solana-launcher/node_modules/vite/bin/vite.js build --configLoader native --config admin-site/ui/vite.config.mjs`. Зависимости берутся из lockfile `solana-launcher` (`npm ci --legacy-peer-deps`). Dockerfile собирает UI отдельным этапом; его build context теперь корень репозитория, например `docker build -f admin-site/Dockerfile .`.
+
+Админская HttpOnly-сессия защищает страницы и серверный мост. `ADMIN_TGINVITE_ACCESS_TOKEN` задаёт существующую identity/owner TG Invite только на сервере. Токен не отправляется браузеру. Существующие локальные API и backend должны работать в том же сетевом пространстве, что и админка: loopback контейнера не указывает на хост. Текущий production Compose сам такой operational runtime не создаёт. Полная проверка production-подключения остаётся отдельным шагом; см. `docs/architecture/ADMIN_WORKSPACE_MIGRATION_20261029.md` в корне репозитория.

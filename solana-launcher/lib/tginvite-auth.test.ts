@@ -42,7 +42,7 @@ describe("TGInvite API authorization", () => {
   it("derives the identity from the backend, never a user-supplied id", async () => {
     const backend = vi.fn()
       .mockResolvedValueOnce({ ok: true, status: 200 })
-      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ id: "123e4567-e89b-12d3-a456-426614174000" }) });
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ id: "123e4567-e89b-12d3-a456-426614174000", is_active: true, is_superuser: true }) });
     vi.stubGlobal("fetch", backend);
     const result = await requireTGInviteUser(request("POST", {
       authorization: "Bearer valid",
@@ -59,5 +59,13 @@ describe("TGInvite API authorization", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const result = await requireTGInviteUser(request("GET", { authorization: "Bearer valid" }));
     expect(result.error?.status).toBe(503);
+  });
+
+  it.each([false, undefined, "true"])("rejects a subscriber without an explicit admin role: %s", async role => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200 })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ id: "123e4567-e89b-12d3-a456-426614174000", is_active: true, is_superuser: role }) }));
+    const result = await requireTGInviteUser(request("GET", { authorization: "Bearer subscriber" }));
+    expect(result.error?.status).toBe(403);
   });
 });
