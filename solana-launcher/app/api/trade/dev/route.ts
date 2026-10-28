@@ -42,7 +42,8 @@ function buildCachedDevResponse(creator: string, warning: string | null) {
     reached300kCount,
     rate300k,
     bestLaunchHourUtc: cachedWallet?.bestLaunchHour ?? null,
-    launchesByHour: Array.from({ length: 24 }, () => 0),
+    // Empty array denotes insufficient evidence, not 24 observed zero-count hours.
+    launchesByHour: [],
     userTag: tag?.tag ?? null,
     userNote: tag?.note ?? null,
     degraded: true,
@@ -75,11 +76,9 @@ export async function GET(req: NextRequest) {
     if (!creator) return NextResponse.json({ creator: null, analysis: null });
   }
 
-  if (!skipCache) {
-    const cached = buildCachedDevResponse(creator!, "Показаны сохранённые данные DEV кошелька. Используйте refresh=1 для live обновления.");
-    if (cached) return NextResponse.json(cached);
-  }
-
+  // analyzeDev already uses its own in-memory/SQLite freshness gates. Returning the
+  // raw DB shortcut here discarded riskScore/riskLevel and synthesized zero launch
+  // hours even when cached token history was available.
   try {
     const analysis = await analyzeDev(creator!, { skipCache });
     const tag = getDevTag(analysis.address);
