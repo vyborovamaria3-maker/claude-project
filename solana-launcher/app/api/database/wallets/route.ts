@@ -41,8 +41,9 @@ const SORT_SQL: Record<string, string> = {
   total_pnl_sol: "ws.total_pnl_sol",
   total_volume_sol: "ws.total_volume_sol",
   tokens_traded: "ws.tokens_traded",
-  chain_win_rate: "m.avg_pnl",
-  bundle_rows: "m.avg_pnl",
+  // Aggregate on the underlying token rows before pagination, otherwise sort order is wrong.
+  chain_win_rate: "(SELECT AVG(CASE WHEN s.pnl_sol > 0 THEN 1.0 ELSE 0.0 END) FROM wallet_token_stats s WHERE s.address = m.wallet)",
+  bundle_rows: "(SELECT SUM(CASE WHEN s.bundle_id IS NOT NULL THEN 1 ELSE 0 END) FROM wallet_token_stats s WHERE s.address = m.wallet)",
   total_rockets: "m.total_rockets",
   reports: "m.reports",
 };
