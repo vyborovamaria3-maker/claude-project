@@ -98,8 +98,11 @@ export function simulateDevSnipe(
     p.secondsAfterLaunch > entry.secondsAfterLaunch &&
     p.secondsAfterLaunch <= entry.secondsAfterLaunch + 1800);
   if (!following.length) return null;
-  const exit = following.find((p) => p.marketCapUsd >= 20_000 || p.marketCapUsd <= entry.marketCapUsd * 0.5)
-    ?? following.at(-1)!;
+  const triggered = following.find((p) => p.marketCapUsd >= 20_000 || p.marketCapUsd <= entry.marketCapUsd * 0.5);
+  // A partial path cannot prove the 30-minute timeout. Only score timeouts when
+  // an observation reaches the actual 30-minute horizon.
+  if (!triggered && following[following.length - 1].secondsAfterLaunch < entry.secondsAfterLaunch + 1800) return null;
+  const exit = triggered ?? following.at(-1)!;
   const reason: SnipingSimulation["exitReason"] = exit.marketCapUsd >= 20_000
     ? "target" : exit.marketCapUsd <= entry.marketCapUsd * 0.5 ? "stop" : "timeout";
   const grossMultiple = exit.marketCapUsd / entry.marketCapUsd;
@@ -123,7 +126,7 @@ function cleanTarget(launch: DevLaunchEvidence): boolean | null {
   if (!valid.length) return null;
   const entry = valid[0].marketCapUsd;
   const target = valid.findIndex((p) => p.marketCapUsd >= 20_000);
-  if (target < 0) return false;
+  if (target < 0) return valid[valid.length - 1].secondsAfterLaunch >= 1800 ? false : null;
   return !valid.slice(0, target + 1).some((p) => p.marketCapUsd <= entry * 0.5);
 }
 
