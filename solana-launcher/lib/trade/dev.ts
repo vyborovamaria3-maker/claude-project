@@ -781,7 +781,8 @@ function computeRiskMetrics(tokens: DevToken[]) {
     ? positiveMcs.reduce((a, b) => a + b, 0) / positiveMcs.length
     : null;
   const medianMcUsd = positiveMcs.length > 0
-    ? positiveMcs[Math.floor(positiveMcs.length / 2)]
+    ? (positiveMcs[Math.floor((positiveMcs.length - 1) / 2)]
+      + positiveMcs[Math.floor(positiveMcs.length / 2)]) / 2
     : null;
   const maxMcUsd = positiveMcs.length > 0 ? positiveMcs[positiveMcs.length - 1] : null;
 
