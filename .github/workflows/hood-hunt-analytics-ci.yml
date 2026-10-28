@@ -1,0 +1,40 @@
+name: Hood Hunt Analytics CI
+
+on:
+  pull_request:
+    paths:
+      - "solana-launcher/lib/trade/hood-hunt-*"
+      - "solana-launcher/app/api/trade/hood-hunt/**"
+      - "solana-launcher/app/trade/hood-hunt/**"
+      - "solana-launcher/app/api/trade/dev/route.ts"
+      - "solana-launcher/lib/database-analytics.ts"
+      - "solana-launcher/app/api/database/wallets/route.ts"
+      - "solana-launcher/components/trade/**"
+      - ".github/workflows/hood-hunt-analytics-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-typecheck:
+    name: Unit tests and TypeScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: solana-launcher
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: solana-launcher/package-lock.json
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+      - name: Hood Hunt unit tests
+        run: npx vitest run lib/trade/hood-hunt.test.ts lib/trade/hood-hunt-strategy.test.ts
+      - name: TypeScript
+        run: npx tsc --noEmit
