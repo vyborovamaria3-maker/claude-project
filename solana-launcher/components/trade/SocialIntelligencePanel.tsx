@@ -27,6 +27,7 @@ import {
   Zap,
 } from "lucide-react";
 import { siteDesign } from "@/lib/siteDesign";
+import featureProvenance from "@/lib/trade/analysis-feature-provenance.json";
 import {
   DEFAULT_SOCIAL_OPTIONS,
   IMPULSE_THRESHOLD_PCT,
@@ -62,6 +63,11 @@ import {
 } from "@/lib/trade/intelligence-agent";
 
 const BACKEND = (process.env.NEXT_PUBLIC_BACKEND_URL || "/fastapi").replace(/\/$/, "");
+type FeatureRule = { source: string; sources: string[] };
+const featureGroups = featureProvenance.groups as Record<string, {
+  default: FeatureRule;
+  overrides?: Record<string, FeatureRule>;
+}>;
 
 export type SocialAnalysisFocus = "all" | "twitter" | "telegram" | "fomo" | "cross" | "price" | "ai";
 export default function SocialIntelligencePanel({
@@ -263,9 +269,17 @@ export default function SocialIntelligencePanel({
     (focus === "price" && group.title === "Price event evidence")
   ).map((group) => ({
     ...group,
-    rows: requestOnly || !(x || tg || market || chain || ai?.result)
-      ? group.rows.map((row) => ({ ...row, value: "—" }))
-      : group.rows,
+    rows: group.rows.map((row) => {
+      const provenance = featureGroups[group.title];
+      const rule = provenance.overrides?.[row.label] || provenance.default;
+      const missingSocialInput = rule.source === "derived"
+        && rule.sources.some((source) => source === "x" || source === "telegram") && !(x || tg);
+      const missingCrossInput = group.title === "Cross-platform / Timing" && !(x && tg)
+        && ["Cross-platform score", "Cross matched share", "Both platforms active"].includes(row.label);
+      return requestOnly || !(x || tg || market || chain || ai?.result) || missingSocialInput || missingCrossInput
+        ? { ...row, value: "—" }
+        : row;
+    }),
   }));
   const focusTitle: Record<SocialAnalysisFocus, string> = {
     all: "Social Intelligence · X + Telegram + Graph + Qwen",

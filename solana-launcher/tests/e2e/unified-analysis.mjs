@@ -63,9 +63,28 @@ export async function checkUnifiedDetails(page, baseUrl, mint) {
     );
   });
   assert.equal(xMint, mint, "Selected mint must reach the existing X source");
+  await dialog.getByRole("button", { name: "Cross-platform / Timing", exact: true }).click();
+  for (const label of ["Cross-platform score", "Cross matched share", "Both platforms active"]) {
+    const row = groupRows("Cross-platform / Timing").filter({ has: page.getByText(label, { exact: true }) });
+    assert.equal(await row.locator(".font-mono").textContent(), "—", `${label}: an unavailable counterpart is unknown`);
+  }
   await dialog.getByRole("button", { name: "Telegram", exact: true }).click();
   await tables.getByText("TG score", { exact: true }).waitFor({ state: "visible" });
   assert.deepEqual(await groupRows("Telegram").locator(".font-mono").allTextContents(), catalog.groups.Telegram.labels.map(() => "—"), "Unavailable Telegram must not show invented values");
+  await close();
+
+  // Market availability alone must not turn missing social inputs into zero scores.
+  await page.route(url => url.pathname === "/api/trade/dev-twitter", route => route.fulfill({ status: 503, json: { error: "source_unavailable" } }));
+  await page.route(url => url.pathname === "/api/token-ohlcv", route => route.fulfill({ json: { pair: { liquidityUsd: 1234 } } }));
+  await fullReport();
+  await dialog.getByText("Нет данных X и Telegram", { exact: true }).waitFor({ state: "visible" });
+  assert.deepEqual(await groupRows("Growth / Quality / Manipulation").locator(".font-mono").allTextContents(), catalog.groups["Growth / Quality / Manipulation"].labels.map(() => "—"));
+  for (const label of ["Cross-platform score", "Cross matched share", "Both platforms active"]) {
+    const row = groupRows("Cross-platform / Timing").filter({ has: page.getByText(label, { exact: true }) });
+    assert.equal(await row.locator(".font-mono").textContent(), "—", `${label}: missing social inputs must remain unknown`);
+  }
+  const liquidity = groupRows("Cross-platform / Timing").filter({ has: page.getByText("Liquidity", { exact: true }) });
+  assert.notEqual(await liquidity.locator(".font-mono").textContent(), "—", "Available market data must remain visible");
   await close();
 
   // A lightweight same-origin frame isolates shell navigation from legacy APIs.
