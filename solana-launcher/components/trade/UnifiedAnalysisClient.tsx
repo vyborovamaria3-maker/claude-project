@@ -16,7 +16,7 @@ const BlockchainAnalyticsDashboard = dynamic(() => import("@/components/trade/Bl
 const BlockchainAiReportPanel = dynamic(() => import("@/components/trade/BlockchainAiReportPanel"), { ssr: false });
 const ForensicEvidencePage = dynamic(() => import("@/app/trade/analysis/evidence/page"), { ssr: false });
 
-type Section = "twitter" | "telegram" | "blockchain" | "fomo" | "ai"
+type Section = "twitter" | "telegram" | "blockchain" | "fomo" | "ai" | "cross" | "price"
   | "onchain" | "evidence" | "leaderboard" | "history" | "kols" | "live" | "investigation" | "chart";
 type ChartSize = "normal" | "compact" | "hidden";
 const MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -26,7 +26,9 @@ const sections: Array<{ id: Section; label: string; description: string; icon: t
   { id: "telegram", label: "Telegram", description: "Каналы, сигналы, репутация, история и ранние упоминания", icon: MessageCircle },
   { id: "blockchain", label: "Блокчейн", description: "Кошельки, сделки, источники данных и состояние индексов", icon: Database },
   { id: "fomo", label: "FOMO", description: "Ускорение, ажиотаж, органика и признаки манипуляций", icon: Activity },
-  { id: "ai", label: "Общий анализ ИИ", description: "Сводка X, Telegram, рынка и on-chain с оговорками", icon: BrainCircuit },
+  { id: "ai", label: "Общий анализ ИИ", description: "Все 129 основных / 141 отображаемое поле, включая cross-source evidence", icon: BrainCircuit },
+  { id: "cross", label: "Cross-platform / Timing", description: "27 полей совпадений, скорости, времени и цены", icon: Clock3 },
+  { id: "price", label: "Price event evidence", description: "14 полей истории цены, трейдов, охвата и импульсов", icon: BarChart3 },
   { id: "onchain", label: "Кошельки и DEV", description: "Полный прежний анализ: PnL, bundles, фильтры и CSV", icon: Users },
   { id: "evidence", label: "Проверенные данные", description: "Локальные подтверждённые операции и границы охвата", icon: ShieldCheck },
   { id: "leaderboard", label: "Leaderboard", description: "Существующие рейтинги кошельков и разработчиков", icon: Trophy },
@@ -38,7 +40,7 @@ const sections: Array<{ id: Section; label: string; description: string; icon: t
 ];
 
 const mainSections = sections.slice(0, 4);
-const extraSections = sections.slice(5, 12);
+const extraSections = sections.filter(({ id }) => !["twitter", "telegram", "blockchain", "fomo", "ai", "chart"].includes(id));
 const gold = "border-[#a98b2b]/35 bg-[#a98b2b]/5";
 const buttonClass = "inline-flex items-center gap-2 rounded-lg border border-[#a98b2b]/40 bg-[#a98b2b]/10 px-3 py-2 text-xs font-semibold text-[#edcf69] transition hover:border-[#e6c65a]/70 hover:bg-[#a98b2b]/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#edcf69]";
 
@@ -115,7 +117,7 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
     if (!validMint && !["leaderboard", "history"].includes(id)) {
       return <p className="rounded-xl border border-amber-400/25 bg-amber-400/5 p-6 text-sm text-amber-200">Для этого анализа сначала укажите mint токена в основной форме.</p>;
     }
-    if (id === "twitter" || id === "telegram" || id === "fomo" || id === "ai") {
+    if (id === "twitter" || id === "telegram" || id === "fomo" || id === "cross" || id === "price" || id === "ai") {
       return (
         <div className="space-y-6">
           <SocialIntelligencePanel
@@ -156,7 +158,7 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
       <header className="space-y-2">
         <p className="text-xs uppercase tracking-[.24em] text-[#d8b744]">POTAPOFF / ANALYSIS</p>
         <h1 className="text-2xl font-semibold tracking-tight text-[#f1eee6]">Единый анализ токена</h1>
-        <p className="max-w-4xl text-sm text-[#a9a093]">Все существующие источники на одном экране. Подробности открываются в большой панели без перехода на другую страницу. Расчётные показатели не являются подтверждённым PnL.</p>
+        <p className="max-w-4xl text-sm text-[#a9a093]">Все существующие источники на одном экране. 129 основных параметров и 141 отображаемое поле доступны в подробном анализе. Подробности открываются в большой панели без перехода на другую страницу. Расчётные показатели не являются подтверждённым PnL.</p>
       </header>
 
       <div className="rounded-2xl border border-[#a98b2b]/25 bg-[#211c16]/90 p-4">
