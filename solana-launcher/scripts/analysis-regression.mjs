@@ -6,6 +6,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const metricsPath = join(root, "lib", "trade", "social-intelligence.ts");
 const layoutPath = join(root, "app", "trade", "analysis", "layout.tsx");
 const overviewPath = join(root, "app", "trade", "analysis", "page.tsx");
+const overviewClientPath = join(root, "components", "trade", "UnifiedAnalysisClient.tsx");
 const socialPagePath = join(root, "app", "trade", "analysis", "social", "page.tsx");
 const panelPath = join(root, "components", "trade", "SocialIntelligencePanel.tsx");
 const routePath = join(root, "app", "api", "trade", "social-ai", "route.ts");
@@ -16,6 +17,7 @@ const tsconfigPath = join(root, "tsconfig.json");
 const metricsSource = readFileSync(metricsPath, "utf8");
 const layoutSource = readFileSync(layoutPath, "utf8");
 const overviewSource = readFileSync(overviewPath, "utf8");
+const overviewClientSource = readFileSync(overviewClientPath, "utf8");
 const socialPageSource = readFileSync(socialPagePath, "utf8");
 const panelSource = readFileSync(panelPath, "utf8");
 const routeSource = readFileSync(routePath, "utf8");
@@ -32,14 +34,22 @@ assert(
   "Trade Analysis shared layout must still wrap the detailed routes",
 );
 assert(
-  overviewSource.includes('trade.analysis.unified_v1') && overviewSource.includes('trade.analysis.detail_modal'),
+  overviewClientSource.includes('trade.analysis.unified_v1') && overviewClientSource.includes('trade.analysis.detail_modal'),
   "unified Analysis overview and detailed modal must exist",
 );
 assert(
-  overviewSource.includes('blockchain') && overviewSource.includes('telegram')
-    && overviewSource.includes('twitter') && overviewSource.includes('fomo')
-    && overviewSource.includes('ai'),
+  overviewClientSource.includes('blockchain') && overviewClientSource.includes('telegram')
+    && overviewClientSource.includes('twitter') && overviewClientSource.includes('fomo')
+    && overviewClientSource.includes('ai'),
   "unified Analysis must expose every existing source",
+);
+assert(
+  overviewSource.includes('INTELLIGENCE_AI_ON_DEMAND_ENABLED'),
+  "the unified Analysis server route must honor request-only AI policy",
+);
+assert(
+  overviewClientSource.includes('requestOnly={requestOnly}'),
+  "the policy must propagate to embedded Social Intelligence",
 );
 assert(
   socialPageSource.includes("SocialIntelligencePanel"),
