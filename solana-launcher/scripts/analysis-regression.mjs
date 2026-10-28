@@ -44,6 +44,15 @@ assert(
   "unified Analysis must expose every existing source",
 );
 assert(
+  overviewClientSource.includes('id: "cross"') && overviewClientSource.includes('id: "price"'),
+  "unified Analysis must expose existing Cross-platform / Timing and Price event evidence detail groups",
+);
+assert(
+  panelSource.includes('group.title === "Cross-platform / Timing"')
+    && panelSource.includes('group.title === "Price event evidence"'),
+  "focused modal views must reuse both existing derived source groups",
+);
+assert(
   overviewSource.includes('INTELLIGENCE_AI_ON_DEMAND_ENABLED'),
   "the unified Analysis server route must honor request-only AI policy",
 );
