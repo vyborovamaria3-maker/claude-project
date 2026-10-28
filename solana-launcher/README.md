@@ -310,4 +310,6 @@ MIT License - см. LICENSE file
 
 ## TG Collector UI
 
-The Settings page contains a **TG Collector** tab for runtime controls, source management, metrics, message search, graph/evidence and Telegram proxy settings. The admin area exposes the same collector through `/admin/tg-collector`, with an **X Collector / TG Collector** switcher alongside the existing X Registry.
+Operational collection controls live under `/admin`: X Collector at `/admin/x-collector`, TG Collector at `/admin/tg-collector`, and TG Invite at `/admin/tg-invite`. These admin routes reuse the existing X/TG components and TG Invite workspace, including their existing APIs and ownership. The product Settings page no longer shows X/TG collector controls. Existing TG Invite URLs redirect to its admin route. X Registry remains at `/admin/twitter-registry`.
+
+**Security scope:** moving Next.js UI under `/admin` does not create an independent admin role check or integrate the separate Python `admin-site` session. The standalone Control Center's X/TG screens remain separate, and it does not yet host the full TG Invite workspace. See `docs/architecture/ADMIN_WORKSPACE_MIGRATION_20261029.md` for acceptance, limitations and rollback.
