@@ -14,7 +14,7 @@ const PumpFunChart = dynamic(() => import("@/components/PumpFunChart"), { ssr: f
 const SocialIntelligencePanel = dynamic(() => import("@/components/trade/SocialIntelligencePanel"), { ssr: false });
 const BlockchainAnalyticsDashboard = dynamic(() => import("@/components/trade/BlockchainAnalyticsDashboard"), { ssr: false });
 const BlockchainAiReportPanel = dynamic(() => import("@/components/trade/BlockchainAiReportPanel"), { ssr: false });
-const ForensicEvidencePage = dynamic(() => import("./evidence/page"), { ssr: false });
+const ForensicEvidencePage = dynamic(() => import("@/app/trade/analysis/evidence/page"), { ssr: false });
 
 type Section = "twitter" | "telegram" | "blockchain" | "fomo" | "ai"
   | "onchain" | "evidence" | "leaderboard" | "history" | "kols" | "live" | "investigation" | "chart";
