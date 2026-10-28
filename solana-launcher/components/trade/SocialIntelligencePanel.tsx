@@ -63,7 +63,7 @@ import {
 
 const BACKEND = (process.env.NEXT_PUBLIC_BACKEND_URL || "/fastapi").replace(/\/$/, "");
 
-export type SocialAnalysisFocus = "all" | "twitter" | "telegram" | "fomo" | "ai";
+export type SocialAnalysisFocus = "all" | "twitter" | "telegram" | "fomo" | "cross" | "price" | "ai";
 export default function SocialIntelligencePanel({
   requestOnly = false,
   focus = "all",
@@ -258,13 +258,17 @@ export default function SocialIntelligencePanel({
     focus === "all" || focus === "ai" ||
     (focus === "twitter" && group.title === "X / Twitter") ||
     (focus === "telegram" && group.title === "Telegram") ||
-    (focus === "fomo" && group.title === "Growth / Quality / Manipulation")
+    (focus === "fomo" && group.title === "Growth / Quality / Manipulation") ||
+    (focus === "cross" && group.title === "Cross-platform / Timing") ||
+    (focus === "price" && group.title === "Price event evidence")
   );
   const focusTitle: Record<SocialAnalysisFocus, string> = {
     all: "Social Intelligence · X + Telegram + Graph + Qwen",
     twitter: "X / Twitter · расширенный анализ",
     telegram: "Telegram · расширенный анализ",
     fomo: "FOMO · рост, качество и манипуляции",
+    cross: "Cross-platform · X / Telegram / Timing",
+    price: "Price event evidence · история и цена",
     ai: "ИИ · общий анализ источников",
   };
 
@@ -329,7 +333,7 @@ export default function SocialIntelligencePanel({
           <Kpi label="AI confidence" value={ai?.result?.overallConfidence != null ? pct(ai.result.overallConfidence * 100) : "—"} icon={<BrainCircuit />} />
         </section>
         {(focus === "all" || focus === "ai") && snapshot && <GraphStats snapshot={snapshot} />}
-        {(focus === "all" || focus === "fomo") && <PricePanel price={derived.price} loading={chainLoading} />}
+        {(focus === "all" || focus === "fomo" || focus === "cross" || focus === "price") && <PricePanel price={derived.price} loading={chainLoading} />}
         <section className="surface-panel rounded-2xl border border-bg-border p-4">
           <div className="mb-3 flex items-center justify-between">
             <div><h2 className="text-sm font-semibold text-content">Все параметры</h2><p className="text-[10px] text-content-faint">Snapshot передаёт агенту все отображаемые поля; отсутствующие данные остаются «—».</p></div>
