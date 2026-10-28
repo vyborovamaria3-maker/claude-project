@@ -4,6 +4,7 @@
 import { TrendingUp, TrendingDown, Copy, ExternalLink, Users, ChevronDown, ChevronUp } from "lucide-react";
 import { useState } from "react";
 import WalletTradeDetail, { type CompactTrade } from "./WalletTradeDetail";
+import HoodHuntWalletAssessment from "./HoodHuntWalletAssessment";
 
 export interface WalletRowData {
   address: string;
@@ -112,9 +113,10 @@ export default function WalletRow({ w, allTrades }: { w: WalletRowData; allTrade
       </div>
       </div>
 
-      {expanded && allTrades && (
-        <div className="border-t border-bg-border bg-black/20 px-3 pb-3">
-          <WalletTradeDetail walletAddress={w.address} allTrades={allTrades} />
+      {expanded && (
+        <div className="border-t border-bg-border bg-black/20 px-3 py-3 space-y-3">
+          <HoodHuntWalletAssessment walletAddress={w.address} />
+          {allTrades && <WalletTradeDetail walletAddress={w.address} allTrades={allTrades} />}
         </div>
       )}
     </div>
