@@ -35,6 +35,6 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps --no-audit --no-fund
       - name: Hood Hunt unit tests
-        run: npx vitest run lib/trade/hood-hunt.test.ts lib/trade/hood-hunt-strategy.test.ts
+        run: npx vitest run --environment node lib/trade/hood-hunt.test.ts lib/trade/hood-hunt-strategy.test.ts
       - name: TypeScript
         run: npx tsc --noEmit
