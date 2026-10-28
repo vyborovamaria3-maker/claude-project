@@ -1,8 +1,9 @@
 "use client";
 // Unified POTAPOFF analysis entry. Existing data pipelines and detailed routes are reused unchanged.
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
+import SearchBar from "@/components/trade/SearchBar";
 import {
   Activity, ArrowUpRight, BarChart3, BrainCircuit, ChevronDown, ChevronUp,
   Database, History, Maximize2, Minimize2, Search, ShieldCheck, Sparkles,
@@ -54,11 +55,9 @@ export default function TradeAnalysisPage() {
   const params = useSearchParams();
   const router = useRouter();
   const initialMint = params.get("mint")?.trim() || "";
-  const [query, setQuery] = useState(initialMint);
   const [mint, setMint] = useState(initialMint);
   const [chartSize, setChartSize] = useState<ChartSize>("normal");
   const [detail, setDetail] = useState<Section | null>(null);
-  const [error, setError] = useState("");
   const dialogRef = useRef<HTMLElement>(null);
   const priorFocus = useRef<HTMLElement | null>(null);
   const validMint = MINT_RE.test(mint);
@@ -66,17 +65,10 @@ export default function TradeAnalysisPage() {
   useEffect(() => {
     const next = params.get("mint")?.trim() || "";
     setMint(next);
-    setQuery(next);
   }, [params]);
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const next = query.trim();
-    if (!MINT_RE.test(next)) {
-      setError("Введите действительный Solana mint / CA (base58, 32–44 символа).");
-      return;
-    }
-    setError("");
+  const submit = (next: string) => {
+    // SearchBar retains clipboard paste, recent searches, auto-submit and base58 validation.
     setMint(next);
     router.replace(`/trade/analysis?mint=${encodeURIComponent(next)}`, { scroll: false });
   };
@@ -165,14 +157,10 @@ export default function TradeAnalysisPage() {
         <p className="max-w-4xl text-sm text-[#a9a093]">Все существующие источники на одном экране. Подробности открываются в большой панели без перехода на другую страницу. Расчётные показатели не являются подтверждённым PnL.</p>
       </header>
 
-      <form onSubmit={submit} className="flex flex-wrap items-center gap-3 rounded-2xl border border-[#a98b2b]/25 bg-[#211c16]/90 p-4">
-        <label htmlFor="analysis-mint" className="text-xs font-semibold text-[#e8cb6b]">Solana mint</label>
-        <input id="analysis-mint" value={query} onChange={(e) => setQuery(e.target.value)}
-          placeholder="Адрес токена (base58)" spellCheck={false}
-          className="min-w-[200px] flex-1 rounded-lg border border-[#675a3b] bg-[#15120e] px-4 py-3 font-mono text-sm text-[#f4f0e7] outline-none focus:border-[#dec05a]" />
-        <button className={buttonClass} type="submit"><Search size={16}/> Анализировать</button>
-        {error && <p role="alert" className="w-full text-xs text-red-300">{error}</p>}
-      </form>
+      <div className="rounded-2xl border border-[#a98b2b]/25 bg-[#211c16]/90 p-4">
+        <p className="mb-2 text-xs font-semibold text-[#e8cb6b]">Solana mint / CA</p>
+        <SearchBar onSearch={submit} isLoading={false} initialValue={mint} />
+      </div>
 
       <section className="overflow-hidden rounded-2xl border border-[#a98b2b]/30 bg-[#1e1912]" aria-label="График токена">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#a98b2b]/20 px-4 py-3">
