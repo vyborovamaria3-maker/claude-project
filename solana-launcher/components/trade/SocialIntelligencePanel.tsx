@@ -69,11 +69,13 @@ export default function SocialIntelligencePanel({
   focus = "all",
   embedded = false,
   mintOverride,
+  onMintChange,
 }: {
   requestOnly?: boolean;
   focus?: SocialAnalysisFocus;
   embedded?: boolean;
   mintOverride?: string;
+  onMintChange?: (mint: string) => void;
 } = {}) {
   const router = useRouter();
   const params = useSearchParams();
@@ -127,7 +129,8 @@ export default function SocialIntelligencePanel({
       setChain(null);
       setAi(null);
       setSnapshot(null);
-      if (!embedded) router.replace(`/trade/analysis/social?mint=${encodeURIComponent(contract)}`, { scroll: false });
+      if (embedded) onMintChange?.(contract);
+      else router.replace(`/trade/analysis/social?mint=${encodeURIComponent(contract)}`, { scroll: false });
 
       if(requestOnly){
         try{
@@ -236,7 +239,7 @@ export default function SocialIntelligencePanel({
 
       if (!controller.signal.aborted) setLoading(false);
     },
-    [channels, options, router, requestOnly, embedded],
+    [channels, options, router, requestOnly, embedded, onMintChange],
   );
 
   useEffect(() => {
