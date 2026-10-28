@@ -261,7 +261,12 @@ export default function SocialIntelligencePanel({
     (focus === "fomo" && group.title === "Growth / Quality / Manipulation") ||
     (focus === "cross" && group.title === "Cross-platform / Timing") ||
     (focus === "price" && group.title === "Price event evidence")
-  );
+  ).map((group) => ({
+    ...group,
+    rows: requestOnly || !(x || tg || market || chain || ai?.result)
+      ? group.rows.map((row) => ({ ...row, value: "—" }))
+      : group.rows,
+  }));
   const focusTitle: Record<SocialAnalysisFocus, string> = {
     all: "Social Intelligence · X + Telegram + Graph + Qwen",
     twitter: "X / Twitter · расширенный анализ",
@@ -334,13 +339,16 @@ export default function SocialIntelligencePanel({
         </section>
         {(focus === "all" || focus === "ai") && snapshot && <GraphStats snapshot={snapshot} />}
         {(focus === "all" || focus === "fomo" || focus === "cross" || focus === "price") && <PricePanel price={derived.price} loading={chainLoading} />}
-        <section className="surface-panel rounded-2xl border border-bg-border p-4">
+      </>}
+        <section className="surface-panel rounded-2xl border border-bg-border p-4" data-tag="trade.social.metrics">
           <div className="mb-3 flex items-center justify-between">
             <div><h2 className="text-sm font-semibold text-content">Все параметры</h2><p className="text-[10px] text-content-faint">Snapshot передаёт агенту все отображаемые поля; отсутствующие данные остаются «—».</p></div>
-            <button type="button" onClick={() => void run(mint)} disabled={loading || !mint} className={siteDesign.controls.actionButtonClassName}><RefreshCw className="h-4 w-4" />Обновить</button>
+            <button type="button" onClick={() => void run(mint)} disabled={loading || !MINT_RE.test(mint)} className={siteDesign.controls.actionButtonClassName}><RefreshCw className="h-4 w-4" />Обновить</button>
           </div>
+          <p role="status" className="mb-3 text-xs text-content-muted">{loading ? "Данные загружаются. Недоступные значения обозначены «—»." : requestOnly ? "В этом режиме доступен ответ по кнопке «Анализ». Детальные значения каталога не получены и обозначены «—»." : !(x || tg || market || chain || ai?.result) ? "Данные источников не получены. Все названия показателей доступны; значения обозначены «—»." : "Значения из доступных источников; отсутствующие данные обозначены «—»."}</p>
           <div className="grid gap-4 xl:grid-cols-2">{focusedGroups.map((group) => <MetricTable key={group.title} title={group.title} rows={group.rows} />)}</div>
         </section>
+      {!requestOnly && (x || tg) && <>
         {(focus === "all" || focus === "ai") && <AiPanel ai={ai} snapshot={snapshot} />}
         {(focus === "all" || focus === "twitter" || focus === "telegram") && <TimelinePanel x={x} tg={tg} impulseAt={derived.price.impulseTime} impulseChange={derived.price.impulseChange} />}
       </>}

@@ -1,9 +1,22 @@
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
+import { checkUnifiedDetails } from "./unified-analysis.mjs";
 
 const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:3000";
 const MINT = "Bi6z17iWRMRejRHM56LHEdD5UQVsoexho5aeTR7kpump";
 const browser = await chromium.launch({ headless: true });
+
+async function waitForSearchReady(page) {
+  const input = page.locator('[data-tag="trade.search_input"]');
+  const submit = page.locator('[data-tag="trade.search_submit"]');
+  for (let attempt = 0; attempt < 50 && !(await submit.isEnabled()); attempt++) {
+    await input.fill("hydration probe");
+    if (!(await submit.isEnabled())) await page.waitForTimeout(100);
+  }
+  assert(await submit.isEnabled(), "SearchBar must be interactive before clipboard or modal checks");
+  await input.fill("");
+  await input.press("Escape");
+}
 
 try {
   const context = await browser.newContext({
@@ -11,10 +24,15 @@ try {
     serviceWorkers: "block",
   });
   try {
+    // Exercise UI contracts with bounded fixtures; never query live data services.
+    await context.route(url => url.pathname.startsWith("/api/") || url.pathname.startsWith("/fastapi/"), route =>
+      route.fulfill({ status: 503, json: { error: "source_unavailable" } })
+    );
     const page = await context.newPage();
 
     await page.goto(`${BASE_URL}/trade/analysis/onchain`, { waitUntil: "domcontentloaded" });
     await page.waitForLoadState("load");
+    await waitForSearchReady(page);
     let requestedMint = null;
     await page.route(url => url.pathname === "/api/trade/analyze-stream", async route => {
       requestedMint = new URL(route.request().url()).searchParams.get("mint");
@@ -60,6 +78,7 @@ try {
     try {
       await unified.goto(`${BASE_URL}/trade/analysis`, { waitUntil: "domcontentloaded" });
       await unified.waitForLoadState("load");
+      await waitForSearchReady(unified);
       await unified.locator('[data-tag="trade.analysis.unified_v1"]').waitFor({ state: "visible" });
       assert.equal(await unified.locator("article").count(), 4, "Unified overview must show four source cards");
       assert(await unified.locator('[data-tag="trade.paste_btn"]').isVisible(), "Unified overview must retain clipboard paste");
@@ -74,6 +93,7 @@ try {
       assert.equal(new URL(unified.url()).pathname, "/trade/analysis", "Modal must not navigate away");
       await unified.keyboard.press("Escape");
       await dialog.waitFor({ state: "hidden" });
+      await checkUnifiedDetails(unified, BASE_URL, MINT);
     } finally {
       await unified.close();
     }

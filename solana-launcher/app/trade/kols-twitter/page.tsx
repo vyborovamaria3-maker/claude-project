@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import KOLBacktestPanel from "@/components/trade/KOLBacktestPanel";
 import KOLLiveTradeFeed from "@/components/trade/KOLLiveTradeFeed";
 import KOLTokenFlowPanel from "@/components/trade/KOLTokenFlowPanel";
@@ -7,7 +8,9 @@ export default function KolsTwitterPage() {
   return (
     <div className="min-w-0">
       <KolsTwitterPanel />
-      <KOLTokenFlowPanel />
+      <Suspense fallback={null}>
+        <KOLTokenFlowPanel />
+      </Suspense>
       <KOLLiveTradeFeed />
       <KOLBacktestPanel />
     </div>

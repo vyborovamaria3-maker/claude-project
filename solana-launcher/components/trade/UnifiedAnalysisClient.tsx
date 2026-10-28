@@ -1,6 +1,6 @@
 "use client";
 // Unified POTAPOFF analysis entry. Existing data pipelines and detailed routes are reused unchanged.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import SearchBar from "@/components/trade/SearchBar";
@@ -44,11 +44,50 @@ const extraSections = sections.filter(({ id }) => !["twitter", "telegram", "bloc
 const gold = "border-[#a98b2b]/35 bg-[#a98b2b]/5";
 const buttonClass = "inline-flex items-center gap-2 rounded-lg border border-[#a98b2b]/40 bg-[#a98b2b]/10 px-3 py-2 text-xs font-semibold text-[#edcf69] transition hover:border-[#e6c65a]/70 hover:bg-[#a98b2b]/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#edcf69]";
 
-function LegacyDetail({ path, mint, label }: { path: string; mint: string; label: string }) {
+function LegacyDetail({ path, mint, label, onNavigate, onClose }: {
+  path: string; mint: string; label: string;
+  onNavigate: (nextMint: string, overview: boolean) => void;
+  onClose: () => void;
+}) {
+  const frameRef = useRef<HTMLIFrameElement>(null);
   const url = mint ? `${path}?mint=${encodeURIComponent(mint)}` : path;
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    let attachedDocument: Document | null = null;
+    let lastUrl = "";
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); onClose(); }
+    };
+    const sync = () => {
+      try {
+        const child = frame.contentWindow;
+        if (!child || child.location.origin !== window.location.origin) return;
+        if (attachedDocument !== child.document) {
+          attachedDocument?.removeEventListener("keydown", keydown);
+          attachedDocument = child.document;
+          attachedDocument.addEventListener("keydown", keydown);
+        }
+        if (child.location.href === lastUrl) return;
+        lastUrl = child.location.href;
+        const nextUrl = new URL(lastUrl);
+        const nextMint = nextUrl.searchParams.get("mint")?.trim() || "";
+        if (MINT_RE.test(nextMint)) onNavigate(nextMint, nextUrl.pathname === "/trade/analysis");
+      } catch { /* External frame navigation cannot change the selected token. */ }
+    };
+    frame.addEventListener("load", sync);
+    // Next.js changes the child URL without a frame load event.
+    const timer = window.setInterval(sync, 500);
+    sync();
+    return () => {
+      frame.removeEventListener("load", sync);
+      attachedDocument?.removeEventListener("keydown", keydown);
+      window.clearInterval(timer);
+    };
+  }, [onNavigate, onClose]);
   return (
     <div className="h-full min-h-[640px] overflow-hidden rounded-xl border border-[#a98b2b]/25 bg-[#17130e]">
-      <iframe title={label} src={url} className="h-[70vh] min-h-[640px] w-full border-0" />
+      <iframe ref={frameRef} title={label} src={url} className="h-[70vh] min-h-[640px] w-full border-0" />
     </div>
   );
 }
@@ -69,21 +108,26 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
     setMint(next);
   }, [params]);
 
-  const submit = (next: string) => {
+  const submit = useCallback((next: string) => {
     // SearchBar retains clipboard paste, recent searches, auto-submit and base58 validation.
     setMint(next);
     router.replace(`/trade/analysis?mint=${encodeURIComponent(next)}`, { scroll: false });
-  };
+  }, [router]);
 
   const open = (id: Section) => {
     priorFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setDetail(id);
   };
 
-  const close = () => {
+  const close = useCallback(() => {
     setDetail(null);
     requestAnimationFrame(() => priorFocus.current?.focus());
-  };
+  }, []);
+
+  const navigateLegacy = useCallback((next: string, overview: boolean) => {
+    if (next !== mint) submit(next);
+    if (overview) close();
+  }, [mint, submit, close]);
 
   useEffect(() => {
     if (!detail) return;
@@ -111,15 +155,13 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
       document.body.style.overflow = before;
       document.removeEventListener("keydown", keydown);
     };
-  }, [detail]);
+  }, [detail, close]);
 
   function detailContent(id: Section): ReactNode {
-    if (!validMint && !["leaderboard", "history"].includes(id)) {
-      return <p className="rounded-xl border border-amber-400/25 bg-amber-400/5 p-6 text-sm text-amber-200">Для этого анализа сначала укажите mint токена в основной форме.</p>;
-    }
     if (id === "twitter" || id === "telegram" || id === "fomo" || id === "cross" || id === "price" || id === "ai") {
       return (
         <div className="space-y-6">
+          {!validMint && <p className="rounded-xl border border-amber-400/25 bg-amber-400/5 p-6 text-sm text-amber-200">Для этого анализа сначала укажите mint токена в основной форме.</p>}
           <SocialIntelligencePanel
             key={mint}
             focus={id}
@@ -128,9 +170,12 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
             mintOverride={mint}
             onMintChange={(next) => { if (next !== mint) submit(next); }}
           />
-          {id === "ai" && <BlockchainAiReportPanel mint={mint} />}
+          {id === "ai" && validMint && <BlockchainAiReportPanel mint={mint} />}
         </div>
       );
+    }
+    if (!validMint && !["leaderboard", "history"].includes(id)) {
+      return <p className="rounded-xl border border-amber-400/25 bg-amber-400/5 p-6 text-sm text-amber-200">Для этого анализа сначала укажите mint токена в основной форме.</p>;
     }
     if (id === "blockchain") return (
       <div className="space-y-5">
@@ -142,12 +187,13 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
       </div>
     );
     if (id === "evidence") return <ForensicEvidencePage />;
-    if (id === "onchain") return <LegacyDetail path="/trade/analysis/onchain" mint={mint} label="Полный анализ кошельков" />;
-    if (id === "leaderboard") return <LegacyDetail path="/trade/leaderboard" mint={mint} label="Leaderboard" />;
-    if (id === "history") return <LegacyDetail path="/trade/history" mint={mint} label="История запусков" />;
-    if (id === "kols") return <LegacyDetail path="/trade/kols-twitter" mint={mint} label="KOL / Smart Money" />;
-    if (id === "live") return <LegacyDetail path="/trade/analysis/live-intelligence" mint={mint} label="Live Intelligence" />;
-    if (id === "investigation") return <LegacyDetail path="/trade/analysis/investigation" mint={mint} label="Расследование" />;
+    const legacy = { onNavigate: navigateLegacy, onClose: close };
+    if (id === "onchain") return <LegacyDetail {...legacy} path="/trade/analysis/onchain" mint={mint} label="Полный анализ кошельков" />;
+    if (id === "leaderboard") return <LegacyDetail {...legacy} path="/trade/leaderboard" mint={mint} label="Leaderboard" />;
+    if (id === "history") return <LegacyDetail {...legacy} path="/trade/history" mint={mint} label="История запусков" />;
+    if (id === "kols") return <LegacyDetail {...legacy} path="/trade/kols-twitter" mint={mint} label="KOL / Smart Money" />;
+    if (id === "live") return <LegacyDetail {...legacy} path="/trade/analysis/live-intelligence" mint={mint} label="Live Intelligence" />;
+    if (id === "investigation") return <LegacyDetail {...legacy} path="/trade/analysis/investigation" mint={mint} label="Расследование" />;
     return <div className="h-[min(75vh,740px)] overflow-auto rounded-xl border border-[#a98b2b]/20"><PumpFunChart mint={mint}/></div>;
   }
 
@@ -170,7 +216,7 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#a98b2b]/20 px-4 py-3">
           <div className="flex items-center gap-2 text-sm font-semibold"><BarChart3 className="text-[#e6c55b]" size={17}/> График Pump.fun <span className="text-[11px] font-normal text-[#9f9583]">Данные существующего компонента</span></div>
           <div className="flex flex-wrap gap-2">
-            <button type="button" className={buttonClass} onClick={() => setChartSize(chartSize === "compact" ? "normal" : "compact")} aria-label="Изменить высоту графика">
+            <button type="button" className={buttonClass} onClick={() => setChartSize(chartSize === "compact" ? "normal" : "compact")}>
               <Minimize2 size={14}/> {chartSize === "compact" ? "Обычный размер" : "Уменьшить"}
             </button>
             <button type="button" className={buttonClass} onClick={() => setChartSize(chartSize === "hidden" ? "normal" : "hidden")}>
