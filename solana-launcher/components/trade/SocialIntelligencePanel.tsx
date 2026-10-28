@@ -63,10 +63,21 @@ import {
 
 const BACKEND = (process.env.NEXT_PUBLIC_BACKEND_URL || "/fastapi").replace(/\/$/, "");
 
-export default function SocialIntelligencePanel({ requestOnly = false }: { requestOnly?: boolean } = {}) {
+export type SocialAnalysisFocus = "all" | "twitter" | "telegram" | "fomo" | "ai";
+export default function SocialIntelligencePanel({
+  requestOnly = false,
+  focus = "all",
+  embedded = false,
+  mintOverride,
+}: {
+  requestOnly?: boolean;
+  focus?: SocialAnalysisFocus;
+  embedded?: boolean;
+  mintOverride?: string;
+} = {}) {
   const router = useRouter();
   const params = useSearchParams();
-  const initialMintRef = useRef(params.get("mint")?.trim() || "");
+  const initialMintRef = useRef(mintOverride?.trim() || params.get("mint")?.trim() || "");
   const initialMint = initialMintRef.current;
 
   const [query, setQuery] = useState(initialMint);
@@ -116,7 +127,7 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
       setChain(null);
       setAi(null);
       setSnapshot(null);
-      router.replace(`/trade/analysis/social?mint=${encodeURIComponent(contract)}`, { scroll: false });
+      if (!embedded) router.replace(`/trade/analysis/social?mint=${encodeURIComponent(contract)}`, { scroll: false });
 
       if(requestOnly){
         try{
@@ -225,7 +236,7 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
 
       if (!controller.signal.aborted) setLoading(false);
     },
-    [channels, options, router, requestOnly],
+    [channels, options, router, requestOnly, embedded],
   );
 
   useEffect(() => {
@@ -240,6 +251,20 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
     [x, tg, market, chain, ai, channels, options],
   );
 
+  const focusedGroups = derived.groups.filter((group) =>
+    focus === "all" || focus === "ai" ||
+    (focus === "twitter" && group.title === "X / Twitter") ||
+    (focus === "telegram" && group.title === "Telegram") ||
+    (focus === "fomo" && group.title === "Growth / Quality / Manipulation")
+  );
+  const focusTitle: Record<SocialAnalysisFocus, string> = {
+    all: "Social Intelligence · X + Telegram + Graph + Qwen",
+    twitter: "X / Twitter · расширенный анализ",
+    telegram: "Telegram · расширенный анализ",
+    fomo: "FOMO · рост, качество и манипуляции",
+    ai: "ИИ · общий анализ источников",
+  };
+
   const submit = (event: FormEvent) => {
     event.preventDefault();
     void run(query);
@@ -251,7 +276,7 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
         <div>
           <div className="flex items-center gap-2">
             <Network className="h-5 w-5 text-primary" />
-            <h1 className="text-lg font-semibold text-content">{requestOnly ? "Анализ токена · Twitter + Telegram + блокчейн" : "Social Intelligence · X + Telegram + Graph + Qwen"}</h1>
+            <h1 className="text-lg font-semibold text-content">{requestOnly ? "Анализ токена · Twitter + Telegram + блокчейн" : focusTitle[focus]}</h1>
           </div>
           <p className="mt-1 text-xs text-content-muted">{requestOnly ? "Анализ запускается только по кнопке и использует собранные данные трёх источников." : "Все deterministic-параметры, entity graph, cross-platform evidence и AI-гипотезы в одном snapshot."}</p>
         </div>
@@ -288,7 +313,7 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
 
       {requestOnly && <TokenRequestPanel ai={ai} loading={loading} error={error} />}
       {!requestOnly && (x || tg) && <>
-        <MainFindings derived={derived} x={x} tg={tg} chain={chain} market={market} snapshot={snapshot} />
+        {(focus === "all" || focus === "ai") && <MainFindings derived={derived} x={x} tg={tg} chain={chain} market={market} snapshot={snapshot} />}
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 xl:grid-cols-9">
           <Kpi label="Social score" value={score(derived.socialScore)} icon={<Gauge />} />
           <Kpi label="X score" value={score(derived.xScore)} icon={<Twitter />} />
@@ -300,17 +325,17 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
           <Kpi label="Alpha" value={score(derived.alpha)} icon={<Radar />} />
           <Kpi label="AI confidence" value={ai?.result?.overallConfidence != null ? pct(ai.result.overallConfidence * 100) : "—"} icon={<BrainCircuit />} />
         </section>
-        {snapshot && <GraphStats snapshot={snapshot} />}
-        <PricePanel price={derived.price} loading={chainLoading} />
+        {(focus === "all" || focus === "ai") && snapshot && <GraphStats snapshot={snapshot} />}
+        {(focus === "all" || focus === "fomo") && <PricePanel price={derived.price} loading={chainLoading} />}
         <section className="surface-panel rounded-2xl border border-bg-border p-4">
           <div className="mb-3 flex items-center justify-between">
             <div><h2 className="text-sm font-semibold text-content">Все параметры</h2><p className="text-[10px] text-content-faint">Snapshot передаёт агенту все отображаемые поля; отсутствующие данные остаются «—».</p></div>
             <button type="button" onClick={() => void run(mint)} disabled={loading || !mint} className={siteDesign.controls.actionButtonClassName}><RefreshCw className="h-4 w-4" />Обновить</button>
           </div>
-          <div className="grid gap-4 xl:grid-cols-2">{derived.groups.map((group) => <MetricTable key={group.title} title={group.title} rows={group.rows} />)}</div>
+          <div className="grid gap-4 xl:grid-cols-2">{focusedGroups.map((group) => <MetricTable key={group.title} title={group.title} rows={group.rows} />)}</div>
         </section>
-        <AiPanel ai={ai} snapshot={snapshot} />
-        <TimelinePanel x={x} tg={tg} impulseAt={derived.price.impulseTime} impulseChange={derived.price.impulseChange} />
+        {(focus === "all" || focus === "ai") && <AiPanel ai={ai} snapshot={snapshot} />}
+        {(focus === "all" || focus === "twitter" || focus === "telegram") && <TimelinePanel x={x} tg={tg} impulseAt={derived.price.impulseTime} impulseChange={derived.price.impulseChange} />}
       </>}
     </div>
   );
