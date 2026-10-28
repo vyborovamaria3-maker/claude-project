@@ -4,12 +4,16 @@ on:
   pull_request:
     paths:
       - "admin-site/**"
+      - "solana-launcher/**"
+      - ".dockerignore"
       - ".github/workflows/admin-control-center.yml"
   push:
     branches:
       - main
     paths:
       - "admin-site/**"
+      - "solana-launcher/**"
+      - ".dockerignore"
       - ".github/workflows/admin-control-center.yml"
 
 permissions:
@@ -158,7 +162,7 @@ jobs:
         run: docker compose -f admin-site/docker-compose.yml config --quiet
 
       - name: Build Control Center image
-        run: docker build --pull -t potapoff-control-center:${{ github.sha }} admin-site
+        run: docker build --pull -f admin-site/Dockerfile -t potapoff-control-center:${{ github.sha }} .
 
       - name: Scan image for HIGH/CRITICAL vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0

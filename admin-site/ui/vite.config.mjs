@@ -20,7 +20,7 @@ export default defineConfig({
   esbuild: { jsx: 'automatic' },
   css: { postcss: { plugins: [tailwind({
     ...loadConfig(path.join(launcher, 'tailwind.config.ts')),
-    content: [path.join(launcher, 'app/settings/**/*.tsx'), path.join(launcher, 'components/tginvite/**/*.tsx'), path.join(ui, '*.tsx')],
+    content: [path.join(launcher, 'app/settings/**/*.tsx'), path.join(launcher, 'components/tginvite/**/*.tsx'), path.join(launcher, 'lib/siteDesign.ts'), path.join(ui, '*.tsx')],
   }), autoprefixer()] } },
   define: { 'process.env.NODE_ENV': JSON.stringify('production'), 'process.env.NEXT_PUBLIC_BACKEND_URL': JSON.stringify('/') },
   build: { outDir: path.resolve(ui, '../app/static/collector-workspaces'), emptyOutDir: true, sourcemap: false,

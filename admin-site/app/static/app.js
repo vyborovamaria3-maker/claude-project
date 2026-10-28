@@ -1,5 +1,5 @@
 const state = {
-  view: "overview",
+  view: window.location.hash === "#graph" ? "graph" : "overview",
   me: null,
   overview: null,
   db: { source: "", table: "", page: 1, pageSize: 50, search: "", tables: [], data: null },
