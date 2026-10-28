@@ -13,7 +13,7 @@ try {
   try {
     const page = await context.newPage();
 
-    await page.goto(`${BASE_URL}/trade/analysis`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE_URL}/trade/analysis/onchain`, { waitUntil: "domcontentloaded" });
     await page.waitForLoadState("load");
     let requestedMint = null;
     await page.route(url => url.pathname === "/api/trade/analyze-stream", async route => {
@@ -54,6 +54,30 @@ try {
     await page.getByRole("button", { name: /Trades\s+137\b/ })
       .waitFor({ state: "visible" });
 
+    // Unified overview: the original SearchBar must also work in the redesigned page.
+    // This UI-only check intentionally does not query live data services.
+    const unified = await context.newPage();
+    try {
+      await unified.goto(`${BASE_URL}/trade/analysis`, { waitUntil: "domcontentloaded" });
+      await unified.waitForLoadState("load");
+      await unified.locator('[data-tag="trade.analysis.unified_v1"]').waitFor({ state: "visible" });
+      assert.equal(await unified.locator("article").count(), 4, "Unified overview must show four source cards");
+      assert(await unified.locator('[data-tag="trade.paste_btn"]').isVisible(), "Unified overview must retain clipboard paste");
+      await unified.getByRole("button", { name: /Уменьшить/ }).click();
+      await unified.getByRole("button", { name: /Обычный размер/ }).waitFor({ state: "visible" });
+      await unified.getByRole("button", { name: /Свернуть/ }).click();
+      await unified.getByRole("button", { name: /Показать/ }).waitFor({ state: "visible" });
+      await unified.locator("article").first().getByRole("button", { name: /Открыть подробно/ }).click();
+      const dialog = unified.getByRole("dialog");
+      await dialog.waitFor({ state: "visible" });
+      await dialog.getByText("Для этого анализа сначала укажите mint").waitFor({ state: "visible" });
+      assert.equal(new URL(unified.url()).pathname, "/trade/analysis", "Modal must not navigate away");
+      await unified.keyboard.press("Escape");
+      await dialog.waitFor({ state: "hidden" });
+    } finally {
+      await unified.close();
+    }
+
     // Test invalid input on a fresh tab to avoid state persisted by the
     // successful analysis and in-flight navigation from the previous scenario.
     const invalidPage = await context.newPage();
@@ -63,7 +87,7 @@ try {
         invalidRequests += 1;
         await route.abort();
       });
-      await invalidPage.goto(`${BASE_URL}/trade/analysis`, { waitUntil: "domcontentloaded" });
+      await invalidPage.goto(`${BASE_URL}/trade/analysis/onchain`, { waitUntil: "domcontentloaded" });
       await invalidPage.waitForLoadState("load");
       const input = invalidPage.locator('[data-tag="trade.search_input"]');
       const submit = invalidPage.locator('[data-tag="trade.search_submit"]');
