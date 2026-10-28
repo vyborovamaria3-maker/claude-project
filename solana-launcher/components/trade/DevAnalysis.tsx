@@ -290,6 +290,7 @@ export default function DevAnalysis({ mint }: { mint: string }) {
         <div>
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-white">DEV Analysis</span>
+            <a href="/trade/hood-hunt" className="text-[11px] text-sky-300 hover:underline">Управление стратегией</a>
             {data.userTag && (
               <span className="px-2 py-0.5 rounded bg-neon-purple/15 border border-neon-purple/30 text-[10px] font-bold text-neon-purple">
                 <Bookmark className="w-3 h-3 inline mr-0.5" />
