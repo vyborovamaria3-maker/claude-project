@@ -10,7 +10,7 @@ test("settings no longer renders operational collectors", () => {
     assert.match(settings, new RegExp('id: "' + tab + '"'));
   }
 });
-test("all three operational workspaces have admin-only navigation locations", () => {
+test("all three operational workspaces have canonical admin routes", () => {
   assert.match(read("app/admin/x-collector/page.tsx"), /<XCollectorTab \/>/);
   assert.match(read("app/admin/tg-collector/page.tsx"), /<TGCollectorTab \/>/);
   assert.match(read("app/admin/tg-invite/page.tsx"), /<TGInviteWorkspace \/>/);
