@@ -1,5 +1,5 @@
-import TGInviteWorkspace from "@/components/tginvite/TGInviteClient";
+import { redirect } from "next/navigation";
 
 export default function SettingsTGInvitePage() {
-  return <TGInviteWorkspace />;
+  redirect("/admin/tg-invite");
 }

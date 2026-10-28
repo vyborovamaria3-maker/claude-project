@@ -9,11 +9,9 @@ import QuickActionsTab from "./QuickActionsTab";
 import ActivityTab from "./ActivityTab";
 import DiagnosticsTab from "./DiagnosticsTab";
 import ApifyTab from "./ApifyTab";
-import XCollectorTab from "./XCollectorTab";
-import TGCollectorTab from "./TGCollectorTab";
 import BlockchainTab from "./BlockchainTab";
 
-type Tab = "account" | "quick-actions" | "activity" | "colors" | "diagnostics" | "apify" | "xcollector" | "tgcollector" | "blockchain";
+type Tab = "account" | "quick-actions" | "activity" | "colors" | "diagnostics" | "apify" | "blockchain";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "account",       label: "Account" },
@@ -21,20 +19,16 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "activity",      label: "Activity" },
   { id: "diagnostics",   label: "Diagnostics" },
   { id: "apify",         label: "Apify" },
-  { id: "xcollector",    label: "X Collector" },
-  { id: "tgcollector",   label: "TG Collector" },
   { id: "blockchain",    label: "Blockchain" },
   { id: "colors",        label: "Colors" },
 ];
 
-const TAB_LABEL_KEYS: Record<Tab, "settings.tab.account" | "settings.tab.quickActions" | "settings.tab.activity" | "settings.tab.diagnostics" | "settings.tab.apify" | "settings.tab.xCollector" | "settings.tab.blockchain" | "settings.tab.colors"> = {
+const TAB_LABEL_KEYS: Record<Tab, "settings.tab.account" | "settings.tab.quickActions" | "settings.tab.activity" | "settings.tab.diagnostics" | "settings.tab.apify" | "settings.tab.blockchain" | "settings.tab.colors"> = {
   account: "settings.tab.account",
   "quick-actions": "settings.tab.quickActions",
   activity: "settings.tab.activity",
   diagnostics: "settings.tab.diagnostics",
   apify: "settings.tab.apify",
-  xcollector: "settings.tab.xCollector",
-  tgcollector: "settings.tab.xCollector",
   blockchain: "settings.tab.blockchain",
   colors: "settings.tab.colors",
 };
@@ -83,7 +77,7 @@ export default function SettingsPage() {
                   <div className="space-y-1">
                     <div className="text-[10px] uppercase tracking-[0.2em] text-content-faint">Section</div>
                     <div className="text-base font-semibold text-content" data-tag={"settings.tab." + tabItem.id}>
-                      {tabItem.id === "tgcollector" ? "TG Collector" : t(TAB_LABEL_KEYS[tabItem.id])}
+                      {t(TAB_LABEL_KEYS[tabItem.id])}
                     </div>
                     <div className="text-sm leading-6 text-content-muted">
                       {tabItem.id === "account" && "Wallet access and identity controls."}
@@ -91,8 +85,6 @@ export default function SettingsPage() {
                       {tabItem.id === "activity" && "Recent events and usage history."}
                       {tabItem.id === "diagnostics" && "Health checks and runtime signals."}
                       {tabItem.id === "apify" && "Collector and sync integrations."}
-                      {tabItem.id === "xcollector" && "X (Twitter) collection pipeline for Solana memecoins."}
-                      {tabItem.id === "tgcollector" && "Telegram channels, history, and background collection."}
                       {tabItem.id === "blockchain" && "Solana RPC health, blockchain data sources and analytics."}
                       {tabItem.id === "colors" && "Theme families, gradients, and palette controls."}
                     </div>
@@ -116,8 +108,6 @@ export default function SettingsPage() {
         {tab === "activity" && <ActivityTab />}
         {tab === "diagnostics" && <DiagnosticsTab />}
         {tab === "apify" && <ApifyTab />}
-        {tab === "xcollector" && <XCollectorTab />}
-        {tab === "tgcollector" && <TGCollectorTab />}
         {tab === "blockchain" && <BlockchainTab />}
         {tab === "colors" && <ColorsTab />}
       </section>

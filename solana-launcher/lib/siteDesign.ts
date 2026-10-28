@@ -132,14 +132,13 @@ export const siteDesign = {
       { href: "/trade/kols-twitter", labelKey: "nav.xAnalysis", icon: "twitter", tag: "nav.kols_twitter" },
       { href: "/trade/leaderboard", labelKey: "nav.tradeLeaderboard", icon: "trophy", tag: "nav.trade_leaderboard" },
       { href: "/trade/history", labelKey: "nav.tradeHistory", icon: "history", tag: "nav.trade_history" },
-      { href: "/tginvite", labelKey: "nav.tgInvite", icon: "userPlus", tag: "nav.tg_invite" },
-      { href: "/tg-collector", labelKey: "nav.tgCollector", icon: "database", tag: "nav.tg_collector" },
     ] satisfies SiteNavItem[],
     common: [
       { href: "/database", labelKey: "nav.database", icon: "database", tag: "nav.database" },
       { href: "/database/wallets", labelKey: "nav.databaseWallets", icon: "wallet", tag: "nav.database_wallets" },
       { href: "/market-overview", labelKey: "nav.marketOverview", icon: "barChart", tag: "nav.market_overview" },
       { href: "/settings", labelKey: "nav.settings", icon: "settings", tag: "nav.settings" },
+      { href: "/admin", labelKey: "nav.administration", icon: "userPlus", tag: "nav.administration" },
     ] satisfies SiteNavItem[],
   },
 

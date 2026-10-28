@@ -1,14 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { Database, Twitter } from "lucide-react";
+import { Database, Twitter, UserPlus, ListTree } from "lucide-react";
 import { usePathname } from "next/navigation";
 
 export default function AdminCollectorTabs() {
   const pathname = usePathname();
   const items = [
-    { href: "/admin/twitter-registry", label: "X Collector", icon: Twitter },
+    { href: "/admin/x-collector", label: "X Collector", icon: Twitter },
     { href: "/admin/tg-collector", label: "TG Collector", icon: Database },
+    { href: "/admin/tg-invite", label: "TG Invite", icon: UserPlus },
+    { href: "/admin/twitter-registry", label: "X Registry", icon: ListTree },
   ];
   return (
     <nav aria-label="Collector administration" className="flex flex-wrap gap-2 rounded-2xl border border-bg-border bg-bg-card/60 p-2">
