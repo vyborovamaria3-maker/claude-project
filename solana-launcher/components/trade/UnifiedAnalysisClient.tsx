@@ -119,7 +119,7 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
       return (
         <div className="space-y-6">
           <SocialIntelligencePanel
-            key={id + ":" + mint}
+            key={mint}
             focus={id}
             embedded
             requestOnly={requestOnly}
