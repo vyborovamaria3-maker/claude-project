@@ -124,6 +124,7 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
             embedded
             requestOnly={requestOnly}
             mintOverride={mint}
+            onMintChange={(next) => { if (next !== mint) submit(next); }}
           />
           {id === "ai" && <BlockchainAiReportPanel mint={mint} />}
         </div>
