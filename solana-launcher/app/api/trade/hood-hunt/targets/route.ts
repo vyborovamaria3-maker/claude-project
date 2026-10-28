@@ -103,7 +103,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "note too long" }, { status: 400 });
   }
   if (body.consecutiveLiveLosses != null
-    && (!Number.isInteger(body.consecutiveLiveLosses) || (body.consecutiveLiveLosses as number) < 0)) {
+    && (!Number.isInteger(body.consecutiveLiveLosses as number) || (body.consecutiveLiveLosses as number) < 0)) {
     return NextResponse.json({ error: "invalid consecutiveLiveLosses" }, { status: 400 });
   }
   if (body.balanceSol != null && (body.balanceSol as number) < 0) {
