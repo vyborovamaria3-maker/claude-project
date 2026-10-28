@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const metricsPath = join(root, "lib", "trade", "social-intelligence.ts");
 const layoutPath = join(root, "app", "trade", "analysis", "layout.tsx");
+const overviewPath = join(root, "app", "trade", "analysis", "page.tsx");
+const socialPagePath = join(root, "app", "trade", "analysis", "social", "page.tsx");
 const panelPath = join(root, "components", "trade", "SocialIntelligencePanel.tsx");
 const routePath = join(root, "app", "api", "trade", "social-ai", "route.ts");
 const wrapperPath = join(root, "lib", "trade", "intelligence-agent-provenance.ts");
@@ -13,6 +15,8 @@ const tsconfigPath = join(root, "tsconfig.json");
 
 const metricsSource = readFileSync(metricsPath, "utf8");
 const layoutSource = readFileSync(layoutPath, "utf8");
+const overviewSource = readFileSync(overviewPath, "utf8");
+const socialPageSource = readFileSync(socialPagePath, "utf8");
 const panelSource = readFileSync(panelPath, "utf8");
 const routeSource = readFileSync(routePath, "utf8");
 const wrapperSource = readFileSync(wrapperPath, "utf8");
@@ -24,12 +28,22 @@ function assert(condition, message) {
 }
 
 assert(
-  layoutSource.includes('href: "/trade/analysis/social"'),
-  "the Social Intelligence route must remain in the Trade Analysis tabs",
+  layoutSource.includes('trade.analysis.layout'),
+  "Trade Analysis shared layout must still wrap the detailed routes",
 );
 assert(
-  layoutSource.includes('label: "Анализ · 129"'),
-  "the visible 129-parameter Analysis tab must remain present",
+  overviewSource.includes('trade.analysis.unified_v1') && overviewSource.includes('trade.analysis.detail_modal'),
+  "unified Analysis overview and detailed modal must exist",
+);
+assert(
+  overviewSource.includes('blockchain') && overviewSource.includes('telegram')
+    && overviewSource.includes('twitter') && overviewSource.includes('fomo')
+    && overviewSource.includes('ai'),
+  "unified Analysis must expose every existing source",
+);
+assert(
+  socialPageSource.includes("SocialIntelligencePanel"),
+  "the existing 129-parameter Social Intelligence deep link must remain functional",
 );
 assert(
   panelSource.includes('>Все параметры</h2>'),
