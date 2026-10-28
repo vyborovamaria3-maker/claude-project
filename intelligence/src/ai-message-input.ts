@@ -10,7 +10,7 @@ export function isLowValueTelegramPost(text:string):boolean {
     /The full version of the whale indicator is available in the alpha chat\.\n+Alpha chat price: [^\n]+\nDM me to join @\w+\n+Indicator free • Alpha • Twitter • Bubble • Main Channel\s*$/.test(plain))return true;
   if(/^[1-9A-HJ-NP-Za-km-z]{32,44}\n├ Token:/.test(plain)&&
     /TOKEN DATA/.test(plain)&&/FIB ZONES/.test(plain)&&/Volume:/.test(plain)&&
-    /\nTrade: AXIOM\nScan: [^\n]+\n+Want to see detailed wallet breakdown\? Join Private Channel →\s*$/.test(plain))return true;
+    /\nTrade: (?:FOMO \| )?AXIOM\nScan: [^\n]+\n+Want to see detailed wallet breakdown\? Join Private Channel →\s*$/.test(plain))return true;
   if(/^Call by\b/i.test(plain)&&/Market Cap:/i.test(plain)&&
     /\nMake a call here[^\n]*@Solbix_bot(?:\s*\nTrade with Axiom[^\n]*)?\s*$/i.test(plain))return true;
   if(/^\[New All-Time High\] Token Alert!\s*\n+[^\n]+\n+Token Contract: [1-9A-HJ-NP-Za-km-z]{32,44}\s*\n+Current MC: [^\n]+\nFirst Call MC: [^\n]+\n\+\d+(?:\.\d+)?% since first call\s*$/i.test(plain))return true;
@@ -18,6 +18,9 @@ export function isLowValueTelegramPost(text:string):boolean {
   if(/^VIP Forward to display Winning - DO NOT BUY\s*\n+\$\w+\s*\n+Entry MC: [^\n]+\n+[1-9A-HJ-NP-Za-km-z]{32,44}\s*\n+Call From: [^\n]+ VIP\s*$/i.test(plain))return true;
   if(/^\$\w+ on SOL \$[^\n]+\n+[1-9A-HJ-NP-Za-km-z]{32,44}\s*\n/.test(plain)&&
     /Automated by Token Ping\s*\n[^\n]*\nRobinhood calls only: here\s*$/i.test(plain))return true;
+  if(/^\$\w+ on SOL \$[^\n]+\n+[1-9A-HJ-NP-Za-km-z]{32,44}\s*\n/.test(plain)&&
+    /^Score: \d+\/100$/m.test(plain)&&/^├Risk Level:/m.test(plain)&&/^BUY:/m.test(plain)&&/^├Scan:/m.test(plain)&&
+    /Automated by Token Ping\s*\nHow to trade on #ROBINHOOD chain\s+here\s*$/i.test(plain))return true;
   if(/^[^\n]+\n+CA: [1-9A-HJ-NP-Za-km-z]{32,44}\s*\n+MC: [^\n]+\n+Full metrics · contact @\w+\s*\n[^\n]*(?:TROJAN|BLOOM)\s*$/i.test(plain))return true;
   if(/^\s*\$\S+\s+\d+(?:\.\d+)?x from called[^\n]*\n[\d.,]+[KM]?\s*➡️?\s*[\d.,]+[KM]? now\s*\n+Ads:[^\n]+\s*$/iu.test(text))return true;
   if(/^(?:[\p{Extended_Pictographic}\uFE0F\s]*\$\w+\s*·\s*Solana|\d+(?:\.\d+)?x\.|\$\w+ (?:just )?\d+(?:\.\d+)?x['’]d\.)/iu.test(text)&&
@@ -48,6 +51,7 @@ export function isLowValueTwitterPost(text:string):boolean {
   // discussion/denial breaks the shape, even when quoting one of these cards.
   const lines=text.replace(/\p{Extended_Pictographic}|\uFE0F/gu,'').split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
   const plain=lines.join('\n');
+  if(/^Meet [^\n]+: its \$\w+ token appears in the Solana memecoin scene\. Discover the airdrop page and explore crypto with \$SOL\.\nCA=[1-9A-HJ-NP-Za-km-z]{32,44}\nhttps?:\/\/\S+$/i.test(plain))return true;
   if(/^(?:Take a closer look at [^\n]+\$\w+ token\. Explore its airdrop page, Solana memecoin culture and crypto with \$SOL\.|Discover more about [^\n]+\$\w+ token! Browse the airdrop page and explore Solana memecoin crypto with \$SOL\.)\nCA=[1-9A-HJ-NP-Za-km-z]{32,44}\nhttps?:\/\/\S+$/i.test(plain))return true;
   if(/^\$\w+ is [^\n]+!\nAped at just \$[^\n]+on my Alpha TG,[^\n]+\nWant to catch plays early\?[^\n]+DM me to join the TG[^\n]+\nCA: [1-9A-HJ-NP-Za-km-z]{32,44}\n(?:#\w+\s*)+(?:https?:\/\/\S+\s*)*$/i.test(plain))return true;
   if(/^(?:@\w+\s+)*(?:https?:\/\/\S+\s*)+$/u.test(plain))return true;

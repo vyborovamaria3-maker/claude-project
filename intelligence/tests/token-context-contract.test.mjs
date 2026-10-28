@@ -14,8 +14,7 @@ test('context ablation and missing-source metadata cannot reuse a full-context c
  const strip=input=>{const copy=structuredClone(input);delete copy.messages[0].context;return copy};assert.deepEqual(strip(base),strip(without));
 });
 
-function contextualRequestFixture(answer){
- const target='Maybe participants are not departing because this asset failed. '+mint;
+function contextualRequestFixture(answer,target='Maybe participants are not departing because this asset failed. '+mint){
  const parent='They are leaving because access is inconvenient, not because the asset failed. Earlier enthusiasm did not resolve that complaint.';
  let supplied,calls=0,failed=false;const saved=new Map();
  const x={query:async()=>({rows:[{tweet_id:'1',text:target,updated_at:at,posted_at:at}]}),connect:async()=>({release(){},async query(sql){
@@ -51,4 +50,21 @@ test('context citation promoted into top-level evidence fails closed without sav
  const f=contextualRequestFixture({...contextualAnswer,evidenceRefs:['x:tweet:1','x:tweet:2']});
  await assert.rejects(analyzeTokenOnDemand(f.options),/token_ai_evidence_invalid/);
  assert.equal(f.state().calls,1);assert.equal(f.state().failed,true);assert.equal(f.state().saved.size,0);
+});
+
+test('numeric fact positions are rejected and billed as a failed attempt, never repaired into facts',async()=>{
+ const f=contextualRequestFixture({...contextualAnswer,factIds:[0,1]});
+ await assert.rejects(analyzeTokenOnDemand(f.options),/token_ai_facts_invalid/);
+ assert.equal(f.state().calls,1);assert.equal(f.state().failed,true);assert.equal(f.state().saved.size,0);
+});
+
+test('an open purchase prerequisite stays conditional and retains its complete qualification through persistence',async()=>{
+ const text='I bought a small amount. '+mint+' Do not add more before trying the application; only decide after evaluating it.';
+ const quote='Do not add more before trying the application; only decide after evaluating it.';
+ const answer={...contextualAnswer,messageViews:[{evidenceRef:'x:tweet:1',target:'token',stance:'unknown',reading:'conditional',contextRefs:[],contextUse:'not_needed'}],caveats:[{evidenceRef:'x:tweet:1',quote}]};
+ const f=contextualRequestFixture(answer,text),report=await analyzeTokenOnDemand(f.options);
+ assert.equal(report.interpretation.stance,'mixed');assert.equal(report.interpretation.score,0);
+ assert.equal(report.interpretation.messageViews[0].reading,'conditional');
+ const saved=[...f.state().saved.values()][0];assert.equal(saved.interpretation.caveats[0].quote,quote);
+ assert.equal(saved.interpretation.caveats[0].contextQuote,text);assert.equal(saved.interpretation.caveats[0].contextComplete,true);
 });
