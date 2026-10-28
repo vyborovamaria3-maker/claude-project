@@ -63,7 +63,7 @@ claim to reproduce proprietary Hood Hunt metrics perfectly.
 
 Run from solana-launcher:
 
-    npx vitest run lib/trade/hood-hunt.test.ts lib/trade/hood-hunt-strategy.test.ts
+    npx vitest run --environment node lib/trade/hood-hunt.test.ts lib/trade/hood-hunt-strategy.test.ts
     npx tsc --noEmit
 
 The pull request workflow runs both commands. It does not submit orders,
