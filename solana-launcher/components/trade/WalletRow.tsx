@@ -115,6 +115,7 @@ export default function WalletRow({ w, allTrades }: { w: WalletRowData; allTrade
 
       {expanded && (
         <div className="border-t border-bg-border bg-black/20 px-3 py-3 space-y-3">
+          <div className="flex justify-end"><a href="/trade/hood-hunt" className="text-xs text-sky-300 hover:underline">Избранное и управление целями</a></div>
           <HoodHuntWalletAssessment walletAddress={w.address} />
           {allTrades && <WalletTradeDetail walletAddress={w.address} allTrades={allTrades} />}
         </div>
