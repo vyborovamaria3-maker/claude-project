@@ -47,7 +47,7 @@ class WorkspaceTests(unittest.TestCase):
         def reject():
             raise HTTPException(401, "Login required")
         self.app.dependency_overrides[require_admin] = reject
-        for path in ("/collectors/x-collector", "/collectors/tg-collector", "/collectors/tg-invite", "/api/integrations/x-collector", "/api/integrations/tg-collector", "/api/tginvite/identity", "/api/v1/telegram/teragram/status"):
+        for path in ("/api/collector-connections", "/collectors/x-collector", "/collectors/tg-collector", "/collectors/tg-invite", "/api/integrations/x-collector", "/api/integrations/tg-collector", "/api/tginvite/identity", "/api/v1/telegram/teragram/status"):
             self.assertEqual(self.client.get(path).status_code, 401, path)
 
     def test_only_known_pages_are_served_and_missing_build_fails_honestly(self):
@@ -90,13 +90,49 @@ class WorkspaceTests(unittest.TestCase):
         self.assertNotIn("publish-start", str(self.events))
 
     def test_tg_auto_connect_uses_admin_session_and_full_api_routes(self):
-        self.assertEqual(self.client.post("/api/integrations/tg-collector/session", headers={"Origin": "http://testserver"}).json(), {"connected": True})
+        with self.upstream(lambda request: httpx.Response(200, json={"configured": True, "stats": {}, "workerOnline": True})):
+            self.assertEqual(self.client.post("/api/integrations/tg-collector/session", headers={"Origin": "http://testserver"}).json(), {"connected": True, "workerOnline": True})
         for suffix in ("", "/graph", "/discovery"):
             def handler(request):
                 self.assertEqual(request.headers["authorization"], "Bearer server-only-collector-key-123456789")
                 return httpx.Response(200, json={"ok": True})
             with self.upstream(handler):
                 self.assertEqual(self.client.get("/api/integrations/tg-collector" + suffix).status_code, 200)
+
+    def test_x_uses_configured_server_identity(self):
+        def handler(request):
+            self.assertEqual(request.headers["authorization"], "Bearer server-only-x-operator")
+            self.assertNotIn("cookie", request.headers)
+            return httpx.Response(200, json={"installed": True})
+        with patch.dict(os.environ, {"ADMIN_COLLECTOR_ACCESS_TOKEN": "server-only-x-operator"}), self.upstream(handler):
+            self.assertEqual(self.client.get("/api/integrations/x-collector", headers={"Authorization": "Bearer attacker"}).status_code, 200)
+
+    def test_connections_probe_is_read_only_and_does_not_expose_identity_or_secrets(self):
+        calls = []
+        def handler(request):
+            calls.append(request)
+            self.assertEqual(request.method, "GET")
+            if request.url.path.endswith("identity"):
+                return httpx.Response(200, json={"ownerId": "123e4567-e89b-12d3-a456-426614174000"})
+            return httpx.Response(200, json={"installed": True, "db": {"reachable": True}, "configured": True, "stats": {}, "workerOnline": False})
+        with self.upstream(handler):
+            result = self.client.get("/api/collector-connections")
+        self.assertEqual(result.status_code, 200)
+        self.assertTrue(result.json()["ready"])
+        self.assertFalse(result.json()["services"]["tgCollector"]["workerOnline"])
+        self.assertEqual(len(calls), 4)
+        self.assertNotIn("ownerId", result.text)
+        self.assertNotIn("server-only", result.text)
+
+    def test_tg_connect_never_claims_success_without_real_snapshot(self):
+        for status in (401, 403, 404, 503):
+            with self.upstream(lambda request: httpx.Response(status, json={"error": "unavailable"})):
+                response = self.client.post("/api/integrations/tg-collector/session", headers={"Origin": "http://testserver"})
+                self.assertEqual(response.status_code, status)
+                self.assertFalse(response.json()["connected"])
+        for payload in ({}, {"configured": False, "stats": {}}, []):
+            with self.upstream(lambda request: httpx.Response(200, json=payload)):
+                self.assertEqual(self.client.post("/api/integrations/tg-collector/session", headers={"Origin": "http://testserver"}).status_code, 502)
 
     def test_completed_mutation_does_not_become_retryable_if_audit_fails(self):
         def fail(**kwargs):

@@ -44,6 +44,39 @@ def local_origin(name: str, default: str) -> str:
 def build_collector_workspaces_router():
     router = APIRouter()
 
+    @router.get("/api/collector-connections")
+    async def connections(admin=Depends(require_admin)):
+        """Read-only probes; never start workers, login, scan, invite or publish."""
+        results = {}
+        for name, family, suffix in (("xCollector", "x", ""), ("tgCollector", "tg", ""), ("tgInvite", "invite", "identity"), ("teraGram", "teragram", "status")):
+            try:
+                # Use the exact bridge contract, including upstream identity checks.
+                scope = {"type": "http", "method": "GET", "scheme": "http", "path": "/api/collector-connections", "query_string": b"", "headers": [], "server": ("localhost", 80)}
+                async def receive():
+                    return {"type": "http.request", "body": b"", "more_body": False}
+                result = await relay(Request(scope, receive), family, suffix, admin)
+                import json
+                payload = json.loads(result.body)
+                valid = isinstance(payload, dict)
+                if name == "xCollector":
+                    valid = valid and payload.get("installed") is True and payload.get("db", {}).get("reachable") is True
+                elif name == "tgCollector":
+                    valid = valid and payload.get("configured") is True and isinstance(payload.get("stats"), dict)
+                elif name == "tgInvite":
+                    import uuid
+                    try:
+                        uuid.UUID(payload.get("ownerId", ""))
+                    except (ValueError, TypeError, AttributeError):
+                        valid = False
+                results[name] = {"connected": result.status_code == 200 and valid, "status": result.status_code}
+                if name == "tgCollector" and valid:
+                    results[name]["workerOnline"] = payload.get("workerOnline") is True
+            except HTTPException as error:
+                results[name] = {"connected": False, "status": error.status_code}
+            except (ValueError, TypeError, AttributeError):
+                results[name] = {"connected": False, "status": 502}
+        return JSONResponse({"services": results, "ready": all(item["connected"] for item in results.values())}, headers=NO_STORE)
+
     @router.get("/collectors/{module}")
     def workspace(module: str, admin=Depends(require_admin)):
         if module not in MODULES:
@@ -58,10 +91,15 @@ def build_collector_workspaces_router():
         mutation = request.method not in {"GET", "HEAD"}
         if mutation and (request.headers.get("origin") != str(request.base_url).rstrip("/") or request.headers.get("sec-fetch-site") == "cross-site"):
             raise HTTPException(403, "Same-origin admin request required")
-        if family == "tg" and suffix == "session":
+        session_probe = family == "tg" and suffix == "session"
+        if session_probe:
             if request.method not in {"POST", "DELETE"}:
                 raise HTTPException(405)
-            return JSONResponse({"connected": request.method == "POST"}, headers=NO_STORE)
+            if request.method == "DELETE":
+                return JSONResponse({"connected": False}, headers=NO_STORE)
+            # Verify the real guarded API before the browser claims a connection.
+            suffix = ""
+            mutation = False
         origin = local_origin("ADMIN_COLLECTOR_API_ORIGIN", "http://127.0.0.1:3100")
         paths = {"x": "/api/integrations/x-collector", "tg": "/api/integrations/tg-collector", "invite": "/api/tginvite", "teragram": "/api/v1/telegram/teragram"}
         if family == "teragram":
@@ -69,11 +107,15 @@ def build_collector_workspaces_router():
         headers = {"Origin": origin, "Content-Type": "application/json", "Accept": "application/json"}
         if family == "tg":
             headers["Authorization"] = "Bearer " + collector_token()
-        elif family in {"invite", "teragram"}:
-            token = os.getenv("ADMIN_TGINVITE_ACCESS_TOKEN", "").strip()
-            if not token:
+        elif family in {"x", "invite", "teragram"}:
+            token = os.getenv("ADMIN_COLLECTOR_ACCESS_TOKEN", "").strip() if family == "x" else ""
+            token = token or os.getenv("ADMIN_TGINVITE_ACCESS_TOKEN", "").strip()
+            # Local development retains its existing X tools. Production X
+            # verifies this explicit operator identity upstream on every call.
+            if family != "x" and not token:
                 raise HTTPException(503, "Configure ADMIN_TGINVITE_ACCESS_TOKEN for the existing operator identity")
-            headers["Authorization"] = "Bearer " + token
+            if token:
+                headers["Authorization"] = "Bearer " + token
         payload = bytearray()
         async for chunk in request.stream():
             payload.extend(chunk)
@@ -82,7 +124,7 @@ def build_collector_workspaces_router():
         target = origin + paths[family] + ("/" + suffix if suffix else "")
         try:
             async with httpx.AsyncClient(timeout=60, trust_env=False, follow_redirects=False) as client:
-                async with client.stream(request.method, target, params=request.query_params.multi_items(), headers=headers, content=bytes(payload) if mutation else None) as upstream:
+                async with client.stream("GET" if session_probe else request.method, target, params=request.query_params.multi_items(), headers=headers, content=bytes(payload) if mutation else None) as upstream:
                     content = bytearray()
                     async for chunk in upstream.aiter_bytes():
                         content.extend(chunk)
@@ -97,6 +139,17 @@ def build_collector_workspaces_router():
                             result_headers[key] = upstream.headers[key]
         except httpx.HTTPError:
             raise HTTPException(503, "Collector service unavailable") from None
+        if session_probe:
+            if status != 200:
+                return JSONResponse({"connected": False, "error": "TG Collector connection unavailable", "upstreamStatus": status}, status_code=status if status in {401, 403, 404, 429, 503} else 502, headers=NO_STORE)
+            import json
+            try:
+                snapshot = json.loads(content)
+            except (ValueError, UnicodeDecodeError):
+                raise HTTPException(502, "Invalid TG Collector response") from None
+            if not isinstance(snapshot, dict) or snapshot.get("configured") is not True or not isinstance(snapshot.get("stats"), dict):
+                raise HTTPException(502, "Invalid TG Collector snapshot")
+            return JSONResponse({"connected": True, "workerOnline": snapshot.get("workerOnline") is True}, headers=NO_STORE)
         if mutation:
             audit = getattr(request.app.state, "audit", None)
             if audit:
