@@ -205,13 +205,16 @@ export async function getXCollectorSummary(): Promise<XCollectorSummary> {
     : [...REQUIRED_MIGRATIONS];
 
   // Parse x-collector .env to get config status
-  const envPath = path.join(dir, ".env");
+  const envPath = process.env.X_COLLECTOR_ENV
+    ? path.resolve(process.env.X_COLLECTOR_ENV)
+    : [path.join(dir, ".env"), path.resolve(process.cwd(), "x-collector/.env")].find(candidate => fs.existsSync(candidate)) || path.join(dir, ".env");
   const envConfig = parseEnvFile(envPath);
-  const databaseUrlFromEnv = envConfig.DATABASE_URL;
-  const masterKeyFromEnv = envConfig.MASTER_KEY;
+  const databaseUrlFromEnv = envConfig.DATABASE_URL || process.env.X_COLLECTOR_DATABASE_URL;
+  const masterKeyFromEnv = envConfig.MASTER_KEY || process.env.X_COLLECTOR_MASTER_KEY;
   const databaseUrlConfigured = Boolean(databaseUrlFromEnv);
   const masterKeyConfigured = Boolean(masterKeyFromEnv);
-  const databaseUrlForProbe = databaseUrlFromEnv || process.env.X_COLLECTOR_DATABASE_URL || process.env.DATABASE_URL;
+  // Never probe the unrelated product DATABASE_URL as if it were the collector.
+  const databaseUrlForProbe = databaseUrlFromEnv;
 
   const workerHost = process.env.X_COLLECTOR_METRICS_HOST || "127.0.0.1";
   const workerPort = Number(process.env.X_COLLECTOR_METRICS_PORT || process.env.METRICS_PORT || 9091);
@@ -267,32 +270,23 @@ async function probeDb(databaseUrl: string | undefined, timeoutMs = 3000, signal
   if (!target) return { reachable: false, detail: "Не удалось разобрать DATABASE_URL" };
 
   return new Promise((resolve) => {
-    if (signal) {
-      if (signal.aborted) {
-        resolve({ reachable: false, detail: "cancelled" });
-        return;
-      }
-      (signal as any).once("abort", () => {
-        socket.destroy();
-        resolve({ reachable: false, detail: "cancelled" });
-      });
-    }
-
     const socket = new net.Socket();
-    const timer = setTimeout(() => {
+    const finish = (result: { reachable: boolean; detail: string }) => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
       socket.destroy();
-      resolve({ reachable: false, detail: `${target.host}:${target.port} — таймаут (${timeoutMs}ms)` });
-    }, timeoutMs);
+      resolve(result);
+    };
+    const abort = () => finish({ reachable: false, detail: "cancelled" });
+    const timer = setTimeout(() => finish({ reachable: false, detail: `${target.host}:${target.port} — таймаут (${timeoutMs}ms)` }), timeoutMs);
+    if (signal?.aborted) { abort(); return; }
+    signal?.addEventListener("abort", abort, { once: true });
 
     socket.on("connect", () => {
-      clearTimeout(timer);
-      socket.destroy();
-      resolve({ reachable: true, detail: `${target.host}:${target.port}` });
+      finish({ reachable: true, detail: `${target.host}:${target.port} (TCP only)` });
     });
     socket.on("error", (error) => {
-      clearTimeout(timer);
-      socket.destroy();
-      resolve({ reachable: false, detail: `${target.host}:${target.port} — ${error.message}` });
+      finish({ reachable: false, detail: `${target.host}:${target.port} — ${error.message}` });
     });
     socket.connect(target.port, target.host);
   });

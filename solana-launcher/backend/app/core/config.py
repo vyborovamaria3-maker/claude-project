@@ -1,10 +1,13 @@
+import os
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_BACKEND_ENV = Path(__file__).resolve().parents[2] / ".env"
+_BACKEND_ENV = Path(
+    os.environ.get("POTAPOFF_BACKEND_ENV_FILE") or Path(__file__).resolve().parents[2] / ".env"
+)
 
 
 class Settings(BaseSettings):
