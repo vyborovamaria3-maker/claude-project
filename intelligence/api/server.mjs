@@ -1,4 +1,5 @@
 import http from "node:http";
+import {tokenFailureDiagnostic} from './token-failure-diagnostic.mjs';
 import {createHash,timingSafeEqual} from "node:crypto";
 import {parseApiRequest,queryTokenApi} from "./routes.mjs";
 
@@ -94,8 +95,9 @@ export function createIntelligenceApi({
         let tokenId;
         try{tokenId=decodeURIComponent(tokenRequest[1]);parseApiRequest('/api/intelligence/v1/tokens/'+encodeURIComponent(tokenId)+'/ai?asOf='+now().toISOString(),now());}
         catch{response(res,400,{error:'invalid_token_id'});return;}
+        const analysisStarted=Date.now();
         try{response(res,200,await analyzeToken(tokenId));}
-        catch{response(res,503,{error:'token_analysis_unavailable'});}
+        catch(error){console.error(JSON.stringify(tokenFailureDiagnostic(error,Date.now()-analysisStarted)));response(res,503,{error:'token_analysis_unavailable'});}
         return;
       }
       if(req.method!=="GET"){

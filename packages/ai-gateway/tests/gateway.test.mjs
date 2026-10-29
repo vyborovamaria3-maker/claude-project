@@ -18,6 +18,14 @@ function provider(overrides = {}) {
   };
 }
 
+test('provider deadline is distinct from a network failure and does not trigger a second attempt',async()=>{
+ let calls=0;
+ const gateway=createAiGateway({providers:[provider({timeoutMs:1000})],defaultProviderId:'primary',maxAttempts:1,
+  fetchImpl:(_url,init)=>new Promise((_resolve,reject)=>{calls++;init.signal.addEventListener('abort',()=>reject(init.signal.reason),{once:true});})});
+ const keepAlive=setTimeout(()=>{},2000);
+ try{await assert.rejects(gateway.chatCompletion({messages:[{role:'user',content:'fixture'}]}),error=>error.code==='ai_provider_timeout');assert.equal(calls,1);assert.equal(gateway.getMetrics()[0].inFlight,0);}finally{clearTimeout(keepAlive);}
+});
+
 test("provider requests forbid redirects and cancel rejected response streams",async()=>{
   let cancelled=0;
   const gateway=createAiGateway({providers:[provider()],defaultProviderId:"primary",maxAttempts:2,
