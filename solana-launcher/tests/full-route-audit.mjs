@@ -28,8 +28,7 @@ function pageFileToRoute(file) {
   }
   const route = parts.filter(part => !(part.startsWith("(") && part.endsWith(")")));
   const pathname = route.length ? "/" + route.join("/") : "/";
-  // This local-only page intentionally returns 404 in production.
-  return pathname === "/tg-collector" ? null : pathname;
+  return pathname;
 }
 
 async function run() {
@@ -39,29 +38,38 @@ async function run() {
   const browser = await chromium.launch({ headless: true });
   const failures = [];
   try {
-    const page = await browser.newPage();
-    try {
-      for (const route of routes) {
-        const pageErrors = [];
-        const onError = error => pageErrors.push(error.message);
-        page.on("pageerror", onError);
-        try {
-          const response = await page.goto(baseURL + route, {
-            waitUntil: "domcontentloaded", timeout: 30_000,
-          });
-          await page.waitForLoadState("load", { timeout: 15_000 });
-          if (!response || response.status() >= 400) {
-            failures.push(`${route}: HTTP ${response?.status() ?? "no response"}`);
-          }
-          if (pageErrors.length) failures.push(`${route}: ${pageErrors.join(" | ")}`);
-        } catch (error) {
-          failures.push(`${route}: ${error instanceof Error ? error.message : String(error)}`);
-        } finally {
-          page.off("pageerror", onError);
-        }
+    const closedRoutes = new Map([
+      ...["/admin", "/admin/x-collector", "/admin/tg-collector", "/admin/tg-invite", "/tg-collector", "/tginvite", "/settings/tginvite", "/launch/tginvite", "/trade/tginvite"].map(route => [route, 404]),
+      ["/admin/twitter-registry", 401],
+    ]);
+    for (const route of routes) {
+      if (closedRoutes.has(route)) {
+        const response = await browser.newContext().then(async context => {
+          try { return await context.request.get(baseURL + route, { maxRedirects: 0 }); }
+          finally { await context.close(); }
+        });
+        if (response.status() !== closedRoutes.get(route)) failures.push(`${route}: expected HTTP ${closedRoutes.get(route)}, got ${response.status()}`);
+        continue;
       }
-    } finally {
-      await page.close();
+      const page = await browser.newPage();
+      const pageErrors = [];
+      const onError = error => pageErrors.push(error.message);
+      page.on("pageerror", onError);
+      try {
+        const response = await page.goto(baseURL + route, {
+          waitUntil: "domcontentloaded", timeout: 30_000,
+        });
+        await page.waitForLoadState("load", { timeout: 15_000 });
+        if (!response || response.status() >= 400) {
+          failures.push(`${route}: HTTP ${response?.status() ?? "no response"}`);
+        }
+        if (pageErrors.length) failures.push(`${route}: ${pageErrors.join(" | ")}`);
+      } catch (error) {
+        failures.push(`${route}: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        page.off("pageerror", onError);
+        await page.close();
+      }
     }
   } finally {
     await browser.close();
