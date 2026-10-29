@@ -4,6 +4,13 @@ import { readFile } from "node:fs/promises";
 const catalog = JSON.parse(await readFile(new URL("../../lib/trade/analysis-feature-provenance.json", import.meta.url), "utf8"));
 
 export async function checkUnifiedDetails(page, baseUrl, mint) {
+  const navigation = page.locator('[data-tag="layout.nav"]');
+  for (const path of ["/trade/kols-twitter", "/trade/leaderboard", "/trade/history"]) {
+    assert.equal(await navigation.locator(`a[href="${path}"]`).count(), 0, "Legacy analytics must not remain in the main menu");
+  }
+  for (const path of ["/trade/analysis", "/tginvite"]) {
+    assert.equal(await navigation.locator(`a[href="${path}"]`).count(), 1, "Analysis and Telegram tools must remain accessible");
+  }
   const dialog = page.getByRole("dialog");
   const tables = dialog.locator('[data-tag="trade.social.metrics"]');
   await page.route(url => url.pathname.startsWith("/api/") || url.pathname.startsWith("/fastapi/"), route =>
@@ -109,4 +116,12 @@ export async function checkUnifiedDetails(page, baseUrl, mint) {
   await page.waitForURL(url => url.searchParams.get("mint") === mint);
   await dialog.waitFor({ state: "hidden" });
   assert.equal(await page.locator("iframe").count(), 0, "Legacy Analyze links must return to the outer overview");
+
+  for (const [section, label] of [["kols", "KOL / Smart Money"], ["leaderboard", "Leaderboard"], ["history", "История запусков"]]) {
+    await page.goto(`${baseUrl}/trade/analysis?section=${section}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("dialog", { name: label, exact: true }).waitFor();
+    await page.getByRole("button", { name: "Закрыть подробный анализ", exact: true }).click();
+    await page.waitForURL(url => !url.searchParams.has("section"), { waitUntil: "domcontentloaded" });
+    assert.equal(await page.getByRole("dialog").count(), 0, "Closing an admin deep link must return to the overview");
+  }
 }

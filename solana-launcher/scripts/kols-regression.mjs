@@ -33,8 +33,8 @@ assert(
   "KOL backtest must keep its strict rate limit",
 );
 assert(
-  siteDesign.includes('{ href: "/trade/kols-twitter", labelKey: "nav.xAnalysis", icon: "twitter", tag: "nav.kols_twitter" }'),
-  "KOL workspace must be registered in shared trade navigation",
+  !siteDesign.includes('tag: "nav.kols_twitter"') && read("components/trade/UnifiedAnalysisClient.tsx").includes('path="/trade/kols-twitter"'),
+  "KOL workspace must live in unified Analysis rather than the main sidebar",
 );
 assert(!sidebar.includes("KOLS_TWITTER_NAV_ITEM"), "Sidebar must use shared navigation only");
 assert(

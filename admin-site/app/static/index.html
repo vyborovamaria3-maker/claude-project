@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="dark" />
+  <meta name="potapoff-site-url" content="__POTAPOFF_SITE_URL__" />
   <title>POTAPoff Control Center v1</title>
   <link rel="stylesheet" href="/static/styles.css" />
   <link rel="stylesheet" href="/static/analysis-profiles-v2.css" />
@@ -40,6 +41,10 @@
         <div><strong>POTAPoff</strong><span>Control Center v1</span></div>
       </div>
       <nav id="navigation">
+        <a class="nav-item" data-analysis-section="ai" target="_blank" rel="noopener noreferrer"><span>AN</span>Общий анализ</a>
+        <a class="nav-item" data-analysis-section="kols" target="_blank" rel="noopener noreferrer"><span>X</span>X Analysis</a>
+        <a class="nav-item" data-analysis-section="leaderboard" target="_blank" rel="noopener noreferrer"><span>LB</span>Leaderboard</a>
+        <a class="nav-item" data-analysis-section="history" target="_blank" rel="noopener noreferrer"><span>HI</span>История анализа</a>
         <button data-view="overview" class="nav-item active"><span>01</span>Обзор</button>
         <button data-view="database" class="nav-item"><span>02</span>Базы данных</button>
         <button data-view="blockchain" class="nav-item"><span>03</span>Блокчейн</button>
@@ -88,6 +93,7 @@
   <script src="/static/theme-picker.js" defer></script>
   <script src="/static/security-ui-v7.js" defer></script>
   <script src="/static/app.js" defer></script>
+  <script src="/static/analysis-tools-links.js" defer></script>
   <script src="/static/twitter-monitoring-v1.js" defer></script>
   <script src="/static/database-migrated-v8.js" defer></script>
   <script src="/static/database-deeplink-v8.js" defer></script>

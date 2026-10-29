@@ -98,6 +98,7 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
   const initialMint = params.get("mint")?.trim() || "";
   const [mint, setMint] = useState(initialMint);
   const [chartSize, setChartSize] = useState<ChartSize>("normal");
+  const requestedSection = params.get("section");
   const [detail, setDetail] = useState<Section | null>(null);
   const dialogRef = useRef<HTMLElement>(null);
   const priorFocus = useRef<HTMLElement | null>(null);
@@ -108,11 +109,17 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
     setMint(next);
   }, [params]);
 
+  useEffect(() => {
+    setDetail(sections.find((item) => item.id === requestedSection)?.id || null);
+  }, [requestedSection]);
+
   const submit = useCallback((next: string) => {
     // SearchBar retains clipboard paste, recent searches, auto-submit and base58 validation.
     setMint(next);
-    router.replace(`/trade/analysis?mint=${encodeURIComponent(next)}`, { scroll: false });
-  }, [router]);
+    const nextParams = new URLSearchParams(params.toString());
+    nextParams.set("mint", next);
+    router.replace(`/trade/analysis?${nextParams}`, { scroll: false });
+  }, [params, router]);
 
   const open = (id: Section) => {
     priorFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -121,8 +128,13 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
 
   const close = useCallback(() => {
     setDetail(null);
+    if (params.has("section")) {
+      const nextParams = new URLSearchParams(params.toString());
+      nextParams.delete("section");
+      window.history.replaceState(null, "", `/trade/analysis${nextParams.size ? "?" + nextParams : ""}`);
+    }
     requestAnimationFrame(() => priorFocus.current?.focus());
-  }, []);
+  }, [params, router]);
 
   const navigateLegacy = useCallback((next: string, overview: boolean) => {
     if (next !== mint) submit(next);
@@ -174,7 +186,7 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
         </div>
       );
     }
-    if (!validMint && !["leaderboard", "history"].includes(id)) {
+    if (!validMint && !["leaderboard", "history", "kols"].includes(id)) {
       return <p className="rounded-xl border border-amber-400/25 bg-amber-400/5 p-6 text-sm text-amber-200">Для этого анализа сначала укажите mint токена в основной форме.</p>;
     }
     if (id === "blockchain") return (

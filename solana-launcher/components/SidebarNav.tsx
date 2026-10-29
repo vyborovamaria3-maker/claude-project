@@ -70,6 +70,7 @@ export default function SidebarNav() {
   );
 
   const activeHref = useMemo(() => {
+    if (["/trade/kols-twitter", "/trade/leaderboard", "/trade/history"].some((path) => pathname === path || pathname.startsWith(path + "/"))) return "/trade/analysis";
     const matches = allNavItems.filter((item) => pathname === item.href || pathname.startsWith(`${item.href}/`));
     return matches.sort((a, b) => b.href.length - a.href.length)[0]?.href ?? null;
   }, [allNavItems, pathname]);
