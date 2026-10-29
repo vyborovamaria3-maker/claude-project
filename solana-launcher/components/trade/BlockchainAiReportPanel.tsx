@@ -138,8 +138,9 @@ function friendlyBlockchainAiError(reason: unknown): string {
   return message || "Blockchain AI report временно недоступен.";
 }
 
-export default function BlockchainAiReportPanel({ mint }: { mint: string }) {
-  const [data, setData] = useState<ReportResponse | null>(null);
+export default function BlockchainAiReportPanel({ mint, requestOnly = false }: { mint: string; requestOnly?: boolean }) {
+  const [storedData, setData] = useState<ReportResponse | null>(null);
+  const data = storedData?.mint === mint ? storedData : null;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -163,10 +164,10 @@ export default function BlockchainAiReportPanel({ mint }: { mint: string }) {
         signal: controller.signal,
       });
       const payload = await response.json().catch(() => ({})) as ReportResponse;
-      if (requestSeq !== requestSeqRef.current) return;
+      if (controller.signal.aborted || requestSeq !== requestSeqRef.current) return;
       if (payload.mint && payload.mint !== mint) throw new Error("stale blockchain AI response ignored");
       if (!response.ok || payload.available === false) throw new Error(payload.error || `HTTP ${response.status}`);
-      setData(payload);
+      setData({ ...payload, mint });
     } catch (caught) {
       if (controller.signal.aborted || requestSeq !== requestSeqRef.current) return;
       setError(friendlyBlockchainAiError(caught));
@@ -180,13 +181,17 @@ export default function BlockchainAiReportPanel({ mint }: { mint: string }) {
     requestSeqRef.current += 1;
     setData(null);
     setError(null);
+    setLoading(false);
     if (!MINT_RE.test(mint)) {
       setLoading(false);
       return;
     }
-    void load(false);
-    return () => abortRef.current?.abort();
-  }, [load, mint]);
+    if (!requestOnly) void load(false);
+    return () => {
+      abortRef.current?.abort();
+      requestSeqRef.current += 1;
+    };
+  }, [load, mint, requestOnly]);
 
   const result = data?.result;
   const intelligence = result?.finalIntelligence;
@@ -219,12 +224,12 @@ export default function BlockchainAiReportPanel({ mint }: { mint: string }) {
         </div>
         <button
           type="button"
-          disabled={loading}
-          onClick={() => void load(true)}
+          disabled={loading || !MINT_RE.test(mint)}
+          onClick={() => void load(!requestOnly || !!data)}
           className="inline-flex items-center gap-2 rounded-lg border border-bg-border bg-bg-elevated px-3 py-2 text-[11px] font-semibold text-content-muted hover:text-content disabled:opacity-50"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-          {loading ? "Анализирую…" : "Обновить AI"}
+          {loading ? "Анализирую…" : requestOnly && !data ? "Запустить AI" : "Обновить AI"}
         </button>
       </div>
 
@@ -234,7 +239,7 @@ export default function BlockchainAiReportPanel({ mint }: { mint: string }) {
           <span>{error}</span>
         </div>
       ) : !data ? (
-        <div className="text-xs text-content-faint">{loading ? "Собираю единый blockchain snapshot и передаю AI…" : "Ожидается blockchain snapshot."}</div>
+        <div className="text-xs text-content-faint">{loading ? "Собираю единый blockchain snapshot и передаю AI…" : requestOnly ? "Для анализа нажмите «Запустить AI»." : "Ожидается blockchain snapshot."}</div>
       ) : (
         <div className="space-y-4">
           {reportGuard?.status && reportGuard.status !== "pass" && (

@@ -109,6 +109,40 @@ test('request-only panel does not depend on legacy sources and never analyzes on
  assert.match(panel,/requestOnly && <TokenRequestPanel/);assert.match(page,/requestOnly=\{process.env.INTELLIGENCE_AI_ON_DEMAND_ENABLED === "true"\}/);
 });
 
+test('blockchain AI waits for an explicit request, preserves default autoload and hides a previous mint report',async()=>{
+ const ts=await import('typescript'),{runInNewContext}=await import('node:vm');
+ const source=await readFile(new URL('../components/trade/BlockchainAiReportPanel.tsx',import.meta.url),'utf8');
+ const compiled=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;
+ const calls=[];
+ function render(props,previous=null){
+  const effects=[],exports={};let stateIndex=0;
+  const jsx=(type,props)=>({type,props});
+  const react={useCallback:fn=>fn,useEffect:fn=>effects.push(fn),useRef:value=>({current:value}),
+   useState:value=>[stateIndex++===0?previous:value,()=>{}]};
+  runInNewContext(compiled,{exports,AbortController,require:name=>{
+   if(name==='react')return react;
+   if(name==='react/jsx-runtime')return {jsx,jsxs:jsx};
+   if(name==='lucide-react')return {};
+   throw new Error('Unexpected component dependency: '+name);
+  },fetch:async(url,init)=>{
+   calls.push({url,...JSON.parse(init.body)});
+   return {ok:true,json:async()=>({available:true,mint,result:{summary:'fixture'}})};
+  }});
+  const tree=exports.default(props);
+  return {tree,mount:()=>effects.map(effect=>effect()).filter(Boolean)};
+ }
+ const nodes=node=>Array.isArray(node)?node.flatMap(nodes):node&&typeof node==='object'?[node,...nodes(node.props?.children)]:[];
+ const manual=render({mint,requestOnly:true});
+ const cleanup=manual.mount();assert.equal(calls.length,0,'opening request-only AI must not POST');
+ const button=nodes(manual.tree).find(node=>node.type==='button');assert.ok(button);
+ button.props.onClick();assert.equal(calls.length,1,'explicit AI action must POST once');
+ assert.equal(calls[0].url,'/api/trade/blockchain-ai-report');assert.equal(calls[0].mint,mint);assert.equal(calls[0].refresh,false);
+ cleanup.forEach(fn=>fn());
+ render({mint}).mount().forEach(fn=>fn());assert.equal(calls.length,2,'default mode must retain autoload');
+ const stale=render({mint,requestOnly:true},{mint:'Bi6z17iWRMRejRHM56LHEdD5UQVsoexho5aeTR7kpump',result:{summary:'PREVIOUS_MINT_REPORT'}});
+ assert.equal(JSON.stringify(stale.tree).includes('PREVIOUS_MINT_REPORT'),false,'new mint must not render the previous report before effects');
+});
+
 test('new exclusion counters survive strict projection; old cached reports remain compatible',async()=>{
  const report=fixture();report.facts['x.filteredTemplates']=9;report.facts['x.duplicateMessages']=6;
  report.summary.push({id:'x.duplicateMessages',value:6});report.interpretation.factIds.push('x.duplicateMessages');
