@@ -39,6 +39,7 @@ assert(
 );
 assert(!sidebar.includes("KOLS_TWITTER_NAV_ITEM"), "Sidebar must use shared navigation only");
 assert(tokenFlowPanel.includes('value > 0 ? "+" : value < 0 ? "-" : ""'), "negative KOL PnL must retain its minus sign");
+assert(tokenFlowPanel.includes("const magnitude = Math.abs(value)"), "KOL PnL magnitude must not duplicate the sign");
 assert(tokenFlowPanel.includes('value == null || !Number.isFinite(value)'), "non-finite KOL PnL must remain unknown");
 assert(
   page.includes("<KolsTwitterPanel />") &&
