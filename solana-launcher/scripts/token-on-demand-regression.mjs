@@ -103,7 +103,8 @@ test('legacy AI empty state explains explicit generation instead of promising an
  const panel=await readFile(new URL('../components/trade/SocialIntelligencePanel.tsx',import.meta.url),'utf8');
  assert.match(panel,/Snapshot готов\. Нажмите «Анализ», чтобы запустить Qwen\./);
  assert.match(panel,/В snapshot нет пригодных доказательств\. Qwen не запускается\./);
- assert.match(panel,/loading \? "Анализ выполняется…"/);
+ assert.match(panel,/aiLoading \? "Qwen выполняет анализ…"/);
+ assert.match(panel,/loading \? "Собираем источники и готовим snapshot…"/);
  assert.doesNotMatch(panel,/AI запускается после сборки unified snapshot/);
 });
 
