@@ -6,6 +6,7 @@ const panel = read("components/trade/BlockchainAiReportPanel.tsx");
 const snapshot = read("lib/trade/chain/ai-snapshot.ts");
 const guard = read("lib/trade/chain/ai-report-guard.ts");
 assert(route.includes("evaluateBlockchainAiReport"));
+assert(route.includes("result.finalIntelligence.socialState"), "social-only AI output must count as report content");
 assert(route.includes("body = record(await req.json())"), "non-object request bodies must be rejected");
 assert(route.includes('if (!body) return NextResponse.json({ error: "invalid request body" }, { status: 400 });'));
 assert(route.includes('typeof body.mint === "string"'), "mint must be a string before normalization");
