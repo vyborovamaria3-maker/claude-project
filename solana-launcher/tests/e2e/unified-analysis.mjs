@@ -77,6 +77,16 @@ export async function checkUnifiedDetails(page, baseUrl, mint) {
   assert.deepEqual(detailPosts, [], "Opening a source detail must not trigger automatic AI POST");
   page.off("request", captureDetailPosts);
   assert.equal(xMint, mint, "Selected mint must reach the existing X source");
+  const manualSocialAiRequest = page.waitForRequest(request =>
+    request.method() === "POST" && new URL(request.url()).pathname === "/api/trade/social-ai"
+  );
+  const manualSocialAiResponse = page.waitForResponse(response =>
+    new URL(response.url()).pathname === "/api/trade/social-ai"
+  );
+  await dialog.getByRole("button", { name: "Анализ", exact: true }).click();
+  const [socialAiRequest, socialAiResponse] = await Promise.all([manualSocialAiRequest, manualSocialAiResponse]);
+  assert.equal(socialAiRequest.method(), "POST", "Explicit Analyze action must issue the Social AI POST");
+  assert.equal(socialAiResponse.status(), 503, "The controlled unavailable fixture should be returned without hiding the request");
   await dialog.getByRole("button", { name: "Cross-platform / Timing", exact: true }).click();
   for (const label of ["Cross-platform score", "Cross matched share", "Both platforms active"]) {
     const row = groupRows("Cross-platform / Timing").filter({ has: page.getByText(label, { exact: true }) });
