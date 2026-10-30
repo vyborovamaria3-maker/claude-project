@@ -2,7 +2,7 @@
 
 ## Current snapshot — 2026-10-30
 
-Observed `main` SHA: `9f4a7e88afa80774633ee4a43221a621fe5f1922`. GitHub branch metadata reports `main.protected=false`; the repository rulesets endpoint returned no rulesets. Branch-protection details cannot be changed through the connected GitHub integration; a repository administrator must configure the policy ([issue #170](https://github.com/vyborovamaria3-maker/claude-project/issues/170)).
+Observed `main` SHA: `9f4a7e88afa80774633ee4a43221a621fe5f1922`. GitHub branch metadata reports `main.protected=false`; the repository rulesets endpoint returned no rulesets. A repository administrator must configure branch protection ([issue #170](https://github.com/vyborovamaria3-maker/claude-project/issues/170)).
 
 Seven open PRs were returned by the current GitHub listing:
 
@@ -18,8 +18,8 @@ Seven open PRs were returned by the current GitHub listing:
 
 - PR #207 is ready for review, targets `main`, and is not merged. On head `cd3ba90d062aa302b0b2ce682774a3231223dc95`, Transactional outbox adapters passed **16/16**, Intelligence foundation passed **247/247**, Intelligence CI, Native social token-link CI and Repository hygiene passed; Security Lock Refresh was skipped. The live PostgreSQL clock-skew regression passed in the outbox adapter job.
 - PR #206 is ready for review, targets `main`, and is not merged. On head `24018ced0ff22433f2daa76bbfd3f66f1bb03fe7`, Intelligence foundation passed **251/251**, Intelligence CI, Native social token-link CI and Repository hygiene passed; Security Lock Refresh was skipped. It adds read-only supervisor queue/lag/progress/retry/DLQ/schema-skew metrics and structured alert records; it does not configure an external alert sink or production process manager.
-- PR #203 remains open and unmerged; current head is `f446f8a60bd9bfcc1a13ce4261194bf45045f31a` (42 files, +2,122/−1,085). At this snapshot, 8 workflows had succeeded, 8 were queued/in progress, Security Gates was cancelled, and Security Lock Refresh was skipped. Frontend Quality CI was still running after the no-source fixture was corrected. Do not describe this head as fully green until all checks finish.
-- PR #205 is documentation-only, mergeable and unmerged. On head `1621a2ca0597f2cadfeb8cbd8f43692a4324f067`, Repository hygiene and Intelligence foundation passed; Intelligence CI passed. No production deployment or live provider verification is implied.
+- PR #203 remains open and unmerged; current head is `28fe9610a8f1d7e3200e17b2ec3d7cc72b0f2aad` (42 files, +2,122/−1,085). Its latest workflow set is still running/queued; Security Lock Refresh was skipped. The latest test change adds a controlled manual Social AI POST assertion and keeps the blockchain report request-only. Do not describe this head as fully green until all checks finish.
+- PR #205 is documentation-only and remains open. The preceding snapshot head passed Repository hygiene, Intelligence foundation and Intelligence CI; this update refreshes the inventory and technical-debt evidence, so consult the PR page for checks on the latest documentation commit.
 
 Human review/approval remains outstanding; passing CI is not permission to merge. Check each current PR page for its latest head, review state and checks before acting.
 
