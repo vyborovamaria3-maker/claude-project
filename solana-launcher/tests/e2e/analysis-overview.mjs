@@ -79,5 +79,5 @@ try {
   await page.keyboard.press("Escape"); await dialog.waitFor({ state: "hidden" });
   for (const width of [320, 390, 768, 1440]) { await page.setViewportSize({ width, height: 900 }); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Fit at ${width}px`); }
   assert.deepEqual(posts, ["/api/trade/blockchain-ai-report"], "No automatic AI generations; one explicit request is allowed"); assert.deepEqual(errors, []);
-  console.log("ANALYSIS_OVERVIEW_OK: source values, missing/empty/error, stale mint, 141 fields, mobile; zero AI calls");
+  console.log("ANALYSIS_OVERVIEW_OK: source values, missing/empty/error, stale mint, 141 fields, mobile; explicit AI request only");
 } finally { await browser.close(); }
