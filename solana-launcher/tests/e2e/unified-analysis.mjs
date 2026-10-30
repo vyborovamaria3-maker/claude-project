@@ -96,6 +96,8 @@ export async function checkUnifiedDetails(page, baseUrl, mint) {
   await dialog.getByRole("button", { name: "Анализ", exact: true }).click();
   await page.waitForURL(url => url.searchParams.get("mint") === embeddedMint);
   await embeddedSourceRequest;
+  assert(await dialog.evaluate(element => document.activeElement !== element),
+    "Synchronizing the embedded mint must not reset focus to the dialog root");
   const socialAiResponse = await manualSocialAiResponse;
   assert.equal(xMint, embeddedMint, "Embedded mint changes must reach the source API");
   assert.equal(socialAiPosts.length, 1, "Changing the embedded mint must not cancel or duplicate the explicit Social AI POST");
