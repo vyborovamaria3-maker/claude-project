@@ -156,7 +156,7 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
     const nextParams = new URLSearchParams(paramsRef.current);
     if (nextParams.has("section")) {
       nextParams.delete("section");
-      paramsRef.current = nextParams;
+      paramsRef.current = nextParams.toString();
       window.history.replaceState(
         window.history.state,
         "",
