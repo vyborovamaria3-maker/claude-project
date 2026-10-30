@@ -402,7 +402,11 @@ function plannerCandidates(report: AdvancedReport | null) {
 
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
-  const rate = checkRateLimit('social-ai:' + getClientIp(req as unknown as Request), 5, 60);
+  const rate = checkRateLimit(
+    'social-ai:' + getClientIp(req as unknown as Request),
+    5,
+    60,
+  );
   if (!rate.success) {
     return NextResponse.json(
       { error: "rate_limited" },
