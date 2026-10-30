@@ -185,7 +185,7 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
             mintOverride={mint}
             onMintChange={(next) => { if (next !== mint) submit(next); }}
           />
-          {id === "ai" && validMint && <BlockchainAiReportPanel mint={mint} requestOnly={requestOnly} />}
+          {id === "ai" && validMint && <BlockchainAiReportPanel mint={mint} requestOnly /> /* The unified report must never trigger a paid AI request merely by opening the dialog. */}
         </div>
       );
     }
