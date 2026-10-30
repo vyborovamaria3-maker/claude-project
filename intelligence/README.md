@@ -120,9 +120,11 @@ Runtime safeguards:
   passwords or original exception strings.
 - A read-only health snapshot is emitted at startup and every
   `--health-interval-ms` (default 30 seconds), plus after failed/lost-lease
-  batches. It includes pending/ready/leased counts, retry count, dead-letter
-  count, oldest pending timestamp/age, last successful progress timestamp/age
-  and maximum pending attempts.
+  batches. It includes pending/ready/leased counts, retrying-event count and
+  total retry attempts, delayed retries, dead-letter count, oldest pending
+  timestamp/age, last successful progress timestamp/age, maximum pending
+  attempts and the number of event kinds with multiple schema versions in the
+  pending queue (a diagnostic signal, not an automatic incompatibility claim).
 - Machine-readable alert records are emitted when any dead-letter exists, when
   oldest pending age exceeds `--alert-oldest-pending-ms` (default 5 minutes;
   zero disables this alert), or when pending attempts reach `--max-failures`.
