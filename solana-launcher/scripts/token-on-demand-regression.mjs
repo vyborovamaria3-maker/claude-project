@@ -99,6 +99,14 @@ test('request parser validates JSON shapes and stops a chunked body at its limit
  await assert.rejects(readTokenAnalysisRequest({headers:new Headers(),body}),/request_too_large/);
  assert.equal(cancelled,true);
 });
+test('legacy Social Intelligence loads deterministic sources on mount but defers AI until explicit action',async()=>{
+ const panel=await readFile(new URL('../components/trade/SocialIntelligencePanel.tsx',import.meta.url),'utf8');
+ assert.match(panel,/async \(next: string, generateAi = true\)/);
+ assert.match(panel,/if \(generateAi && nextSnapshot\.evidence\.length\)/);
+ assert.match(panel,/void run\(initialMint, false\)/);
+ assert.match(panel,/void run\(query\)/);
+});
+
 test('request-only panel does not depend on legacy sources and never analyzes on mount',async()=>{
  const panel=await readFile(new URL('../components/trade/SocialIntelligencePanel.tsx',import.meta.url),'utf8');
  const page=await readFile(new URL('../app/trade/analysis/social/page.tsx',import.meta.url),'utf8');
