@@ -64,7 +64,7 @@ These counts are a file inventory only; they are not complexity, ownership or ru
 
 ## Explicit non-claims
 
-This baseline did not connect to any X or Telegram account, use a paid Solana RPC key, inspect production secrets, query or mutate a user database, run a production migration, restore a live backup, or deploy a service. Live operation, full source coverage, profitability, alpha, PnL correctness and production RPO/RTO remain unverified unless separately evidenced in [LIVE_TESTS.md](LIVE_TESTS.md).
+This baseline did not connect to any X or Telegram account, use a paid Solana RPC key, inspect production secrets, query or mutate a user database, run a production migration, restore a live backup, or deploy a service. PR #203's description reports a prior local API3182 smoke, but this baseline did not independently reproduce or verify its logs, authorization, database identity or backup. Live operation, full source coverage, profitability, alpha, PnL correctness and production RPO/RTO remain unverified unless separately evidenced in [LIVE_TESTS.md](LIVE_TESTS.md).
 
 ## Related documents
 
