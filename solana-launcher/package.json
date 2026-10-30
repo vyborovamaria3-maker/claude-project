@@ -7,7 +7,7 @@
     "build": "npm run analysis:test && next build",
     "start": "next start",
     "lint": "eslint .",
-    "security:test": "node scripts/security-regression.mjs",
+    "security:test": "node scripts/security-regression.mjs && node scripts/blockchain-ai-report-guard-regression.mjs",
     "admin-confirmation:test": "node ../admin-site/tests/analysis-confirmation-browser.mjs",
     "landing:test": "node scripts/landing-regression.mjs",
     "kols:test": "node scripts/kols-regression.mjs",
