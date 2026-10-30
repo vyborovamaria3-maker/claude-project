@@ -355,8 +355,8 @@ export async function POST(req: NextRequest) {
     }
     const result = await response.json().catch(() => ({})) as AiEnvelope;
     if (!response.ok) {
-      const upstreamMessage = text(result.error || result.detail || result.message, 1_000);
-      console.error("[blockchain-ai-report] upstream failure", response.status, upstreamMessage || "no detail");
+      // Provider response bodies may contain internal diagnostics or sensitive values.
+      console.error("[blockchain-ai-report] upstream failure", response.status);
       return NextResponse.json(
         { available: false, error: "AI provider unavailable", upstreamStatus: response.status },
         { status: 502 },
@@ -424,7 +424,7 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("[blockchain-ai-report] failed", error);
+    console.error("[blockchain-ai-report] failed");
     return NextResponse.json(
       { available: false, error: "blockchain AI report failed" },
       { status: 502 },
