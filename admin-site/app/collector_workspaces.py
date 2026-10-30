@@ -6,6 +6,7 @@ configured operator's existing product identity; its owner isolation stays upstr
 from __future__ import annotations
 
 import os
+import re
 import logging
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -20,8 +21,11 @@ from .tg_collector_admin import collector_token
 ROOT = Path(__file__).resolve().parent / "static" / "collector-workspaces"
 NO_STORE = {"Cache-Control": "private, no-store"}
 logger = logging.getLogger(__name__)
-MODULES = {"x-collector", "tg-collector", "tg-invite"}
+MODULES = {"x-collector", "tg-collector", "tg-invite", "diagnostics", "apify", "blockchain"}
+PATHS = {"x": "/api/integrations/x-collector", "tg": "/api/integrations/tg-collector", "invite": "/api/tginvite", "teragram": "/api/v1/telegram/teragram", "apify": "/api/integrations/apify", "blockchain": "/api/blockchain/settings", "rpc": "/api/rpc-health", "market": "/api/market-overview", "trending": "/api/trending"}
 SUFFIXES = {
+    "apify": {"", "sandbox", "pumpfun-sync"},
+    "blockchain": {""}, "rpc": {""}, "market": {""}, "trending": {""},
     "x": {"", "register-session"},
     "tg": {"", "session", "discovery", "graph"},
     "invite": {"", "bot", "channels", "direct-invite", "history", "identity", "invite", "jobs", "messages", "mtproto", "source-candidates", "stats", "status"},
@@ -86,8 +90,10 @@ def build_collector_workspaces_router():
         return FileResponse(ROOT / "index.html", headers=NO_STORE)
 
     async def relay(request: Request, family: str, suffix: str, admin: dict):
-        if suffix not in SUFFIXES[family]:
+        if suffix not in SUFFIXES[family] and not (family == "apify" and re.fullmatch(r"runs/[A-Za-z0-9_-]{1,128}", suffix)):
             raise HTTPException(404)
+        if family in {"rpc", "market", "trending"} and request.method != "GET":
+            raise HTTPException(405)
         mutation = request.method not in {"GET", "HEAD"}
         if mutation and (request.headers.get("origin") != str(request.base_url).rstrip("/") or request.headers.get("sec-fetch-site") == "cross-site"):
             raise HTTPException(403, "Same-origin admin request required")
@@ -101,25 +107,27 @@ def build_collector_workspaces_router():
             suffix = ""
             mutation = False
         origin = local_origin("ADMIN_COLLECTOR_API_ORIGIN", "http://127.0.0.1:3100")
-        paths = {"x": "/api/integrations/x-collector", "tg": "/api/integrations/tg-collector", "invite": "/api/tginvite", "teragram": "/api/v1/telegram/teragram"}
+        paths = PATHS
         if family == "teragram":
             origin = local_origin("ADMIN_COLLECTOR_BACKEND_ORIGIN", "http://127.0.0.1:8000")
         headers = {"Origin": origin, "Content-Type": "application/json", "Accept": "application/json"}
         if family == "tg":
             headers["Authorization"] = "Bearer " + collector_token()
-        elif family in {"x", "invite", "teragram"}:
-            token = os.getenv("ADMIN_COLLECTOR_ACCESS_TOKEN", "").strip() if family == "x" else ""
+        elif family in {"x", "invite", "teragram", "apify", "blockchain"}:
+            token = os.getenv("ADMIN_COLLECTOR_ACCESS_TOKEN", "").strip() if family in {"x", "apify", "blockchain"} else ""
             token = token or os.getenv("ADMIN_TGINVITE_ACCESS_TOKEN", "").strip()
             # Local development retains its existing X tools. Production X
             # verifies this explicit operator identity upstream on every call.
-            if family != "x" and not token:
+            if family in {"invite", "teragram"} and not token:
                 raise HTTPException(503, "Configure ADMIN_TGINVITE_ACCESS_TOKEN for the existing operator identity")
             if token:
                 headers["Authorization"] = "Bearer " + token
+        if family == "blockchain":
+            headers["Content-Type"] = request.headers.get("content-type", "application/octet-stream")
         payload = bytearray()
         async for chunk in request.stream():
             payload.extend(chunk)
-            if len(payload) > 300_000:
+            if len(payload) > (16 * 1024 * 1024 if family == "blockchain" and request.query_params.get("action") == "import" else 300_000):
                 raise HTTPException(413, "Request too large")
         target = origin + paths[family] + ("/" + suffix if suffix else "")
         try:
@@ -165,7 +173,7 @@ def build_collector_workspaces_router():
             return await relay(request, family, suffix, admin)
         return call
 
-    for family, base in (("x", "/api/integrations/x-collector"), ("tg", "/api/integrations/tg-collector"), ("invite", "/api/tginvite"), ("teragram", "/api/v1/telegram/teragram")):
+    for family, base in PATHS.items():
         for route in (base, base + "/{suffix:path}"):
             router.add_api_route(route, endpoint(family), methods=["GET", "POST", "DELETE"], include_in_schema=False)
     return router

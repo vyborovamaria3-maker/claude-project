@@ -179,7 +179,8 @@ export async function proxy(request: NextRequest) {
     const legacyTab = searchParams.get("tab");
     const collectorModule: CollectorModule | null = legacyTab === "xcollector" ? "x-collector"
       : legacyTab === "tgcollector" ? "tg-collector"
-      : legacyTab === "tginvite" ? "tg-invite" : null;
+      : legacyTab === "tginvite" ? "tg-invite"
+      : legacyTab === "diagnostics" || legacyTab === "apify" || legacyTab === "blockchain" ? legacyTab : null;
     if (collectorModule) {
       const destination = standaloneAdminUrl(collectorModule);
       if (!destination) return applyCsp(new NextResponse(null, { status: 404 }), csp);

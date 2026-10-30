@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 
-export type CollectorModule = "x-collector" | "tg-collector" | "tg-invite";
+export type CollectorModule = "x-collector" | "tg-collector" | "tg-invite" | "diagnostics" | "apify" | "blockchain";
 
 /** Only server configuration can choose the separate administration origin. */
 export function standaloneAdminUrl(module?: CollectorModule): string | null {

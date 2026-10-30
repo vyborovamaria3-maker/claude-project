@@ -34,6 +34,9 @@ try {
     assert.equal(url.origin, origin, 'All browser traffic must stay on admin-site');
     if (!url.pathname.startsWith('/api/')) return route.continue();
     requests.push({ path: url.pathname, method: route.request().method() });
+    if (url.pathname === '/api/rpc-health') return route.fulfill({ json: { status: 'ok', latency: 12 } });
+    if (url.pathname === '/api/integrations/apify') return route.fulfill({ json: { config: { tokenConfigured: false, apiBaseUrl: '', sandboxActorId: '', pumpfunActorId: '' }, recentRuns: [], recentSyncs: [], latestSandboxRun: null, latestPumpfunRun: null } });
+    if (url.pathname === '/api/blockchain/settings') return route.fulfill({ json: { values: { primary: '', fallback: '', batchSize: 5, concurrency: 1, requestsPerSecond: 1, timeoutMs: 5000, retries: 0, retryDelayMs: 100, enabled: false }, slots: [], alchemyConfigured: false, metrics: { errors: 0, retries: 0 }, collection: { collectedEvents: 0, targets: [] }, runs: [], imports: [] } });
     if (url.pathname === '/api/me') return route.fulfill({ status: denied ? 401 : 200, json: { username: 'fixture-admin' } });
     if (url.pathname === '/api/tginvite/identity') return route.fulfill({ json: { ownerId: '123e4567-e89b-12d3-a456-426614174000' } });
     if (url.pathname.endsWith('/session')) return route.fulfill({ json: { connected: true } });
@@ -66,6 +69,14 @@ try {
   }
   assert.equal(requests.some(request => request.path === '/api/tginvite/identity'), true);
   assert.equal(requests.some(request => request.path.startsWith('/api/v1/telegram/teragram')), true);
+  for (const module of ['diagnostics', 'apify', 'blockchain']) {
+    await page.goto(origin + '/collectors/' + module);
+    await page.locator('nav a[aria-current="page"]').filter({ hasText: new RegExp(module, 'i') }).waitFor();
+    await page.waitForTimeout(700);
+  }
+  assert.equal(requests.some(request => request.path === '/api/blockchain/settings'), true);
+  assert.equal(requests.some(request => request.path === '/api/integrations/apify'), true);
+  assert.equal(requests.some(request => request.path === '/api/rpc-health'), true);
   assert.deepEqual(errors, []);
   denied = true;
   await page.reload();

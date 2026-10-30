@@ -47,14 +47,14 @@ class WorkspaceTests(unittest.TestCase):
         def reject():
             raise HTTPException(401, "Login required")
         self.app.dependency_overrides[require_admin] = reject
-        for path in ("/api/collector-connections", "/collectors/x-collector", "/collectors/tg-collector", "/collectors/tg-invite", "/api/integrations/x-collector", "/api/integrations/tg-collector", "/api/tginvite/identity", "/api/v1/telegram/teragram/status"):
+        for path in ("/collectors/diagnostics", "/collectors/apify", "/collectors/blockchain", "/api/blockchain/settings", "/api/rpc-health", "/api/trending", "/api/market-overview", "/api/integrations/apify", "/api/collector-connections", "/collectors/x-collector", "/collectors/tg-collector", "/collectors/tg-invite", "/api/integrations/x-collector", "/api/integrations/tg-collector", "/api/tginvite/identity", "/api/v1/telegram/teragram/status"):
             self.assertEqual(self.client.get(path).status_code, 401, path)
 
     def test_only_known_pages_are_served_and_missing_build_fails_honestly(self):
         with tempfile.TemporaryDirectory() as directory, patch("app.collector_workspaces.ROOT", Path(directory)):
             self.assertEqual(self.client.get("/collectors/tg-invite").status_code, 503)
             Path(directory, "index.html").write_text("native admin workspace")
-            for module in ("x-collector", "tg-collector", "tg-invite"):
+            for module in ("x-collector", "tg-collector", "tg-invite", "diagnostics", "apify", "blockchain"):
                 response = self.client.get("/collectors/" + module)
                 self.assertEqual(response.status_code, 200)
                 self.assertIn("no-store", response.headers["cache-control"])
@@ -164,6 +164,24 @@ class WorkspaceTests(unittest.TestCase):
             with patch.dict(os.environ, {"ADMIN_COLLECTOR_API_ORIGIN": value}):
                 with self.assertRaises(HTTPException):
                     local_origin("ADMIN_COLLECTOR_API_ORIGIN", "http://127.0.0.1:3100")
+
+    def test_settings_bridges_preserve_upload_and_operator_identity(self):
+        def handler(request):
+            self.assertEqual(request.headers["authorization"], "Bearer server-only-operator-token")
+            self.assertEqual(request.headers["content-type"], "application/octet-stream")
+            self.assertEqual(request.content, b"xlsx-placeholder")
+            self.assertEqual(request.url.params["action"], "import")
+            return httpx.Response(200, json={"ok": True})
+        with self.upstream(handler):
+            response = self.client.post("/api/blockchain/settings?action=import&category=migrated&name=data.xlsx", content=b"xlsx-placeholder", headers={"Origin": "http://testserver", "Content-Type": "application/octet-stream"})
+        self.assertEqual(response.status_code, 200)
+
+    def test_diagnostics_are_read_only_and_apify_paths_are_bounded(self):
+        with self.upstream(lambda request: httpx.Response(200, json={"ok": True})):
+            for path in ("/api/rpc-health", "/api/trending", "/api/market-overview", "/api/integrations/apify/runs/abc-123"):
+                self.assertEqual(self.client.get(path).status_code, 200)
+            self.assertEqual(self.client.post("/api/rpc-health", headers={"Origin": "http://testserver"}).status_code, 405)
+            self.assertEqual(self.client.get("/api/integrations/apify/runs/abc/other").status_code, 404)
 
 
 if __name__ == "__main__":

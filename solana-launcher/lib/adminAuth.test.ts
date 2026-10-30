@@ -58,7 +58,7 @@ describe("admin navigation proxy", () => {
       expect(response.status).toBe(401);
       expect(response.headers.get("cache-control")).toContain("no-store");
     });
-  it.each([["xcollector", "x-collector"], ["tgcollector", "tg-collector"], ["tginvite", "tg-invite"]])(
+  it.each([["xcollector", "x-collector"], ["tgcollector", "tg-collector"], ["tginvite", "tg-invite"], ["diagnostics", "diagnostics"], ["apify", "apify"], ["blockchain", "blockchain"]])(
     "redirects the old settings tab %s while preserving other parameters", async (tab, route) => {
       vi.stubEnv("ADMIN_SITE_URL", "https://admin.example");
       const response = await proxy(new NextRequest(`https://app.example/settings?tab=${tab}&lang=ru`));

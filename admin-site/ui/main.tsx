@@ -4,12 +4,16 @@ import { QueryClient, QueryClientProvider } from "../../solana-launcher/lib/reac
 import XCollectorTab from "../../solana-launcher/app/settings/XCollectorTab";
 import TGCollectorTab from "../../solana-launcher/app/settings/TGCollectorTab";
 import TGInviteWorkspace from "../../solana-launcher/components/tginvite/TGInviteWorkspace";
+import DiagnosticsTab from "../../solana-launcher/app/settings/DiagnosticsTab";
+import ApifyTab from "../../solana-launcher/app/settings/ApifyTab";
+import BlockchainTab from "../../solana-launcher/app/settings/BlockchainTab";
+import { I18nProvider } from "../../solana-launcher/components/providers/I18nProvider";
 import "../../solana-launcher/app/globals.css";
 import "../../solana-launcher/app/adaptive-theme.css";
 import "./style.css";
 
 const client = new QueryClient();
-const modules = [ ["x-collector", "X Collector"], ["tg-collector", "TG Collector"], ["tg-invite", "TG Invite"] ];
+const modules = [ ["x-collector", "X Collector"], ["tg-collector", "TG Collector"], ["tg-invite", "TG Invite"], ["diagnostics", "Diagnostics"], ["apify", "Apify"], ["blockchain", "Blockchain"] ];
 function App() {
   const [access, setAccess] = useState("loading");
   useEffect(() => {
@@ -24,7 +28,7 @@ function App() {
     <header><a href="/">← Control Center</a><h1>Управление сборщиками</h1></header>
     <nav aria-label="Collector administration">{modules.map(([id, label]) => <a key={id} href={`/collectors/${id}`} aria-current={active === id ? "page" : undefined}>{label}</a>)}</nav>
     {access === "loading" ? <p role="status">Проверка доступа…</p> : access === "denied" ? <p role="alert">Требуется вход администратора. <a href="/">Открыть вход в Control Center</a></p> :
-      <QueryClientProvider client={client}>{active === "x-collector" ? <XCollectorTab/> : active === "tg-collector" ? <TGCollectorTab/> : active === "tg-invite" ? <TGInviteWorkspace/> : <p>Выберите инструмент.</p>}</QueryClientProvider>}
+      <I18nProvider initialLocale="ru"><QueryClientProvider client={client}>{active === "x-collector" ? <XCollectorTab/> : active === "tg-collector" ? <TGCollectorTab/> : active === "tg-invite" ? <TGInviteWorkspace/> : active === "diagnostics" ? <DiagnosticsTab standaloneAdmin/> : active === "apify" ? <ApifyTab/> : active === "blockchain" ? <BlockchainTab/> : <p>Выберите инструмент.</p>}</QueryClientProvider></I18nProvider>}
   </main>;
 }
 createRoot(document.getElementById("root")!).render(<App/>);
