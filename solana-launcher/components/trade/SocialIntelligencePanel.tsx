@@ -99,6 +99,7 @@ export default function SocialIntelligencePanel({
   const [snapshot, setSnapshot] = useState<AnalysisSnapshot | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [loading, setLoading] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
   const [chainLoading, setChainLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -126,6 +127,7 @@ export default function SocialIntelligencePanel({
       setMint(contract);
       setQuery(contract);
       setLoading(true);
+      setAiLoading(false);
       setChainLoading(true);
       setError(null);
       setWarnings([]);
@@ -139,6 +141,7 @@ export default function SocialIntelligencePanel({
       else router.replace(`/trade/analysis/social?mint=${encodeURIComponent(contract)}`, { scroll: false });
 
       if(requestOnly){
+        setAiLoading(true);
         try{
           const answer=await fetchJson<TokenRequestEnvelope>("/api/trade/social-ai",controller.signal,{
             method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({mint:contract}),
@@ -147,7 +150,7 @@ export default function SocialIntelligencePanel({
         }catch{
           if(!controller.signal.aborted)setError("Не удалось подготовить проверенный ответ. Проверьте адрес и повторите запрос.");
         }finally{
-          if(!controller.signal.aborted){setLoading(false);setChainLoading(false);}
+          if(!controller.signal.aborted){setAiLoading(false);setLoading(false);setChainLoading(false);}
         }
         return;
       }
@@ -221,6 +224,7 @@ export default function SocialIntelligencePanel({
       setSnapshot(nextSnapshot);
 
       if (generateAi && nextSnapshot.evidence.length) {
+        setAiLoading(true);
         try {
           const qwen = await fetchJson<AiEnvelope>("/api/trade/social-ai", controller.signal, {
             method: "POST",
@@ -240,6 +244,8 @@ export default function SocialIntelligencePanel({
             setWarnings((value) => upsertWarning(value, `Qwen: ${message}`));
             setAi({ agent: "qwen", available: false, error: message });
           }
+        } finally {
+          if (!controller.signal.aborted) setAiLoading(false);
         }
       }
 
@@ -364,7 +370,7 @@ export default function SocialIntelligencePanel({
           <div className="grid gap-4 xl:grid-cols-2">{focusedGroups.map((group) => <MetricTable key={group.title} title={group.title} rows={group.rows} />)}</div>
         </section>
       {!requestOnly && (x || tg) && <>
-        {(focus === "all" || focus === "ai") && <AiPanel ai={ai} snapshot={snapshot} loading={loading} />}
+        {(focus === "all" || focus === "ai") && <AiPanel ai={ai} snapshot={snapshot} loading={loading} aiLoading={aiLoading} />}
         {(focus === "all" || focus === "twitter" || focus === "telegram") && <TimelinePanel x={x} tg={tg} impulseAt={derived.price.impulseTime} impulseChange={derived.price.impulseChange} />}
       </>}
     </div>
@@ -526,7 +532,7 @@ function MetricTable({ title, rows }: { title: string; rows: Metric[] }) {
 function PricePanel({ price, loading }: { price: PriceSocial; loading: boolean }) {
   return <section className="surface-panel rounded-2xl border border-bg-border p-4"><div className="mb-3 flex items-center gap-2"><TrendingUp className="h-4 w-4 text-primary" /><div><h2 className="text-sm font-semibold text-content">Price ↔ Social lead/lag</h2><p className="text-[10px] text-content-faint">{loading ? "Trade history загружается параллельно — social уже доступен." : `Ближайший price impulse ≥ ${IMPULSE_THRESHOLD_PCT}% за 5 минут.`}</p></div></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8"><Kpi label="Direction" value={price.leadDirection} icon={<Zap />} /><Kpi label="Lead / lag" value={price.leadLagMinutes == null ? "—" : `${Math.abs(price.leadLagMinutes).toFixed(1)}m`} icon={<Gauge />} /><Kpi label="Confidence" value={score(price.leadLagConfidence)} icon={<Radar />} /><Kpi label="+5m" value={signedPct(price.reaction5)} icon={<TrendingUp />} /><Kpi label="+15m" value={signedPct(price.reaction15)} icon={<TrendingUp />} /><Kpi label="+1h" value={signedPct(price.reaction60)} icon={<TrendingUp />} /><Kpi label="Max up 1h" value={signedPct(price.maxUpside)} icon={<TrendingUp />} /><Kpi label="Max DD 1h" value={signedPct(price.maxDrawdown)} icon={<ShieldAlert />} /></div></section>;
 }
-function AiPanel({ ai, snapshot, loading }: { ai: AiEnvelope | null; snapshot: AnalysisSnapshot | null; loading: boolean }) {
+function AiPanel({ ai, snapshot, loading, aiLoading }: { ai: AiEnvelope | null; snapshot: AnalysisSnapshot | null; loading: boolean; aiLoading: boolean }) {
   const result = ai?.result;
   const advanced = result as (typeof result & {
     discoveredRelationships?: Array<{ source?: string; target?: string; type?: string; confidence?: number; status?: string; rationale?: string }>;
@@ -535,7 +541,7 @@ function AiPanel({ ai, snapshot, loading }: { ai: AiEnvelope | null; snapshot: A
     whatWouldChangeConclusion?: string[];
     finalIntelligence?: { marketState?: string; socialState?: string; manipulationAssessment?: string; bullCase?: string; bearCase?: string; unknowns?: string[]; confidence?: number };
   }) | undefined;
-  return <section className="surface-panel rounded-2xl border border-bg-border p-4"><div className="mb-3 flex items-center gap-2"><BrainCircuit className="h-4 w-4 text-primary" /><div><h2 className="text-sm font-semibold text-content">Qwen AI · Full Intelligence Analyst</h2><p className="text-[10px] text-content-faint">{snapshot ? `${snapshot.featureCount} features · ${snapshot.graph.stats.nodes} nodes · ${snapshot.graph.stats.edges} deterministic edges` : "Ожидается unified snapshot"}</p></div></div>{!ai ? <div className="text-xs text-content-faint">{loading ? "Анализ выполняется…" : snapshot ? snapshot.evidence.length ? "Snapshot готов. Нажмите «Анализ», чтобы запустить Qwen." : "В snapshot нет пригодных доказательств. Qwen не запускается." : "Нет готового snapshot. Укажите mint и нажмите «Анализ»."}</div> : !result ? <div className="text-xs text-warning">Qwen недоступен: {ai.error || "нет результата"}</div> : <div className="space-y-4"><div className="grid gap-4 lg:grid-cols-[1.1fr_.9fr]"><div><p className="text-sm leading-6 text-content-soft">{result.summary || "—"}</p><div className="mt-3 rounded-xl border border-bg-border bg-bg-card p-3"><div className="text-[10px] uppercase tracking-wider text-content-faint">Campaign narrative</div><div className="mt-1 text-xs leading-5 text-content-muted">{result.campaignHypothesis?.narrative || "—"}</div></div></div><div className="space-y-2">{(result.reasoningSummary || []).map((value, index) => <div key={`${index}-${value.slice(0, 24)}`} className="rounded-lg border border-bg-border bg-bg-elevated/50 px-3 py-2 text-xs text-content-muted">{value}</div>)}</div></div>{advanced?.finalIntelligence && <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3"><Insight label="Market state" text={advanced.finalIntelligence.marketState} /><Insight label="Social state" text={advanced.finalIntelligence.socialState} /><Insight label="Manipulation" text={advanced.finalIntelligence.manipulationAssessment} /><Insight label="Bull case" text={advanced.finalIntelligence.bullCase} /><Insight label="Bear case" text={advanced.finalIntelligence.bearCase} /><Insight label="Unknowns" text={(advanced.finalIntelligence.unknowns || []).join(" · ")} /></div>}{Boolean(advanced?.discoveredRelationships?.length) && <AdvancedList title="New graph relationships" rows={(advanced?.discoveredRelationships || []).slice(0, 20).map((item) => `${item.type || "link"}: ${item.source || "?"} → ${item.target || "?"} · ${item.status || "hypothesis"} · ${item.confidence == null ? "—" : pct(item.confidence * 100)} · ${item.rationale || ""}`)} />}{Boolean(advanced?.anomalies?.length) && <AdvancedList title="Anomalies" rows={(advanced?.anomalies || []).slice(0, 20).map((item) => `${item.severity || "info"} · ${item.type || "anomaly"} · ${item.explanation || ""}`)} />}{Boolean(advanced?.contradictions?.length) && <AdvancedList title="Contradictions" rows={(advanced?.contradictions || []).slice(0, 15).map((item) => item.statement || "—")} />}{Boolean(advanced?.whatWouldChangeConclusion?.length) && <AdvancedList title="What would change the conclusion" rows={(advanced?.whatWouldChangeConclusion || []).slice(0, 15)} />}</div>}</section>;
+  return <section className="surface-panel rounded-2xl border border-bg-border p-4"><div className="mb-3 flex items-center gap-2"><BrainCircuit className="h-4 w-4 text-primary" /><div><h2 className="text-sm font-semibold text-content">Qwen AI · Full Intelligence Analyst</h2><p className="text-[10px] text-content-faint">{snapshot ? `${snapshot.featureCount} features · ${snapshot.graph.stats.nodes} nodes · ${snapshot.graph.stats.edges} deterministic edges` : "Ожидается unified snapshot"}</p></div></div>{!ai ? <div className="text-xs text-content-faint">{aiLoading ? "Qwen выполняет анализ…" : loading ? "Собираем источники и готовим snapshot…" : snapshot ? snapshot.evidence.length ? "Snapshot готов. Нажмите «Анализ», чтобы запустить Qwen." : "В snapshot нет пригодных доказательств. Qwen не запускается." : "Нет готового snapshot. Укажите mint и нажмите «Анализ». "}</div> : !result ? <div className="text-xs text-warning">Qwen недоступен: {ai.error || "нет результата"}</div> : <div className="space-y-4"><div className="grid gap-4 lg:grid-cols-[1.1fr_.9fr]"><div><p className="text-sm leading-6 text-content-soft">{result.summary || "—"}</p><div className="mt-3 rounded-xl border border-bg-border bg-bg-card p-3"><div className="text-[10px] uppercase tracking-wider text-content-faint">Campaign narrative</div><div className="mt-1 text-xs leading-5 text-content-muted">{result.campaignHypothesis?.narrative || "—"}</div></div></div><div className="space-y-2">{(result.reasoningSummary || []).map((value, index) => <div key={`${index}-${value.slice(0, 24)}`} className="rounded-lg border border-bg-border bg-bg-elevated/50 px-3 py-2 text-xs text-content-muted">{value}</div>)}</div></div>{advanced?.finalIntelligence && <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3"><Insight label="Market state" text={advanced.finalIntelligence.marketState} /><Insight label="Social state" text={advanced.finalIntelligence.socialState} /><Insight label="Manipulation" text={advanced.finalIntelligence.manipulationAssessment} /><Insight label="Bull case" text={advanced.finalIntelligence.bullCase} /><Insight label="Bear case" text={advanced.finalIntelligence.bearCase} /><Insight label="Unknowns" text={(advanced.finalIntelligence.unknowns || []).join(" · ")} /></div>}{Boolean(advanced?.discoveredRelationships?.length) && <AdvancedList title="New graph relationships" rows={(advanced?.discoveredRelationships || []).slice(0, 20).map((item) => `${item.type || "link"}: ${item.source || "?"} → ${item.target || "?"} · ${item.status || "hypothesis"} · ${item.confidence == null ? "—" : pct(item.confidence * 100)} · ${item.rationale || ""}`)} />}{Boolean(advanced?.anomalies?.length) && <AdvancedList title="Anomalies" rows={(advanced?.anomalies || []).slice(0, 20).map((item) => `${item.severity || "info"} · ${item.type || "anomaly"} · ${item.explanation || ""}`)} />}{Boolean(advanced?.contradictions?.length) && <AdvancedList title="Contradictions" rows={(advanced?.contradictions || []).slice(0, 15).map((item) => item.statement || "—")} />}{Boolean(advanced?.whatWouldChangeConclusion?.length) && <AdvancedList title="What would change the conclusion" rows={(advanced?.whatWouldChangeConclusion || []).slice(0, 15)} />}</div>}</section>;
 }
 function Insight({ label, text }: { label: string; text?: string }) {
   return <div className="rounded-xl border border-bg-border bg-bg-card p-3"><div className="text-[9px] uppercase tracking-wider text-content-faint">{label}</div><div className="mt-1 text-xs leading-5 text-content-muted">{text || "—"}</div></div>;
