@@ -115,6 +115,9 @@ test('legacy Social Intelligence loads deterministic sources on mount but defers
  assert.match(panel,/async \(next: string, generateAi = true\)/);
  assert.match(panel,/if \(generateAi && nextSnapshot\.evidence\.length\)/);
  assert.match(panel,/void run\(initialMint, false\)/);
+ assert.match(panel,/if \(next === initialMintRef\.current\) return;/);
+ assert.match(panel,/if \(!MINT_RE\.test\(next\)\) \{[\s\S]*?setSnapshot\(null\);[\s\S]*?return;/,
+   "Clearing the embedded mint must abort and clear stale source/AI state");
  assert.match(panel,/void run\(query\)/);
 });
 
