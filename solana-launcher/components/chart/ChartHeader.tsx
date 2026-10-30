@@ -139,7 +139,7 @@ const ChartHeader = React.memo(function ChartHeader({
               )}
             </div>
             <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-              <span className="text-[10px] text-[#d1d4dc]/40 font-mono">{mint.slice(0, 4)}вЂ¦{mint.slice(-4)}</span>
+              <span className="text-[10px] text-[#d1d4dc]/40 font-mono">{mint.slice(0, 4)}…{mint.slice(-4)}</span>
               <button type="button" onClick={handleCopy} className="p-0.5 rounded text-[#d1d4dc]/30 hover:text-[#d1d4dc] transition" title="Copy mint">
                 <Copy className="w-2.5 h-2.5" />
               </button>
