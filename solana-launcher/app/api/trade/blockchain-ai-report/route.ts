@@ -200,6 +200,7 @@ function hasAiContent(result: ReturnType<typeof normalizeAiResult>): boolean {
   return Boolean(
     result.summary
     || result.finalIntelligence.marketState
+    || result.finalIntelligence.socialState
     || result.finalIntelligence.manipulationAssessment
     || result.finalIntelligence.bullCase
     || result.finalIntelligence.bearCase
