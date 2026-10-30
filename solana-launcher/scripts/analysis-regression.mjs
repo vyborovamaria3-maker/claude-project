@@ -9,6 +9,7 @@ const overviewPath = join(root, "app", "trade", "analysis", "page.tsx");
 const overviewClientPath = join(root, "components", "trade", "UnifiedAnalysisClient.tsx");
 const socialPagePath = join(root, "app", "trade", "analysis", "social", "page.tsx");
 const panelPath = join(root, "components", "trade", "SocialIntelligencePanel.tsx");
+const chartHeaderPath = join(root, "components", "chart", "ChartHeader.tsx");
 const routePath = join(root, "app", "api", "trade", "social-ai", "route.ts");
 const wrapperPath = join(root, "lib", "trade", "intelligence-agent-provenance.ts");
 const provenancePath = join(root, "lib", "trade", "analysis-feature-provenance.json");
@@ -20,6 +21,7 @@ const overviewSource = readFileSync(overviewPath, "utf8");
 const overviewClientSource = readFileSync(overviewClientPath, "utf8");
 const socialPageSource = readFileSync(socialPagePath, "utf8");
 const panelSource = readFileSync(panelPath, "utf8");
+const chartHeaderSource = readFileSync(chartHeaderPath, "utf8");
 const routeSource = readFileSync(routePath, "utf8");
 const wrapperSource = readFileSync(wrapperPath, "utf8");
 const provenance = JSON.parse(readFileSync(provenancePath, "utf8"));
@@ -33,6 +35,8 @@ assert(
   layoutSource.includes('trade.analysis.layout'),
   "Trade Analysis shared layout must still wrap the detailed routes",
 );
+assert(!chartHeaderSource.includes("вЂ"), "chart header must not contain mojibake fallback symbols");
+assert(chartHeaderSource.includes("…"), "chart header mint abbreviation must use a proper ellipsis");
 assert(
   overviewClientSource.includes('trade.analysis.unified_v1') && overviewClientSource.includes('trade.analysis.detail_modal'),
   "unified Analysis overview and detailed modal must exist",
