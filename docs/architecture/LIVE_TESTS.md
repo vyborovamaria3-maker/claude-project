@@ -2,6 +2,17 @@
 
 Audit register started **2026-10-22** on `audit/tg-collector-sprint0-20261022`. This file distinguishes **source inspection**, **offline tests** and **actual live validation**. No tests were executed as part of this documentation-only sprint-0 audit: all execution statuses below are `NOT RUN`. Historical README/CI claims are references to existing test infrastructure, not evidence that the *current head* is green.
 
+## CI-only evidence — 2026-10-30
+
+PR [#203](https://github.com/vyborovamaria3-maker/claude-project/pull/203), head `03aca7e25f3d66f0d39f6f8b279483eb8eb101cf`:
+
+- 17 GitHub Actions workflows completed successfully; one conditional Security Lock Refresh workflow was skipped.
+- [Frontend Quality CI](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41107335183) passed. Its Playwright log contains one `ANALYSIS_OVERVIEW_OK` run covering source values, missing/empty/error states, stale-mint protection, the 141-field report, mobile layout and explicit AI request only.
+- [Social Analysis UI CI](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41107335055), [Security Gates](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41107335173) and [POTAPoff predeploy gate](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41107335084) passed.
+- The on-demand regression suite reports 21 tests passed, 0 failed; it includes a source-level assertion that unified Analysis embeds `BlockchainAiReportPanel` in request-only mode.
+
+**Classification:** OFFLINE / SYNTHETIC CI ONLY. No real X account, Telegram MTProto session, paid RPC, production database, production migration, live witness service or backup/restore operation was accessed. All external live-validation rows below remain `NOT RUN` until a separately approved run records the evidence required by this register.
+
 ## Verification matrix
 
 | Component | Test method / entrypoint | Required environment | Status 2026-10-22 | Evidence / follow-up |
