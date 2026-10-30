@@ -52,6 +52,7 @@ export type PumpFunChartSignal = {
 
 interface Props {
   mint: string;
+  overview?: boolean;
   symbol?: string;
   tokenName?: string;
   intelligenceSignals?: PumpFunChartSignal[];
@@ -115,7 +116,7 @@ function markerColor(tone: PumpFunChartSignal["tone"]) {
   return "#a855f7";
 }
 
-export default function PumpFunChart({ mint, symbol, tokenName, intelligenceSignals = [] }: Props) {
+export default function PumpFunChart({ mint, symbol, tokenName, intelligenceSignals = [], overview = false }: Props) {
   const [tf, setTf] = useState<Timeframe>("1m");
   const handleTfChange = useCallback((newTf: Timeframe) => {
     if (newTf === tf) return;
@@ -432,12 +433,12 @@ export default function PumpFunChart({ mint, symbol, tokenName, intelligenceSign
           )}
         </div>
 
-        <div className="w-72 flex flex-col border-l border-bg-border overflow-hidden bg-bg-card">
+        {!overview && <div className="w-72 flex flex-col border-l border-bg-border overflow-hidden bg-bg-card">
           <ActivityPanel mint={mint} />
-        </div>
+        </div>}
       </div>
 
-      <BottomTabs mint={mint} />
+      {!overview && <BottomTabs mint={mint} />}
     </div>
   );
 }

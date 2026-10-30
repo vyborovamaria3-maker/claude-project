@@ -6,7 +6,7 @@ import React, { useEffect, useState, useMemo } from "react";
 import { Copy, ExternalLink, Download, Globe, Send } from "lucide-react";
 import { exportCandles, formatExportFilename } from "@/lib/chart/csvExport";
 import type { Candle } from "@/lib/chart/types";
-import { formatUsd, formatNumber, formatAge, formatMcap as fmtMcapConfig } from "@/lib/chart/config";
+import { formatUsd, formatNumber, formatAge, formatPrice } from "@/lib/chart/config";
 
 interface Props {
   mint: string;
@@ -48,9 +48,6 @@ interface PairInfo {
   telegram: string | null;
   website: string | null;
 }
-
-// Re-export from config for backward compatibility
-const fmtMcap = fmtMcapConfig;
 
 const ChartHeader = React.memo(function ChartHeader({
   mint, symbol, name, lastPrice, change24h, isOnline,
@@ -104,7 +101,7 @@ const ChartHeader = React.memo(function ChartHeader({
   }, [pair?.totalFeesSol]);
 
   const metrics = useMemo(() => ({
-    mcap: fmtMcap(pair?.marketCap || (displayPrice * 1_000_000_000)),
+    mcap: formatUsd(pair?.marketCap),
     vol24h: formatUsd(pair?.volumeH24),
     vol1h: formatUsd(pair?.volumeH1),
     liquidity: formatUsd(pair?.liquidityUsd),
@@ -171,7 +168,7 @@ const ChartHeader = React.memo(function ChartHeader({
 
         {/* Price */}
         <div className="flex items-baseline gap-2">
-          <span className="text-2xl font-bold text-white tabular-nums">{fmtMcap(displayPrice)}</span>
+          <span className="text-2xl font-bold text-white tabular-nums">{displayPrice > 0 ? formatPrice(displayPrice) : "—"}</span>
         </div>
 
         {/* Age */}
