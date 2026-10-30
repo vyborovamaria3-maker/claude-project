@@ -28,22 +28,29 @@ export async function emitPostgres(client: PgQuery, event: OutboxEvent): Promise
 
 /** Claims are committed before the consumer handles external writes. */
 export async function claimPostgres(pool: PgPool, options: ClaimOptions): Promise<ClaimedEvent[]> {
-  const now = checkClaimOptions(options), client = await pool.connect();
+  const checkedNow=checkClaimOptions(options);
+  // The source database owns created_at/next_attempt_at. Defaulting to the
+  // application clock can miss a just-committed event when host clocks differ
+  // by even a few milliseconds. Keep an explicit clock override for
+  // deterministic tests, but use the DB statement clock in production.
+  const explicitNow=options.now===undefined?null:checkedNow.toISOString();
+  const claimTime="COALESCE($1::timestamptz, DATE_TRUNC('milliseconds', statement_timestamp()))";
+  const client = await pool.connect();
   let open = false;
   try {
     await client.query("BEGIN"); open = true;
     const rows = await client.query(`WITH candidates AS (
       SELECT id FROM outbox_events
       WHERE processed_at IS NULL AND dead_lettered_at IS NULL
-        AND next_attempt_at <= $1
-        AND (lease_until IS NULL OR lease_until <= $1)
+        AND next_attempt_at <= ${claimTime}
+        AND (lease_until IS NULL OR lease_until <= ${claimTime})
       ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED
     )
-    UPDATE outbox_events AS o SET lease_owner=$3, lease_until=$4
+    UPDATE outbox_events AS o SET lease_owner=$3,
+      lease_until=${claimTime} + ($4::integer * interval '1 millisecond')
     FROM candidates AS c WHERE o.id=c.id
     RETURNING o.*`, [
-      now.toISOString(), options.batchSize, options.workerId,
-      new Date(now.getTime()+options.leaseMs).toISOString(),
+      explicitNow, options.batchSize, options.workerId, options.leaseMs,
     ]);
     await client.query("COMMIT"); open = false;
     return rows.rows.map(mapRow);
