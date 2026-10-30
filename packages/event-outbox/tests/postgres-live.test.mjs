@@ -86,13 +86,18 @@ test("actual PostgreSQL: failure postpones claim, retries with durable error",{s
     assert.equal(claimed.length,1);
     const client=await pool.connect();
     try {
+      // A deliberately stale host timestamp must not override the DB-clock retry schedule.
       assert.equal(await failPostgres(client,claimed[0].id,"workerA",claimed[0].leaseUntil,"fixture_transient",
-        new Date(now.getTime()+120000)),true);
+        new Date(now.getTime()-60000),12,120000),true);
     }finally{client.release()}
     assert.equal((await claimPostgres(pool,{workerId:"workerB",batchSize:10,leaseMs:60000})).length,0);
-    const saved=await pool.query("SELECT attempts,last_error FROM outbox_events WHERE event_key=$1",["tweet:1000:v1"]);
+    const saved=await pool.query(`SELECT attempts,last_error,next_attempt_at,
+      DATE_TRUNC('milliseconds',statement_timestamp()) AS db_now
+      FROM outbox_events WHERE event_key=$1`,["tweet:1000:v1"]);
     assert.equal(saved.rows[0].attempts,1);
     assert.equal(saved.rows[0].last_error,"fixture_transient");
+    const retryDelay=Date.parse(saved.rows[0].next_attempt_at)-Date.parse(saved.rows[0].db_now);
+    assert(retryDelay>=119000&&retryDelay<=120000, `retry must be scheduled from DB time, got ${retryDelay}ms`);
   }finally{await pool.end()}
 });
 
