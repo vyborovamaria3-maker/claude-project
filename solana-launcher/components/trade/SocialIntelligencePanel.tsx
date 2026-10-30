@@ -137,12 +137,15 @@ export default function SocialIntelligencePanel({
       setChain(null);
       setAi(null);
       setSnapshot(null);
-      if (embedded && contract !== initialMintRef.current) {
-        // Keep the embedded request alive while synchronizing the parent URL/mint.
-        initialMintRef.current = contract;
-        onMintChange?.(contract);
+      if (embedded) {
+        if (contract !== initialMintRef.current) {
+          // Keep the embedded request alive while synchronizing the parent URL/mint.
+          initialMintRef.current = contract;
+          onMintChange?.(contract);
+        }
+      } else {
+        router.replace(`/trade/analysis/social?mint=${encodeURIComponent(contract)}`, { scroll: false });
       }
-      else router.replace(`/trade/analysis/social?mint=${encodeURIComponent(contract)}`, { scroll: false });
 
       if(requestOnly){
         setAiLoading(true);
