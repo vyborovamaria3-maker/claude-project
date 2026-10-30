@@ -41,6 +41,37 @@ test("actual PostgreSQL: transaction rollback, dedup and fenced ACK",{skip:!url}
   }finally{await pool.end()}
 });
 
+test("actual PostgreSQL: DB-clock claim recovers an event when the application clock is stale",{skip:!url},async()=>{
+  const pool=new pg.Pool({connectionString:url});
+  const schema="db_clock_"+Math.random().toString(16).slice(2);
+  const admin=new pg.Client({connectionString:url});
+  await admin.connect();
+  try{
+    await admin.query('CREATE SCHEMA "'+schema+'"');
+    await admin.query('SET search_path TO "'+schema+'"');
+    await admin.query(POSTGRES_OUTBOX_DDL);
+    await pool.end();
+    const isolated=new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:2});
+    try{
+      await emitPostgres(isolated,{...event,eventKey:"tweet:db-clock"});
+      const dbNow=(await isolated.query("SELECT statement_timestamp() AS now")).rows[0].now;
+      const staleNow=new Date(dbNow.getTime()-60_000);
+      const stale=await claimPostgres(isolated,{
+        workerId:"stale-host-clock",batchSize:1,leaseMs:60_000,now:staleNow,
+      });
+      assert.equal(stale.length,0,"an explicitly stale host timestamp must not make a future queue row ready");
+      const claimed=await claimPostgres(isolated,{
+        workerId:"database-clock",batchSize:1,leaseMs:60_000,
+      });
+      assert.equal(claimed.length,1,"the default database-clock path must claim the just-inserted event");
+      assert.equal(await ackPostgres(isolated,claimed[0].id,"database-clock",claimed[0].leaseUntil),true);
+    }finally{await isolated.end();}
+  }finally{
+    try{await admin.query('DROP SCHEMA IF EXISTS "'+schema+'" CASCADE')}catch{}
+    await admin.end();
+  }
+});
+
 test("actual PostgreSQL: failure postpones claim, retries with durable error",{skip:!url},async()=>{
   const pool=new pg.Pool({connectionString:url});
   try {
