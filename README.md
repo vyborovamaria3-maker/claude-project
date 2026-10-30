@@ -2,7 +2,7 @@
 
 Multi-application repository for **Solana token research, X and Telegram collection, source-evidence processing, and several independent product/tooling workspaces**. This is a **monorepo**, not a single production deployment or a claim that every component is live.
 
-> **Readiness snapshot (2026-10-24):** source contracts, transactional-outbox building blocks, Intelligence ingestion/timeline code, and substantial offline/CI tests exist. The end-to-end live X/TG/chain → token-level Intelligence flow, complete historical coverage, dependable deployment/restore, and trading-signal performance are **not verified as a whole**. See [known gaps](docs/architecture/KNOWN_GAPS.md), [live test register](docs/architecture/LIVE_TESTS.md), and [PR status](docs/architecture/PR_STATUS.md).
+> **Readiness snapshot (2026-10-30):** this monorepo contains 4,065 tracked files across independent product, collector, Intelligence and tooling workspaces. Canonical contracts, opt-in source outboxes, verified X/TG mint-link code, a foreground local ETL supervisor and extensive offline/CI tests exist. A complete live X/TG/blockchain token timeline, production DB inventory, backup/restore, effective branch protection, full historical coverage and trading-signal validity are **not verified as a whole**. The current architecture, dependency boundaries and P0/P1 debt are recorded in [the 2026-10-30 baseline](docs/architecture/REPOSITORY_BASELINE_20261030.md), [system dependency map](docs/architecture/DEPENDENCY_MAP.md) and [technical debt register](docs/architecture/TECHNICAL_DEBT_REGISTER_20261030.md). See also [known gaps](docs/architecture/KNOWN_GAPS.md), [live test register](docs/architecture/LIVE_TESTS.md), and [PR status](docs/architecture/PR_STATUS.md).
 
 ## System map
 
