@@ -14,11 +14,11 @@ function sqliteFixture(){
     (source_system,event_kind,event_key,schema_version,payload,created_at,
      processed_at,lease_owner,lease_until,next_attempt_at,attempts,dead_lettered_at,last_error)
     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-  const row=(key,created,processed,owner,lease,next,attempts,dead)=>{
-    insert.run("x","tweet_observed",key,"v1","{}",created,processed,owner,lease,next,attempts,dead,null);
+  const row=(key,created,processed,owner,lease,next,attempts,dead,schema="v1")=>{
+    insert.run("x","tweet_observed",key,schema,"{}",created,processed,owner,lease,next,attempts,dead,null);
   };
   row("ready","2026-10-30T19:50:00.000Z",null,null,null,"2026-10-30T19:50:00.000Z",0,null);
-  row("leased","2026-10-30T19:55:00.000Z",null,"worker","2026-10-30T20:05:00.000Z","2026-10-30T19:55:00.000Z",2,null);
+  row("leased","2026-10-30T19:55:00.000Z",null,"worker","2026-10-30T20:05:00.000Z","2026-10-30T19:55:00.000Z",2,null,"v2");
   row("dead","2026-10-30T19:30:00.000Z",null,null,null,"2026-10-30T19:40:00.000Z",5,"2026-10-30T19:41:00.000Z");
   row("done","2026-10-30T19:00:00.000Z","2026-10-30T19:05:00.000Z",null,null,"2026-10-30T19:00:00.000Z",1,null);
   return db;
@@ -32,7 +32,8 @@ test("SQLite outbox health is read-only and reports backlog, retry, DLQ and prog
     const after=db.prepare("SELECT COUNT(*) AS n FROM outbox_events").get().n;
     assert.equal(after,before,"health snapshots must not mutate or claim events");
     assert.deepEqual(health,{
-      pending:2,ready:1,leased:1,retryCount:1,retryDelayed:0,deadLetter:1,
+      pending:2,ready:1,leased:1,retryCount:1,retryAttemptsTotal:2,retryDelayed:0,deadLetter:1,
+      schemaVersionSkewKinds:1,
       oldestPendingAt:"2026-10-30T19:50:00.000Z",oldestPendingAgeMs:600000,
       lastProgressAt:"2026-10-30T19:05:00.000Z",lastProgressAgeMs:3300000,
       maxAttempts:2,
@@ -46,7 +47,8 @@ test("PostgreSQL health maps native timestamps and bigint counters without expos
     calls++;
     if(sql.includes("to_regclass"))return {rows:[{present:true}]};
     return {rows:[{
-      pending:"3",ready:"2",leased:"1",retry_count:"2",retry_delayed:"1",dead_letter:"0",
+      pending:"3",ready:"2",leased:"1",retry_count:"2",retry_attempts_total:"6",
+      retry_delayed:"1",dead_letter:"0",schema_version_skew_kinds:"1",
       oldest_pending_at:new Date("2026-10-30T19:40:00.000Z"),
       last_progress_at:new Date("2026-10-30T19:58:00.000Z"),max_attempts:"4",
     }]};
@@ -57,8 +59,10 @@ test("PostgreSQL health maps native timestamps and bigint counters without expos
   assert.equal(health.ready,2);
   assert.equal(health.leased,1);
   assert.equal(health.retryCount,2);
+  assert.equal(health.retryAttemptsTotal,6);
   assert.equal(health.retryDelayed,1);
   assert.equal(health.deadLetter,0);
+  assert.equal(health.schemaVersionSkewKinds,1);
   assert.equal(health.oldestPendingAgeMs,1200000);
   assert.equal(health.lastProgressAgeMs,120000);
   assert.equal(health.maxAttempts,4);
