@@ -2,19 +2,26 @@
 
 ## Current snapshot — 2026-10-30
 
-Observed `main` SHA: `9f4a7e88afa80774633ee4a43221a621fe5f1922`. GitHub currently reports `main.protected=false`; effective branch protection must be configured by a repository administrator ([issue #170](https://github.com/vyborovamaria3-maker/claude-project/issues/170)).
+Observed `main` SHA: `9f4a7e88afa80774633ee4a43221a621fe5f1922`. GitHub branch metadata reports `main.protected=false`; the repository rulesets endpoint returned no rulesets. Branch-protection details cannot be changed through the connected GitHub integration; a repository administrator must configure the policy ([issue #170](https://github.com/vyborovamaria3-maker/claude-project/issues/170)).
 
-Five open PRs were returned by the current GitHub listing:
+Seven open PRs were returned by the current GitHub listing:
 
 | PR | Title | State | Head |
 | --- | --- | --- | --- |
+| [#207](https://github.com/vyborovamaria3-maker/claude-project/pull/207) | fix(event-outbox): use PostgreSQL clock for outbox claims | OPEN | `fix/three-source-outbox-tombstone-20261030` |
+| [#206](https://github.com/vyborovamaria3-maker/claude-project/pull/206) | feat(intelligence): add read-only supervisor health metrics | OPEN | `feat/intelligence-supervisor-health-20261030` |
 | [#205](https://github.com/vyborovamaria3-maker/claude-project/pull/205) | docs(architecture): refresh whole-repository baseline and technical debt | OPEN | `docs/repository-baseline-20261030` |
 | [#204](https://github.com/vyborovamaria3-maker/claude-project/pull/204) | fix(admin): relocate collector workspaces exclusively to standalone Control Center | OPEN DRAFT | `feat/admin-relocate-collectors-tginvite-20261029` |
 | [#203](https://github.com/vyborovamaria3-maker/claude-project/pull/203) | UI: единая вкладка Analysis с графиком и подробной панелью | OPEN | `feature/unified-analysis-v1-modal` |
 | [#202](https://github.com/vyborovamaria3-maker/claude-project/pull/202) | feat: Hood Hunt-style evidence-first analytics, DEV setups and target review | OPEN DRAFT | `fix/hood-hunt-analytics-foundation-20261028` |
 | [#195](https://github.com/vyborovamaria3-maker/claude-project/pull/195) | feat: split FOMO pressure and quality metrics | OPEN DRAFT | `feat/fomo-pressure-quality-2026-10-27` |
 
-PR #203 is mergeable and has 17 successful workflows plus one skipped workflow on head `03aca7e25f3d66f0d39f6f8b279483eb8eb101cf`; it remains unmerged and no review submissions were recorded. PR #205 is mergeable and documentation-only; repository hygiene passed on head `ad5f67eb95b7a4d144135850cb5dda9f6df76e88` and Security Lock Refresh was skipped.
+- PR #207 is ready for review, targets `main`, and is not merged. On head `cd3ba90d062aa302b0b2ce682774a3231223dc95`, Transactional outbox adapters passed **16/16**, Intelligence foundation passed **247/247**, Intelligence CI, Native social token-link CI and Repository hygiene passed; Security Lock Refresh was skipped. The live PostgreSQL clock-skew regression passed in the outbox adapter job.
+- PR #206 is ready for review, targets `main`, and is not merged. On head `24018ced0ff22433f2daa76bbfd3f66f1bb03fe7`, Intelligence foundation passed **251/251**, Intelligence CI, Native social token-link CI and Repository hygiene passed; Security Lock Refresh was skipped. It adds read-only supervisor queue/lag/progress/retry/DLQ/schema-skew metrics and structured alert records; it does not configure an external alert sink or production process manager.
+- PR #203 remains open and unmerged; current head is `f446f8a60bd9bfcc1a13ce4261194bf45045f31a` (42 files, +2,122/−1,085). At this snapshot, 8 workflows had succeeded, 8 were queued/in progress, Security Gates was cancelled, and Security Lock Refresh was skipped. Frontend Quality CI was still running after the no-source fixture was corrected. Do not describe this head as fully green until all checks finish.
+- PR #205 is documentation-only, mergeable and unmerged. On head `1621a2ca0597f2cadfeb8cbd8f43692a4324f067`, Repository hygiene and Intelligence foundation passed; Intelligence CI passed. No production deployment or live provider verification is implied.
+
+Human review/approval remains outstanding; passing CI is not permission to merge. Check each current PR page for its latest head, review state and checks before acting.
 
 ## Historical inventory snapshot — 2026-10-24
 
