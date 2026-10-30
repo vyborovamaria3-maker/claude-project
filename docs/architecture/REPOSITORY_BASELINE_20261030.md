@@ -57,6 +57,7 @@ These counts are a file inventory only; they are not complexity, ownership or ru
 ## CI and release posture
 
 - The tree contains 38 workflow definitions across product quality, backend/database, intelligence, security, hygiene, mobile and release/deploy concerns.
+- GitHub branch metadata currently reports `main` as `protected:false` at the observed SHA. The detailed protection endpoint is not readable by this connection; repository-admin action is tracked in [issue #170](https://github.com/vyborovamaria3-maker/claude-project/issues/170).
 - CI uses disposable test services/fixtures for many checks. A green workflow proves only the checks and commit it ran against; it does not certify live X/TG/RPC operation, production migrations, backups/restores, complete history or trading performance.
 - Root README states the current documented operating mode is local/offline development and that no remote server/deploy is required by ordinary checks.
 - At this snapshot, open PRs observed: [#204](https://github.com/vyborovamaria3-maker/claude-project/pull/204) (draft, admin collector relocation), [#203](https://github.com/vyborovamaria3-maker/claude-project/pull/203) (unified Analysis UI), [#202](https://github.com/vyborovamaria3-maker/claude-project/pull/202) (draft evidence-first analytics), [#195](https://github.com/vyborovamaria3-maker/claude-project/pull/195) (draft FOMO metrics). GitHub is authoritative for later state.
