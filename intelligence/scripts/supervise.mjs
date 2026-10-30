@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { runDeliveryBatch } from "../dist/index.js";
 import {
-  sourceConnection, checkPgOutbox, checkDestination, destinationConnection,
+  sourceConnection, checkPgOutbox, checkDestination, destinationConnection, outboxStatus,
 } from "./etl-connections.mjs";
 import { runSourceLoop } from "./supervisor-core.mjs";
 import { createAiRuntime } from "./ai-runtime.mjs";
@@ -17,7 +17,7 @@ import { createAiRuntime } from "./ai-runtime.mjs";
 export function parseArguments(args){
   const options={
     sources:[],pollMs:2000,paceMs:100,leaseMs:120_000,maxFailures:5,
-    maxBatches:0,help:false,
+    maxBatches:0,healthIntervalMs:30_000,alertOldestPendingMs:300_000,help:false,
   };
   let provided=false;
   const numeric={
@@ -26,6 +26,8 @@ export function parseArguments(args){
     "--lease-ms":["leaseMs",1000,3_600_000],
     "--max-failures":["maxFailures",1,100],
     "--max-batches":["maxBatches",0,1_000_000],
+    "--health-interval-ms":["healthIntervalMs",1000,3_600_000],
+    "--alert-oldest-pending-ms":["alertOldestPendingMs",0,86_400_000],
   };
   for(let i=0;i<args.length;i++){
     const raw=args[i];
@@ -67,6 +69,9 @@ function usage(){
     "    node scripts/supervise.mjs --sources x,tg,blockchain",
     "  Optional --poll-ms 2000 --pace-ms 100 --lease-ms 120000",
     "           --max-failures 5 --max-batches 0",
+    "           --health-interval-ms 30000 --alert-oldest-pending-ms 300000",
+    "  Health emits pending/ready/leased/retry/DLQ, oldest-pending lag and last progress.",
+    "  Set --alert-oldest-pending-ms 0 to disable the oldest-pending age alert.",
     "  --max-batches N is a per-source upper bound; 0 means until SIGINT/SIGTERM.",
     "  Use --sources x or --sources tg,blockchain to run only configured sources.",
     "  X_SOURCE_DATABASE_URL, TG_SOURCE_DATABASE_URL, SOLANA_TRADE_DB_PATH",
@@ -74,6 +79,32 @@ function usage(){
     "  Requires existing source outbox schemas; does NOT apply migrations.",
     "  Preserve separate producer opt-ins; never point this at live DBs before backup/restore.",
   ].join("\n");
+}
+
+export function classifyOutboxHealth(status,options={}){
+  if(!status||!Number.isSafeInteger(status.pending)||status.pending<0||
+     !Number.isSafeInteger(status.deadLetter)||status.deadLetter<0||
+     !Number.isSafeInteger(status.maxAttempts)||status.maxAttempts<0||
+     (status.oldestPendingAgeMs!==null&&
+       (!Number.isSafeInteger(status.oldestPendingAgeMs)||status.oldestPendingAgeMs<0))){
+    throw new TypeError("invalid outbox health snapshot");
+  }
+  const oldestPendingMs=options.alertOldestPendingMs??300_000;
+  const maxFailures=options.maxFailures??5;
+  if(!Number.isSafeInteger(oldestPendingMs)||oldestPendingMs<0||
+     !Number.isSafeInteger(maxFailures)||maxFailures<1){
+    throw new RangeError("invalid outbox health alert thresholds");
+  }
+  const alerts=[];
+  if(status.deadLetter>0)alerts.push("dead_letter_events_present");
+  if(oldestPendingMs>0&&status.oldestPendingAgeMs!==null&&
+     status.oldestPendingAgeMs>oldestPendingMs){
+    alerts.push("oldest_pending_age_exceeded");
+  }
+  if(status.pending>0&&status.maxAttempts>=maxFailures){
+    alerts.push("pending_retry_threshold_exceeded");
+  }
+  return alerts;
 }
 
 async function main(){
@@ -105,9 +136,22 @@ async function main(){
     const report=event=>console.log(JSON.stringify({
       timestamp:new Date().toISOString(),...event,
     }));
+    const emitHealth=async(name,connection)=>{
+      const health=await outboxStatus(connection);
+      report({kind:"health",source:name,...health});
+      for(const code of classifyOutboxHealth(health,options)){
+        report({kind:"alert",source:name,code,
+          oldestPendingAgeMs:health.oldestPendingAgeMs,
+          deadLetter:health.deadLetter,maxAttempts:health.maxAttempts});
+      }
+    };
     report({kind:"startup",sources:options.sources,mode:"foreground",
-      perSourceClaimLimit:1,leaseMs:options.leaseMs});
+      perSourceClaimLimit:1,leaseMs:options.leaseMs,
+      healthIntervalMs:options.healthIntervalMs,
+      alertOldestPendingMs:options.alertOldestPendingMs});
+    for(const source of sources)await emitHealth(source.name,source.connection);
     const executions=sources.map(async({name,connection,workerId})=>{
+      let lastHealthAt=Date.now();
       try{
         return await runSourceLoop({
           source:name,signal:stop.signal,pollMs:options.pollMs,
@@ -115,6 +159,11 @@ async function main(){
           maxBatches:options.maxBatches,onReport:report,
           runBatch:async()=>{
             const stats=await runDeliveryBatch(connection.port,destination,{workerId,batchSize:1,leaseMs:options.leaseMs});
+            if(Date.now()-lastHealthAt>=options.healthIntervalMs||stats.failed>0||stats.lostLeases>0){
+              try{await emitHealth(name,connection);}
+              catch{report({kind:"health",source:name,code:"health_probe_failed"});}
+              lastHealthAt=Date.now();
+            }
             if(ai&&name!=='blockchain'&&!stop.signal.aborted)try{report({kind:"ai",source:name,...(await ai.run(name,stop.signal))});}
             catch{report({kind:"ai",source:name,code:"ai_batch_failed"});}
             return stats;
