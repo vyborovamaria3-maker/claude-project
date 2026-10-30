@@ -10,10 +10,11 @@ const staticRoot = new URL('../app/static/', import.meta.url);
 const server = createServer(async (request, response) => {
   try {
     const pathname = new URL(request.url, 'http://fixture').pathname;
-    const relative = pathname.startsWith('/collectors/') ? 'collector-workspaces/index.html' : pathname.startsWith('/static/') ? pathname.slice(8) : '';
+    const relative = pathname === '/' ? 'index.html' : pathname.startsWith('/collectors/') ? 'collector-workspaces/index.html' : pathname.startsWith('/static/') ? pathname.slice(8) : '';
     if (!relative || relative.includes('..')) { response.writeHead(404); response.end(); return; }
     const body = await readFile(new URL(relative, staticRoot));
-    response.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+    const embedded = pathname.startsWith('/collectors/') && new URL(request.url, 'http://fixture').searchParams.get('embedded') === '1';
+    response.setHeader('Content-Security-Policy', `default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors ${embedded ? "'self'" : "'none'"}; base-uri 'self'; form-action 'self'`);
     response.setHeader('Content-Type', relative.endsWith('.js') ? 'text/javascript' : relative.endsWith('.css') ? 'text/css' : 'text/html');
     response.end(body);
   } catch { response.writeHead(404); response.end(); }
@@ -39,6 +40,7 @@ try {
     if (url.pathname === '/api/blockchain/settings') return route.fulfill({ json: { values: { primary: '', fallback: '', batchSize: 5, concurrency: 1, requestsPerSecond: 1, timeoutMs: 5000, retries: 0, retryDelayMs: 100, enabled: false }, slots: [], alchemyConfigured: false, metrics: { errors: 0, retries: 0 }, collection: { collectedEvents: 0, targets: [] }, runs: [], imports: [] } });
     if (url.pathname === '/api/me') return route.fulfill({ status: denied ? 401 : 200, json: { username: 'fixture-admin' } });
     if (url.pathname === '/api/tginvite/identity') return route.fulfill({ json: { ownerId: '123e4567-e89b-12d3-a456-426614174000' } });
+    if (url.pathname === '/api/integrations/x-collector') return route.fulfill({ json: { installed:true,dirExists:true,nodeModulesPresent:true,env:{databaseUrlConfigured:true,masterKeyConfigured:true},migrations:{complete:true,missing:[],path:'fixture'},processes:{worker:null,scheduler:null,dashboard:null},health:{worker:{reachable:false,detail:'fixture'},dashboard:{reachable:false,detail:'fixture'}},db:{reachable:true,detail:'fixture'} } });
     if (url.pathname.endsWith('/session')) return route.fulfill({ json: { connected: true } });
     if (url.pathname === '/api/integrations/tg-collector') {
       if (url.searchParams.get('mode') === 'memecoin') return route.fulfill({ json: { tokenStats: { tokens_total: 0, unresolved_addresses: 0, analysis_backfill_remaining: 0, ticker_mentions_24h: 0, confirmed_tokens_24h: 0, signals_24h: 0, market_snapshots_24h: 0 }, tokens: [], channels: [], unresolvedTickers: [], signals: [] } });
@@ -82,6 +84,24 @@ try {
   await page.reload();
   await page.getByRole('alert').filter({ hasText: 'Требуется вход администратора' }).waitFor();
   console.log('PASS standalone TG Invite: 16 original tabs, owner identity, same-origin TeraGram, login denial, no runtime errors');
+  denied = false;
+  let popups = 0;
+  page.on('popup', () => popups++);
+  await page.goto(origin + '/#collector-tg-collector');
+  await page.locator('#appView').waitFor({ state: 'visible' });
+  for (const module of ['tg-collector', 'x-collector', 'tg-invite', 'diagnostics', 'apify', 'blockchain']) {
+    await page.locator(`[data-view="collector-${module}"]`).click();
+    const frame = page.frameLocator(`iframe[data-collector-workspace="${module}"]`);
+    await frame.locator('.collector-console[data-embedded=true]').waitFor();
+    assert.equal(new URL(page.url()).origin, origin);
+    assert.equal(new URL(page.url()).pathname, '/');
+    assert.equal(context.pages().length, 1);
+    assert.equal(await page.locator('#navigation').isVisible(), true);
+    assert.equal(await frame.locator('nav[aria-label="Collector administration"]').count(), 0);
+  }
+  assert.equal(popups, 0);
+  assert.deepEqual(errors, []);
+  console.log('PASS integrated admin shell: six views, one tab, same origin, unchanged pathname, no popup or duplicate navigation');
   process.env.TG_COLLECTOR_SMOKE_URL = origin;
   await import('../../solana-launcher/tests/tg-collector-graph-smoke.mjs');
 } finally {

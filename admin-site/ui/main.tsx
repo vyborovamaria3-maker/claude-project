@@ -15,6 +15,7 @@ import "./style.css";
 const client = new QueryClient();
 const modules = [ ["x-collector", "X Collector"], ["tg-collector", "TG Collector"], ["tg-invite", "TG Invite"], ["diagnostics", "Diagnostics"], ["apify", "Apify"], ["blockchain", "Blockchain"] ];
 function App() {
+  const embedded = new URLSearchParams(location.search).get('embedded') === '1';
   const [access, setAccess] = useState("loading");
   useEffect(() => {
     const abort = new AbortController();
@@ -24,9 +25,15 @@ function App() {
     return () => abort.abort();
   }, []);
   const active = location.pathname.split("/").filter(Boolean)[1];
-  return <main className="collector-console">
-    <header><a href="/">← Control Center</a><h1>Управление сборщиками</h1></header>
-    <nav aria-label="Collector administration">{modules.map(([id, label]) => <a key={id} href={`/collectors/${id}`} aria-current={active === id ? "page" : undefined}>{label}</a>)}</nav>
+  useEffect(() => {
+    if (!embedded) return;
+    const observer = new ResizeObserver(() => parent.postMessage({ type: 'collector-height', height: document.documentElement.scrollHeight }, location.origin));
+    observer.observe(document.body);
+    return () => observer.disconnect();
+  }, [embedded]);
+  return <main className="collector-console" data-embedded={embedded}>
+    {!embedded && <><header><a href="/">← Control Center</a><h1>Управление сборщиками</h1></header>
+    <nav aria-label="Collector administration">{modules.map(([id, label]) => <a key={id} href={`/#collector-${id}`} aria-current={active === id ? "page" : undefined}>{label}</a>)}</nav></>}
     {access === "loading" ? <p role="status">Проверка доступа…</p> : access === "denied" ? <p role="alert">Требуется вход администратора. <a href="/">Открыть вход в Control Center</a></p> :
       <I18nProvider initialLocale="ru"><QueryClientProvider client={client}>{active === "x-collector" ? <XCollectorTab/> : active === "tg-collector" ? <TGCollectorTab/> : active === "tg-invite" ? <TGInviteWorkspace/> : active === "diagnostics" ? <DiagnosticsTab standaloneAdmin/> : active === "apify" ? <ApifyTab/> : active === "blockchain" ? <BlockchainTab/> : <p>Выберите инструмент.</p>}</QueryClientProvider></I18nProvider>}
   </main>;

@@ -52,10 +52,13 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_only_known_pages_are_served_and_missing_build_fails_honestly(self):
         with tempfile.TemporaryDirectory() as directory, patch("app.collector_workspaces.ROOT", Path(directory)):
-            self.assertEqual(self.client.get("/collectors/tg-invite").status_code, 503)
+            self.assertEqual(self.client.get("/collectors/tg-invite?embedded=1").status_code, 503)
             Path(directory, "index.html").write_text("native admin workspace")
             for module in ("x-collector", "tg-collector", "tg-invite", "diagnostics", "apify", "blockchain"):
-                response = self.client.get("/collectors/" + module)
+                redirect = self.client.get("/collectors/" + module, follow_redirects=False)
+                self.assertEqual(redirect.status_code, 307)
+                self.assertEqual(redirect.headers["location"], "/#collector-" + module)
+                response = self.client.get("/collectors/" + module + "?embedded=1")
                 self.assertEqual(response.status_code, 200)
                 self.assertIn("no-store", response.headers["cache-control"])
             self.assertEqual(self.client.get("/collectors/arbitrary").status_code, 404)

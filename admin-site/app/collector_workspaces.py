@@ -5,15 +5,15 @@ configured operator's existing product identity; its owner isolation stays upstr
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
-import logging
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
 from .auth import require_admin
 from .tg_collector_admin import collector_token
@@ -82,9 +82,11 @@ def build_collector_workspaces_router():
         return JSONResponse({"services": results, "ready": all(item["connected"] for item in results.values())}, headers=NO_STORE)
 
     @router.get("/collectors/{module}")
-    def workspace(module: str, admin=Depends(require_admin)):
+    def workspace(module: str, request: Request, admin=Depends(require_admin)):
         if module not in MODULES:
             raise HTTPException(404)
+        if request.query_params.get("embedded") != "1":
+            return RedirectResponse("/#collector-" + module, status_code=307, headers=NO_STORE)
         if not (ROOT / "index.html").is_file():
             raise HTTPException(503, "Build collector workspaces before starting admin-site")
         return FileResponse(ROOT / "index.html", headers=NO_STORE)

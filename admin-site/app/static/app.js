@@ -1,5 +1,5 @@
 const state = {
-  view: window.location.hash === "#graph" ? "graph" : "overview",
+  view: /^#collector-(x-collector|tg-collector|tg-invite|diagnostics|apify|blockchain)$/.test(window.location.hash) ? window.location.hash.slice(1) : window.location.hash === "#graph" ? "graph" : "overview",
   me: null,
   overview: null,
   db: { source: "", table: "", page: 1, pageSize: 50, search: "", tables: [], data: null },
