@@ -79,7 +79,8 @@
   const followHash = () => {
     const module = location.hash.slice(1).replace(/^collector-/, '');
     if (modules.has(module)) selected = module;
-    else if (location.hash !== '#collectors') return;
+    else if (location.hash === '#collectors') selected = null;
+    else return;
     state.view = 'xCollector';
     if (state.me) void renderCurrentView();
   };

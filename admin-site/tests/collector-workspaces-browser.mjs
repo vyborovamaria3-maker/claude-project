@@ -109,6 +109,9 @@ try {
     assert.equal(await frame.locator('nav[aria-label="Collector administration"]').count(), 0);
   }
   assert.equal(popups, 0);
+  await page.evaluate(() => { location.hash = '#collectors'; });
+  await page.waitForFunction(() => document.querySelector('[data-collector-tab="system"]')?.getAttribute('aria-pressed') === 'true');
+  assert.equal(await page.locator('iframe[data-collector-workspace]').count(), 0);
   assert.equal(await page.locator('#navigation [data-view^="collector-"]').count(), 0);
   assert.deepEqual(errors, []);
   console.log('PASS integrated admin shell: six views, one tab, same origin, unchanged pathname, no popup or duplicate navigation');
