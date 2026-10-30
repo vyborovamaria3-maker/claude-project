@@ -43,13 +43,14 @@ function validTelegramResponse(value: unknown): boolean {
     || !Array.isArray(value.timeline) || !value.timeline.every(validTimelineItem)
     || (value.origin !== null && value.origin !== undefined && !validTimelineItem(value.origin))) return false;
   if (value.meta === undefined || value.meta === null) return true;
-  if (!isRecord(value.meta)
+  const meta = value.meta;
+  if (!isRecord(meta)
     || !["matchedBeforeLimit", "returned", "uniqueSourcesBeforeLimit", "explicitTelegramCallsBeforeLimit"]
-      .every((key) => isOptionalFiniteNumber(value.meta?.[key]))
-    || !isOptionalBoolean(value.meta.truncated)
-    || !isOptionalString(value.meta.firstMatchedAt)
-    || !isOptionalString(value.meta.lastMatchedAt)) return false;
-  const matchedPlatforms = value.meta.matchedPlatforms;
+      .every((key) => isOptionalFiniteNumber(meta[key]))
+    || !isOptionalBoolean(meta.truncated)
+    || !isOptionalString(meta.firstMatchedAt)
+    || !isOptionalString(meta.lastMatchedAt)) return false;
+  const matchedPlatforms = meta.matchedPlatforms;
   return matchedPlatforms === undefined || matchedPlatforms === null
     || (isRecord(matchedPlatforms) && isOptionalFiniteNumber(matchedPlatforms.telegram));
 }
