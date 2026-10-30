@@ -225,7 +225,7 @@ export function deriveColors(baseHex: string): ThemeColors {
 
 export function normalizeTheme(colors: Partial<ThemeColors> | null | undefined): ThemeColors {
   if (!colors?.bg) {
-    return createThemeColors({ bg: "#17120a", bgSoft: "#110d07", bgCard: "#241c10", bgBorder: "#42301a", accent: "#f59e0b" });
+    return THEME_PRESETS[0].colors;
   }
 
   const accent = colors.accent ?? colors.primary ?? shiftColor(colors.bg, 26, 26, 152);
@@ -250,6 +250,7 @@ export function normalizeTheme(colors: Partial<ThemeColors> | null | undefined):
 }
 
 export const THEME_PRESETS: ThemePreset[] = [
+  { id: "graphite", name: "Graphite", colors: createThemeColors({ bg: "#101113", bgSoft: "#0d0e10", bgCard: "#18191c", bgBorder: "#303136", accent: "#d6c19b" }) },
   { id: "market-amber", name: "Market Amber", colors: createThemeColors({ bg: "#17120a", bgSoft: "#110d07", bgCard: "#241c10", bgBorder: "#42301a", accent: "#f59e0b" }) },
   { id: "wine-dark", name: "Wine Dark", colors: createThemeColors({ bg: "#180a0e", bgSoft: "#100609", bgCard: "#221014", bgBorder: "#381820", accent: "#f43f5e" }) },
   { id: "burgundy-noir", name: "Burgundy Noir", colors: createThemeColors({ bg: "#1a0c10", bgSoft: "#12080b", bgCard: "#26121a", bgBorder: "#3e1c28", accent: "#fda4af" }) },
@@ -270,7 +271,6 @@ export const THEME_PRESETS: ThemePreset[] = [
   { id: "amber-dusk", name: "Amber Dusk", colors: createThemeColors({ bg: "#17120a", bgSoft: "#110d07", bgCard: "#241c10", bgBorder: "#42301a", accent: "#fcd34d" }) },
   { id: "solar-flare", name: "Solar Flare", colors: createThemeColors({ bg: "#180f07", bgSoft: "#110a04", bgCard: "#251710", bgBorder: "#3d2410", accent: "#fdba74" }) },
   { id: "golden-hour", name: "Golden Hour", colors: createThemeColors({ bg: "#191107", bgSoft: "#120c05", bgCard: "#281b0f", bgBorder: "#47331b", accent: "#f59e0b" }) },
-  { id: "graphite", name: "Graphite", colors: createThemeColors({ bg: "#111318", bgSoft: "#0c0e12", bgCard: "#1a1d24", bgBorder: "#272b35", accent: "#93c5fd" }) },
   { id: "zinc-dark", name: "Zinc Dark", colors: createThemeColors({ bg: "#121214", bgSoft: "#0d0d0f", bgCard: "#1c1c20", bgBorder: "#2c2c32", accent: "#a1a1aa" }) },
 ];
 

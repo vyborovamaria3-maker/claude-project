@@ -2,7 +2,7 @@
 
 import { useLayoutEffect, useState } from "react";
 import ThemeColorPicker from "./ThemeColorPicker";
-import { applyTheme, loadElementColors, loadTheme, saveTheme, saveThemePresetId, THEME_PRESETS } from "@/lib/themeColors";
+import { applyTheme, loadElementColors, loadTheme, loadThemePresetId, saveTheme, saveThemePresetId, THEME_PRESETS } from "@/lib/themeColors";
 
 export const PICKER_ENABLED_KEY = "solana-launcher.picker-enabled";
 
@@ -13,7 +13,11 @@ export default function ThemePickerToggle() {
 
   useLayoutEffect(() => {
     const savedTheme = loadTheme();
-    if (savedTheme) {
+    if (savedTheme && loadThemePresetId() === "graphite" && savedTheme.bg !== THEME_PRESETS[0].colors.bg) {
+      // The existing blue Graphite preset was replaced by the new neutral palette.
+      applyTheme(THEME_PRESETS[0].colors);
+      saveTheme(THEME_PRESETS[0].colors);
+    } else if (savedTheme) {
       applyTheme(savedTheme);
     } else if (THEME_PRESETS[0]) {
       applyTheme(THEME_PRESETS[0].colors);
