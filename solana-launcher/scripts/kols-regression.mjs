@@ -25,6 +25,7 @@ const advanced = read("backend/app/api/v1/advanced_intelligence.py");
 const tasks = read("backend/app/tasks/kols.py");
 const celery = read("backend/app/tasks/celery_app.py");
 const page = read("app/trade/kols-twitter/page.tsx");
+const tokenFlowPanel = read("components/trade/KOLTokenFlowPanel.tsx");
 const resolver = read("lib/kols/resolver.ts");
 
 assert(proxy.includes('"/api/kols"'), "KOL API must remain protected and rate limited");
@@ -37,6 +38,7 @@ assert(
   "KOL workspace must live in unified Analysis rather than the main sidebar",
 );
 assert(!sidebar.includes("KOLS_TWITTER_NAV_ITEM"), "Sidebar must use shared navigation only");
+assert(tokenFlowPanel.includes('value > 0 ? "+" : value < 0 ? "-" : ""'), "negative KOL PnL must retain its minus sign");
 assert(
   page.includes("<KolsTwitterPanel />") &&
     page.includes("<KOLTokenFlowPanel />") &&
