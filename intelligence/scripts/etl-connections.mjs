@@ -80,11 +80,13 @@ export async function outboxStatus(source,now=new Date()){
       count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
         AND lease_until>?) AS leased,
       count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL AND attempts>0) AS retry_count,
+      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+        AND attempts>0 AND next_attempt_at>?) AS retry_delayed,
       count(*) FILTER (WHERE dead_lettered_at IS NOT NULL) AS dead_letter,
       min(created_at) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS oldest_pending_at,
       max(processed_at) AS last_progress_at,
       max(attempts) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS max_attempts
-    FROM outbox_events`).get(at,at,at);
+    FROM outbox_events`).get(at,at,at,at);
   }else{
     await checkPgOutbox(source.connection);
     const result=await source.connection.query(`SELECT
@@ -95,6 +97,8 @@ export async function outboxStatus(source,now=new Date()){
       count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
         AND lease_until>$1::timestamptz)::text AS leased,
       count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL AND attempts>0)::text AS retry_count,
+      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+        AND attempts>0 AND next_attempt_at>$1::timestamptz)::text AS retry_delayed,
       count(*) FILTER (WHERE dead_lettered_at IS NOT NULL)::text AS dead_letter,
       min(created_at) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS oldest_pending_at,
       max(processed_at) AS last_progress_at,
@@ -107,7 +111,7 @@ export async function outboxStatus(source,now=new Date()){
   const age=(value)=>value===null?null:Math.max(0,now.getTime()-Date.parse(value));
   return {
     pending:Number(row.pending),ready:Number(row.ready),leased:Number(row.leased),
-    retryCount:Number(row.retry_count),deadLetter:Number(row.dead_letter),
+    retryCount:Number(row.retry_count),retryDelayed:Number(row.retry_delayed),deadLetter:Number(row.dead_letter),
     oldestPendingAt,oldestPendingAgeMs:age(oldestPendingAt),
     lastProgressAt,lastProgressAgeMs:age(lastProgressAt),
     maxAttempts:Number(row.max_attempts??0),
