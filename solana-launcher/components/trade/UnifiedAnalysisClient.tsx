@@ -181,7 +181,7 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
             key={mint}
             focus={id}
             embedded
-            requestOnly={id === "ai" || requestOnly}
+            requestOnly={requestOnly}
             mintOverride={mint}
             onMintChange={(next) => { if (next !== mint) submit(next); }}
           />
