@@ -87,13 +87,14 @@ export async function checkUnifiedDetails(page, baseUrl, mint) {
   assert.deepEqual(await groupRows("Telegram").locator(".font-mono").allTextContents(), catalog.groups.Telegram.labels.map(() => "—"), "Unavailable Telegram must not show invented values");
   await close();
 
-  // Opening the full report is request-only: it must not start source-driven AI generation.
+  // Opening the full report may load deterministic sources, but it must not start AI generation.
   const aiPosts = [];
   const captureAiPosts = request => {
     if (request.method() === "POST") aiPosts.push(new URL(request.url()).pathname);
   };
   page.on("request", captureAiPosts);
   await fullReport();
+  await dialog.getByText("Нет данных X и Telegram", { exact: true }).waitFor({ state: "visible" });
   await dialog.getByRole("button", { name: "Запустить AI", exact: true }).waitFor({ state: "visible" });
   assert.deepEqual(aiPosts, [], "Opening the AI report must not trigger an automatic POST");
   assert.deepEqual(await groupRows("Growth / Quality / Manipulation").locator(".font-mono").allTextContents(), catalog.groups["Growth / Quality / Manipulation"].labels.map(() => "—"));
