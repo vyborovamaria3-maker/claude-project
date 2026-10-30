@@ -18,7 +18,11 @@ try {
     const state = mode;
     if (x && state === "delayed" && url.searchParams.get("mint") === a) await gate;
     if (state === "error") return route.fulfill({ status: 503, json: { error: "source_unavailable" } });
-    if (state === "malformed") return route.fulfill({ json: {} });
+    if (state === "malformed") {
+      if (x) return route.fulfill({ json: { totalTweets: 7, aggregated: {}, topTweets: [null], shillers: [] } });
+      if (tg) return route.fulfill({ json: { timeline: [null], meta: { matchedPlatforms: { telegram: 1 } } } });
+      if (chain) return route.fulfill({ json: { meta: { forensicIndexAvailable: true, dexIndexAvailable: true }, observedDexTrades: [], seedWalletTrades: [], walletPnl: [null] } });
+    }
     const empty = state === "empty";
     let data;
     if (x) data = { symbol: "FIXTURE", totalTweets: empty ? 0 : url.searchParams.get("mint") === b ? 14 : 7, totalViews: 70, totalLikes: 3, totalRetweets: 2, uniqueMentioners: empty ? 0 : 1, botRiskScore: 12, anomalyCount: 0, topTweets: [], shillers: [], aggregated: { totalEngagement: 5, engagementRate: 5 / 70, verifiedAuthors: 0, botRatio: 0 } };
@@ -60,7 +64,11 @@ try {
   assert.equal(await value("twitter"), "14", "Late responses must not overwrite the current mint");
   mode = "empty"; await refresh(); await waitValue("twitter", "0"); await waitValue("telegram", "0"); await waitValue("blockchain", "0");
   assert.equal(await value("fomo"), "—", "Empty evidence cannot produce FOMO scores");
-  mode = "malformed"; await refresh(); await page.locator('[data-source="twitter"] .is-error').waitFor(); assert.equal(await value("twitter"), "—");
+  mode = "malformed"; await refresh();
+  await page.locator('[data-source="twitter"] .is-error').waitFor();
+  await page.locator('[data-source="telegram"] .is-error').waitFor();
+  await page.locator('[data-source="blockchain"] .is-error').waitFor();
+  assert.equal(await value("twitter"), "—"); assert.equal(await value("telegram"), "—"); assert.equal(await value("blockchain"), "—");
   mode = "error";
   await page.getByRole("button", { name: /Открыть полный отчёт/ }).click();
   const dialog = page.getByRole("dialog"); await dialog.locator('[data-tag="trade.social.metrics"]').waitFor();
