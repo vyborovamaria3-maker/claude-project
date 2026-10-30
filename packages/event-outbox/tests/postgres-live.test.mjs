@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import {randomBytes} from "node:crypto";
 import pg from "pg";
 import {
   POSTGRES_OUTBOX_DDL,emitPostgres,claimPostgres,ackPostgres,failPostgres
@@ -42,15 +43,13 @@ test("actual PostgreSQL: transaction rollback, dedup and fenced ACK",{skip:!url}
 });
 
 test("actual PostgreSQL: DB-clock claim recovers an event when the application clock is stale",{skip:!url},async()=>{
-  const pool=new pg.Pool({connectionString:url});
-  const schema="db_clock_"+Math.random().toString(16).slice(2);
+  const schema="db_clock_"+randomBytes(6).toString("hex");
   const admin=new pg.Client({connectionString:url});
   await admin.connect();
   try{
     await admin.query('CREATE SCHEMA "'+schema+'"');
     await admin.query('SET search_path TO "'+schema+'"');
     await admin.query(POSTGRES_OUTBOX_DDL);
-    await pool.end();
     const isolated=new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:2});
     try{
       await emitPostgres(isolated,{...event,eventKey:"tweet:db-clock"});
