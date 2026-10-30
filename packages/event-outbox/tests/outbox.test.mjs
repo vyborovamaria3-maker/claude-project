@@ -43,6 +43,22 @@ test("Postgres claim uses locked transaction, then release",async()=>{
   assert.deepEqual(calls.slice(-2),["COMMIT","RELEASE"]);
 });
 
+test("Postgres claims use the database statement clock unless a deterministic override is supplied",async()=>{
+  const calls=[];
+  const pool={connect:async()=>({
+    query:async(sql,params)=>{calls.push({sql,params});return{rows:[]}},
+    release:()=>calls.push({sql:"RELEASE"}),
+  })};
+  await claimPostgres(pool,{workerId:"db-clock",batchSize:1,leaseMs:5000});
+  const claim=calls.find(call=>call.sql.includes("RETURNING o.*"));
+  assert.ok(claim);
+  assert.equal(claim.params[0],null,"production claims must not depend on the host wall clock");
+  assert.equal(claim.params[3],5000);
+  assert.match(claim.sql,/DATE_TRUNC\('milliseconds', statement_timestamp\(\)\)/);
+  assert.match(claim.sql,/next_attempt_at <= COALESCE/);
+  assert.match(claim.sql,/lease_until=COALESCE/);
+});
+
 test("Postgres ACK and failure require lease owner",async()=>{
   const calls=[];
   const client={query:async(sql,params)=>{calls.push({sql,params});return{rows:[{id:"7"}]}}};
