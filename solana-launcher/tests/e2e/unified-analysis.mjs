@@ -77,6 +77,7 @@ export async function checkUnifiedDetails(page, baseUrl, mint) {
   assert.deepEqual(detailPosts, [], "Opening a source detail must not trigger automatic AI POST");
   page.off("request", captureDetailPosts);
   assert.equal(xMint, mint, "Selected mint must reach the existing X source");
+  const embeddedMint = "So11111111111111111111111111111111111111112";
   const socialAiPosts = [];
   const captureSocialAiPosts = request => {
     if (request.method() === "POST" && new URL(request.url()).pathname === "/api/trade/social-ai") {
@@ -84,12 +85,21 @@ export async function checkUnifiedDetails(page, baseUrl, mint) {
     }
   };
   page.on("request", captureSocialAiPosts);
+  const embeddedSourceRequest = page.waitForRequest(request =>
+    new URL(request.url()).pathname === "/api/trade/dev-twitter"
+    && new URL(request.url()).searchParams.get("mint") === embeddedMint
+  );
   const manualSocialAiResponse = page.waitForResponse(response =>
     new URL(response.url()).pathname === "/api/trade/social-ai"
   );
+  await dialog.getByPlaceholder("Вставь contract").fill(embeddedMint);
   await dialog.getByRole("button", { name: "Анализ", exact: true }).click();
+  await page.waitForURL(url => url.searchParams.get("mint") === embeddedMint);
+  await embeddedSourceRequest;
   const socialAiResponse = await manualSocialAiResponse;
-  assert.equal(socialAiPosts.length, 1, "Explicit Analyze action must issue exactly one Social AI POST");
+  assert.equal(xMint, embeddedMint, "Embedded mint changes must reach the source API");
+  assert.equal(socialAiPosts.length, 1, "Changing the embedded mint must not cancel or duplicate the explicit Social AI POST");
+  assert.equal(socialAiPosts[0].postDataJSON().mint, embeddedMint, "Explicit AI must analyze the newly selected mint");
   assert.equal(socialAiResponse.status(), 503, "The controlled unavailable fixture should be returned without hiding the request");
   page.off("request", captureSocialAiPosts);
   await dialog.getByRole("button", { name: "Cross-platform / Timing", exact: true }).click();
@@ -145,7 +155,7 @@ export async function checkUnifiedDetails(page, baseUrl, mint) {
   await frame.locator("#inside").press("Tab");
   assert(await page.getByRole("button", { name: "Закрыть подробный анализ", exact: true }).evaluate(element => element === document.activeElement),
     "Tab from the last iframe control must wrap to the dialog close button");
-  const nextMint = "So11111111111111111111111111111111111111112";
+  const nextMint = mint;
   await frame.locator("#inside").evaluate((_, next) => history.replaceState(null, "", `?mint=${next}`), nextMint);
   await page.waitForURL(url => url.searchParams.get("mint") === nextMint);
   await frame.locator("#inside").focus();
