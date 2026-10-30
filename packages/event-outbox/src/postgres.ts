@@ -70,16 +70,22 @@ export async function ackPostgres(client: PgQuery, id: string, owner: string, le
 
 export async function failPostgres(
   client: PgQuery, id: string, owner: string, leaseUntil: string, reason: string,
-  nextAttemptAt: Date, maxAttempts = 12,
+  nextAttemptAt: Date, maxAttempts = 12, retryDelayMs?: number,
 ): Promise<boolean> {
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1) throw new RangeError("maxAttempts");
+  if (retryDelayMs !== undefined &&
+      (!Number.isInteger(retryDelayMs) || retryDelayMs < 1000 || retryDelayMs > 3_600_000)) {
+    throw new RangeError("retryDelayMs");
+  }
   const result = await client.query(`UPDATE outbox_events SET
     attempts=attempts+1, last_error=$3,
     dead_lettered_at=CASE WHEN attempts+1 >= $5 THEN NOW() ELSE NULL END,
-    next_attempt_at=$4, lease_owner=NULL, lease_until=NULL
+    next_attempt_at=CASE WHEN $7::integer IS NULL THEN $4::timestamptz
+      ELSE DATE_TRUNC('milliseconds', statement_timestamp()) + ($7::integer * interval '1 millisecond') END,
+    lease_owner=NULL, lease_until=NULL
     WHERE id=$1 AND lease_owner=$2 AND lease_until=$6::timestamptz AND lease_until>NOW()
       AND processed_at IS NULL AND dead_lettered_at IS NULL RETURNING id`,
-    [id,owner,reason.slice(0,1000),nextAttemptAt.toISOString(),maxAttempts,leaseUntil]);
+    [id,owner,reason.slice(0,1000),nextAttemptAt.toISOString(),maxAttempts,leaseUntil,retryDelayMs??null]);
   return result.rows.length === 1;
 }
 
