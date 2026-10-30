@@ -271,8 +271,26 @@ export default function SocialIntelligencePanel({
 
   useEffect(() => {
     const next = mintOverride?.trim() || "";
-    if (!MINT_RE.test(next) || next === initialMintRef.current) return;
+    if (next === initialMintRef.current) return;
     initialMintRef.current = next;
+    if (!MINT_RE.test(next)) {
+      abortRef.current?.abort();
+      abortRef.current = null;
+      setMint(next);
+      setQuery(next);
+      setLoading(false);
+      setAiLoading(false);
+      setChainLoading(false);
+      setError(null);
+      setWarnings([]);
+      setX(null);
+      setTg(null);
+      setMarket(null);
+      setChain(null);
+      setAi(null);
+      setSnapshot(null);
+      return;
+    }
     void run(next, false);
   }, [mintOverride, run]);
 
