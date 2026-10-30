@@ -24,6 +24,11 @@ try {
       if (chain) return route.fulfill({ json: { meta: { forensicIndexAvailable: true, dexIndexAvailable: true }, observedDexTrades: [], seedWalletTrades: [], walletPnl: [null] } });
     }
     if (state === "malformed-nested") {
+      if (x) return route.fulfill({ json: {
+        symbol: "FIXTURE", totalTweets: 7, totalViews: 70, totalLikes: 3, totalRetweets: 2,
+        uniqueMentioners: 1, botRiskScore: 12, anomalyCount: 0, topTweets: [], shillers: [],
+        aggregated: { totalEngagement: "invalid", engagementRate: 0.1, verifiedAuthors: 0, botRatio: 0 },
+      } });
       if (tg) return route.fulfill({ json: {
         mentions: 1, platforms: { telegram: 1 },
         origin: { text: "malformed", platform: 7, source_name: { invalid: true } },
@@ -82,8 +87,10 @@ try {
   await page.locator('[data-source="blockchain"] .is-error').waitFor();
   assert.equal(await value("twitter"), "—"); assert.equal(await value("telegram"), "—"); assert.equal(await value("blockchain"), "—");
   mode = "malformed-nested"; await refresh();
+  await page.locator('[data-source="twitter"] .is-error').waitFor();
   await page.locator('[data-source="telegram"] .is-error').waitFor();
   await page.locator('[data-source="blockchain"] .is-error').waitFor();
+  assert.equal(await value("twitter"), "—", "Malformed X metrics must not propagate NaN into scores");
   assert.equal(await value("telegram"), "—", "Malformed timeline fields must not reach scoring/rendering");
   assert.equal(await value("blockchain"), "—", "Non-boolean index flags must not be treated as available");
   mode = "error";
