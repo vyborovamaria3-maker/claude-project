@@ -39,7 +39,8 @@ type TokenKOLResponse = {
 function money(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value)) return "—";
   const sign = value > 0 ? "+" : value < 0 ? "-" : "";
-  return `${sign}$${Math.abs(value) >= 1000 ? `${(value / 1000).toFixed(1)}k` : value.toFixed(0)}`;
+  const magnitude = Math.abs(value);
+  return `${sign}${magnitude >= 1000 ? `${(magnitude / 1000).toFixed(1)}k` : magnitude.toFixed(0)}`;
 }
 
 function signalLabel(signal?: string) {
