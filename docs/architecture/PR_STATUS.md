@@ -14,7 +14,7 @@ Five open PRs were returned by the current GitHub listing:
 | [#202](https://github.com/vyborovamaria3-maker/claude-project/pull/202) | feat: Hood Hunt-style evidence-first analytics, DEV setups and target review | OPEN DRAFT | `fix/hood-hunt-analytics-foundation-20261028` |
 | [#195](https://github.com/vyborovamaria3-maker/claude-project/pull/195) | feat: split FOMO pressure and quality metrics | OPEN DRAFT | `feat/fomo-pressure-quality-2026-10-27` |
 
-PR #203 is mergeable and has 17 successful workflows plus one skipped workflow on head `03aca7e25f3d66f0d39f6f8b279483eb8eb101cf`; it remains unmerged. PR #205 is mergeable and documentation-only; GitHub checks must be read at its latest head before merge.
+PR #203 is mergeable and has 17 successful workflows plus one skipped workflow on head `03aca7e25f3d66f0d39f6f8b279483eb8eb101cf`; it remains unmerged and no review submissions were recorded. PR #205 is mergeable and documentation-only; repository hygiene passed on head `ad5f67eb95b7a4d144135850cb5dda9f6df76e88` and Security Lock Refresh was skipped.
 
 ## Historical inventory snapshot — 2026-10-24
 
