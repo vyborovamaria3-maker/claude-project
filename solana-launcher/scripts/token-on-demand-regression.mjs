@@ -161,3 +161,9 @@ test('author caveats reach the visible summary, stay bounded and do not leak nes
   report.interpretation.caveats=caveats;await assert.rejects(requestTokenAnalysis(mint,{env,fetchImpl:async()=>new Response(JSON.stringify(report))}),/token_analysis_invalid/);
  }
 });
+
+test('unified Analysis embeds blockchain AI in request-only mode',async()=>{
+ const source=await readFile(new URL('../components/trade/UnifiedAnalysisClient.tsx',import.meta.url),'utf8');
+ assert.match(source,/<BlockchainAiReportPanel mint=\{mint\} requestOnly \/>/);
+ assert.doesNotMatch(source,/<BlockchainAiReportPanel mint=\{mint\} requestOnly=\{requestOnly\}/);
+});
