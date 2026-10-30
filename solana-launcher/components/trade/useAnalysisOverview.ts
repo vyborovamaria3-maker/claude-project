@@ -38,30 +38,35 @@ function validTimelineItem(value: unknown): boolean {
     && (value.metrics === undefined || value.metrics === null || isRecord(value.metrics));
 }
 function validTwitterResponse(value: unknown): boolean {
-  if (!isRecord(value)
-    || !["totalTweets", "totalViews", "totalLikes", "totalRetweets", "uniqueMentioners", "botRiskScore", "anomalyCount"]
-      .every((key) => isFiniteNumber(value[key]))
-    || !isRecord(value.aggregated)
+  if (!isRecord(value)) return false;
+  if (!["totalTweets", "totalViews", "totalLikes", "totalRetweets", "uniqueMentioners", "botRiskScore", "anomalyCount"]
+    .every((key) => isFiniteNumber(value[key]))) return false;
+
+  const aggregated = value.aggregated;
+  if (!isRecord(aggregated)
     || !["totalEngagement", "engagementRate", "verifiedAuthors", "botRatio"]
-      .every((key) => isFiniteNumber(value.aggregated?.[key]))
-    || !Array.isArray(value.topTweets)
-    || !value.topTweets.every((item) => isRecord(item)
-      && typeof item.id === "string"
-      && typeof item.text === "string"
-      && typeof item.author === "string"
-      && isFiniteNumber(item.likes)
-      && isFiniteNumber(item.retweets)
-      && isFiniteNumber(item.views)
-      && (item.timestamp === null || isFiniteNumber(item.timestamp))
-      && typeof item.isSuspicious === "boolean")
-    || !Array.isArray(value.shillers)
-    || !value.shillers.every((item) => isRecord(item)
-      && typeof item.handle === "string"
-      && isFiniteNumber(item.tweets)
-      && isFiniteNumber(item.totalEngagement)
-      && typeof item.isBot === "boolean"
-      && isOptionalFiniteNumber(item.followers)
-      && typeof item.isVerified === "boolean")) return false;
+      .every((key) => isFiniteNumber(aggregated[key]))) return false;
+
+  const topTweets = value.topTweets;
+  if (!Array.isArray(topTweets) || !topTweets.every((item) => isRecord(item)
+    && typeof item.id === "string"
+    && typeof item.text === "string"
+    && typeof item.author === "string"
+    && isFiniteNumber(item.likes)
+    && isFiniteNumber(item.retweets)
+    && isFiniteNumber(item.views)
+    && (item.timestamp === null || isFiniteNumber(item.timestamp))
+    && typeof item.isSuspicious === "boolean")) return false;
+
+  const shillers = value.shillers;
+  if (!Array.isArray(shillers) || !shillers.every((item) => isRecord(item)
+    && typeof item.handle === "string"
+    && isFiniteNumber(item.tweets)
+    && isFiniteNumber(item.totalEngagement)
+    && typeof item.isBot === "boolean"
+    && isOptionalFiniteNumber(item.followers)
+    && typeof item.isVerified === "boolean")) return false;
+
   const riskUniverse = value.riskUniverse;
   return riskUniverse === undefined || riskUniverse === null
     || (isRecord(riskUniverse)
