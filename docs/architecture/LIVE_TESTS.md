@@ -1,6 +1,6 @@
 # LIVE_TESTS — TG Collector / Cross-source Intelligence
 
-Audit register started **2026-10-22** on `audit/tg-collector-sprint0-20261022`. This file distinguishes **source inspection**, **offline tests** and **actual live validation**. No tests were executed as part of this documentation-only sprint-0 audit: all execution statuses below are `NOT RUN`. Historical README/CI claims are references to existing test infrastructure, not evidence that the *current head* is green.
+Audit register started **2026-10-22** on `audit/tg-collector-sprint0-20261022`. The initial sprint-0 audit did not execute tests; the matrix below preserves its 2026-10-22 baseline, where initial execution statuses were `NOT RUN`. Current CI-only evidence and author-reported limited live smoke are recorded above with explicit provenance. This file distinguishes **source inspection**, **offline tests** and **actual live validation**; a green CI run is not a live-source pass.
 
 ## CI-only evidence — 2026-10-30
 
@@ -21,7 +21,7 @@ This audit did not connect to API3182, inspect the backup, retrieve sanitized so
 
 ## Verification matrix
 
-| Component | Test method / entrypoint | Required environment | Status 2026-10-22 | Evidence / follow-up |
+| Component | Test method / entrypoint | Required environment | Initial status 2026-10-22 | Evidence / follow-up |
 | --- | --- | --- | --- | --- |
 | TG TypeScript | `cd tg-collector && npm ci && npm run typecheck` | Node 22; dependency install | NOT RUN | Capture stdout, Node version and exact SHA. |
 | TG unit/integration | `cd tg-collector && npm test` | Disposable PostgreSQL; no real Telegram account | NOT RUN | Test suite includes `tests/*.test.ts` and `tests/integration/*.test.ts`. |
