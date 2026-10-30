@@ -13,6 +13,12 @@ PR [#203](https://github.com/vyborovamaria3-maker/claude-project/pull/203), head
 
 **Classification:** OFFLINE / SYNTHETIC CI ONLY. No real X account, Telegram MTProto session, paid RPC, production database, production migration, live witness service or backup/restore operation was accessed. All external live-validation rows below remain `NOT RUN` until a separately approved run records the evidence required by this register.
 
+### Author-reported limited live smoke — not independently reproduced
+
+The description of [PR #203](https://github.com/vyborovamaria3-maker/claude-project/pull/203) reports a local/source API3182 smoke: cached report HTTP 200; a separate uncached AI generation HTTP 200 with one completed AI ledger record; one X message and one Telegram message returned; zero saved trades; coverage explicitly unknown. It also reports a service restart and backup.
+
+This audit did not connect to API3182, inspect the backup, retrieve sanitized source logs, verify the account/operator approval, confirm the database identity or reproduce those calls. Treat this as **author-reported, limited evidence**, not independently verified live validation. It does not satisfy [issue #175](https://github.com/vyborovamaria3-maker/claude-project/issues/175): the controlled X/TG smoke, bounded chain RPC/finality evidence, authorization and reproducible sanitized record are still incomplete. Autopost remains `NOT RUN` unless separately approved.
+
 ## Verification matrix
 
 | Component | Test method / entrypoint | Required environment | Status 2026-10-22 | Evidence / follow-up |
