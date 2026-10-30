@@ -105,6 +105,8 @@ test('legacy AI empty state explains explicit generation instead of promising an
  assert.match(panel,/В snapshot нет пригодных доказательств\. Qwen не запускается\./);
  assert.match(panel,/aiLoading \? "Qwen выполняет анализ…"/);
  assert.match(panel,/loading \? "Собираем источники и готовим snapshot…"/);
+ assert.match(panel,/Детерминированные показатели, entity graph и cross-platform evidence\. AI-гипотезы формируются отдельным запросом\./);
+ assert.match(panel,/Trade history загружается параллельно с социальными источниками\./);
  assert.doesNotMatch(panel,/AI запускается после сборки unified snapshot/);
 });
 
