@@ -8,7 +8,7 @@ The diagram represents code-level ownership and integration contracts found in t
 flowchart LR
   X["X Collector\nNode/TS + own PostgreSQL"] -->|"opt-in outbox\nX flags"| I["Node Intelligence\nseparate PostgreSQL"]
   TG["Telegram Collector\nNode/TS + own PostgreSQL"] -->|"opt-in outbox\nTG flags"| I
-  CH["Blockchain evidence\nSQLite trade store"] -->|"opt-in raw evidence outbox\nblockchain flag"| I
+  CH["Blockchain evidence\nSQLite trade store"] -->|"opt-in raw + parsed swap evidence/revisions\nblockchain flags"| I
   I --> API["Read-only Token Intelligence API"]
   API -. "local authenticated proxy / UI code" .-> UI["solana-launcher Next.js"]
   API -. "configured read-only source" .-> ADMIN["admin-site Control Center"]
@@ -18,7 +18,7 @@ flowchart LR
 
 - **X:** `x-collector` owns its PostgreSQL records and explicit migration manifest. Its source outbox is opt-in. `scripts/verify-x-token-links.ts` is a separate bounded mint-verification CLI; execution requires `--execute`, configured Alchemy RPC and explicit source/outbox/token-link flags. The normal collector does not silently turn text matches into verified mint claims.
 - **Telegram:** `tg-collector` owns its PostgreSQL records and migration ledger. GramJS/MTProto collection is separate from its Alchemy-backed mint resolver. The resolver requires both `TG_INTELLIGENCE_OUTBOX_ENABLED=true` and `TG_INTELLIGENCE_TOKEN_LINKS_ENABLED=true`; source text must contain the exact mint and the RPC account must pass SPL/Token-2022 mint validation.
-- **Blockchain:** `solana-launcher` stores chain seed/evidence data in SQLite. The inspected Intelligence outbox emits raw wallet-target evidence. It does not by itself prove token attribution, swap completeness, owner attribution or PnL.
+- **Blockchain:** `solana-launcher` stores chain seed/evidence data in SQLite. In addition to raw wallet observations, `blockchain-token-swap-outbox.cjs` emits `token_swap_evidence_observed` and `blockchain-token-swap-revisions.cjs` emits `token_swap_evidence_revision` when both `BLOCKCHAIN_INTELLIGENCE_OUTBOX_ENABLED=true` and `BLOCKCHAIN_INTELLIGENCE_TOKEN_EVENTS_ENABLED=true`. The parser accepts one unambiguous SOL/WSOL-quoted wallet swap with balance reconciliation; later unsupported raw revisions supersede old supported evidence. This is historical provider-parsed evidence, not independent SPL Mint account proof, authenticated RPC provenance, finality/reorg assurance, full DEX coverage or PnL.
 - **Node Intelligence:** source connections are read from X/TG PostgreSQL and blockchain SQLite; destination registry/timeline/token-link/feature data lives in a separate PostgreSQL. `etl:once` is bounded; `etl:supervise` runs a foreground local supervisor only with explicit opt-ins and verified schemas. It never starts collectors or applies migrations.
 
 ## Other independent runtime boundaries
