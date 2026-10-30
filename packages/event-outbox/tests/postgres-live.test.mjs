@@ -28,7 +28,7 @@ test("actual PostgreSQL: transaction rollback, dedup and fenced ACK",{skip:!url}
     }finally{writer.release()}
     assert.equal(Number((await pool.query("SELECT COUNT(*) AS n FROM outbox_events")).rows[0].n),1);
     const now=new Date();
-    const rows=await claimPostgres(pool,{workerId:"workerA",batchSize:5,leaseMs:60000,now});
+    const rows=await claimPostgres(pool,{workerId:"workerA",batchSize:5,leaseMs:60000});
     assert.equal(rows.length,1);
     assert.equal(rows[0].eventKey,event.eventKey);
     assert.equal((await claimPostgres(pool,{workerId:"workerB",batchSize:5,leaseMs:60000,now})).length,0);
@@ -52,14 +52,14 @@ test("actual PostgreSQL: failure postpones claim, retries with durable error",{s
       await tx.query("COMMIT");
     }finally{tx.release()}
     const now=new Date();
-    const claimed=await claimPostgres(pool,{workerId:"workerA",batchSize:10,leaseMs:60000,now});
+    const claimed=await claimPostgres(pool,{workerId:"workerA",batchSize:10,leaseMs:60000});
     assert.equal(claimed.length,1);
     const client=await pool.connect();
     try {
       assert.equal(await failPostgres(client,claimed[0].id,"workerA",claimed[0].leaseUntil,"fixture_transient",
         new Date(now.getTime()+120000)),true);
     }finally{client.release()}
-    assert.equal((await claimPostgres(pool,{workerId:"workerB",batchSize:10,leaseMs:60000,now})).length,0);
+    assert.equal((await claimPostgres(pool,{workerId:"workerB",batchSize:10,leaseMs:60000})).length,0);
     const saved=await pool.query("SELECT attempts,last_error FROM outbox_events WHERE event_key=$1",["tweet:1000:v1"]);
     assert.equal(saved.rows[0].attempts,1);
     assert.equal(saved.rows[0].last_error,"fixture_transient");
