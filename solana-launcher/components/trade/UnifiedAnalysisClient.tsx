@@ -116,8 +116,8 @@ function LegacyDetail({ path, mint, label, onNavigate, onClose, onTabBoundary }:
 export default function UnifiedAnalysisClient({ requestOnly = false }: { requestOnly?: boolean }) {
   const params = useSearchParams();
   const router = useRouter();
-  const paramsRef = useRef(params);
-  useEffect(() => { paramsRef.current = params; }, [params]);
+  const paramsRef = useRef(params.toString());
+  useEffect(() => { paramsRef.current = params.toString(); }, [params]);
   const initialMint = params.get("mint")?.trim() || "";
   const [mint, setMint] = useState(initialMint);
   const [chartSize, setChartSize] = useState<ChartSize>("normal");
@@ -142,7 +142,7 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
     setMint(next);
     const nextParams = new URLSearchParams(params.toString());
     nextParams.set("mint", next);
-    paramsRef.current = nextParams;
+    paramsRef.current = nextParams.toString();
     router.replace(`/trade/analysis?${nextParams}`, { scroll: false });
   }, [params, router]);
 
@@ -153,7 +153,7 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
 
   const close = useCallback(() => {
     setDetail(null);
-    const nextParams = new URLSearchParams(paramsRef.current.toString());
+    const nextParams = new URLSearchParams(paramsRef.current);
     if (nextParams.has("section")) {
       nextParams.delete("section");
       paramsRef.current = nextParams;
