@@ -140,11 +140,11 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
   const submit = useCallback((next: string) => {
     // SearchBar retains clipboard paste, recent searches, auto-submit and base58 validation.
     setMint(next);
-    const nextParams = new URLSearchParams(paramsRef.current);
+    const nextParams = new URLSearchParams(params.toString());
     nextParams.set("mint", next);
     paramsRef.current = nextParams.toString();
     router.replace(`/trade/analysis?${nextParams}`, { scroll: false });
-  }, [router]);
+  }, [params, router]);
 
   const open = (id: Section) => {
     priorFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
