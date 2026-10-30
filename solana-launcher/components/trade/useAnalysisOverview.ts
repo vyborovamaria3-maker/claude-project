@@ -11,6 +11,10 @@ type Evidence = {
   walletPnl: Array<{ status?: string }>;
   meta: { forensicIndexAvailable: boolean; dexIndexAvailable: boolean };
 };
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 type Snapshot = { mint: string; x: Source<TwitterStats>; tg: Source<SocialTimeline>; market: Source<Market>; chain: Source<Evidence> };
 const source = <T,>(loading: boolean): Source<T> => ({ status: loading ? "loading" : "idle", data: null });
 const empty = (mint: string): Snapshot => {
@@ -45,10 +49,16 @@ export default function useAnalysisOverview(mint: string) {
       }
     }
     void Promise.all([
-      read("x", `/api/trade/dev-twitter?${x}`, data => !!data && Number.isFinite(data.totalTweets) && Array.isArray(data.topTweets) && Array.isArray(data.shillers) && !!data.aggregated),
-      read("tg", `${backend}/api/v1/social/token/${encodeURIComponent(mint)}?${tg}`, data => !!data && Array.isArray(data.timeline)),
-      read("market", `/api/token-ohlcv?mint=${encodeURIComponent(mint)}`, data => !!data?.pair),
-      read("chain", `/api/blockchain/evidence?mint=${encodeURIComponent(mint)}&limit=100`, data => !!data?.meta && Array.isArray(data.observedDexTrades) && Array.isArray(data.seedWalletTrades) && Array.isArray(data.walletPnl)),
+      read("x", `/api/trade/dev-twitter?${x}`, data =>
+        isRecord(data) && Number.isFinite(data.totalTweets) && isRecord(data.aggregated)
+        && Array.isArray(data.topTweets) && data.topTweets.every(item => isRecord(item) && typeof item.text === "string")
+        && Array.isArray(data.shillers) && data.shillers.every(isRecord)),
+      read("tg", `${backend}/api/v1/social/token/${encodeURIComponent(mint)}?${tg}`, data =>
+        isRecord(data) && Array.isArray(data.timeline) && data.timeline.every(item => isRecord(item) && typeof item.text === "string")),
+      read("market", `/api/token-ohlcv?mint=${encodeURIComponent(mint)}`, data => isRecord(data) && isRecord(data.pair)),
+      read("chain", `/api/blockchain/evidence?mint=${encodeURIComponent(mint)}&limit=100`, data =>
+        isRecord(data) && isRecord(data.meta) && Array.isArray(data.observedDexTrades) && Array.isArray(data.seedWalletTrades)
+        && Array.isArray(data.walletPnl) && data.walletPnl.every(isRecord)),
     ]).finally(() => window.clearTimeout(timeout));
     return () => { active = false; controller.abort(); window.clearTimeout(timeout); };
   }, [mint, revision]);
