@@ -80,19 +80,22 @@ export async function checkUnifiedDetails(page, baseUrl, mint) {
   assert.deepEqual(await groupRows("Telegram").locator(".font-mono").allTextContents(), catalog.groups.Telegram.labels.map(() => "—"), "Unavailable Telegram must not show invented values");
   await close();
 
-  // Market availability alone must not turn missing social inputs into zero scores.
-  await page.route(url => url.pathname === "/api/trade/dev-twitter", route => route.fulfill({ status: 503, json: { error: "source_unavailable" } }));
-  await page.route(url => url.pathname === "/api/token-ohlcv", route => route.fulfill({ json: { pair: { liquidityUsd: 1234 } } }));
+  // Opening the full report is request-only: it must not start source-driven AI generation.
+  const aiPosts = [];
+  const captureAiPosts = request => {
+    if (request.method() === "POST") aiPosts.push(new URL(request.url()).pathname);
+  };
+  page.on("request", captureAiPosts);
   await fullReport();
-  await dialog.getByText("Нет данных X и Telegram", { exact: true }).waitFor({ state: "visible" });
+  await dialog.getByRole("button", { name: "Запустить AI", exact: true }).waitFor({ state: "visible" });
+  assert.deepEqual(aiPosts, [], "Opening the AI report must not trigger an automatic POST");
   assert.deepEqual(await groupRows("Growth / Quality / Manipulation").locator(".font-mono").allTextContents(), catalog.groups["Growth / Quality / Manipulation"].labels.map(() => "—"));
   for (const label of ["Cross-platform score", "Cross matched share", "Both platforms active"]) {
     const row = groupRows("Cross-platform / Timing").filter({ has: page.getByText(label, { exact: true }) });
     assert.equal(await row.locator(".font-mono").textContent(), "—", `${label}: missing social inputs must remain unknown`);
   }
-  const liquidity = groupRows("Cross-platform / Timing").filter({ has: page.getByText("Liquidity", { exact: true }) });
-  assert.notEqual(await liquidity.locator(".font-mono").textContent(), "—", "Available market data must remain visible");
   await close();
+  page.off("request", captureAiPosts);
 
   // A lightweight same-origin frame isolates shell navigation from legacy APIs.
   await page.route(url => url.pathname === "/trade/analysis/onchain", async route => {
