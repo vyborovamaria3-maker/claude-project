@@ -52,7 +52,7 @@ const mainSections = sections.slice(0, 4);
 const extraSections = sections.filter(({ id }) => !["twitter", "telegram", "blockchain", "fomo", "ai", "chart"].includes(id));
 const buttonClass = "analysis-button";
 
-function LegacyDetail({ path, mint, label, onNavigate, onClose }: {
+function LegacyDetail({ path, mint, label, onNavigate, onClose, onTabBoundary }: {
   path: string; mint: string; label: string;
   onNavigate: (nextMint: string, overview: boolean) => void;
   onClose: () => void;
