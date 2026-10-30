@@ -100,7 +100,7 @@ jobs:
             -v "$PWD:/work" \
             -w /work \
             "mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble" \
-            sh -lc 'node tests/cross-browser-smoke.mjs && node tests/e2e/search-bar.mjs && node tests/e2e/analysis-overview.mjs'
+            sh -lc 'node tests/cross-browser-smoke.mjs && node tests/e2e/search-bar.mjs && node tests/e2e/analysis-overview.mjs && node tests/e2e/analysis-overview.mjs'
 
       - name: Install isolated quality tools
         run: |
