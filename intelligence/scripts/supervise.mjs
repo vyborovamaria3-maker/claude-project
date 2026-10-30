@@ -85,6 +85,7 @@ export function classifyOutboxHealth(status,options={}){
   if(!status||!Number.isSafeInteger(status.pending)||status.pending<0||
      !Number.isSafeInteger(status.deadLetter)||status.deadLetter<0||
      !Number.isSafeInteger(status.maxAttempts)||status.maxAttempts<0||
+     !Number.isSafeInteger(status.schemaVersionSkewKinds)||status.schemaVersionSkewKinds<0||
      (status.oldestPendingAgeMs!==null&&
        (!Number.isSafeInteger(status.oldestPendingAgeMs)||status.oldestPendingAgeMs<0))){
     throw new TypeError("invalid outbox health snapshot");
