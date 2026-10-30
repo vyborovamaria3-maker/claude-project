@@ -90,7 +90,7 @@ try {
   await page.goto(origin + '/#collector-tg-collector');
   await page.locator('#appView').waitFor({ state: 'visible' });
   for (const module of ['tg-collector', 'x-collector', 'tg-invite', 'diagnostics', 'apify', 'blockchain']) {
-    await page.locator(`[data-view="collector-${module}"]`).click();
+    await page.locator(`[data-collector-tab="${module}"]`).click();
     const frame = page.frameLocator(`iframe[data-collector-workspace="${module}"]`);
     await frame.locator('.collector-console[data-embedded=true]').waitFor();
     assert.equal(new URL(page.url()).origin, origin);
@@ -100,6 +100,7 @@ try {
     assert.equal(await frame.locator('nav[aria-label="Collector administration"]').count(), 0);
   }
   assert.equal(popups, 0);
+  assert.equal(await page.locator('#navigation [data-view^="collector-"]').count(), 0);
   assert.deepEqual(errors, []);
   console.log('PASS integrated admin shell: six views, one tab, same origin, unchanged pathname, no popup or duplicate navigation');
   process.env.TG_COLLECTOR_SMOKE_URL = origin;

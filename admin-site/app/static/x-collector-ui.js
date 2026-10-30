@@ -101,7 +101,7 @@
     host.querySelector('#xcEditForm').onsubmit=e=>{e.preventDefault();void save(row?'PATCH':'POST');};
     host.querySelector('#xcDelete')?.addEventListener('click',()=>void save('DELETE'));
   }
-  window.XCollector = Object.freeze({render});
+  window.XCollector = Object.freeze({render, deactivate() { active=false; ++generation; }});
   document.querySelector('#navigation').addEventListener('click',e=>{if(e.target.closest('button')!==nav){active=false;++generation;}});
   document.querySelector('#logoutButton').addEventListener('click',()=>{active=false;++generation;},true);
   document.querySelector('#refreshButton').addEventListener('click',e=>{if(active){e.stopImmediatePropagation();void render();}},true);
