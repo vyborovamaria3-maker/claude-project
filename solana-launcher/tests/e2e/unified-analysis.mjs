@@ -134,6 +134,17 @@ export async function checkUnifiedDetails(page, baseUrl, mint) {
   await page.getByRole("button", { name: "Кошельки и DEV", exact: false }).click();
   const frame = page.frameLocator('iframe[title="Полный анализ кошельков"]');
   await frame.locator("#inside").waitFor();
+  await frame.locator("#inside").focus();
+  await frame.locator("#inside").press("Shift+Tab");
+  assert(await page.evaluate(() => {
+    const dialog = document.querySelector('[role="dialog"]');
+    return !!dialog?.contains(document.activeElement) && document.activeElement?.tagName !== "IFRAME";
+  }), "Shift+Tab from the first iframe control must return focus to the parent dialog");
+  await page.keyboard.press("Tab");
+  await frame.locator("#inside").focus();
+  await frame.locator("#inside").press("Tab");
+  assert(await page.getByRole("button", { name: "Закрыть подробный анализ", exact: true }).evaluate(element => element === document.activeElement),
+    "Tab from the last iframe control must wrap to the dialog close button");
   const nextMint = "So11111111111111111111111111111111111111112";
   await frame.locator("#inside").evaluate((_, next) => history.replaceState(null, "", `?mint=${next}`), nextMint);
   await page.waitForURL(url => url.searchParams.get("mint") === nextMint);
