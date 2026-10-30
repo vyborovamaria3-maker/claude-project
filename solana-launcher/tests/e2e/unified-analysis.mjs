@@ -105,6 +105,29 @@ export async function checkUnifiedDetails(page, baseUrl, mint) {
   assert.equal(socialAiPosts[0].postDataJSON().mint, embeddedMint, "Explicit AI must analyze the newly selected mint");
   assert.equal(socialAiResponse.status(), 503, "The controlled unavailable fixture should be returned without hiding the request");
   page.off("request", captureSocialAiPosts);
+
+  const repeatedMintPosts = [];
+  const captureRepeatedMintPosts = request => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/api/trade/social-ai") {
+      repeatedMintPosts.push(request);
+    }
+  };
+  page.on("request", captureRepeatedMintPosts);
+  const repeatedMintRequest = page.waitForRequest(request =>
+    request.method() === "POST" && new URL(request.url()).pathname === "/api/trade/social-ai"
+  );
+  const repeatedMintResponse = page.waitForResponse(response =>
+    new URL(response.url()).pathname === "/api/trade/social-ai"
+  );
+  await dialog.getByRole("button", { name: "Анализ", exact: true }).click();
+  const [repeatRequest, repeatResponse] = await Promise.all([repeatedMintRequest, repeatedMintResponse]);
+  assert.equal(repeatRequest.postDataJSON().mint, embeddedMint, "Repeated analysis must keep the selected mint");
+  assert.equal(repeatResponse.status(), 503, "The repeated explicit AI request should reach the controlled fixture");
+  assert.equal(repeatedMintPosts.length, 1, "Repeated analysis must issue exactly one AI request");
+  assert.equal(new URL(page.url()).pathname, "/trade/analysis", "Same-mint analysis must stay in the unified workspace");
+  await dialog.waitFor({ state: "visible" });
+  page.off("request", captureRepeatedMintPosts);
+
   await dialog.getByRole("button", { name: "Cross-platform / Timing", exact: true }).click();
   for (const label of ["Cross-platform score", "Cross matched share", "Both platforms active"]) {
     const row = groupRows("Cross-platform / Timing").filter({ has: page.getByText(label, { exact: true }) });
