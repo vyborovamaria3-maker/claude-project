@@ -14,6 +14,54 @@ type Evidence = {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+function isOptionalFiniteNumber(value: unknown): boolean {
+  return value === undefined || value === null || isFiniteNumber(value);
+}
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === "string";
+}
+function isOptionalBoolean(value: unknown): boolean {
+  return value === undefined || typeof value === "boolean";
+}
+function validTimelineItem(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.text === "string"
+    && isOptionalString(value.platform)
+    && isOptionalString(value.source_handle)
+    && isOptionalString(value.source_name)
+    && isOptionalString(value.source_url)
+    && isOptionalString(value.event_type)
+    && isOptionalString(value.occurred_at)
+    && (value.metrics === undefined || value.metrics === null || isRecord(value.metrics));
+}
+function validTelegramResponse(value: unknown): boolean {
+  if (!isRecord(value) || !isFiniteNumber(value.mentions) || !isRecord(value.platforms)
+    || !isOptionalFiniteNumber(value.platforms.telegram)
+    || !Array.isArray(value.timeline) || !value.timeline.every(validTimelineItem)
+    || (value.origin !== null && value.origin !== undefined && !validTimelineItem(value.origin))) return false;
+  if (value.meta === undefined || value.meta === null) return true;
+  if (!isRecord(value.meta)
+    || !["matchedBeforeLimit", "returned", "uniqueSourcesBeforeLimit", "explicitTelegramCallsBeforeLimit"]
+      .every((key) => isOptionalFiniteNumber(value.meta?.[key]))
+    || !isOptionalBoolean(value.meta.truncated)
+    || !isOptionalString(value.meta.firstMatchedAt)
+    || !isOptionalString(value.meta.lastMatchedAt)) return false;
+  const matchedPlatforms = value.meta.matchedPlatforms;
+  return matchedPlatforms === undefined || matchedPlatforms === null
+    || (isRecord(matchedPlatforms) && isOptionalFiniteNumber(matchedPlatforms.telegram));
+}
+function validChainResponse(value: unknown): boolean {
+  return isRecord(value) && isRecord(value.meta)
+    && typeof value.meta.forensicIndexAvailable === "boolean"
+    && typeof value.meta.dexIndexAvailable === "boolean"
+    && Array.isArray(value.observedDexTrades) && value.observedDexTrades.every(isRecord)
+    && Array.isArray(value.seedWalletTrades) && value.seedWalletTrades.every(isRecord)
+    && Array.isArray(value.walletPnl)
+    && value.walletPnl.every((item) => isRecord(item) && typeof item.status === "string");
+}
 
 type Snapshot = { mint: string; x: Source<TwitterStats>; tg: Source<SocialTimeline>; market: Source<Market>; chain: Source<Evidence> };
 const source = <T,>(loading: boolean): Source<T> => ({ status: loading ? "loading" : "idle", data: null });
@@ -53,12 +101,9 @@ export default function useAnalysisOverview(mint: string) {
         isRecord(data) && Number.isFinite(data.totalTweets) && isRecord(data.aggregated)
         && Array.isArray(data.topTweets) && data.topTweets.every(item => isRecord(item) && typeof item.text === "string")
         && Array.isArray(data.shillers) && data.shillers.every(isRecord)),
-      read("tg", `${backend}/api/v1/social/token/${encodeURIComponent(mint)}?${tg}`, data =>
-        isRecord(data) && Array.isArray(data.timeline) && data.timeline.every(item => isRecord(item) && typeof item.text === "string")),
+      read("tg", `${backend}/api/v1/social/token/${encodeURIComponent(mint)}?${tg}`, validTelegramResponse),
       read("market", `/api/token-ohlcv?mint=${encodeURIComponent(mint)}`, data => isRecord(data) && isRecord(data.pair)),
-      read("chain", `/api/blockchain/evidence?mint=${encodeURIComponent(mint)}&limit=100`, data =>
-        isRecord(data) && isRecord(data.meta) && Array.isArray(data.observedDexTrades) && Array.isArray(data.seedWalletTrades)
-        && Array.isArray(data.walletPnl) && data.walletPnl.every(isRecord)),
+      read("chain", `/api/blockchain/evidence?mint=${encodeURIComponent(mint)}&limit=100`, validChainResponse),
     ]).finally(() => window.clearTimeout(timeout));
     return () => { active = false; controller.abort(); window.clearTimeout(timeout); };
   }, [mint, revision]);
