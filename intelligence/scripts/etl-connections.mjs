@@ -80,9 +80,15 @@ export async function outboxStatus(source,now=new Date()){
       count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
         AND lease_until>?) AS leased,
       count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL AND attempts>0) AS retry_count,
+      coalesce(sum(attempts) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL),0) AS retry_attempts_total,
       count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
         AND attempts>0 AND next_attempt_at>?) AS retry_delayed,
       count(*) FILTER (WHERE dead_lettered_at IS NOT NULL) AS dead_letter,
+      (SELECT count(*) FROM (
+        SELECT event_kind FROM outbox_events
+        WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+        GROUP BY event_kind HAVING count(DISTINCT schema_version)>1
+      ) AS version_skew) AS schema_version_skew_kinds,
       min(created_at) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS oldest_pending_at,
       max(processed_at) AS last_progress_at,
       max(attempts) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS max_attempts
@@ -97,9 +103,15 @@ export async function outboxStatus(source,now=new Date()){
       count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
         AND lease_until>$1::timestamptz)::text AS leased,
       count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL AND attempts>0)::text AS retry_count,
+      coalesce(sum(attempts) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL),0)::text AS retry_attempts_total,
       count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
         AND attempts>0 AND next_attempt_at>$1::timestamptz)::text AS retry_delayed,
       count(*) FILTER (WHERE dead_lettered_at IS NOT NULL)::text AS dead_letter,
+      (SELECT count(*) FROM (
+        SELECT event_kind FROM outbox_events
+        WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+        GROUP BY event_kind HAVING count(DISTINCT schema_version)>1
+      ) AS version_skew)::text AS schema_version_skew_kinds,
       min(created_at) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS oldest_pending_at,
       max(processed_at) AS last_progress_at,
       coalesce(max(attempts) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL),0)::text AS max_attempts
@@ -111,7 +123,9 @@ export async function outboxStatus(source,now=new Date()){
   const age=(value)=>value===null?null:Math.max(0,now.getTime()-Date.parse(value));
   return {
     pending:Number(row.pending),ready:Number(row.ready),leased:Number(row.leased),
-    retryCount:Number(row.retry_count),retryDelayed:Number(row.retry_delayed),deadLetter:Number(row.dead_letter),
+    retryCount:Number(row.retry_count),retryAttemptsTotal:Number(row.retry_attempts_total),
+    retryDelayed:Number(row.retry_delayed),deadLetter:Number(row.dead_letter),
+    schemaVersionSkewKinds:Number(row.schema_version_skew_kinds),
     oldestPendingAt,oldestPendingAgeMs:age(oldestPendingAt),
     lastProgressAt,lastProgressAgeMs:age(lastProgressAt),
     maxAttempts:Number(row.max_attempts??0),
