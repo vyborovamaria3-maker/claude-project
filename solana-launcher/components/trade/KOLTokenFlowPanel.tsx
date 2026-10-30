@@ -38,7 +38,7 @@ type TokenKOLResponse = {
 
 function money(value: number | null | undefined) {
   if (value == null) return "—";
-  const sign = value > 0 ? "+" : "";
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
   return `${sign}$${Math.abs(value) >= 1000 ? `${(value / 1000).toFixed(1)}k` : value.toFixed(0)}`;
 }
 
