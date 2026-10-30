@@ -66,8 +66,11 @@ try {
   const dialog = page.getByRole("dialog"); await dialog.locator('[data-tag="trade.social.metrics"]').waitFor();
   const startAi = dialog.getByRole("button", { name: "Запустить AI", exact: true });
   await startAi.waitFor();
+  const explicitAiRequest = page.waitForRequest(request =>
+    request.method() === "POST" && new URL(request.url()).pathname === "/api/trade/blockchain-ai-report"
+  );
   await startAi.click();
-  await page.waitForFunction(() => window.__analysisAiPostObserved === true).catch(() => {});
+  await explicitAiRequest;
   // The request is deliberately aborted by the fixture; assert that only the explicit click initiated it.
   assert.deepEqual(posts, ["/api/trade/blockchain-ai-report"], "AI generation must happen only after explicit user action");
   assert.equal(await dialog.locator('[data-tag="trade.social.metrics"] .divide-y > div').count(), 141);
