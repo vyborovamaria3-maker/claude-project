@@ -21,6 +21,8 @@ Seven open PRs were returned by the current GitHub listing:
 - PR #203 remains open and unmerged; current head is `85738c1872acea9153e7c58be437db398345f6f6` (42 files, +2,149/−1,085). **17 workflows succeeded; Security Lock Refresh was skipped.** Frontend Quality CI passed the 22-test analysis regression suite, the 129/129 core / 141/141 displayed-row checks, and the Playwright browser suite (`ANALYSIS_OVERVIEW_OK`); Security Gates, Mobile Responsive CI, Full Backtest Audit and the five-job POTAPoff predeploy gate also passed. The no-source test now overrides the earlier successful X fixture, checks no AI POST on dialog open, and verifies manual Social AI only after the explicit action; the blockchain report has a separate explicit-click POST assertion. The PR remains unmerged and has no recorded human review approval.
 - PR #205 is documentation-only and remains open. The preceding snapshot head passed Repository hygiene, Intelligence foundation and Intelligence CI; this update refreshes the inventory and technical-debt evidence, so consult the PR page for checks on the latest documentation commit.
 
+Path-overlap audit: #203/#204 share 9 files; #203/#195 share 5; #204/#195 share 3; #205/#206 both edit `intelligence/README.md`; #206/#207 both edit `intelligence/scripts/etl-connections.mjs`. PR #202 has no direct path overlap with these PRs. Suggested sequence, subject to human review: #207 → rebase/merge #206 → rebase/merge #205; resolve #195/#204 overlaps before #203. See the technical-debt register for details.
+
 Human review/approval remains outstanding; passing CI is not permission to merge. Check each current PR page for its latest head, review state and checks before acting.
 
 ## Historical inventory snapshot — 2026-10-24
