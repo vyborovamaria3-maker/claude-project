@@ -23,6 +23,12 @@ type Section = "twitter" | "telegram" | "blockchain" | "fomo" | "ai" | "cross" |
   | "onchain" | "evidence" | "leaderboard" | "history" | "kols" | "live" | "investigation" | "chart";
 type ChartSize = "normal" | "compact" | "hidden";
 const MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const FOCUSABLE_SELECTOR = 'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), iframe, [tabindex="0"]';
+
+function focusableElements(root: ParentNode): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+    .filter((element) => element.getAttribute("aria-hidden") !== "true" && element.getClientRects().length > 0);
+}
 
 const sections: Array<{ id: Section; label: string; description: string; icon: typeof Twitter }> = [
   { id: "twitter", label: "X / Twitter", description: "Упоминания, авторы, боты, охват и качество публикаций", icon: Twitter },
@@ -50,6 +56,7 @@ function LegacyDetail({ path, mint, label, onNavigate, onClose }: {
   path: string; mint: string; label: string;
   onNavigate: (nextMint: string, overview: boolean) => void;
   onClose: () => void;
+  onTabBoundary: (direction: "previous" | "next", frame: HTMLIFrameElement) => void;
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const url = mint ? `${path}?mint=${encodeURIComponent(mint)}` : path;
@@ -59,7 +66,17 @@ function LegacyDetail({ path, mint, label, onNavigate, onClose }: {
     let attachedDocument: Document | null = null;
     let lastUrl = "";
     const keydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { event.preventDefault(); onClose(); }
+      if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
+      if (event.key !== "Tab") return;
+      const focusable = focusableElements(child.document);
+      const active = child.document.activeElement;
+      if (!focusable.length || (event.shiftKey && active === focusable[0])) {
+        event.preventDefault();
+        onTabBoundary("previous", frame);
+      } else if (!event.shiftKey && active === focusable[focusable.length - 1]) {
+        event.preventDefault();
+        onTabBoundary("next", frame);
+      }
     };
     const sync = () => {
       try {
@@ -86,7 +103,7 @@ function LegacyDetail({ path, mint, label, onNavigate, onClose }: {
       attachedDocument?.removeEventListener("keydown", keydown);
       window.clearInterval(timer);
     };
-  }, [onNavigate, onClose]);
+  }, [onNavigate, onClose, onTabBoundary]);
   return (
     <div className="h-full min-h-[640px] overflow-hidden rounded-xl border border-[#a98b2b]/25 bg-[#17130e]">
       <iframe ref={frameRef} title={label} src={url} className="h-[70vh] min-h-[640px] w-full border-0" />
@@ -144,6 +161,17 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
     if (overview) close();
   }, [mint, submit, close]);
 
+  const focusFrameBoundary = useCallback((direction: "previous" | "next", frame: HTMLIFrameElement) => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusable = focusableElements(dialog);
+    const frameIndex = focusable.indexOf(frame);
+    const target = direction === "previous"
+      ? focusable[frameIndex - 1] ?? focusable[focusable.length - 1]
+      : focusable[frameIndex + 1] ?? focusable[0];
+    target?.focus();
+  }, []);
+
   useEffect(() => {
     if (!detail) return;
     const before = document.body.style.overflow;
@@ -155,9 +183,7 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
         close();
       }
       if (event.key === "Tab" && dialogRef.current) {
-        const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), iframe, [tabindex="0"]'
-        ));
+        const focusable = focusableElements(dialogRef.current);
         if (focusable.length) {
           const first = focusable[0], last = focusable[focusable.length - 1];
           if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
@@ -202,7 +228,7 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
       </div>
     );
     if (id === "evidence") return <ForensicEvidencePage />;
-    const legacy = { onNavigate: navigateLegacy, onClose: close };
+    const legacy = { onNavigate: navigateLegacy, onClose: close, onTabBoundary: focusFrameBoundary };
     if (id === "onchain") return <LegacyDetail {...legacy} path="/trade/analysis/onchain" mint={mint} label="Полный анализ кошельков" />;
     if (id === "leaderboard") return <LegacyDetail {...legacy} path="/trade/leaderboard" mint={mint} label="Leaderboard" />;
     if (id === "history") return <LegacyDetail {...legacy} path="/trade/history" mint={mint} label="История запусков" />;
