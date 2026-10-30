@@ -59,6 +59,19 @@ test("Postgres claims use the database statement clock unless a deterministic ov
   assert.match(claim.sql,/lease_until=COALESCE/);
 });
 
+test("Postgres claim keeps an explicit deterministic clock override",async()=>{
+  const calls=[];
+  const pool={connect:async()=>({
+    query:async(sql,params)=>{calls.push({sql,params});return{rows:[]}},
+    release:()=>{},
+  })};
+  const now=new Date("2026-10-18T00:00:00.000Z");
+  await claimPostgres(pool,{workerId:"fixture-clock",batchSize:1,leaseMs:7000,now});
+  const claim=calls.find(call=>call.sql.includes("RETURNING o.*"));
+  assert.equal(claim.params[0],now.toISOString());
+  assert.equal(claim.params[3],7000);
+});
+
 test("Postgres ACK and failure require lease owner",async()=>{
   const calls=[];
   const client={query:async(sql,params)=>{calls.push({sql,params});return{rows:[{id:"7"}]}}};
