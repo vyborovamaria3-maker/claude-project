@@ -90,7 +90,11 @@ try {
   await page.goto(origin + '/#collector-tg-collector');
   await page.locator('#appView').waitFor({ state: 'visible' });
   for (const module of ['tg-collector', 'x-collector', 'tg-invite', 'diagnostics', 'apify', 'blockchain']) {
-    await page.locator(`[data-collector-tab="${module}"]`).click();
+    if (module === 'tg-collector') await page.locator('#tgCollectorUserNav').click();
+    else {
+      await page.locator('#xCollectorNav').click();
+      await page.locator(`[data-collector-tab="${module}"]`).click();
+    }
     const frame = page.frameLocator(`iframe[data-collector-workspace="${module}"]`);
     await frame.locator('.collector-console[data-embedded=true]').waitFor();
     assert.equal(new URL(page.url()).origin, origin);

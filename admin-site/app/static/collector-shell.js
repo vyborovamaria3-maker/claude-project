@@ -2,7 +2,7 @@
 (() => {
   const modules = new Map([
     ['x-collector', 'Пользовательский X Collector'], ['tg-invite', 'TG Inviting'],
-    ['tg-collector', 'TG Collector'], ['diagnostics', 'Diagnostics'],
+    ['diagnostics', 'Diagnostics'],
     ['apify', 'Apify'], ['blockchain', 'Настройки Blockchain'],
   ]);
   let selected = null;

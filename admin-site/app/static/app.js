@@ -1,5 +1,5 @@
 const state = {
-  view: window.location.hash === "#collectors" ? "xCollector" : /^#collector-(x-collector|tg-collector|tg-invite|diagnostics|apify|blockchain)$/.test(window.location.hash) ? window.location.hash.slice(1) : window.location.hash === "#graph" ? "graph" : "overview",
+  view: window.location.hash === "#user-tg-collector" ? "tgCollectorUser" : window.location.hash === "#tg-collector" ? "tgCollector" : window.location.hash === "#collectors" ? "xCollector" : /^#collector-(x-collector|tg-collector|tg-invite|diagnostics|apify|blockchain)$/.test(window.location.hash) ? window.location.hash.slice(1) : window.location.hash === "#graph" ? "graph" : "overview",
   me: null,
   overview: null,
   db: { source: "", table: "", page: 1, pageSize: 50, search: "", tables: [], data: null },
