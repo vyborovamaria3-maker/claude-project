@@ -1,6 +1,6 @@
 # ARCH-06: offline collector-signed RPC provenance contract
 
-Draft PR #150. No network transport, signer service, secret loading, API integration or confidence promotion is enabled. A dedicated SQLite challenge-store adapter is available only through an explicit file path.
+Offline provenance verifier integrated into `main` through PR #133 (original PR #150); two-witness offline report acceptance was added by merged PR #159. No network transport, signer service, secret loading, API integration or confidence promotion is enabled. A dedicated SQLite challenge-store adapter is available only through an explicit file path.
 
 ## What is authenticated
 
