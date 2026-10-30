@@ -68,8 +68,10 @@ function LegacyDetail({ path, mint, label, onNavigate, onClose }: {
     const keydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
       if (event.key !== "Tab") return;
-      const focusable = focusableElements(child.document);
-      const active = child.document.activeElement;
+      const childDocument = frame.contentDocument;
+      if (!childDocument) return;
+      const focusable = focusableElements(childDocument);
+      const active = childDocument.activeElement;
       if (!focusable.length || (event.shiftKey && active === focusable[0])) {
         event.preventDefault();
         onTabBoundary("previous", frame);
