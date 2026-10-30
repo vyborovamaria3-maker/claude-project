@@ -99,6 +99,13 @@ test('request parser validates JSON shapes and stops a chunked body at its limit
  await assert.rejects(readTokenAnalysisRequest({headers:new Headers(),body}),/request_too_large/);
  assert.equal(cancelled,true);
 });
+test('legacy AI empty state explains explicit generation instead of promising an automatic run',async()=>{
+ const panel=await readFile(new URL('../components/trade/SocialIntelligencePanel.tsx',import.meta.url),'utf8');
+ assert.match(panel,/Snapshot готов\. Нажмите «Анализ», чтобы запустить Qwen\./);
+ assert.match(panel,/loading \? "Анализ выполняется…"/);
+ assert.doesNotMatch(panel,/AI запускается после сборки unified snapshot/);
+});
+
 test('legacy Social Intelligence loads deterministic sources on mount but defers AI until explicit action',async()=>{
  const panel=await readFile(new URL('../components/trade/SocialIntelligencePanel.tsx',import.meta.url),'utf8');
  assert.match(panel,/async \(next: string, generateAi = true\)/);
