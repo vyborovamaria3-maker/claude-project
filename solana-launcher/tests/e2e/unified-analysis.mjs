@@ -62,6 +62,11 @@ export async function checkUnifiedDetails(page, baseUrl, mint) {
   await page.locator('[data-tag="trade.search_input"]').fill(mint);
   await page.locator('[data-tag="trade.search_submit"]').click();
   await page.waitForURL(url => url.searchParams.get("mint") === mint);
+  const detailPosts = [];
+  const captureDetailPosts = request => {
+    if (request.method() === "POST") detailPosts.push(new URL(request.url()).pathname);
+  };
+  page.on("request", captureDetailPosts);
   await page.locator("article").first().getByRole("button", { name: /Открыть подробно/ }).click();
   await page.waitForFunction(() => {
     const tables = document.querySelector('[data-tag="trade.social.metrics"]');
@@ -69,6 +74,8 @@ export async function checkUnifiedDetails(page, baseUrl, mint) {
       row.querySelector(".text-content-muted")?.textContent === "Mentions" && row.querySelector(".font-mono")?.textContent === "7"
     );
   });
+  assert.deepEqual(detailPosts, [], "Opening a source detail must not trigger automatic AI POST");
+  page.off("request", captureDetailPosts);
   assert.equal(xMint, mint, "Selected mint must reach the existing X source");
   await dialog.getByRole("button", { name: "Cross-platform / Timing", exact: true }).click();
   for (const label of ["Cross-platform score", "Cross matched share", "Both platforms active"]) {
