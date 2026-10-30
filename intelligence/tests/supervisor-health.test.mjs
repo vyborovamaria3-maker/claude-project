@@ -71,7 +71,7 @@ test("PostgreSQL health maps native timestamps and bigint counters without expos
 
 test("health alerts use conservative configurable thresholds and remain machine-readable",()=>{
   const health={
-    pending:2,deadLetter:1,maxAttempts:5,oldestPendingAgeMs:600001,
+    pending:2,deadLetter:1,maxAttempts:5,schemaVersionSkewKinds:1,oldestPendingAgeMs:600001,
   };
   assert.deepEqual(classifyOutboxHealth(health,{alertOldestPendingMs:300000,maxFailures:5}),[
     "dead_letter_events_present","oldest_pending_age_exceeded","pending_retry_threshold_exceeded",
