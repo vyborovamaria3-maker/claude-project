@@ -57,6 +57,63 @@ export async function checkPgOutbox(pool){
   if(!rows[0]?.present)throw new Error("source outbox schema is not installed");
 }
 
+function isoOrNull(value){
+  if(value===null||value===undefined)return null;
+  const date=value instanceof Date?value:new Date(String(value));
+  if(!Number.isFinite(date.getTime()))throw new TypeError("invalid outbox timestamp");
+  return date.toISOString();
+}
+
+/** Read-only queue health snapshot; does not claim, lease, ACK or mutate events. */
+export async function outboxStatus(source,now=new Date()){
+  if(!source||!["pg","sqlite"].includes(source.kind)||!source.connection){
+    throw new TypeError("invalid outbox source");
+  }
+  if(!(now instanceof Date)||!Number.isFinite(now.getTime()))throw new TypeError("invalid health timestamp");
+  const at=now.toISOString();
+  let row;
+  if(source.kind==="sqlite"){
+    row=source.connection.prepare(`SELECT
+      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS pending,
+      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+        AND next_attempt_at<=? AND (lease_until IS NULL OR lease_until<=?)) AS ready,
+      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+        AND lease_until>?) AS leased,
+      count(*) FILTER (WHERE processed_at IS NULL AND attempts>0) AS retry_count,
+      count(*) FILTER (WHERE dead_lettered_at IS NOT NULL) AS dead_letter,
+      min(created_at) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS oldest_pending_at,
+      max(processed_at) AS last_progress_at,
+      max(attempts) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS max_attempts
+    FROM outbox_events`).get(at,at,at);
+  }else{
+    await checkPgOutbox(source.connection);
+    const result=await source.connection.query(`SELECT
+      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL)::text AS pending,
+      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+        AND next_attempt_at<=$1::timestamptz
+        AND (lease_until IS NULL OR lease_until<=$1::timestamptz))::text AS ready,
+      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+        AND lease_until>$1::timestamptz)::text AS leased,
+      count(*) FILTER (WHERE processed_at IS NULL AND attempts>0)::text AS retry_count,
+      count(*) FILTER (WHERE dead_lettered_at IS NOT NULL)::text AS dead_letter,
+      min(created_at) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS oldest_pending_at,
+      max(processed_at) AS last_progress_at,
+      coalesce(max(attempts) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL),0)::text AS max_attempts
+    FROM outbox_events`,[at]);
+    row=result.rows[0];
+  }
+  const oldestPendingAt=isoOrNull(row.oldest_pending_at);
+  const lastProgressAt=isoOrNull(row.last_progress_at);
+  const age=(value)=>value===null?null:Math.max(0,now.getTime()-Date.parse(value));
+  return {
+    pending:Number(row.pending),ready:Number(row.ready),leased:Number(row.leased),
+    retryCount:Number(row.retry_count),deadLetter:Number(row.dead_letter),
+    oldestPendingAt,oldestPendingAgeMs:age(oldestPendingAt),
+    lastProgressAt,lastProgressAgeMs:age(lastProgressAt),
+    maxAttempts:Number(row.max_attempts??0),
+  };
+}
+
 export async function checkDestination(pool,options={}){
   const result=await pool.query(`SELECT
     to_regclass('intelligence_inbox') IS NOT NULL AS inbox,
