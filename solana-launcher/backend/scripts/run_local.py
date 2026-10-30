@@ -42,10 +42,18 @@ def main(argv=None) -> int:
         )
         return 2
     try:
-        Settings(_env_file=filename)
+        settings = Settings(_env_file=filename)
     except ValidationError as error:
         fields = sorted({".".join(map(str, item["loc"])) for item in error.errors()})
         print("Backend configuration invalid: " + ", ".join(fields), file=sys.stderr)
+        return 2
+    selected_database = os.environ.get("DATABASE_URL") or values.get("DATABASE_URL")
+    if settings.database_url != selected_database:
+        print(
+            "Backend settings substituted a different database. Refusing startup; "
+            "configure a secure explicit connection to the existing database.",
+            file=sys.stderr,
+        )
         return 2
     if args.check:
         print(

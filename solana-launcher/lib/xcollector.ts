@@ -81,7 +81,8 @@ export type XCollectorSummary = {
 };
 
 function getXCollectorDir() {
-  return path.resolve(X_COLLECTOR_DIR_REL);
+  // The UI checkout and the installed collector can live in different folders.
+  return path.resolve(process.env.X_COLLECTOR_DIR || X_COLLECTOR_DIR_REL);
 }
 
 function envValueConfigured(value: string | undefined) {

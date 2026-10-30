@@ -462,6 +462,8 @@ class TelegramMonitorManager:
             self._background_running = False
 
     def start_background(self) -> None:
+        if not getattr(self.settings, "telegram_background_enabled", True):
+            return
         if self._background_task is not None and not self._background_task.done():
             return
         self._background_task = asyncio.create_task(

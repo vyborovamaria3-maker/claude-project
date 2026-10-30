@@ -92,3 +92,5 @@ LLM_PROVIDER=openai
 ## Telegram dataset integration
 
 See [TELEGRAM_DATASETS.md](TELEGRAM_DATASETS.md) for public dataset sync, local TGDataset import, provenance, and operational limits.
+
+For API-only local recovery, set `TG_BACKGROUND_ENABLED=false`; this prevents scheduling the Telegram background loop without changing existing worker processes. `run_local.py --check` now also rejects a Settings validator silently selecting a different database than the explicit configuration. Existing local administrator addresses (for example a reserved .local domain) remain readable through `/users/me`; new-user input validation is unchanged.

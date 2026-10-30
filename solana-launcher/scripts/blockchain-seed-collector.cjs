@@ -113,7 +113,9 @@ function usage() {
 function initDb(db) {
   db.pragma("journal_mode = WAL");
   db.pragma("busy_timeout = 5000");
-  db.exec([
+  const rawCompact = require("./chain-raw-compact.cjs");
+  const compactEnabled = rawCompact.enabled(db);
+  const schemaSql = [
     "CREATE TABLE IF NOT EXISTS chain_seed_files (",
     "  file_path TEXT PRIMARY KEY, category TEXT NOT NULL, bytes INTEGER NOT NULL,",
     "  mtime_ms INTEGER NOT NULL, imported_at INTEGER NOT NULL, sheet_count INTEGER NOT NULL,",
@@ -257,7 +259,8 @@ function initDb(db) {
     " INSERT INTO chain_collection_budget_ledger(provider,request_id,run_id,scope_id,account_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at)",
     " VALUES('alchemy',NEW.request_id,NEW.run_id,NEW.scope_id,NEW.account_id,NEW.task_kind,NEW.task_address,NEW.method,'cu',NEW.estimated_cu,NEW.actual_cu,NEW.status,NEW.http_status,NEW.error,NEW.created_at,NEW.finished_at)",
     " ON CONFLICT(provider,request_id) DO UPDATE SET actual_units=excluded.actual_units,status=excluded.status,http_status=excluded.http_status,error=excluded.error,finished_at=excluded.finished_at; END",
-  ].join("\n"));
+  ].join("\n");
+  db.exec(compactEnabled ? rawCompact.legacySchema(schemaSql) : schemaSql);
   if (!db.pragma("table_info(chain_seed_targets)").some(c => c.name === "forward_cursor")) {
     db.exec("ALTER TABLE chain_seed_targets ADD COLUMN forward_cursor TEXT");
   }
@@ -908,7 +911,9 @@ function persistEvents(db, kind, address, transactions) {
   const current=db.prepare("SELECT kind,address,signature,raw_revision,payload_hash,"+
     "payload_gzip,payload_bytes,observed_at,block_time,slot FROM chain_seed_events "+
     "WHERE kind=? AND address=? AND signature=?");
-  const recordRevision=db.prepare("INSERT INTO chain_seed_raw_revisions "+
+  const compactRaw=require("./chain-raw-compact.cjs");
+  const usesCompactRaw=compactRaw.enabled(db);
+  const recordRevision=usesCompactRaw ? null : db.prepare("INSERT INTO chain_seed_raw_revisions "+
     "(kind,address,signature,raw_revision,payload_hash,payload_gzip,payload_bytes,"+
     "observed_at,block_time,slot) VALUES(?,?,?,?,?,?,?,?,?,?) "+
     "ON CONFLICT(kind,address,signature,raw_revision) DO NOTHING");
@@ -926,6 +931,7 @@ function persistEvents(db, kind, address, transactions) {
     }
     if(!/^[a-f0-9]{64}$/.test(row.payload_hash||""))
       throw new Error("Invalid raw snapshot hash");
+    if(usesCompactRaw){compactRaw.archive(db,row);return;}
     const values=[row.kind,row.address,row.signature,row.raw_revision,row.payload_hash,
       row.payload_gzip,row.payload_bytes,row.observed_at,row.block_time,row.slot];
     if(recordRevision.run(...values).changes===0){

@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     )
     telegram_monitor_channels: str = Field(default="", alias="TG_MONITOR_CHANNELS")
     telegram_autostart: bool = Field(default=False, alias="TG_AUTOSTART")
+    telegram_background_enabled: bool = Field(default=True, alias="TG_BACKGROUND_ENABLED")
     telegram_history_limit: int = Field(default=300, ge=1, le=5000, alias="TG_HISTORY_LIMIT")
     telegram_graph_depth: int = Field(default=1, ge=0, le=3, alias="TG_GRAPH_DEPTH")
     telegram_entity_limit: int = Field(default=100, ge=1, le=1000, alias="TG_ENTITY_LIMIT")

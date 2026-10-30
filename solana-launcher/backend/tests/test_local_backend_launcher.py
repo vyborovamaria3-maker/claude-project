@@ -29,6 +29,7 @@ class LocalBackendLauncherTests(unittest.TestCase):
                 timeout=20,
             )
             self.assertFalse((Path(directory) / "must-not-create.db").exists())
+            self.assertFalse((Path(directory) / "potapoff.db").exists())
             return result
 
     def test_missing_secret_is_reported_without_secret_values(self):
@@ -52,6 +53,15 @@ class LocalBackendLauncherTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("no database connection", result.stdout)
         self.assertNotIn(secret, result.stdout + result.stderr)
+
+    def test_rewritten_database_is_rejected_without_creating_sqlite(self):
+        result = self.check_config(
+            "ENVIRONMENT=development\nSECRET_KEY=" + "test-key-" * 8
+            + "\nDATABASE_URL=postgresql+asyncpg://potapoff:potapoff@127.0.0.1:1/existing\n"
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("substituted a different database", result.stderr)
+        self.assertNotIn("potapoff:potapoff", result.stderr)
 
 
 if __name__ == "__main__":
