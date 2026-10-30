@@ -75,7 +75,7 @@ const ChartHeader = React.memo(function ChartHeader({
   const changeColor = up ? "text-[#a855f7]" : "text-[#10b981]";
   const changeBg = up ? "bg-[#a855f7]/10 border-[#a855f7]/20" : "bg-[#10b981]/10 border-[#10b981]/20";
 
-  const displaySymbol = pair?.symbol || symbol || "вЂ”";
+  const displaySymbol = pair?.symbol || symbol || "—";
   const displayName = pair?.name || name || "";
   const displayPrice = pair?.priceUsd ?? lastPrice;
 
@@ -94,7 +94,7 @@ const ChartHeader = React.memo(function ChartHeader({
   // Memoized formatted values for performance
   const feeStr = useMemo(() => {
     const feeSol = pair?.totalFeesSol;
-    if (!feeSol || feeSol <= 0) return "вЂ”";
+    if (!feeSol || feeSol <= 0) return "—";
     if (feeSol >= 1000) return `${(feeSol / 1000).toFixed(2)}K SOL`;
     if (feeSol >= 0.01) return `${feeSol.toFixed(2)} SOL`;
     return `${(feeSol * 1000).toFixed(2)}m SOL`;
