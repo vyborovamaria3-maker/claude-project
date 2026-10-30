@@ -18,6 +18,7 @@ export const maxDuration = 120;
 const AI_BASE = (process.env.MEMECOIN_INTELLIGENCE_URL || "http://host.docker.internal:3001").replace(/\/$/, "");
 const API_KEY = process.env.MEMECOIN_INTELLIGENCE_API_KEY || process.env.INTERNAL_API_KEY || "";
 const MAX_AI_SNAPSHOT_BYTES = 450_000;
+const MAX_REQUEST_BODY_BYTES = 4_096;
 const REPORT_CACHE_TTL_MS = 60_000;
 const REPORT_CACHE_MAX = 500;
 
@@ -100,6 +101,48 @@ function record(value: unknown): Record<string, unknown> | null {
   return value != null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+type BoundedJsonResult =
+  | { ok: true; value: unknown }
+  | { ok: false; error: "too_large" | "invalid" };
+
+async function readBoundedJson(req: NextRequest): Promise<BoundedJsonResult> {
+  const declaredLength = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_REQUEST_BODY_BYTES) {
+    return { ok: false, error: "too_large" };
+  }
+  const reader = req.body?.getReader();
+  if (!reader) return { ok: false, error: "invalid" };
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > MAX_REQUEST_BODY_BYTES) {
+        await reader.cancel();
+        return { ok: false, error: "too_large" };
+      }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return {
+      ok: true,
+      value: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
+    };
+  } catch {
+    return { ok: false, error: "invalid" };
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 
@@ -239,12 +282,14 @@ export async function POST(req: NextRequest) {
       },
     );
   }
-  let body: Record<string, unknown> | null;
-  try {
-    body = record(await req.json());
-  } catch {
-    return NextResponse.json({ error: "bad json" }, { status: 400 });
+  const parsedBody = await readBoundedJson(req);
+  if (!parsedBody.ok) {
+    return NextResponse.json(
+      { error: parsedBody.error === "too_large" ? "request body too large" : "bad json" },
+      { status: parsedBody.error === "too_large" ? 413 : 400 },
+    );
   }
+  const body = record(parsedBody.value);
   if (!body) return NextResponse.json({ error: "invalid request body" }, { status: 400 });
   const mint = typeof body.mint === "string" ? body.mint.trim() : "";
   if (!validMint(mint)) return NextResponse.json({ error: "invalid mint" }, { status: 400 });
