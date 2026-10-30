@@ -37,6 +37,37 @@ function validTimelineItem(value: unknown): boolean {
     && isOptionalString(value.occurred_at)
     && (value.metrics === undefined || value.metrics === null || isRecord(value.metrics));
 }
+function validTwitterResponse(value: unknown): boolean {
+  if (!isRecord(value)
+    || !["totalTweets", "totalViews", "totalLikes", "totalRetweets", "uniqueMentioners", "botRiskScore", "anomalyCount"]
+      .every((key) => isFiniteNumber(value[key]))
+    || !isRecord(value.aggregated)
+    || !["totalEngagement", "engagementRate", "verifiedAuthors", "botRatio"]
+      .every((key) => isFiniteNumber(value.aggregated?.[key]))
+    || !Array.isArray(value.topTweets)
+    || !value.topTweets.every((item) => isRecord(item)
+      && typeof item.id === "string"
+      && typeof item.text === "string"
+      && typeof item.author === "string"
+      && isFiniteNumber(item.likes)
+      && isFiniteNumber(item.retweets)
+      && isFiniteNumber(item.views)
+      && (item.timestamp === null || isFiniteNumber(item.timestamp))
+      && typeof item.isSuspicious === "boolean")
+    || !Array.isArray(value.shillers)
+    || !value.shillers.every((item) => isRecord(item)
+      && typeof item.handle === "string"
+      && isFiniteNumber(item.tweets)
+      && isFiniteNumber(item.totalEngagement)
+      && typeof item.isBot === "boolean"
+      && isOptionalFiniteNumber(item.followers)
+      && typeof item.isVerified === "boolean")) return false;
+  const riskUniverse = value.riskUniverse;
+  return riskUniverse === undefined || riskUniverse === null
+    || (isRecord(riskUniverse)
+      && ["totalTweets", "uniqueAuthors", "suspiciousTweets", "botAccounts", "botRiskScore", "botRatio", "anomalyCount"]
+        .every((key) => isOptionalFiniteNumber(riskUniverse[key])));
+}
 function validTelegramResponse(value: unknown): boolean {
   if (!isRecord(value) || !isFiniteNumber(value.mentions) || !isRecord(value.platforms)
     || !isOptionalFiniteNumber(value.platforms.telegram)
@@ -98,10 +129,7 @@ export default function useAnalysisOverview(mint: string) {
       }
     }
     void Promise.all([
-      read("x", `/api/trade/dev-twitter?${x}`, data =>
-        isRecord(data) && Number.isFinite(data.totalTweets) && isRecord(data.aggregated)
-        && Array.isArray(data.topTweets) && data.topTweets.every(item => isRecord(item) && typeof item.text === "string")
-        && Array.isArray(data.shillers) && data.shillers.every(isRecord)),
+      read("x", `/api/trade/dev-twitter?${x}`, validTwitterResponse),
       read("tg", `${backend}/api/v1/social/token/${encodeURIComponent(mint)}?${tg}`, validTelegramResponse),
       read("market", `/api/token-ohlcv?mint=${encodeURIComponent(mint)}`, data => isRecord(data) && isRecord(data.pair)),
       read("chain", `/api/blockchain/evidence?mint=${encodeURIComponent(mint)}&limit=100`, validChainResponse),
