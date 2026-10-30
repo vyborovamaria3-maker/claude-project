@@ -8,7 +8,7 @@ Seven open PRs were returned by the current GitHub listing:
 
 | PR | Title | State | Head |
 | --- | --- | --- | --- |
-| [#207](https://github.com/vyborovamaria3-maker/claude-project/pull/207) | fix(event-outbox): use PostgreSQL clock for outbox claims | OPEN | `fix/three-source-outbox-tombstone-20261030` |
+| [#207](https://github.com/vyborovamaria3-maker/claude-project/pull/207) | fix(event-outbox): use PostgreSQL clock for claims and retries | OPEN | `fix/three-source-outbox-tombstone-20261030` |
 | [#206](https://github.com/vyborovamaria3-maker/claude-project/pull/206) | feat(intelligence): add read-only supervisor health metrics | OPEN | `feat/intelligence-supervisor-health-20261030` |
 | [#205](https://github.com/vyborovamaria3-maker/claude-project/pull/205) | docs(architecture): refresh whole-repository baseline and technical debt | OPEN | `docs/repository-baseline-20261030` |
 | [#204](https://github.com/vyborovamaria3-maker/claude-project/pull/204) | fix(admin): relocate collector workspaces exclusively to standalone Control Center | OPEN DRAFT | `feat/admin-relocate-collectors-tginvite-20261029` |
