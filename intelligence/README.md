@@ -118,10 +118,22 @@ Runtime safeguards:
   finish before closing connection pools.
 - Bounded JSON lines include counters and error **codes**, never event payloads,
   passwords or original exception strings.
+- A read-only health snapshot is emitted at startup and every
+  `--health-interval-ms` (default 30 seconds), plus after failed/lost-lease
+  batches. It includes pending/ready/leased counts, retry count, dead-letter
+  count, oldest pending timestamp/age, last successful progress timestamp/age
+  and maximum pending attempts.
+- Machine-readable alert records are emitted when any dead-letter exists, when
+  oldest pending age exceeds `--alert-oldest-pending-ms` (default 5 minutes;
+  zero disables this alert), or when pending attempts reach `--max-failures`.
+  Alert records contain only source, bounded counters and an allowlisted code.
+- These alerts are JSON log events, **not an external notification service**.
+  A deployment must route supervisor stdout to its approved log/alert sink.
 - Operator can inspect per-source backlog and dead letters using the existing
-  read-only `run.mjs --source <source> --status`.
+  read-only `run.mjs --source <source> --status`; it shares the same health
+  metrics without claiming or mutating events.
 
-Caveats: this implementation does not persist a machine-level process manager,
+Caveats: health alerts are structured stdout records only; no external alert delivery or process manager is configured. This implementation does not persist a machine-level process manager,
 does not create a health HTTP service, does not apply migrations, and does not
 validate a live X/TG/Blockchain producer or the real token-link resolver.
 Startup after Windows restart requires explicit process launch. The current
