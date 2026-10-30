@@ -102,6 +102,7 @@ test('request parser validates JSON shapes and stops a chunked body at its limit
 test('legacy AI empty state explains explicit generation instead of promising an automatic run',async()=>{
  const panel=await readFile(new URL('../components/trade/SocialIntelligencePanel.tsx',import.meta.url),'utf8');
  assert.match(panel,/Snapshot готов\. Нажмите «Анализ», чтобы запустить Qwen\./);
+ assert.match(panel,/В snapshot нет пригодных доказательств\. Qwen не запускается\./);
  assert.match(panel,/loading \? "Анализ выполняется…"/);
  assert.doesNotMatch(panel,/AI запускается после сборки unified snapshot/);
 });
