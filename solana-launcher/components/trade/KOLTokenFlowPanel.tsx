@@ -40,7 +40,7 @@ function money(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value)) return "—";
   const sign = value > 0 ? "+" : value < 0 ? "-" : "";
   const magnitude = Math.abs(value);
-  return `${sign}${magnitude >= 1000 ? `${(magnitude / 1000).toFixed(1)}k` : magnitude.toFixed(0)}`;
+  return `${sign}${magnitude >= 1000 ? `${(magnitude / 1000).toFixed(1)}k` : magnitude.toFixed(2)}`;
 }
 
 function signalLabel(signal?: string) {
