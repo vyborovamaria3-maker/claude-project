@@ -25,7 +25,7 @@ This is a point-in-time, evidence-backed register. GitHub Issues remain the owne
 
 ## Active PR #203 — unified Analysis UI
 
-- PR [#203](https://github.com/vyborovamaria3-maker/claude-project/pull/203) remains open and targets `main`; it is not merged. No review submissions were present in the current GitHub review list, so human review/approval remains outstanding.
+- PR [#203](https://github.com/vyborovamaria3-maker/claude-project/pull/203) remains open and targets `main`; it is not merged. The diff spans 39 files (+2,049/−1,080) across the Next.js UI, Admin Control Center, Intelligence API, AI gateway, tests and CI; the scope is broader than the PR title. No review submissions were present in the current GitHub review list, so human review/approval remains outstanding. Review the API/AI-gateway and admin-link changes as well as the UI before merge.
 - The embedded `BlockchainAiReportPanel` is configured request-only in the unified Analysis dialog so opening the dialog does not itself send the AI POST. Explicit user action remains available.
 - A source regression asserts the unified component uses request-only mode. A Playwright browser test verifies source states, stale-mint handling, the 141-field report and one explicit AI POST.
 - The browser test is wired into Frontend Quality CI; Social Analysis UI CI path filters include the unified components and test.
