@@ -10,7 +10,7 @@ import {queueAnalyticsInvalidation} from "./governance.js";
 export type OutboxSource = {
   claim(options: ClaimOptions): Promise<ClaimedEvent[]>;
   ack(event: ClaimedEvent): Promise<boolean>;
-  fail(event: ClaimedEvent, reasonCode: string, nextAttemptAt: Date): Promise<boolean>;
+  fail(event: ClaimedEvent, reasonCode: string, nextAttemptAt: Date, retryDelayMs?: number): Promise<boolean>;
   /** Optional: exchange an exact active claim for a new lease fencing token. */
   renew?(event: ClaimedEvent, leaseMs: number): Promise<string | null>;
 };
@@ -269,7 +269,7 @@ export async function runDeliveryBatch(
         continue;
       }
       const next=new Date(Date.now()+retryDelayMs);
-      try {if (!await source.fail(active,code,next)) stats.lostLeases++}
+      try {if (!await source.fail(active,code,next,retryDelayMs)) stats.lostLeases++}
       catch {stats.lostLeases++}
     }
   }
