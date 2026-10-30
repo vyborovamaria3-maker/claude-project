@@ -77,6 +77,10 @@ test("Postgres ACK and failure require lease owner",async()=>{
   const client={query:async(sql,params)=>{calls.push({sql,params});return{rows:[{id:"7"}]}}};
   assert.equal(await ackPostgres(client,"7","w","2026-10-18T00:10:00Z"),true);
   assert.equal(await failPostgres(client,"7","w","2026-10-18T00:10:00Z","network",new Date()),true);
+  assert.equal(calls[1].params[6],null,"explicit nextAttemptAt remains available for deterministic callers");
+  assert.equal(await failPostgres(client,"7","w","2026-10-18T00:10:00Z","network",new Date("2026-10-18T00:00:00Z"),12,30000),true);
+  assert.equal(calls[2].params[6],30000);
+  assert.match(calls[2].sql,/DATE_TRUNC\('milliseconds', statement_timestamp\(\)\)/);
   assert.ok(calls.every(x=>x.sql.includes("lease_owner=$2")));
 });
 
