@@ -1,4 +1,23 @@
-# PR_STATUS — GitHub PR inventory (2026-10-24, after #165 merge)
+# PR_STATUS — GitHub PR inventory
+
+## Current snapshot — 2026-10-30
+
+Observed `main` SHA: `9f4a7e88afa80774633ee4a43221a621fe5f1922`. GitHub currently reports `main.protected=false`; effective branch protection must be configured by a repository administrator ([issue #170](https://github.com/vyborovamaria3-maker/claude-project/issues/170)).
+
+Five open PRs were returned by the current GitHub listing:
+
+| PR | Title | State | Head |
+| --- | --- | --- | --- |
+| [#205](https://github.com/vyborovamaria3-maker/claude-project/pull/205) | docs(architecture): refresh whole-repository baseline and technical debt | OPEN | `docs/repository-baseline-20261030` |
+| [#204](https://github.com/vyborovamaria3-maker/claude-project/pull/204) | fix(admin): relocate collector workspaces exclusively to standalone Control Center | OPEN DRAFT | `feat/admin-relocate-collectors-tginvite-20261029` |
+| [#203](https://github.com/vyborovamaria3-maker/claude-project/pull/203) | UI: единая вкладка Analysis с графиком и подробной панелью | OPEN | `feature/unified-analysis-v1-modal` |
+| [#202](https://github.com/vyborovamaria3-maker/claude-project/pull/202) | feat: Hood Hunt-style evidence-first analytics, DEV setups and target review | OPEN DRAFT | `fix/hood-hunt-analytics-foundation-20261028` |
+| [#195](https://github.com/vyborovamaria3-maker/claude-project/pull/195) | feat: split FOMO pressure and quality metrics | OPEN DRAFT | `feat/fomo-pressure-quality-2026-10-27` |
+
+PR #203 is mergeable and has 17 successful workflows plus one skipped workflow on head `03aca7e25f3d66f0d39f6f8b279483eb8eb101cf`; it remains unmerged. PR #205 is mergeable and documentation-only; GitHub checks must be read at its latest head before merge.
+
+## Historical inventory snapshot — 2026-10-24
+
 
 Point-in-time snapshot of the public [GitHub PR listing](https://github.com/vyborovamaria3-maker/claude-project/pulls). **GitHub is authoritative** for current status, CI, review and merge base; this file can become stale after every update.
 
