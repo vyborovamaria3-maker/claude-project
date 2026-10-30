@@ -108,8 +108,8 @@ test('request-only panel does not depend on legacy sources and never analyzes on
  assert.ok(start<panel.indexOf('const chainPromise'));
  assert.match(panel,/if \(!requestOnly && initialMint/);assert.match(panel,/if\(requestOnly\)return;/);
  assert.match(panel,/requestOnly && <TokenRequestPanel/);assert.match(page,/requestOnly=\{process.env.INTELLIGENCE_AI_ON_DEMAND_ENABLED === "true"\}/);
- assert.match(unified,/focus=\{id\}[\s\S]*requestOnly=\{id === "ai" \|\| requestOnly\}/,
-  'Opening the unified AI tab must never auto-run legacy social AI, regardless of the server flag');
+ assert.match(unified,/focus=\{id\}[\s\S]*requestOnly=\{requestOnly\}/,
+  'The unified Social Intelligence panel must preserve the server-configured request-only policy');
  assert.match(unified,/BlockchainAiReportPanel mint=\{mint\} requestOnly/,
   'The blockchain AI report must also wait for an explicit click in the unified dialog');
 });
