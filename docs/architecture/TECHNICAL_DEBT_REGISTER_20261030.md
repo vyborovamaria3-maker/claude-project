@@ -40,8 +40,8 @@ This is a point-in-time, evidence-backed register. GitHub Issues remain the owne
 
 ### PR #207 — PostgreSQL outbox clock consistency
 
-- PR [#207](https://github.com/vyborovamaria3-maker/claude-project/pull/207) is ready for review and targets `main`; it is not merged. PostgreSQL now uses its own millisecond-truncated statement clock by default for claim eligibility and lease creation; an explicit `now` remains available for deterministic tests.
-- This addresses an intermittent race between DB-generated `next_attempt_at` and application-host time. A live PostgreSQL regression simulates a host clock one minute behind DB time and verifies the default DB-clock claim succeeds.
+- PR [#207](https://github.com/vyborovamaria3-maker/claude-project/pull/207) is ready for review and targets `main`; it is not merged. PostgreSQL now uses its own millisecond-truncated statement clock by default for claim eligibility, lease creation and retry-backoff scheduling; explicit `now`/`nextAttemptAt` overrides remain available for deterministic callers.
+- This addresses the intermittent race between DB-generated queue timestamps and application-host time. Live PostgreSQL regressions simulate a host clock one minute behind DB time and verify that default claim and retry scheduling use the DB clock.
 - On head `cd3ba90d062aa302b0b2ce682774a3231223dc95`, Transactional outbox adapters passed **16/16**, Intelligence foundation passed **247/247**, Intelligence CI, Native social token-link CI and Repository hygiene passed; Security Lock Refresh was skipped.
 - The diagnostic assertion in the three-source delivery regression prints only bounded source/outbox/inbox/link metadata if the failure recurs; it does not print payloads or credentials.
 
