@@ -62,6 +62,14 @@ assert(tokenInfo.includes("MAX_METADATA_BYTES"), "metadata response size must be
 
 const proxy = read("proxy.ts");
 assert(proxy.includes('"/api/trade"'), "all trade routes must be behind the paid gateway");
+const blockchainAiReport = read("app/api/trade/blockchain-ai-report/route.ts");
+const blockchainAiPost = blockchainAiReport.slice(blockchainAiReport.indexOf("export async function POST"));
+assert(blockchainAiReport.includes('import { checkRateLimit, getClientIp } from "@/lib/rateLimit";'), "blockchain AI report must use server-side rate limiting");
+assert(blockchainAiPost.includes("checkRateLimit("), "blockchain AI report must rate-limit before doing expensive work");
+assert(blockchainAiPost.indexOf("checkRateLimit(") < blockchainAiPost.indexOf("getBlockchainAiSnapshot("), "rate limit must run before snapshot collection");
+assert(blockchainAiPost.includes("`blockchain-ai-report:${getClientIp(req as unknown as Request)}`"), "blockchain AI report limit must be scoped by trusted client IP");
+assert(blockchainAiPost.includes("    5,\n    60,"), "blockchain AI report must allow at most five requests per minute per IP");
+assert(blockchainAiPost.includes("status: 429"), "blockchain AI report must reject excess requests with HTTP 429");
 assert(proxy.includes('"/api/database"'), "database diagnostics must be private in production");
 assert(proxy.includes("HEAVY_ROUTE_PREFIXES"), "expensive API routes must be rate limited");
 assert(proxy.includes("strict-dynamic"), "production CSP must be nonce-aware");
