@@ -1,0 +1,38 @@
+# Technical debt and P0 release blockers — 2026-10-30
+
+This is a point-in-time, evidence-backed register. GitHub Issues remain the ownership/acceptance source; this document does not close issues or declare a live release. Statuses distinguish implemented code, isolated CI evidence and operator/live verification.
+
+## P0 — release and operational safety
+
+| Area | Current evidence | Remaining debt / acceptance |
+| --- | --- | --- |
+| Main branch governance — [#170](https://github.com/vyborovamaria3-maker/claude-project/issues/170) | The issue remains open and explicitly requires repository-admin configuration. The current GitHub integration returned 403 for the branch-protection endpoint; the repository rulesets query returned an empty list. The 403 means effective classic protection could not be inspected; it is not proof of current state. A prior 2026-10-24 audit reported `protected=false`. | Repository admin must verify effective main rules, required checks by change type, no force-push, reviewed bypass and that a failing required check blocks merge. Do not claim protection until verified from an admin-capable context. |
+| Physical DB inventory and backup/restore — [#172](https://github.com/vyborovamaria3-maker/claude-project/issues/172) | Code includes pinned SSH/atomic backup and isolated restore-rehearsal work from PR #146; release-policy work from PR #188 is merged. The issue remains open and requires an evidence-backed inventory of physical DB instances plus a restore to an isolated destination. | Enumerate actual instances, schemas, owners, backup schedules and retention; verify host fingerprints through a trusted channel; run and record isolated restore/integrity/RPO/RTO. Do not run against or restore over a live DB. |
+| Three-source verified token evidence — [#173](https://github.com/vyborovamaria3-maker/claude-project/issues/173) | Shared token-link contracts, destination observation/retraction logic and isolated PostgreSQL/SQLite delivery tests exist. TG has an Alchemy-backed SPL/Token-2022 resolver gated by source outbox + token-link opt-ins. X has a bounded Alchemy verification CLI requiring explicit `--execute` and opt-ins. Tests exercise synthetic preverified evidence, ACK rollback/replay and time cutoffs. | Blockchain source outbox currently emits raw wallet-target evidence; a complete verified mint-attribution producer for chain is not established by the inspected source. Prove X/TG/chain one-mint joining, unrelated-mint exclusion, edits/deletes, stale replay, failed ACK, leases and coverage on disposable DBs; separately record live provider/source status. |
+| Supervised delivery and recovery — [#174](https://github.com/vyborovamaria3-maker/claude-project/issues/174) | `intelligence/scripts/supervise.mjs` and `supervisor-core.mjs` implement a foreground local supervisor, per-source one-event batches, schema readiness checks, bounded failure threshold, SIGINT/SIGTERM drain and sanitized counters. It requires both ETL and supervisor opt-ins; it does not start collectors or apply migrations. | Issue remains open. Need named operator/runbook, backup-first rollout, restart/replay/lease/DLQ drill, queue lag/oldest-pending/last-progress metrics and alerting. No automatic live opt-in. |
+| Controlled live validation — [#175](https://github.com/vyborovamaria3-maker/claude-project/issues/175) | CI and synthetic fixtures do not use real X/TG accounts, production databases or paid RPC. | Keep live X read, TG MTProto, bounded RPC/finality, optional autopost and full source delivery as NOT RUN until explicit account/provider/budget approval and sanitized evidence is recorded. |
+
+## P1 — product integration and observability
+
+| Area | Current evidence | Remaining debt / acceptance |
+| --- | --- | --- |
+| Reconcile overlapping AI/read-model proposals — [#176](https://github.com/vyborovamaria3-maker/claude-project/issues/176) | The issue exists to reconcile overlapping API/auth/data designs before stacking or retargeting drafts. Open PRs observed at this snapshot include #202 and #203. | Review the current diff and merge base of each PR; publish one API/auth/data contract and intentional merge order. Do not merge overlapping drafts solely because CI is green. |
+| Token Intelligence user journey — [#177](https://github.com/vyborovamaria3-maker/claude-project/issues/177) | Read-only API and UI building blocks exist; the root README still treats end-to-end live source coverage as unverified. | Prove a bounded authenticated mint query with provenance, coverage/unknowns and as-of cutoffs using authorized data, then separately record usability. |
+| Observability/runbooks — [#178](https://github.com/vyborovamaria3-maker/claude-project/issues/178) | Source dashboards, Control Center health views, quality CLI and structured supervisor output exist. | End-to-end source lag, oldest pending event, worker heartbeat, DLQ, token coverage, backup age, canary alerts and tested operator actions remain to be demonstrated. |
+| Historical outcomes/model validity — [#179](https://github.com/vyborovamaria3-maker/claude-project/issues/179) | Backtest, feature and outcome code plus synthetic/isolated tests exist. | No claim of profitable signals. Require preregistered holdout, no-look-ahead, label quality, coverage, uncertainty and independent out-of-sample results. |
+| Pilot and product focus — [#180](https://github.com/vyborovamaria3-maker/claude-project/issues/180) | Product/pilot is a proposed next phase, not a measured result. | Define a narrow pilot and evaluate user utility, retention, provider cost and willingness to pay before broadening the product. |
+
+## Active PR #203 — unified Analysis UI
+
+- PR [#203](https://github.com/vyborovamaria3-maker/claude-project/pull/203) remains open and targets `main`; it is not merged.
+- The embedded `BlockchainAiReportPanel` is configured request-only in the unified Analysis dialog so opening the dialog does not itself send the AI POST. Explicit user action remains available.
+- A source regression asserts the unified component uses request-only mode. A Playwright browser test verifies source states, stale-mint handling, the 141-field report and one explicit AI POST.
+- The browser test is wired into Frontend Quality CI; Social Analysis UI CI path filters include the unified components and test.
+- CI for the earlier PR head `c133c660927efd9a4e33f593b74175c742df6eb5` completed 17 successful workflows and one skipped workflow. The follow-up head `dd5d8620846189334dcd82e7b09878b2785d6815` had 12 successful, five in-progress and one skipped workflow at the time of this snapshot; treat the latest-head result as pending until all runs finish.
+
+## Guardrails
+
+- No production DB writes, destructive migrations, secret changes, branch-protection changes or live provider actions are performed by this audit.
+- Keep source flags, ETL supervisor flags and AI features default-off unless explicitly configured by an authorized operator.
+- A passing CI run is evidence for that commit and those tests only. It does not satisfy live validation or backup/restore gates.
+- When a prerequisite is unavailable, record BLOCKED/NOT VERIFIED instead of guessing.
