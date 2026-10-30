@@ -64,11 +64,17 @@ try {
   mode = "error";
   await page.getByRole("button", { name: /Открыть полный отчёт/ }).click();
   const dialog = page.getByRole("dialog"); await dialog.locator('[data-tag="trade.social.metrics"]').waitFor();
+  const startAi = dialog.getByRole("button", { name: "Запустить AI", exact: true });
+  await startAi.waitFor();
+  await startAi.click();
+  await page.waitForFunction(() => window.__analysisAiPostObserved === true).catch(() => {});
+  // The request is deliberately aborted by the fixture; assert that only the explicit click initiated it.
+  assert.deepEqual(posts, ["/api/trade/blockchain-ai-report"], "AI generation must happen only after explicit user action");
   assert.equal(await dialog.locator('[data-tag="trade.social.metrics"] .divide-y > div').count(), 141);
   assert(await dialog.evaluate(element => element.contains(document.elementFromPoint(120, 150))), "The report must appear above the desktop sidebar");
   for (const width of [390, 768, 1440]) { await page.setViewportSize({ width, height: 900 }); assert(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)); }
   await page.keyboard.press("Escape"); await dialog.waitFor({ state: "hidden" });
   for (const width of [320, 390, 768, 1440]) { await page.setViewportSize({ width, height: 900 }); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Fit at ${width}px`); }
-  assert.deepEqual(posts, [], "No automatic AI generations"); assert.deepEqual(errors, []);
+  assert.deepEqual(posts, ["/api/trade/blockchain-ai-report"], "No automatic AI generations; one explicit request is allowed"); assert.deepEqual(errors, []);
   console.log("ANALYSIS_OVERVIEW_OK: source values, missing/empty/error, stale mint, 141 fields, mobile; zero AI calls");
 } finally { await browser.close(); }
