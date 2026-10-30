@@ -28,7 +28,7 @@ This is a point-in-time, evidence-backed register. GitHub Issues remain the owne
 - The embedded `BlockchainAiReportPanel` is configured request-only in the unified Analysis dialog so opening the dialog does not itself send the AI POST. Explicit user action remains available.
 - A source regression asserts the unified component uses request-only mode. A Playwright browser test verifies source states, stale-mint handling, the 141-field report and one explicit AI POST.
 - The browser test is wired into Frontend Quality CI; Social Analysis UI CI path filters include the unified components and test.
-- CI for the earlier PR head `c133c660927efd9a4e33f593b74175c742df6eb5` completed 17 successful workflows and one skipped workflow. The follow-up head `dd5d8620846189334dcd82e7b09878b2785d6815` had 12 successful, five in-progress and one skipped workflow at the time of this snapshot; treat the latest-head result as pending until all runs finish.
+- Latest PR head `03aca7e25f3d66f0d39f6f8b279483eb8eb101cf` completed **17 successful workflows and one skipped workflow** (Security Lock Refresh). Frontend Quality CI (`41107335183`) passed and its log contains one `ANALYSIS_OVERVIEW_OK` browser run; the on-demand regression suite reports **21/21 passing**. Social Analysis UI CI (`41107335055`), Security Gates (`41107335173`) and POTAPoff predeploy gate (`41107335084`) also passed. This is CI-only evidence, not a live deployment or external-source verification.
 
 ## Guardrails
 
