@@ -79,7 +79,7 @@ export async function outboxStatus(source,now=new Date()){
         AND next_attempt_at<=? AND (lease_until IS NULL OR lease_until<=?)) AS ready,
       count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
         AND lease_until>?) AS leased,
-      count(*) FILTER (WHERE processed_at IS NULL AND attempts>0) AS retry_count,
+      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL AND attempts>0) AS retry_count,
       count(*) FILTER (WHERE dead_lettered_at IS NOT NULL) AS dead_letter,
       min(created_at) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS oldest_pending_at,
       max(processed_at) AS last_progress_at,
@@ -94,7 +94,7 @@ export async function outboxStatus(source,now=new Date()){
         AND (lease_until IS NULL OR lease_until<=$1::timestamptz))::text AS ready,
       count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
         AND lease_until>$1::timestamptz)::text AS leased,
-      count(*) FILTER (WHERE processed_at IS NULL AND attempts>0)::text AS retry_count,
+      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL AND attempts>0)::text AS retry_count,
       count(*) FILTER (WHERE dead_lettered_at IS NOT NULL)::text AS dead_letter,
       min(created_at) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS oldest_pending_at,
       max(processed_at) AS last_progress_at,
