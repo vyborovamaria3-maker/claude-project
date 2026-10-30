@@ -112,7 +112,7 @@ export default function SocialIntelligencePanel({
   }, [requestOnly]);
 
   const run = useCallback(
-    async (next: string) => {
+    async (next: string, generateAi = true) => {
       const contract = next.trim();
       if (!MINT_RE.test(contract)) {
         setError("Введи корректный Solana mint / CA.");
@@ -220,7 +220,7 @@ export default function SocialIntelligencePanel({
       });
       setSnapshot(nextSnapshot);
 
-      if (nextSnapshot.evidence.length) {
+      if (generateAi && nextSnapshot.evidence.length) {
         try {
           const qwen = await fetchJson<AiEnvelope>("/api/trade/social-ai", controller.signal, {
             method: "POST",
@@ -249,7 +249,8 @@ export default function SocialIntelligencePanel({
   );
 
   useEffect(() => {
-    if (!requestOnly && initialMint && MINT_RE.test(initialMint)) void run(initialMint);
+    // Load deterministic source data on open; AI generation is reserved for an explicit user action.
+    if (!requestOnly && initialMint && MINT_RE.test(initialMint)) void run(initialMint, false);
     return () => abortRef.current?.abort();
     // Initial URL mint is intentionally analyzed only once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
