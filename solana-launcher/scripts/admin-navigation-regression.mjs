@@ -5,8 +5,9 @@ import { readFileSync } from "node:fs";
 const read = path => readFileSync(new URL("../" + path, import.meta.url), "utf8");
 test("settings no longer renders operational collectors", () => {
   const settings = read("app/settings/page.tsx");
-  assert.doesNotMatch(settings, /XCollectorTab|TGCollectorTab|xcollector|tgcollector/);
-  for (const tab of ["account","quick-actions","activity","diagnostics","apify","blockchain","colors"]) {
+  assert.doesNotMatch(settings, /XCollectorTab|TGCollectorTab|TGInviteWorkspace|DiagnosticsTab|ApifyTab|BlockchainTab|xcollector|tgcollector|tginvite/);
+  assert.doesNotMatch(settings, /id: "(?:diagnostics|apify|blockchain)"/);
+  for (const tab of ["account","quick-actions","activity","colors"]) {
     assert.match(settings, new RegExp('id: "' + tab + '"'));
   }
 });
