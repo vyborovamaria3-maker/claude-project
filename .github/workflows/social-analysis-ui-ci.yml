@@ -57,3 +57,33 @@ jobs:
         run: bash -n scripts/healthcheck-production.sh
       - name: Next production build
         run: npm run build
+      - name: Install Chromium for unified analysis browser regression
+        run: npx playwright install chromium
+      - name: Start production frontend for unified analysis browser regression
+        run: |
+          set -Eeuo pipefail
+          log_file="$RUNNER_TEMP/unified-analysis-next.log"
+          pid_file="$RUNNER_TEMP/unified-analysis-next.pid"
+          PORT=3100 HOSTNAME=127.0.0.1 INTELLIGENCE_AI_ON_DEMAND_ENABLED=true npm run start >"$log_file" 2>&1 &
+          echo "$!" >"$pid_file"
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:3100/trade/analysis >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$log_file"
+          exit 1
+      - name: Unified Analysis browser regression
+        env:
+          BASE_URL: http://127.0.0.1:3100
+        run: npm run analysis-overview:test
+      - name: Stop production frontend
+        if: always()
+        run: |
+          pid_file="$RUNNER_TEMP/unified-analysis-next.pid"
+          if [[ -f "$pid_file" ]]; then
+            pid="$(cat "$pid_file")"
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+          fi
