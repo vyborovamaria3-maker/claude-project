@@ -238,13 +238,14 @@ export async function POST(req: NextRequest) {
       },
     );
   }
-  let body: { mint?: string; refresh?: boolean };
+  let body: Record<string, unknown> | null;
   try {
-    body = await req.json() as typeof body;
+    body = record(await req.json());
   } catch {
     return NextResponse.json({ error: "bad json" }, { status: 400 });
   }
-  const mint = String(body.mint || "").trim();
+  if (!body) return NextResponse.json({ error: "invalid request body" }, { status: 400 });
+  const mint = typeof body.mint === "string" ? body.mint.trim() : "";
   if (!validMint(mint)) return NextResponse.json({ error: "invalid mint" }, { status: 400 });
 
   try {
