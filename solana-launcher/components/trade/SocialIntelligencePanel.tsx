@@ -137,7 +137,11 @@ export default function SocialIntelligencePanel({
       setChain(null);
       setAi(null);
       setSnapshot(null);
-      if (embedded) onMintChange?.(contract);
+      if (embedded && contract !== initialMintRef.current) {
+        // Keep the embedded request alive while synchronizing the parent URL/mint.
+        initialMintRef.current = contract;
+        onMintChange?.(contract);
+      }
       else router.replace(`/trade/analysis/social?mint=${encodeURIComponent(contract)}`, { scroll: false });
 
       if(requestOnly){
@@ -261,6 +265,13 @@ export default function SocialIntelligencePanel({
     // Initial URL mint is intentionally analyzed only once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const next = mintOverride?.trim() || "";
+    if (!MINT_RE.test(next) || next === initialMintRef.current) return;
+    initialMintRef.current = next;
+    void run(next, false);
+  }, [mintOverride, run]);
 
   const derived = useMemo(
     () => deriveSocialMetrics(x, tg, market, chain, ai, channels, options),
