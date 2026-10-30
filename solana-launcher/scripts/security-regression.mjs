@@ -70,6 +70,9 @@ assert(blockchainAiPost.indexOf("checkRateLimit(") < blockchainAiPost.indexOf("g
 assert(blockchainAiPost.includes("`blockchain-ai-report:${getClientIp(req as unknown as Request)}`"), "blockchain AI report limit must be scoped by trusted client IP");
 assert(blockchainAiPost.includes("    5,\n    60,"), "blockchain AI report must allow at most five requests per minute per IP");
 assert(blockchainAiPost.includes("status: 429"), "blockchain AI report must reject excess requests with HTTP 429");
+assert(blockchainAiPost.includes("body = record(await req.json())"), "blockchain AI report must reject non-object request bodies");
+assert(blockchainAiPost.includes('if (!body) return NextResponse.json({ error: "invalid request body" }, { status: 400 });'));
+assert(blockchainAiPost.includes('typeof body.mint === "string"'), "blockchain AI report must validate mint type before normalization");
 const socialAi = read("app/api/trade/social-ai/route.ts");
 const socialAiPost = socialAi.slice(socialAi.indexOf("export async function POST"));
 assert(socialAiPost.includes("checkRateLimit("), "social AI route must rate-limit every request");
