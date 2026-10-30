@@ -57,8 +57,8 @@ assert(
   "the unified Analysis server route must honor request-only AI policy",
 );
 assert(
-  overviewClientSource.includes('requestOnly={id === "ai" || requestOnly}'),
-  "the unified AI detail must stay request-only while other details honor the server policy",
+  overviewClientSource.includes('requestOnly={requestOnly}'),
+  "the server-configured request-only policy must propagate to embedded Social Intelligence",
 );
 assert(
   socialPageSource.includes("SocialIntelligencePanel"),
