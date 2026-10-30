@@ -206,7 +206,6 @@ export default function UnifiedAnalysisClient({ requestOnly = false }: { request
         <div className="space-y-6">
           {!validMint && <p className="rounded-xl border border-amber-400/25 bg-amber-400/5 p-6 text-sm text-amber-200">Для этого анализа сначала укажите mint токена в основной форме.</p>}
           <SocialIntelligencePanel
-            key={mint}
             focus={id}
             embedded
             requestOnly={requestOnly}
