@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
+import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
 import { createHash } from "node:crypto";
 import { getBlockchainAiSnapshot } from "@/lib/trade/chain/ai-service";
 import { buildUpstreamCompatibleIntelligenceSnapshot } from "@/lib/trade/chain/ai-snapshot";
@@ -220,6 +221,23 @@ type AiEnvelope = Record<string, unknown> & {
 
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
+  const rate = checkRateLimit(
+    `blockchain-ai-report:${getClientIp(req as unknown as Request)}`,
+    5,
+    60,
+  );
+  if (!rate.success) {
+    return NextResponse.json(
+      { error: "rate_limited" },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(rate.retryAfter || 60),
+          "Cache-Control": "private, no-store",
+        },
+      },
+    );
+  }
   let body: { mint?: string; refresh?: boolean };
   try {
     body = await req.json() as typeof body;
