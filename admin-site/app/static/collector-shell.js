@@ -49,7 +49,7 @@
     if (modules.has(legacy)) { selected = legacy; state.view = 'xCollector'; }
     if (state.view !== 'xCollector') { ++generation; return previousRender(); }
     const ticket = ++generation;
-    history.replaceState(null, '', '#collectors');
+    history.replaceState(null, '', selected ? '#collector-' + selected : '#collectors');
     if (!selected) {
       const pending = previousRender();
       installTabs();

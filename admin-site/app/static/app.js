@@ -1,5 +1,7 @@
+const nativeViews = new Set(["tgCollector","xCollector","overview","database","blockchain","telegram","x","users","logs","search","graph","queues","monitoring","control","audit"]);
+let nativeRenderGeneration = 0;
 const state = {
-  view: window.location.hash === "#user-tg-collector" ? "tgCollectorUser" : window.location.hash === "#tg-collector" ? "tgCollector" : window.location.hash === "#collectors" ? "xCollector" : /^#collector-(x-collector|tg-collector|tg-invite|diagnostics|apify|blockchain)$/.test(window.location.hash) ? window.location.hash.slice(1) : window.location.hash === "#graph" ? "graph" : "overview",
+  view: nativeViews.has(window.location.hash.slice(1)) ? window.location.hash.slice(1) : window.location.hash === "#user-tg-collector" ? "tgCollectorUser" : window.location.hash === "#tg-collector" ? "tgCollector" : window.location.hash === "#collectors" ? "xCollector" : /^#collector-(x-collector|tg-collector|tg-invite|diagnostics|apify|blockchain)$/.test(window.location.hash) ? window.location.hash.slice(1) : window.location.hash === "#graph" ? "graph" : "overview",
   me: null,
   overview: null,
   db: { source: "", table: "", page: 1, pageSize: 50, search: "", tables: [], data: null },
@@ -26,6 +28,7 @@ function formatDate(value) { if (!value) return "—"; const date = new Date(val
 function toast(message, isError = false) { const el = $("#toast"); el.textContent = message; el.className = `toast show${isError ? " error" : ""}`; clearTimeout(toast.timer); toast.timer = setTimeout(() => { el.className = "toast"; }, 3200); }
 
 async function api(path, options = {}) {
+  const view = state.view, generation = nativeRenderGeneration;
   const response = await fetch(path, { credentials: "same-origin", headers: { "Content-Type": "application/json", ...(options.headers || {}) }, ...options });
   if (response.status === 401) {
     let detail = "Требуется вход";
@@ -36,7 +39,9 @@ async function api(path, options = {}) {
   }
   if (!response.ok) { let detail = `HTTP ${response.status}`; try { detail = (await response.json()).detail || detail; } catch {} throw new Error(detail); }
   const type = response.headers.get("content-type") || "";
-  return type.includes("application/json") ? response.json() : response.text();
+  const payload = await (type.includes("application/json") ? response.json() : response.text());
+  if ((options.method || "GET").toUpperCase() === "GET" && path !== "/api/me" && (view !== state.view || generation !== nativeRenderGeneration)) throw Object.assign(new Error("View changed"), { staleView: true });
+  return payload;
 }
 function loading() { content.replaceChildren($("#loadingTemplate").content.cloneNode(true)); }
 function showLogin() { appView.classList.add("hidden"); loginView.classList.remove("hidden"); }
@@ -84,9 +89,11 @@ async function renderMonitoring() { loading(); const d = await api("/api/monitor
 async function renderControl() { loading(); const [flags, alerts, inv, integrations] = await Promise.all([api("/api/feature-flags"), api("/api/alerts?limit=200"), api("/api/inventory"), api("/api/integrations")]); content.innerHTML = `<section class="section full"><h3>Связь с основным сайтом и сохранение</h3>${genericTable(integrations.rows)}<p class="muted">Проверка подтверждает чтение. Права записи проверяются при сохранении. Флаги и профили ниже сохраняются в админке; основной сайт их автоматически не применяет.</p></section><section class="section full"><div class="lookup"><input id="flagName" placeholder="feature.name"/><input id="flagDescription" placeholder="Описание"/><button id="flagCreate" class="primary">Включить</button></div>${genericTable(flags.rows)}</section><div style="height:18px"></div>${genericTable(alerts.rows)}<div style="height:18px"></div>${genericTable(inv.service_manifests)}`; $("#flagCreate")?.addEventListener("click", async () => { const name = $("#flagName").value.trim(); if (!name) return; await api(`/api/feature-flags/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ name, enabled: true, description: $("#flagDescription").value.trim() }) }); toast("Feature flag сохранён"); await renderControl(); }); }
 
 async function renderCurrentView() {
+  const view = state.view; ++nativeRenderGeneration;
+  if (nativeViews.has(view)) history.replaceState(null, "", "#" + view);
   $("#viewTitle").textContent = titles[state.view]; document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === state.view));
   try { const renderers = { tgCollector: () => window.TGCollector.render(), xCollector: () => window.XCollector.render(), overview: renderOverview, database: renderDatabase, blockchain: renderBlockchain, telegram: renderTelegram, x: renderX, users: renderUsers, logs: renderLogs, search: renderSearch, graph: renderGraph, queues: renderQueues, monitoring: renderMonitoring, control: renderControl, audit: renderAudit }; await renderers[state.view]?.(); }
-  catch (error) { content.innerHTML = `<div class="empty"><strong>Не удалось загрузить данные</strong><p>${escapeHtml(error.message)}</p></div>`; toast(error.message, true); }
+  catch (error) { if (error.staleView || state.view !== view) return; content.innerHTML = `<div class="empty"><strong>Не удалось загрузить данные</strong><p>${escapeHtml(error.message)}</p></div>`; toast(error.message, true); }
 }
 async function bootstrap() { try { state.me = await api("/api/me"); showApp(); await renderCurrentView(); } catch { showLogin(); } }
 $("#loginForm").addEventListener("submit", async (event) => { event.preventDefault(); $("#loginError").textContent = ""; try { await api("/api/login", { method: "POST", body: JSON.stringify({ username: $("#loginUsername").value.trim(), password: $("#loginPassword").value }) }); state.me = await api("/api/me"); $("#loginPassword").value = ""; showApp(); await renderCurrentView(); } catch (error) { $("#loginError").textContent = error.message; } });

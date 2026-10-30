@@ -29,12 +29,17 @@ try {
   const page = await context.newPage();
   const errors = [], requests = [];
   let enabled = true, denied = false;
+  let holdOverview = false, releaseOverview;
   page.on('pageerror', error => errors.push(error.message));
   await context.route('**/*', async route => {
     const url = new URL(route.request().url());
     assert.equal(url.origin, origin, 'All browser traffic must stay on admin-site');
     if (!url.pathname.startsWith('/api/')) return route.continue();
     requests.push({ path: url.pathname, method: route.request().method() });
+    if (url.pathname === '/api/overview') {
+      if (holdOverview) await new Promise(resolve => { releaseOverview = resolve; });
+      return route.fulfill({ json: { sources:[], logs:[], total_sources:0, healthy_sources:0, total_tables:0, total_rows:0, total_users:0 } });
+    }
     if (url.pathname === '/api/rpc-health') return route.fulfill({ json: { status: 'ok', latency: 12 } });
     if (url.pathname === '/api/integrations/apify') return route.fulfill({ json: { config: { tokenConfigured: false, apiBaseUrl: '', sandboxActorId: '', pumpfunActorId: '' }, recentRuns: [], recentSyncs: [], latestSandboxRun: null, latestPumpfunRun: null } });
     if (url.pathname === '/api/blockchain/settings') return route.fulfill({ json: { values: { primary: '', fallback: '', batchSize: 5, concurrency: 1, requestsPerSecond: 1, timeoutMs: 5000, retries: 0, retryDelayMs: 100, enabled: false }, slots: [], alchemyConfigured: false, metrics: { errors: 0, retries: 0 }, collection: { collectedEvents: 0, targets: [] }, runs: [], imports: [] } });
@@ -107,6 +112,27 @@ try {
   assert.equal(await page.locator('#navigation [data-view^="collector-"]').count(), 0);
   assert.deepEqual(errors, []);
   console.log('PASS integrated admin shell: six views, one tab, same origin, unchanged pathname, no popup or duplicate navigation');
+  await page.locator('#tgCollectorUserNav').click();
+  await page.frameLocator('iframe[data-collector-workspace="tg-collector"]').locator('.collector-console').waitFor();
+  await page.locator('#tgCollectorNav').click();
+  assert.equal(new URL(page.url()).hash, '#tgCollector');
+  await page.reload();
+  await page.locator('#appView').waitFor({state:'visible'});
+  await page.waitForFunction(() => document.querySelector('#viewTitle')?.textContent === 'TG Collector');
+  assert.equal(await page.locator('iframe[data-collector-workspace]').count(), 0);
+  holdOverview = true;
+  const overviewRequested = page.waitForRequest('**/api/overview');
+  await page.locator('[data-view="overview"]').click();
+  await overviewRequested;
+  await page.locator('#tgCollectorUserNav').click();
+  await page.frameLocator('iframe[data-collector-workspace="tg-collector"]').locator('.collector-console').waitFor();
+  assert.equal(typeof releaseOverview, 'function');
+  releaseOverview();
+  await page.waitForTimeout(150);
+  assert.equal(await page.locator('iframe[data-collector-workspace="tg-collector"]').count(), 1);
+  assert.equal(await page.locator('#viewTitle').innerText(), 'Пользовательский TG Collector');
+  assert.deepEqual(errors, []);
+  console.log('PASS navigation fixes: native TG survives reload; delayed previous response cannot replace user workspace');
   process.env.TG_COLLECTOR_SMOKE_URL = origin;
   await import('../../solana-launcher/tests/tg-collector-graph-smoke.mjs');
 } finally {
