@@ -95,11 +95,12 @@ export async function checkUnifiedDetails(page, baseUrl, mint) {
   await dialog.getByPlaceholder("Вставь contract").fill(embeddedMint);
   await dialog.getByRole("button", { name: "Анализ", exact: true }).click();
   await page.waitForURL(url => url.searchParams.get("mint") === embeddedMint);
-  await embeddedSourceRequest;
+  const embeddedRequest = await embeddedSourceRequest;
   assert(await dialog.evaluate(element => document.activeElement !== element),
     "Synchronizing the embedded mint must not reset focus to the dialog root");
   const socialAiResponse = await manualSocialAiResponse;
-  assert.equal(xMint, embeddedMint, "Embedded mint changes must reach the source API");
+  assert.equal(new URL(embeddedRequest.url()).searchParams.get("mint"), embeddedMint, "Embedded mint changes must reach the source API");
+  assert.equal(xMint, embeddedMint, "The source fixture must observe the embedded mint");
   assert.equal(socialAiPosts.length, 1, "Changing the embedded mint must not cancel or duplicate the explicit Social AI POST");
   assert.equal(socialAiPosts[0].postDataJSON().mint, embeddedMint, "Explicit AI must analyze the newly selected mint");
   assert.equal(socialAiResponse.status(), 503, "The controlled unavailable fixture should be returned without hiding the request");
