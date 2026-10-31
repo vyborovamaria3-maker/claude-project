@@ -35,7 +35,7 @@ export function parseAlertWebhookConfig(env = process.env) {
   if (url.protocol !== "https:" || !url.hostname || url.username || url.password || url.hash) {
     throw new Error("alert_webhook_url_must_be_https_without_credentials_or_fragment");
   }
-  if (token.length > 4096 || /[\\r\\n]/.test(token)) {
+  if (token.length > 4096 || /[\r\n]/.test(token)) {
     throw new Error("invalid_alert_webhook_token");
   }
 
@@ -99,7 +99,7 @@ export function createAlertWebhookSink(config, {
       !Number.isSafeInteger(config.timeoutMs) ||
       config.timeoutMs < 250 || config.timeoutMs > MAX_TIMEOUT_MS ||
       (config.token !== null && (typeof config.token !== "string" ||
-        config.token.length > 4096 || /[\\r\\n]/.test(config.token))) ||
+        config.token.length > 4096 || /[\r\n]/.test(config.token))) ||
       typeof fetchImpl !== "function" || typeof onStatus !== "function" ||
       !Number.isSafeInteger(maxQueue) || maxQueue < 1 || maxQueue > 64 ||
       !Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 2 ||
