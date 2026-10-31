@@ -155,7 +155,18 @@ Runtime safeguards:
   records. The queue is not durable: a process crash can lose pending notices,
   and a receiver should persist its own history and tolerate duplicate posts.
   This is a delivery adapter, not an approved provider endpoint or a process
-  manager; no webhook URL/token is configured in this repository.
+  manager; no webhook URL/token is configured in this repository. The POST
+  body follows this minimal contract:
+  ```json
+  {
+    "schema": "potapoff.intelligence.alert.v1",
+    "state": "active",
+    "source": "x",
+    "code": "dead_letter_events_present",
+    "observedAt": "2026-10-31T12:00:00.000Z",
+    "details": { "deadLetter": 2 }
+  }
+  ```
 - Health queries require source-side covering indexes: X migration
   `051_intelligence_outbox_health_indexes.sql`, TG migration
   `037_intelligence_outbox_health_indexes.sql`, and the opt-in Blockchain
