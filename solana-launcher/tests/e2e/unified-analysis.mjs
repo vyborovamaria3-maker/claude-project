@@ -128,6 +128,18 @@ export async function checkUnifiedDetails(page, baseUrl, mint) {
   await dialog.waitFor({ state: "visible" });
   page.off("request", captureRepeatedMintPosts);
 
+  await dialog.getByPlaceholder("Вставь contract").fill("");
+  await dialog.getByRole("button", { name: "Анализ", exact: true }).click();
+  await page.waitForURL(url => url.searchParams.get("mint") === "");
+  await dialog.getByText("Введи корректный Solana mint / CA.", { exact: true }).waitFor();
+  await page.waitForFunction(() => {
+    const table = document.querySelector('[data-tag="trade.social.metrics"]');
+    const row = [...(table?.querySelectorAll(".divide-y > div") || [])].find(item =>
+      item.querySelector(".text-content-muted")?.textContent === "Mentions"
+    );
+    return row?.querySelector(".font-mono")?.textContent === "—";
+  }, null, { timeout: 5000 });
+
   await dialog.getByRole("button", { name: "Cross-platform / Timing", exact: true }).click();
   for (const label of ["Cross-platform score", "Cross matched share", "Both platforms active"]) {
     const row = groupRows("Cross-platform / Timing").filter({ has: page.getByText(label, { exact: true }) });
