@@ -125,3 +125,36 @@ The `POTAPoff production deploy` `workflow_run` path is intentionally **disabled
 **Operator approval sequence:** confirm the genuine SSH host fingerprint through an independent trusted channel; repair pinned GitHub Secrets without disabling strict checking; successfully run manual SSH check, production backup, disposable verified product/admin restore, and production predeploy and smoke tests; configure required `main` branch reviews and repository/environment protection. **Only then** explicitly set `POTAPOFF_AUTODEPLOY_ENABLED=true` under GitHub Settings → Secrets and variables → Actions → Variables (with suitable environment/repository control and independent review). Remove/disable the variable to pause further automatic deployments. `workflow_dispatch` remains available for an operator's intentional manual deployment, still subject to strict release SHA/SSH/predeploy checks.
 
 Until that approval, merging release-workflow corrections can still publish images, **but must not attempt automatic production deployment**.
+
+
+## 8. SQLite recovery coverage delta — 2026-10-31 (draft PR #211)
+
+The earlier sections above describe the ARCH-02 baseline before the central
+POTAPoff backup bundle included Blockchain SQLite. Do not read the historical
+statement that this script does not create Blockchain backups as a current
+description of the proposed branch.
+
+Draft [PR #211](https://github.com/vyborovamaria3-maker/claude-project/pull/211)
+adds the following code-level coverage:
+
+- `backup-production.sh` discovers the single Compose frontend container and
+  uses its existing `better-sqlite3` module to snapshot
+  `/app/data/trade.db` with SQLite Online Backup API. A raw filesystem copy of
+  a live WAL-backed database is not used.
+- The snapshot is integrity-checked, copied into the incomplete recovery set,
+  protected with mode 0600 and included in the complete `SHA256SUMS` manifest.
+  Missing frontend/container DB or a failed snapshot rejects the whole backup.
+- `verify-backup-restore.sh` checks the manifest and restores a copy of
+  `trade.db` to a fresh temporary path for a full SQLite integrity check, in
+  addition to the existing network-isolated PostgreSQL restore.
+- The synthetic rehearsal holds a writer open with a committed row in WAL,
+  asserts that row is present in the backup, rejects PostgreSQL and SQLite
+  corruption, and verifies that a missing SQLite source leaves no incomplete
+  recovery directory.
+
+**Evidence boundary:** PR #211 is Draft. Its CI is still required; no production
+server, live database, SSH secret or off-host backup was accessed. A real
+staging/production backup and timed restore remain NOT RUN, and RPO/RTO remain
+NOT MEASURED. ARCH-02 and issue #172 must stay OPEN until an accountable
+operator verifies the physical DB inventory, off-host copy and a restore from
+an actual backup on trusted isolated infrastructure.
