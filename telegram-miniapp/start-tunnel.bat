@@ -15,7 +15,7 @@ if not exist "%APP_DIR%\node_modules" (
   exit /b 1
 )
 
-powershell -NoProfile -Command "try { Invoke-WebRequest -Uri 'http://127.0.0.1:3000/miniapp' -TimeoutSec 2 -UseBasicParsing ^| Out-Null; exit 0 } catch { exit 1 }" >nul 2>&1
+powershell -NoProfile -Command "try { $null = Invoke-WebRequest -Uri 'http://127.0.0.1:3000/miniapp' -TimeoutSec 2 -UseBasicParsing; exit 0 } catch { exit 1 }" >nul 2>&1
 if errorlevel 1 (
   echo Starting the Next.js Mini App/API on port 3000...
   start "POTAPoff Mini App and API" cmd /k "cd /d ""%APP_DIR%"" && npm run dev"
