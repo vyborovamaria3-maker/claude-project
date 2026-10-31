@@ -177,6 +177,22 @@ test("P0 #173: isolated X/TG PG and chain SQLite outboxes deliver verified sourc
     }
     const ports=[portPg(xPool),portPg(tgPool),portSqlite(sqlite)];
 
+    // Expire a real PostgreSQL source lease. A stale owner/fencing token
+    // must not ACK; the next worker may reclaim the same durable event.
+    const expired=(await claimPostgres(xPool,{
+      workerId:"expired-x-worker",batchSize:1,leaseMs:120000,
+    }))[0];
+    assert.ok(expired);
+    await xPool.query(
+      "UPDATE outbox_events SET lease_until=NOW()-interval '1 second' WHERE id=$1",
+      [expired.id],
+    );
+    assert.equal(
+      await ackPostgres(xPool,expired.id,expired.leaseOwner,expired.leaseUntil),
+      false,
+      "expired lease fencing token cannot ACK after another worker may reclaim",
+    );
+
     // Inject a destination COMMIT failure. The transaction is rolled back and
     // the X source is NOT ACKed; later retry is the only permitted progression.
     const refuseCommit={
