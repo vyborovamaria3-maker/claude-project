@@ -1,6 +1,6 @@
 # P0/P1 deep-review corrections — 2026-10-20
 
-**Scope:** draft PR #145, stacked above ARCH-11 #144. Nothing is merged to `main`. Changes are opt-in, local, and were tested only with disposable fixtures and GitHub CI; no live production DB or Alchemy/Helius/TG/X credentials were used.
+**Scope/status:** implementation integrated into `main` through PR #133 (original PR #145). Changes are opt-in and were tested only with disposable fixtures and GitHub CI; no live production DB or Alchemy/Helius/TG/X credentials were used. The fixes do not constitute a live rollout.
 
 ## Changes
 

@@ -1,4 +1,63 @@
-# PR_STATUS — GitHub PR inventory (2026-10-24, after #165 merge)
+# PR_STATUS — GitHub PR inventory
+
+## Current snapshot — 2026-10-31 19:15 UTC
+
+Observed `main` SHA: `f4dc5ef3aad400f64fc300f30542085e10aae4c1`. GitHub branch metadata reports `main.protected=false`; issue #170 remains an administrator-only governance blocker. The recursive tree snapshot remains 4,791 entries / 4,065 blobs / 725 directories, 38 workflows and 43 architecture documents.
+
+PR [#207](https://github.com/vyborovamaria3-maker/claude-project/pull/207) is **MERGED** at the current `main` SHA. Ten PRs are currently open:
+
+| PR | Title | State | Latest observed head |
+| --- | --- | --- | --- |
+| [#211](https://github.com/vyborovamaria3-maker/claude-project/pull/211) | fix(ops): include WAL-safe trade.db in recovery bundle | OPEN DRAFT; all observed checks green | `ba68c47c7469ac84a5a515ca94a7b1cda007e9ca` |
+| [#210](https://github.com/vyborovamaria3-maker/claude-project/pull/210) | test(intelligence): strengthen three-source retraction and recovery coverage | OPEN DRAFT; observed checks green | `1b8827be359a516e260349de1867ba9970335dbb` |
+| [#209](https://github.com/vyborovamaria3-maker/claude-project/pull/209) | test(intelligence): verify source producers and extend backup recovery | OPEN DRAFT; latest-head Full Backtest rerun pending | `aa0cb5006314e9eac48d3e65463d5e70da7e3c8c` |
+| [#208](https://github.com/vyborovamaria3-maker/claude-project/pull/208) | fix(admin): narrow X Collector editor writes and correct MiniApp launch flow | OPEN DRAFT; observed checks green | `1faa2f938683fd66f6bd5556bd07657b9f530966` |
+| [#206](https://github.com/vyborovamaria3-maker/claude-project/pull/206) | feat(intelligence): add read-only supervisor health metrics | OPEN; observed checks green | `a329640dd694ce2b7f6928b61d0fafd4a079b93a` |
+| [#205](https://github.com/vyborovamaria3-maker/claude-project/pull/205) | docs(architecture): refresh whole-repository baseline and technical debt | OPEN; this documentation branch | This commit |
+| [#204](https://github.com/vyborovamaria3-maker/claude-project/pull/204) | fix(admin): relocate collector workspaces exclusively to standalone Control Center | OPEN DRAFT | `2f4bf7e09be402230307073de8754cc389f2a9db` |
+| [#203](https://github.com/vyborovamaria3-maker/claude-project/pull/203) | UI: единая вкладка Analysis с графиком и подробной панелью | OPEN | `1ba1f6bf561a082c59d924d440891c1f9924cb00` |
+| [#202](https://github.com/vyborovamaria3-maker/claude-project/pull/202) | feat: Hood Hunt-style evidence-first analytics, DEV setups and target review | OPEN DRAFT | `40131ff79600c7767dfec7f262d67058724ac046` |
+| [#195](https://github.com/vyborovamaria3-maker/claude-project/pull/195) | feat: split FOMO pressure and quality metrics | OPEN DRAFT; GitHub reports not mergeable | `fbdbf4ddd1590982fd71142784acbd9a32e1f68b` |
+
+- **PR #207 — Outbox clock correctness.** Merged into `main` at `f4dc5ef3aad400f64fc300f30542085e10aae4c1`. Its PostgreSQL DB-clock claim/retry regression and adapter tests passed before merge. This is code-level correctness, not proof of production delivery.
+- **PR #206 — supervisor health metrics.** Open, unmerged, non-draft. Exact head `a329640dd694ce2b7f6928b61d0fafd4a079b93a` has all observed required CI workflows successful, including X/TG collectors, Intelligence foundation, Intelligence CI, security, frontend/mobile, backtest and POTAPoff predeploy. Security Lock Refresh was skipped because no lockfile changes were present. The four original review threads are resolved, but there is no independent human approval. Metrics/alerts are structured stdout records; no external alert sink is configured by this PR. Keep unmerged pending independent review and explicit authorization.
+- **PR #205 — architecture documentation.** Open, unmerged. Current head `fc762c9e724ba2d9eb6a26cb6d0de3a93ec98bbd` passes Repository hygiene, Intelligence foundation and Native social token-link CI; Intelligence CI also passed on the refreshed head. However, a fresh compare reports this branch is **64 commits ahead and 14 behind** current `main` (`f4dc5ef3aad400f64fc300f30542085e10aae4c1`), diverged from merge base `9f4a7e88afa80774633ee4a43221a621fe5f1922`. GitHub's `mergeable=true` is not enough: rebase/refresh and reconcile the 19 documentation paths before merge. The baseline SHA was refreshed to current `main`; do not hardcode this PR's own head SHA in its inventory.
+- **PR #208 — Admin/MiniApp.** Open draft, exact observed head `1faa2f938683fd66f6bd5556bd07657b9f530966`; POTAPoff predeploy, Security Gates, Admin Control Center CI and repository hygiene passed; lock refresh skipped. No independent review recorded.
+- **PR #209 — producer E2E and recovery.** Open draft, exact current head `aa0cb5006314e9eac48d3e65463d5e70da7e3c8c`. Mocked X/TG/Blockchain producers into isolated Intelligence PostgreSQL passed. On this exact head, all 16 observed workflow runs completed successfully, including Full Backtest Audit, POTAPoff predeploy, Security Gates, ARCH-02 synthetic PG16/PG17 + Python Intelligence SQLite recovery, X/TG quality and Blockchain Settings V2. The earlier `/intelligence: HTTP no response` route failure did not reproduce on this latest head. This remains synthetic CI evidence, not live producer connectivity or production recovery.
+- **PR #210 — three-source retraction/recovery tests.** Open draft, exact observed head `1b8827be359a516e260349de1867ba9970335dbb`; Intelligence CI, foundation, native social token-link CI and repository hygiene passed. It proves synthetic/test-level behaviors only, not live producer connectivity.
+- **PR #211 — production recovery bundle.** Open draft, exact current head `ba68c47c7469ac84a5a515ca94a7b1cda007e9ca`. All 12 observed workflow runs passed, including ARCH-02 synthetic PG16/PG17 restore, Security Gates, Full Backtest Audit and POTAPoff predeploy. The recovery bundle preserves product/Admin PostgreSQL dumps, WAL-safe `trade.db` and Python Intelligence `intelligence.sqlite`; both SQLite stores are checksummed, independently restored/integrity-checked, corruption-tested and fail closed when their source container is missing. This is disposable CI evidence, not a live production backup/restore.
+- **PR #204 — Admin Control Center migration.** Open draft, 81 files, 16 commits; last observed prior checks were 30 successful, 1 skipped. No independent review recorded. Overlaps #203 in nine paths.
+- **PR #203 — unified Analysis UI.** Open, unmerged, 43 files, 128 commits; last observed checks were 33 successful and 1 skipped. No independent review recorded. Broader than its UI title: also changes Admin links, Intelligence API/AI gateway and CI.
+- **PR #202 — Hood Hunt analytics foundation.** Open draft, 18 files; last observed checks 10 successful, 1 skipped. No independent review recorded.
+- **PR #195 — FOMO pressure/quality.** Open draft, 23 files, 60 commits; GitHub reports `mergeable=false`; no workflow runs were returned for its current head. Do not integrate until dirty state and shared files are reconciled.
+
+### Path-overlap and integration order
+
+| PR pair | Shared paths | Integration note |
+| --- | ---: | --- |
+| #205 / #206 | 1 | Both edit `intelligence/README.md`; reconcile operator documentation. |
+| #203 / #204 | 9 | Shared Admin navigation/styles/package/context; integrate only after combined diff review. |
+| #203 / #195 | 5 | Shared Analysis panel/package/regressions; preserve FOMO capture and unified Analysis behavior together. |
+| #204 / #195 | 3 | Shared docs/package metadata; reconcile after primary UI overlap. |
+| #209 / #211 | 5 | Shared backup/restore scripts, rehearsal script, ARCH-02 workflow and recovery-governance document. #211 now includes both Python Intelligence SQLite and WAL-safe trade.db. Both heads currently pass CI, but do not merge independently; review the combined semantic diff and integrate the producer/recovery and WAL changes as one reviewed recovery bundle. |
+| #202 / listed UI and monitoring PRs | 0 | No direct changed-path overlap found in the prior filename audit; re-check before integration. |
+
+Concrete semantic conflict in #203/#195 remains: #195 adds three rows to the “Growth / Quality / Manipulation” group while #203's provenance catalog and regression currently enforce 16 core rows. Combined change must append three extended rows (keep coreCount=16 unless contract intentionally changes), preserve embedded/focus/request-only panel behavior plus FOMO capture/KPIs, and retain both regression sets. #203/#204/#195 also edit `solana-launcher/package.json`; build one deliberate analysis:test command rather than taking one branch's script wholesale.
+
+### Latest verification refresh — 2026-10-31 17:32 UTC
+
+GitHub was re-queried on the current PR heads. Current observed heads: #205 `f3aa136419f72b718be4f6851ec4c06b7cfd402c`; #206 `a329640dd694ce2b7f6928b61d0fafd4a079b93a`; #209 `aa0cb5006314e9eac48d3e65463d5e70da7e3c8c`; #210 `1b8827be359a516e260349de1867ba9970335dbb`; #211 `ba68c47c7469ac84a5a515ca94a7b1cda007e9ca`. #206 has 19 observed workflow runs, 18 successful and one lock-refresh skipped. #209 has 16 observed workflow runs, 15 successful and one lock-refresh skipped. #210 has 5 observed workflow runs, 4 successful and one lock-refresh skipped. #211 has 12 observed workflow runs, 11 successful and one lock-refresh skipped. #205 has 4 successful runs and one lock-refresh skipped. These are observed workflow runs, not proof of production operation. #206 still has no independent human approval; #209–#211 remain draft PRs.
+
+### Issue #174 — delivery and recovery acceptance
+
+Issue [#174](https://github.com/vyborovamaria3-maker/claude-project/issues/174) remains **OPEN**. #207 provides PostgreSQL DB-clock correctness; #206 provides read-only queue/progress/retry/DLQ/schema-skew metrics; #209 provides mocked three-producer-to-isolated-Intelligence PostgreSQL integration; #210 adds retraction/recovery acceptance coverage; #211 now backs up both SQLite stores plus PostgreSQL and passes isolated restore/corruption regressions. These are valuable code/CI proofs, not live operations. Still outstanding: named owner and start/stop procedure per source/destination, approved external alert delivery, supervised restart/rollout/rollback, operator DLQ handling, live source/destination acceptance under explicit credentials and change window, and verified production backup/restore. No production DB, collector, credentials, external alert sink or deployment was accessed.
+
+### Governance and release gate
+
+Human review/approval remains outstanding for active PRs #195 and #202–#211 (the PR review API returned no independent approvals for the checked PRs). #207 was merged only after explicit user authorization; no human review submission existed at that time. `main` remains unprotected (`protected=false`); issue #170 remains open. Passing CI and `mergeable=true` are not substitutes for branch governance. Re-read current head SHA, mergeability, reviews and checks immediately before any merge. Do not merge #209/#211 independently; do not merge #203/#204/#195 independently.
+
+## Historical inventory snapshot — 2026-10-24
+
 
 Point-in-time snapshot of the public [GitHub PR listing](https://github.com/vyborovamaria3-maker/claude-project/pulls). **GitHub is authoritative** for current status, CI, review and merge base; this file can become stale after every update.
 

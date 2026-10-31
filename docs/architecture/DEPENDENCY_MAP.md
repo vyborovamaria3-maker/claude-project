@@ -1,11 +1,12 @@
-# Collector dependencies
+# Dependency map
 
-- scripts/worker.ts -> tasks, account-manager, WorkerRegistry, scraper, schemas, collector-store, history-filter, metrics, auth.
-- scheduler -> tasks, advisory lock, analytics/graph SQL functions.
-- collector-store -> pg tx, entities processor, archive store, intelligence-store.
-- task-handler -> encrypted session/proxy -> searchX -> Playwright parser.
-- dashboard -> analytics, tasks/worker reads, authenticated collector controls.
-- launcher lib/xcollector.ts -> local collector scripts and HTTP health probes.
-- intelligence worker -> shared PostgreSQL raw-event normalization.
-- PostgreSQL is authoritative for tasks, accounts, results, history and raw AI events. In-memory timers are coordination only.
-- Existing libraries: pg, Playwright, zod, prom-client, proxy agents, dotenv; PGlite/Node test for verification. No added queue broker.
+The current repository-wide dependency and data-flow inventory is maintained in [SYSTEM_DEPENDENCY_MAP_20261030.md](SYSTEM_DEPENDENCY_MAP_20261030.md).
+
+The map distinguishes:
+- independent X, Telegram and blockchain source stores;
+- the separate Node Intelligence event/timeline destination;
+- the distinct Python provider/NLP Intelligence runtime;
+- standalone Memecoin Intelligence, Admin, Subscription and Telegram Mini App domains;
+- shared packages that provide optional building blocks rather than automatic runtime wiring.
+
+This file previously contained only a short X Collector dependency list. That historical collector-specific scope is superseded by the repository-wide map; see [ARCHITECTURE_BASELINE_20261012.md](ARCHITECTURE_BASELINE_20261012.md) for the old audit context.
