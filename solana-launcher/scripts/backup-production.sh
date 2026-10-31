@@ -95,6 +95,11 @@ try:
     source.backup(target)
     if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
         raise RuntimeError("SQLite online backup integrity check failed")
+    tables = target.execute(
+        "SELECT count(*) FROM sqlite_master WHERE type='table'"
+    ).fetchone()[0]
+    if tables < 1:
+        raise RuntimeError("Python Intelligence SQLite backup contains no tables")
 finally:
     target.close()
     source.close()
