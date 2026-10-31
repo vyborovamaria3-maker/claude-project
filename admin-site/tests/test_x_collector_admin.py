@@ -116,6 +116,20 @@ class CollectorApiTest(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 403)
 
+    def test_feature_flag_timestamp_is_server_managed(self):
+        connection_patch, metadata_patch = self.setup_database()
+        with connection_patch, metadata_patch:
+            response = self.client.patch(
+                '/api/x-collector/tables/feature_flags',
+                json={
+                    'confirm': True,
+                    'values': {'updated_at': 0},
+                    'key': {'name': 'test.flag'},
+                    'version': '12',
+                },
+            )
+        self.assertEqual(response.status_code, 422)
+
     def test_feature_flag_payload_is_read_only(self):
         connection_patch, metadata_patch = self.setup_database()
         with connection_patch, metadata_patch:
