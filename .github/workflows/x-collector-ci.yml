@@ -61,24 +61,41 @@ jobs:
           archive="${RUNNER_TEMP}/x-collector-ci.dump"
           corrupt="${archive}.corrupt"
           restore_db="x_collector_restore_ci"
-          maintenance="postgresql://collector:isolated_ci_fixture@127.0.0.1:5432/postgres"
+          restore_container="x-collector-pg-restore-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm -f "$restore_container" >/dev/null 2>&1 || true
+            rm -f "$archive" "$corrupt"
+          }
+          trap cleanup EXIT
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DROP TABLE IF EXISTS public.x_backup_restore_fixture"
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE TABLE public.x_backup_restore_fixture(id integer PRIMARY KEY, marker text NOT NULL)"
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "INSERT INTO public.x_backup_restore_fixture VALUES(1,'x-collector-ci-fixture')"
           pg_dump --dbname="$DATABASE_URL" --format=custom --no-owner --no-acl --file="$archive"
           test -s "$archive"
           pg_restore --list "$archive" >/dev/null
-          psql "$maintenance" -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS $restore_db"
-          psql "$maintenance" -v ON_ERROR_STOP=1 -c "CREATE DATABASE $restore_db"
-          restore_url="postgresql://collector:isolated_ci_fixture@127.0.0.1:5432/$restore_db"
-          pg_restore --dbname="$restore_url" --no-owner --no-privileges --exit-on-error --single-transaction "$archive"
-          restored="$(psql "$restore_url" -v ON_ERROR_STOP=1 -Atc "SELECT marker FROM public.x_backup_restore_fixture WHERE id=1")"
+
+          # The runner's pg_dump may be newer than the PostgreSQL 16 source.
+          # Restore into an isolated matching PostgreSQL 17 target so newer
+          # archive settings are never sent to the PG16 service.
+          docker run -d --rm --network none --name "$restore_container" \
+            -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17-alpine >/dev/null
+          ready=0
+          for i in $(seq 1 45); do
+            if docker exec "$restore_container" pg_isready -U postgres >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = 1
+          docker exec "$restore_container" createdb -U postgres "$restore_db"
+          docker exec -i "$restore_container" pg_restore -U postgres -d "$restore_db" \
+            --no-owner --no-privileges --exit-on-error --single-transaction < "$archive"
+          restored="$(docker exec "$restore_container" psql -U postgres -d "$restore_db" -v ON_ERROR_STOP=1 -Atc "SELECT marker FROM public.x_backup_restore_fixture WHERE id=1")"
           test "$restored" = "x-collector-ci-fixture"
           head -c 64 "$archive" > "$corrupt"
           if pg_restore --list "$corrupt" >/dev/null 2>&1; then
             echo "ERROR: truncated X PostgreSQL backup was accepted" >&2
             exit 1
           fi
-          psql "$maintenance" -v ON_ERROR_STOP=1 -c "DROP DATABASE $restore_db"
-          rm -f "$archive" "$corrupt"
           echo "X_COLLECTOR_PG_BACKUP_RESTORE_OK isolated_restore=true corrupt_archive_rejected=true"
