@@ -84,7 +84,11 @@ See the [official PostgreSQL image documentation](https://hub.docker.com/_/postg
 
 The current central backup script also runs `pg_dump` using these same
 configured role names; a separate backup identity has not been provisioned or
-verified. Before production activation, design and test distinct bootstrap,
+verified. This warning concerns the product and Admin state database login
+identities; the separate read-only source roles `admin_reader` and
+`intelligence_reader` documented in `admin-site/deploy/DEPLOY_ADMIN_POTAPOFF.md`
+are a distinct access path and do not resolve the product/Admin state role
+question. Before production activation, design and test distinct bootstrap,
 migration, runtime and backup roles. Do not assume a new
 `docker-entrypoint-initdb.d` script will repair an existing volume: the
 official image runs initialization scripts only when the data directory is
