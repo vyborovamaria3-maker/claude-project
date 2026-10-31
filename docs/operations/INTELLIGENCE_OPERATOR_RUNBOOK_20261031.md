@@ -47,8 +47,9 @@ volumes, deployed roles and actual connection targets remain NOT IDENTIFIED.
 | --- | --- | --- | --- |
 | X PostgreSQL | X Collector | Source outbox claim/ACK lifecycle plus only required source reads | NOT IDENTIFIED |
 | Telegram PostgreSQL | TG Collector | Source outbox claim/ACK lifecycle plus only required source reads | NOT IDENTIFIED |
-| Blockchain `trade.db` | Blockchain collector | SQLite lease/ACK lifecycle on a verified local copy or approved DB | Expected Compose mount only; live host NOT VERIFIED |
-| Intelligence PostgreSQL | Intelligence | ETL writer; API reader should be SELECT-only | Backend selection / instance NOT VERIFIED |
+| Blockchain `trade.db` | Blockchain collector | SQLite lease/ACK lifecycle on a verified local copy or approved DB | Expected frontend Compose mount `/app/data/trade.db`; live host NOT VERIFIED |
+| Python Intelligence SQLite | Python Intelligence worker | Local Python runtime state; Admin reads the shared volume read-only | Expected `intelligence-state` volume at `/var/lib/potapoff-intelligence/intelligence.sqlite3`; central backup artifact `intelligence.sqlite`; live host NOT VERIFIED |
+| Node Intelligence PostgreSQL | Node cross-source Intelligence | ETL writer; API reader should be SELECT-only | `INTELLIGENCE_DATABASE_URL` target / physical instance NOT VERIFIED; no verified production backup schedule |
 | Admin / product PostgreSQL | Admin / POTAPoff | Dedicated application roles; no shared owner credentials | Production host not provisioned at last confirmation |
 
 Before assigning a host or connection, record one row per physical database:
