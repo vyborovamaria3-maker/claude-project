@@ -41,7 +41,7 @@ jobs:
         run: bash .github/scripts/test-pinned-ssh.sh
 
   disposable-recovery:
-    name: Synthetic PG16 and PG17 full restore
+    name: Synthetic PG16/PG17 and Python Intelligence SQLite restore
     runs-on: ubuntu-latest
     timeout-minutes: 18
     steps:
