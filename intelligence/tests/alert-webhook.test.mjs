@@ -143,11 +143,16 @@ test("retries one transient failure but does not retry permanent client errors",
 test("bounded queue drops excess alerts without blocking the caller", async () => {
   let resolveFirst;
   const statuses = [];
+  let calls = 0;
   const sink = createAlertWebhookSink(config(), {
     maxQueue: 1,
     maxAttempts: 1,
     onStatus: value => statuses.push(value),
-    fetchImpl: () => new Promise(resolve => { resolveFirst = resolve; }),
+    fetchImpl: () => {
+      calls++;
+      if (calls === 1) return new Promise(resolve => { resolveFirst = resolve; });
+      return Promise.resolve({ ok: true, status: 200 });
+    },
   });
 
   assert.equal(sink.enqueue(event()), true);
