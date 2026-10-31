@@ -41,6 +41,7 @@ export type ClaimOptions = Readonly<{
   workerId: string;
   batchSize: number;
   leaseMs: number;
+  /** Deterministic clock override for tests; PostgreSQL defaults to its statement clock. */
   now?: Date;
 }>;
 export function checkClaimOptions(options: ClaimOptions): Date {
