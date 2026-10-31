@@ -139,8 +139,23 @@ Runtime safeguards:
 - A failed startup or periodic health probe emits one deduplicated
   `health_probe_failed` alert and does **not** prevent delivery; the next
   successful health snapshot emits its recovery transition.
-- These alerts are JSON log events, **not an external notification service**.
-  A deployment must route supervisor stdout to its approved log/alert sink.
+- By default, these alerts remain JSON stdout records. An optional generic
+  HTTPS webhook can forward only `alert` and `alert_recovered` transitions:
+  set `INTELLIGENCE_ALERT_WEBHOOK_URL`, and optionally
+  `INTELLIGENCE_ALERT_WEBHOOK_TOKEN` (Bearer token) and
+  `INTELLIGENCE_ALERT_WEBHOOK_TIMEOUT_MS` (250–5000 ms; default 2000).
+  The URL must use HTTPS and cannot contain embedded credentials or a fragment.
+- Webhook delivery is disabled unless the URL is explicitly configured. It uses
+  a bounded in-memory queue (16 pending records), at most two attempts and a
+  bounded request timeout. Only allowlisted source, alert code, transition time
+  and safe numeric counters are sent; no DSNs, raw event payloads, provider
+  responses or exception text are included.
+- Webhook failure never stops event delivery. Failed sends, queue overflow and
+  shutdown flush timeout are reported as sanitized `alert_delivery` stdout
+  records. The queue is not durable: a process crash can lose pending notices,
+  and a receiver should persist its own history and tolerate duplicate posts.
+  This is a delivery adapter, not an approved provider endpoint or a process
+  manager; no webhook URL/token is configured in this repository.
 - Health queries require source-side covering indexes: X migration
   `051_intelligence_outbox_health_indexes.sql`, TG migration
   `037_intelligence_outbox_health_indexes.sql`, and the opt-in Blockchain
@@ -152,7 +167,7 @@ Runtime safeguards:
   read-only `run.mjs --source <source> --status`; it shares the same health
   metrics without claiming or mutating events.
 
-Caveats: health alerts are structured stdout records only; no external alert delivery or process manager is configured. This implementation does not persist a machine-level process manager,
+Caveats: the optional webhook is code-only and remains disabled without an operator-supplied HTTPS endpoint and secret; no provider endpoint, durable alert store or process manager is configured. This implementation does not persist a machine-level process manager,
 does not create a health HTTP service, does not apply migrations, and does not
 validate a live X/TG/Blockchain producer or the real token-link resolver.
 Startup after Windows restart requires explicit process launch. The current
