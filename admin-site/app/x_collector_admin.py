@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import time
 from contextlib import contextmanager
 from typing import Any
 
@@ -19,8 +20,8 @@ from .database import _mask_nested, is_sensitive
 # evidence and derived-data tables remain read-only in the Control Center.
 MUTATION_POLICY = {
     'feature_flags': {
-        'insert': frozenset({'name', 'enabled', 'rollout_pct', 'description', 'updated_at'}),
-        'update': frozenset({'enabled', 'rollout_pct', 'description', 'updated_at'}),
+        'insert': frozenset({'name', 'enabled', 'rollout_pct', 'description'}),
+        'update': frozenset({'enabled', 'rollout_pct', 'description'}),
     },
 }
 MUTATION_ACTIONS = ('insert', 'update', 'delete')
@@ -253,11 +254,17 @@ def build_x_collector_router():
                 meta = metadata(db, table)
                 fields = validate_mutation(meta, body, action)
                 relation = sql.Identifier('public', table)
-                if any(has_secrets(v) or has_redaction(v) for v in body.values.values()):
+                values = dict(body.values)
+                if action == 'insert' and not values:
+                    raise HTTPException(422, 'Нет полей для добавления')
+                if table == 'feature_flags':
+                    # The editor owns this timestamp; clients cannot backdate or forge it.
+                    values['updated_at'] = int(time.time() * 1000)
+                if any(has_secrets(v) or has_redaction(v) for v in values.values()):
                     raise HTTPException(422, 'JSON с секретными полями или скрытыми значениями нельзя записать через редактор')
-                params = [adapt(v, fields[k]) for k,v in body.values.items()]
+                params = [adapt(v, fields[k]) for k,v in values.items()]
                 if action == 'insert':
-                    query = sql.SQL('INSERT INTO {} ({}) VALUES ({})').format(relation, sql.SQL(',').join(map(sql.Identifier, body.values)), sql.SQL(',').join(sql.Placeholder() for _ in body.values)) if body.values else sql.SQL('INSERT INTO {} DEFAULT VALUES').format(relation)
+                    query = sql.SQL('INSERT INTO {} ({}) VALUES ({})').format(relation, sql.SQL(',').join(map(sql.Identifier, values)), sql.SQL(',').join(sql.Placeholder() for _ in values))
                 else:
                     predicate = sql.SQL(' AND ').join(sql.SQL('{} = %s').format(sql.Identifier(k)) for k in body.key) + sql.SQL(' AND xmin::text = %s')
                     key_params = [adapt(v, fields[k]) for k,v in body.key.items()] + [body.version]
@@ -273,7 +280,7 @@ def build_x_collector_router():
                     else:
                         if not body.values:
                             raise HTTPException(422, 'Нет изменённых полей')
-                        query = sql.SQL('UPDATE {} SET {} WHERE {}').format(relation, sql.SQL(',').join(sql.SQL('{} = %s').format(sql.Identifier(k)) for k in body.values), predicate)
+                        query = sql.SQL('UPDATE {} SET {} WHERE {}').format(relation, sql.SQL(',').join(sql.SQL('{} = %s').format(sql.Identifier(k)) for k in values), predicate)
                         params += key_params
                 cursor = db.execute(query, params)
                 if cursor.rowcount != 1:
