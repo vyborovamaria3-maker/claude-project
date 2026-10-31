@@ -13,6 +13,8 @@ on:
       - ".github/workflows/landing-release.yml"
       - "solana-launcher/scripts/backup-production.sh"
       - "solana-launcher/scripts/verify-backup-restore.sh"
+      - "solana-launcher/Dockerfile.frontend.prod"
+      - "solana-launcher/docker-compose.production.yml"
       - "solana-launcher/scripts/blockchain-sqlite-health.cjs"
       - "solana-launcher/scripts/blockchain-sqlite-health-regression.cjs"
       - "solana-launcher/package.json"
