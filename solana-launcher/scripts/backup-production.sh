@@ -198,10 +198,10 @@ try:
 
     if target.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
         raise RuntimeError("Python Intelligence snapshot integrity_check failed")
-    tables = target.execute(
-        "SELECT count(*) FROM sqlite_master "
-        "WHERE type=\'table\' AND name NOT LIKE \'sqlite_%\'"
-    ).fetchone()[0]
+    tables = sum(
+        1 for name, kind in target.execute("SELECT name, type FROM sqlite_master")
+        if kind == "table" and not name.startswith("sqlite_")
+    )
     if not isinstance(tables, int) or tables < 1:
         raise RuntimeError("Python Intelligence snapshot contains no application tables")
 
