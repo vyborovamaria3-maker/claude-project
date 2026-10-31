@@ -7,13 +7,8 @@ scratch="$(mktemp -d)"
 product="potapoff-ci-product-$$"
 admin="potapoff-admin-postgres"
 frontend="potapoff-ci-frontend-$$"
-sqlite_writer_pid=""
 
 cleanup(){
-  if [[ -n "$sqlite_writer_pid" ]]; then
-    kill "$sqlite_writer_pid" >/dev/null 2>&1 || true
-    wait "$sqlite_writer_pid" >/dev/null 2>&1 || true
-  fi
   docker rm -f "$product" "$admin" "$frontend" >/dev/null 2>&1 || true
   rm -rf -- "$scratch"
 }
@@ -23,51 +18,54 @@ trap cleanup EXIT
   echo "Install solana-launcher dependencies before this rehearsal" >&2
   exit 1
 }
-mkdir -p "$scratch/deploy" "$scratch/admin" "$scratch/frontend-data"
+mkdir -p "$scratch/deploy" "$scratch/admin" "$scratch/frontend-data" "$scratch/backups"
 
-# Keep a writer open with committed rows still in WAL. The production backup
-# must capture these rows through SQLite Online Backup, not by copying trade.db.
-(
-  cd "$root/solana-launcher"
-  TEST_SQLITE_DB_PATH="$scratch/frontend-data/trade.db" node -e '
-    const Database = require("better-sqlite3");
-    const db = new Database(process.env.TEST_SQLITE_DB_PATH);
-    db.pragma("journal_mode=WAL");
-    db.pragma("wal_autocheckpoint=0");
-    db.exec("CREATE TABLE backup_fixture(id INTEGER PRIMARY KEY, payload TEXT NOT NULL)");
-    db.prepare("INSERT INTO backup_fixture(id,payload) VALUES(1,?)").run("written-to-wal");
-    console.log("SQLITE_FIXTURE_READY");
-    setInterval(() => { db.pragma("data_version"); }, 1000);
-  '
-) > "$scratch/sqlite-writer.log" 2>&1 &
-sqlite_writer_pid=$!
-ready=0
-for i in $(seq 1 50); do
-  if grep -Fq "SQLITE_FIXTURE_READY" "$scratch/sqlite-writer.log"; then
-    ready=1
-    break
-  fi
-  if ! kill -0 "$sqlite_writer_pid" 2>/dev/null; then
-    cat "$scratch/sqlite-writer.log" >&2
-    exit 1
-  fi
-  sleep 0.1
-done
-[[ "$ready" = 1 && -s "$scratch/frontend-data/trade.db-wal" ]] || {
-  echo "SQLite WAL fixture did not become ready" >&2
-  cat "$scratch/sqlite-writer.log" >&2
-  exit 1
-}
-
-# This test-only frontend container mirrors the production mount and includes
-# the exact locked better-sqlite3 package from the checked-out application.
-# It has no network and cannot reach any production resource.
+# This test-only frontend container mirrors the production /app/data mount and
+# uses the exact locked better-sqlite3 package. It has no network and cannot
+# reach any production resource.
 docker run -d --rm --network none --name "$frontend" \
   --label com.docker.compose.project=potapoff \
   --label com.docker.compose.service=frontend \
   -v "$scratch/frontend-data:/app/data" \
+  -v "$scratch/backups:/backup" \
   -v "$root/solana-launcher/node_modules:/app/node_modules:ro" \
   -w /app node:20-bookworm-slim sleep infinity >/dev/null
+
+# Keep a writer open with committed rows still in WAL. The production backup
+# must capture these rows through SQLite Online Backup, not by copying trade.db.
+docker exec -d "$frontend" node -e '
+  const fs = require("node:fs");
+  const Database = require("better-sqlite3");
+  try {
+    const db = new Database("/app/data/trade.db");
+    db.pragma("journal_mode=WAL");
+    db.pragma("wal_autocheckpoint=0");
+    db.exec("CREATE TABLE backup_fixture(id INTEGER PRIMARY KEY, payload TEXT NOT NULL)");
+    db.prepare("INSERT INTO backup_fixture(id,payload) VALUES(1,?)").run("written-to-wal");
+    fs.writeFileSync("/tmp/sqlite-fixture-ready", "ready");
+    setInterval(() => { db.pragma("data_version"); }, 1000);
+  } catch (error) {
+    fs.writeFileSync("/tmp/sqlite-fixture-error", String(error && error.message || error));
+    process.exit(1);
+  }
+'
+ready=0
+for i in $(seq 1 50); do
+  if docker exec "$frontend" test -s /tmp/sqlite-fixture-ready >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  if docker exec "$frontend" test -s /tmp/sqlite-fixture-error >/dev/null 2>&1; then
+    docker exec "$frontend" cat /tmp/sqlite-fixture-error >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+[[ "$ready" = 1 ]] || {
+  echo "SQLite WAL fixture did not become ready" >&2
+  exit 1
+}
+docker exec "$frontend" test -s /app/data/trade.db-wal
 
 # These are disposable test-only PostgreSQL containers; no live host is used.
 docker run -d --rm --network none --name "$product" \
@@ -123,9 +121,8 @@ grep -Fq "  ./trade.db" "$backup/SHA256SUMS"
 }
 
 # Verify the row that was committed only to the WAL is present in the backup.
-(
-  cd "$root/solana-launcher"
-  BACKUP_SQLITE_PATH="$backup/trade.db" node -e '
+docker exec -e "BACKUP_SQLITE_PATH=/backup/$(basename "$backup")/trade.db" \
+  "$frontend" node -e '
     const Database = require("better-sqlite3");
     const db = new Database(process.env.BACKUP_SQLITE_PATH, { readonly: true, fileMustExist: true });
     try {
@@ -135,8 +132,7 @@ grep -Fq "  ./trade.db" "$backup/SHA256SUMS"
     } finally {
       db.close();
     }
-  '
-) | grep -Fq "SQLITE_WAL_ROW_RESTORED_OK"
+  ' | grep -Fq "SQLITE_WAL_ROW_RESTORED_OK"
 
 bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" |
   grep -Fq 'BACKUP_RESTORE_REHEARSAL_OK'
