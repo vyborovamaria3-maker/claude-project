@@ -122,6 +122,10 @@ const backupPath = process.env.POTAPOFF_TRADE_DB_BACKUP;
       fs.existsSync(backupPath)) {
     throw new Error("invalid_sqlite_backup_paths");
   }
+  const sourceStat = fs.lstatSync(sourcePath);
+  if (!sourceStat.isFile() || sourceStat.isSymbolicLink()) {
+    throw new Error("sqlite_source_must_be_regular_file");
+  }
 
   let source;
   try {
@@ -189,8 +193,11 @@ os.umask(0o077)
 source = None
 target = None
 target_path = os.environ["POTAPOFF_INTELLIGENCE_BACKUP"]
+source_path = "/var/lib/potapoff-intelligence/intelligence.sqlite3"
 try:
-    source = sqlite3.connect("file:/var/lib/potapoff-intelligence/intelligence.sqlite3?mode=ro", uri=True)
+    if os.path.islink(source_path) or not os.path.isfile(source_path):
+        raise RuntimeError("Python Intelligence source must be a regular file")
+    source = sqlite3.connect("file:" + source_path + "?mode=ro", uri=True)
     if source.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
         raise RuntimeError("Python Intelligence source quick_check failed")
     target = sqlite3.connect(target_path)
