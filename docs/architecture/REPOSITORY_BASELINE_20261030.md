@@ -4,7 +4,7 @@
 
 ## Baseline identity
 
-- Observed `main`: `9f4a7e88afa80774633ee4a43221a621fe5f1922` (commit timestamp 2026-10-28 12:09:26 UTC).
+- Observed `main` on 2026-10-31: `f4dc5ef3aad400f64fc300f30542085e10aae4c1` (post-#207 integration). Tree inventory unchanged from the previous snapshot: 4,791 entries, 4,065 tracked file blobs, 725 directories; 38 workflows and 43 architecture documents.
 - Recursive Git tree: **4,791 entries**, **4,065 tracked file blobs**, **725 directories**; tree response was not truncated.
 - GitHub workflow files: **38**.
 - Architecture documents under `docs/architecture`: **43**.
