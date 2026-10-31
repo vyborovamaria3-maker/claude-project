@@ -27,13 +27,19 @@ WHERE parent.rolname <> current_user
 ORDER BY parent.rolname;
 
 \echo 'EFFECTIVE DATABASE PRIVILEGES'
-SELECT current_database() AS database_name,
-       has_database_privilege(current_user, current_database(), 'CONNECT') AS can_connect,
-       has_database_privilege(current_user, current_database(), 'CREATE') AS can_create_schema,
-       has_database_privilege(current_user, current_database(), 'TEMPORARY') AS can_create_temp_objects;
+SELECT d.datname AS database_name,
+       pg_get_userbyid(d.datdba) AS database_owner,
+       d.datdba = (SELECT oid FROM pg_roles WHERE rolname = current_user) AS is_database_owner,
+       has_database_privilege(current_user, d.oid, 'CONNECT') AS can_connect,
+       has_database_privilege(current_user, d.oid, 'CREATE') AS can_create_schema,
+       has_database_privilege(current_user, d.oid, 'TEMPORARY') AS can_create_temp_objects
+FROM pg_database AS d
+WHERE d.datname = current_database();
 
 \echo 'EFFECTIVE SCHEMA PRIVILEGES'
 SELECT n.nspname AS schema_name,
+       pg_get_userbyid(n.nspowner) AS schema_owner,
+       n.nspowner = (SELECT oid FROM pg_roles WHERE rolname = current_user) AS is_schema_owner,
        has_schema_privilege(current_user, n.oid, 'USAGE') AS can_use,
        has_schema_privilege(current_user, n.oid, 'CREATE') AS can_create
 FROM pg_namespace AS n
@@ -45,6 +51,8 @@ ORDER BY n.nspname;
 SELECT n.nspname AS schema_name,
        c.relname AS relation_name,
        c.relkind AS relation_kind,
+       pg_get_userbyid(c.relowner) AS relation_owner,
+       c.relowner = (SELECT oid FROM pg_roles WHERE rolname = current_user) AS is_relation_owner,
        has_table_privilege(current_user, c.oid, 'SELECT') AS can_select,
        has_table_privilege(current_user, c.oid, 'INSERT') AS can_insert,
        has_table_privilege(current_user, c.oid, 'UPDATE') AS can_update,
@@ -62,6 +70,8 @@ ORDER BY n.nspname, c.relname;
 \echo 'EFFECTIVE SEQUENCE PRIVILEGES'
 SELECT n.nspname AS schema_name,
        s.relname AS sequence_name,
+       pg_get_userbyid(s.relowner) AS sequence_owner,
+       s.relowner = (SELECT oid FROM pg_roles WHERE rolname = current_user) AS is_sequence_owner,
        has_sequence_privilege(current_user, s.oid, 'USAGE') AS can_use,
        has_sequence_privilege(current_user, s.oid, 'SELECT') AS can_select,
        has_sequence_privilege(current_user, s.oid, 'UPDATE') AS can_update
