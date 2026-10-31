@@ -187,6 +187,8 @@ target = None
 target_path = os.environ["POTAPOFF_INTELLIGENCE_BACKUP"]
 try:
     source = sqlite3.connect("file:/var/lib/potapoff-intelligence/intelligence.sqlite3?mode=ro", uri=True)
+    if source.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+        raise RuntimeError("Python Intelligence source quick_check failed")
     target = sqlite3.connect(target_path)
     source.backup(target)
     if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
