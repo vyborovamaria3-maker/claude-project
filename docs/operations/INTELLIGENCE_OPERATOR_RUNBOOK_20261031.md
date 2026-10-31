@@ -191,30 +191,38 @@ weaken retry limits to make the queue appear healthy.
 
 ## 6. Backup and recovery
 
-The central POTAPoff backup bundle is being extended in this branch to include:
+The central POTAPoff backup bundle in this integration contains four
+database artifacts:
 
-- product PostgreSQL dump;
-- Control Center PostgreSQL dump;
-- `trade.db`, captured from the running frontend container using the SQLite
-  Online Backup API so committed WAL pages are included;
-- deployment and Control Center configuration files;
-- a SHA256 manifest over the complete recovery set.
+- product PostgreSQL dump (`postgres.dump`);
+- Control Center PostgreSQL dump (`admin-postgres.dump`);
+- Blockchain `trade.db`, captured from the running frontend container using
+  the better-sqlite3 SQLite Online Backup API so committed WAL pages are included;
+- Python Intelligence `intelligence.sqlite`, captured from the
+  `potapoff-intelligence` worker using Python's SQLite Online Backup API so
+  committed WAL pages are included.
 
-The updated isolated rehearsal validates the manifest, restores the two
-PostgreSQL dumps into a network-isolated temporary Docker container, restores
-the SQLite snapshot to a fresh temporary path, and rejects corruption. The CI
-fixture also keeps a SQLite writer open with a committed WAL row and asserts
-that the row appears in the snapshot.
+Deployment and Control Center configuration files are included in the same
+SHA256-manifested recovery set. The updated isolated rehearsal validates the
+manifest, restores both PostgreSQL dumps into a network-isolated temporary
+Docker container, restores **both** SQLite snapshots to fresh temporary paths,
+and rejects corruption. The CI fixture keeps a writer open with a committed
+WAL-only row in each SQLite database and asserts that both rows appear in the
+corresponding snapshots.
 
 This is synthetic evidence only. It does not prove that a real host has been
 backed up, that the backup was copied off-host, or that an actual production
-restore was timed. X Collector PostgreSQL, TG Collector PostgreSQL and any
-separate Intelligence store require independent backup and restore evidence;
-they are not silently covered by the POTAPoff product bundle.
+restore was timed. X Collector PostgreSQL, TG Collector PostgreSQL and the
+separate Node cross-source Intelligence PostgreSQL target require independent
+backup and restore evidence; they are not silently covered by the POTAPoff
+product bundle. The Node Intelligence PostgreSQL path currently has a
+synthetic CI dump/restore check only, not a verified production backup owner
+or schedule.
 
-Never copy a live `trade.db` file directly. Do not restore over an open
-database. Keep RPO and RTO as NOT MEASURED until a named operator completes a
-restore from an actual backup copy and records elapsed time and data coverage.
+Never copy a live `trade.db` or `intelligence.sqlite` file directly. Do not
+restore over an open database. Keep RPO and RTO as NOT MEASURED until a named
+operator completes a restore from an actual backup copy and records elapsed
+time and data coverage.
 
 ## 7. Activation gates
 
