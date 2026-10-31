@@ -155,7 +155,7 @@ for database in "product potapoff potapoff synthetic_product" "admin potapoff_ad
     -c "CREATE ROLE backup_audit_probe NOLOGIN; GRANT CONNECT ON DATABASE $db_name TO backup_audit_probe; GRANT USAGE ON SCHEMA public TO backup_audit_probe; GRANT SELECT ON TABLE public.$table_name TO backup_audit_probe" >/dev/null
 
   audit_output="$(
-    { printf 'SET ROLE backup_audit_probe;\\n'; cat "$root/docs/operations/postgres-effective-privileges.sql"; } |
+    { printf '%s\\n' 'SET ROLE backup_audit_probe;'; cat "$root/docs/operations/postgres-effective-privileges.sql"; } |
       docker exec -i "$container" psql -X -U "$db_user" -d "$db_name" -v ON_ERROR_STOP=1
   )"
   grep -Fq "backup_audit_probe" <<< "$audit_output"
