@@ -115,6 +115,7 @@ The backup contains:
 - product PostgreSQL custom-format dump (`postgres.dump`);
 - Control Center PostgreSQL custom-format dump (`admin-postgres.dump`);
 - the Blockchain SQLite database (`trade.db`) captured with the SQLite Online Backup API while the frontend container is running;
+- the separate Python Intelligence SQLite database (`intelligence.sqlite`) captured with Python's SQLite Online Backup API from the `potapoff-intelligence` worker;
 - `.env.server`;
 - `backend.env`;
 - production Compose file;
@@ -124,11 +125,13 @@ The backup contains:
 
 The script immediately runs `sha256sum -c SHA256SUMS`. The backup directory is mode `0700` and backups older than 14 days are pruned.
 
-The frontend container is the owner of the `/app/data/trade.db` mount. The backup uses `better-sqlite3` Online Backup API inside that container, checks the source with `quick_check`, checks the snapshot with `integrity_check`, copies the completed snapshot into the same incomplete recovery directory, and includes it in `SHA256SUMS`. A plain filesystem copy of a live `trade.db` is forbidden because committed pages may still be in the WAL file. If the frontend container or database is missing, the whole backup fails closed and the incomplete directory is removed.
+The frontend container owns the `/app/data/trade.db` mount. The backup uses `better-sqlite3` Online Backup API inside that container, checks the source with `quick_check`, checks the snapshot with `integrity_check`, copies the completed snapshot into the same incomplete recovery directory, and includes it in `SHA256SUMS`. A plain filesystem copy of a live `trade.db` is forbidden because committed pages may still be in the WAL file. If the frontend container or database is missing, the whole backup fails closed and the incomplete directory is removed.
 
-`verify-backup-restore.sh` verifies the complete checksum manifest, restores both PostgreSQL dumps into a network-isolated disposable Docker container, and copies the SQLite snapshot into a fresh temporary path for an independent integrity check. This proves archive readability in CI; it does not prove a live host backup, off-host copy, or a measured RPO/RTO.
+The Python Intelligence worker owns a separate `intelligence-state` volume mounted at `/var/lib/potapoff-intelligence`. The backup runs Python's SQLite Online Backup API inside the `potapoff-intelligence` container, checks the snapshot integrity and application-table presence, and includes the standalone result as `intelligence.sqlite` in the same manifest. Its temporary file is unique per backup and removed on success or failure. A missing worker or source database fails the whole backup closed. This is a separate store from the Node cross-source Intelligence PostgreSQL target configured by `INTELLIGENCE_DATABASE_URL`; that Node target still has no verified production backup schedule in this repository.
 
-If either PostgreSQL dump or the SQLite snapshot cannot be created and verified, deployment stops before migration.
+`verify-backup-restore.sh` verifies the complete checksum manifest, restores both PostgreSQL dumps into a network-isolated disposable Docker container, and independently copies and integrity-checks both SQLite snapshots in fresh temporary paths. This proves archive readability and synthetic restore behavior in CI; it does not prove a live host backup, off-host copy, or a measured RPO/RTO.
+
+If either PostgreSQL dump or either SQLite snapshot cannot be created and verified, deployment stops before migration.
 
 ## 6. Schema transition and service switch
 
@@ -223,7 +226,7 @@ cd /opt/potapoff-deploy/backups/<timestamp>
 sha256sum -c SHA256SUMS
 ```
 
-Product and Control Center dumps are PostgreSQL custom format and must be restored with `pg_restore` into the correct databases. The `trade.db` snapshot is a standalone SQLite database. Stop the frontend and every other writer to the `/app/data` mount before replacing it; verify the manifest and run `PRAGMA integrity_check` on the restored copy before starting the application. Keep the previous file quarantined until the application healthcheck passes. Never overwrite an open SQLite database or copy a live `trade.db` without the Online Backup API.
+Product and Control Center dumps are PostgreSQL custom format and must be restored with `pg_restore` into the correct databases. The `trade.db` snapshot is the Blockchain SQLite store; stop the frontend and every other writer to the `/app/data` mount before replacing it. The `intelligence.sqlite` snapshot is the separate Python Intelligence worker store; stop both `potapoff-intelligence` and the Admin reader before replacing the file in the `intelligence-state` volume at `/var/lib/potapoff-intelligence/intelligence.sqlite3`. For either SQLite store, verify the manifest first, preserve the previous database and any WAL/SHM sidecars in quarantine, install the standalone snapshot with the correct container ownership and restrictive permissions, and run `PRAGMA integrity_check` on the restored copy before restarting writers. Never overwrite an open SQLite database or copy a live SQLite database without its Online Backup API. The Node cross-source Intelligence PostgreSQL target is not covered by this bundle and needs its own separately approved backup and restore plan.
 
 Database restore is a destructive emergency action; do not perform it merely because an application image rollback was needed.
 
