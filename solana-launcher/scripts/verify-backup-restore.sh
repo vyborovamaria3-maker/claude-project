@@ -14,6 +14,10 @@ command -v docker >/dev/null
 command -v sha256sum >/dev/null
 command -v python3 >/dev/null
 backup="$(cd -- "$1" && pwd -P)"
+if find "$backup" -type l -print -quit | grep -q .; then
+  echo "Backup contains a symlink; refusing restore verification" >&2
+  exit 1
+fi
 for file in SHA256SUMS postgres.dump admin-postgres.dump trade.db; do
   [[ -s "$backup/$file" && ! -L "$backup/$file" ]] || {
     echo "Backup missing required file or contains a symlink" >&2
