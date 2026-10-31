@@ -86,10 +86,10 @@ done
 # mounted read-only; no named volume, host path or live database is modified.
 docker run --rm --network none --read-only --pids-limit 64 \
   --tmpfs /tmp:size=64m,mode=1777 \
-  --mount "type=bind,src=$backup/intelligence.sqlite,dst=/backup/intelligence.sqlite,readonly" \
+  --mount "type=bind,src=$backup/intelligence.sqlite,dst=/intelligence.sqlite,readonly" \
   python:3.12-alpine python -c '
 import sqlite3
-source = sqlite3.connect("file:/backup/intelligence.sqlite?mode=ro", uri=True)
+source = sqlite3.connect("file:/intelligence.sqlite?mode=ro", uri=True)
 target = sqlite3.connect("/tmp/intelligence-restored.sqlite")
 try:
     source.backup(target)
