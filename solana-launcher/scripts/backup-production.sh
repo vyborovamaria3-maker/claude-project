@@ -178,7 +178,7 @@ INTELLIGENCE_CONTAINER="$(
   echo "Python Intelligence worker container was not found" >&2
   exit 1
 }
-INTELLIGENCE_SQLITE_CONTAINER_TMP="/tmp/potapoff-intelligence-backup-$STAMP-$.sqlite"
+INTELLIGENCE_SQLITE_CONTAINER_TMP="/tmp/potapoff-intelligence-backup-${STAMP}-${BASHPID}.sqlite"
 docker exec -e "POTAPOFF_INTELLIGENCE_BACKUP=$INTELLIGENCE_SQLITE_CONTAINER_TMP" \
   "$INTELLIGENCE_CONTAINER" python -c '
 import os, sqlite3, sys
