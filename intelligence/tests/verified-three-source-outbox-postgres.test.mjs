@@ -233,7 +233,17 @@ test("P0 #173: isolated X/TG PG and chain SQLite outboxes deliver verified sourc
     // independently verified X assertion or supported chain revision.
     const tombstone=invalidated("tg",edited,"edited");
     await commitSource(tgPool,"tg-edit-201",tombstone);
-    assert.equal((await deliver(ports[1],dst,"tg-edit")).delivered,1);
+    const retraction=await deliver(ports[1],dst,"tg-edit");
+    const sourceState=await tgPool.query(`SELECT event_kind,event_key,processed_at,attempts,
+      last_error,lease_owner,lease_until,next_attempt_at FROM outbox_events
+      WHERE event_kind='token_links_invalidated'`);
+    const inboxState=await dst.query(`SELECT source_system,event_kind,event_key
+      FROM intelligence_inbox WHERE event_kind='token_links_invalidated'`);
+    const linkState=await dst.query(`SELECT source_system,event_kind,event_key,state
+      FROM token_link_observations WHERE event_kind='token_links_invalidated'`);
+    assert.equal(retraction.delivered,1,
+      `retraction=${JSON.stringify(retraction)} source=${JSON.stringify(sourceState.rows)} inbox=${JSON.stringify(inboxState.rows)} links=${JSON.stringify(linkState.rows)}`);
+    assert.equal(retraction.failed,0,JSON.stringify(retraction));
     await dst.query("UPDATE token_link_observations SET inserted_at=observed_at");
     assert.deepEqual((await active()).map(row=>row.source_system),["x"]);
     assert.equal((await chain()).length,1);

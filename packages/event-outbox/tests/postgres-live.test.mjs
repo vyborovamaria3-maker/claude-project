@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import {randomBytes} from "node:crypto";
 import pg from "pg";
 import {
   POSTGRES_OUTBOX_DDL,emitPostgres,claimPostgres,ackPostgres,failPostgres
@@ -28,7 +29,7 @@ test("actual PostgreSQL: transaction rollback, dedup and fenced ACK",{skip:!url}
     }finally{writer.release()}
     assert.equal(Number((await pool.query("SELECT COUNT(*) AS n FROM outbox_events")).rows[0].n),1);
     const now=new Date();
-    const rows=await claimPostgres(pool,{workerId:"workerA",batchSize:5,leaseMs:60000,now});
+    const rows=await claimPostgres(pool,{workerId:"workerA",batchSize:5,leaseMs:60000});
     assert.equal(rows.length,1);
     assert.equal(rows[0].eventKey,event.eventKey);
     assert.equal((await claimPostgres(pool,{workerId:"workerB",batchSize:5,leaseMs:60000,now})).length,0);
@@ -39,6 +40,35 @@ test("actual PostgreSQL: transaction rollback, dedup and fenced ACK",{skip:!url}
       assert.equal(await ackPostgres(client,rows[0].id,"workerA",rows[0].leaseUntil),false);
     }finally{client.release()}
   }finally{await pool.end()}
+});
+
+test("actual PostgreSQL: DB-clock claim recovers an event when the application clock is stale",{skip:!url},async()=>{
+  const schema="db_clock_"+randomBytes(6).toString("hex");
+  const admin=new pg.Client({connectionString:url});
+  await admin.connect();
+  try{
+    await admin.query('CREATE SCHEMA "'+schema+'"');
+    await admin.query('SET search_path TO "'+schema+'"');
+    await admin.query(POSTGRES_OUTBOX_DDL);
+    const isolated=new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:2});
+    try{
+      await emitPostgres(isolated,{...event,eventKey:"tweet:db-clock"});
+      const dbNow=(await isolated.query("SELECT statement_timestamp() AS now")).rows[0].now;
+      const staleNow=new Date(dbNow.getTime()-60_000);
+      const stale=await claimPostgres(isolated,{
+        workerId:"stale-host-clock",batchSize:1,leaseMs:60_000,now:staleNow,
+      });
+      assert.equal(stale.length,0,"an explicitly stale host timestamp must not make a future queue row ready");
+      const claimed=await claimPostgres(isolated,{
+        workerId:"database-clock",batchSize:1,leaseMs:60_000,
+      });
+      assert.equal(claimed.length,1,"the default database-clock path must claim the just-inserted event");
+      assert.equal(await ackPostgres(isolated,claimed[0].id,"database-clock",claimed[0].leaseUntil),true);
+    }finally{await isolated.end();}
+  }finally{
+    try{await admin.query('DROP SCHEMA IF EXISTS "'+schema+'" CASCADE')}catch{}
+    await admin.end();
+  }
 });
 
 test("actual PostgreSQL: failure postpones claim, retries with durable error",{skip:!url},async()=>{
@@ -52,17 +82,22 @@ test("actual PostgreSQL: failure postpones claim, retries with durable error",{s
       await tx.query("COMMIT");
     }finally{tx.release()}
     const now=new Date();
-    const claimed=await claimPostgres(pool,{workerId:"workerA",batchSize:10,leaseMs:60000,now});
+    const claimed=await claimPostgres(pool,{workerId:"workerA",batchSize:10,leaseMs:60000});
     assert.equal(claimed.length,1);
     const client=await pool.connect();
     try {
+      // A deliberately stale host timestamp must not override the DB-clock retry schedule.
       assert.equal(await failPostgres(client,claimed[0].id,"workerA",claimed[0].leaseUntil,"fixture_transient",
-        new Date(now.getTime()+120000)),true);
+        new Date(now.getTime()-60000),12,120000),true);
     }finally{client.release()}
-    assert.equal((await claimPostgres(pool,{workerId:"workerB",batchSize:10,leaseMs:60000,now})).length,0);
-    const saved=await pool.query("SELECT attempts,last_error FROM outbox_events WHERE event_key=$1",["tweet:1000:v1"]);
+    assert.equal((await claimPostgres(pool,{workerId:"workerB",batchSize:10,leaseMs:60000})).length,0);
+    const saved=await pool.query(`SELECT attempts,last_error,next_attempt_at,
+      DATE_TRUNC('milliseconds',statement_timestamp()) AS db_now
+      FROM outbox_events WHERE event_key=$1`,["tweet:1000:v1"]);
     assert.equal(saved.rows[0].attempts,1);
     assert.equal(saved.rows[0].last_error,"fixture_transient");
+    const retryDelay=Date.parse(saved.rows[0].next_attempt_at)-Date.parse(saved.rows[0].db_now);
+    assert(retryDelay>=119000&&retryDelay<=120000, `retry must be scheduled from DB time, got ${retryDelay}ms`);
   }finally{await pool.end()}
 });
 
