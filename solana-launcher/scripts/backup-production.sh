@@ -110,6 +110,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const Database = require("better-sqlite3");
 
+// The temporary database may contain private wallet/analytics records.
+process.umask(0o077);
+
 const sourcePath = process.env.POTAPOFF_TRADE_DB_SOURCE;
 const backupPath = process.env.POTAPOFF_TRADE_DB_BACKUP;
 
@@ -182,6 +185,7 @@ INTELLIGENCE_SQLITE_CONTAINER_TMP="/tmp/potapoff-intelligence-backup-${STAMP}-${
 docker exec -e "POTAPOFF_INTELLIGENCE_BACKUP=$INTELLIGENCE_SQLITE_CONTAINER_TMP" \
   "$INTELLIGENCE_CONTAINER" python -c '
 import os, sqlite3, sys
+os.umask(0o077)
 source = None
 target = None
 target_path = os.environ["POTAPOFF_INTELLIGENCE_BACKUP"]
@@ -190,6 +194,7 @@ try:
     if source.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
         raise RuntimeError("Python Intelligence source quick_check failed")
     target = sqlite3.connect(target_path)
+    os.chmod(target_path, 0o600)
     source.backup(target)
     if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
         raise RuntimeError("SQLite online backup integrity check failed")
