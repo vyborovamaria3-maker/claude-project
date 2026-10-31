@@ -50,12 +50,25 @@ volumes, deployed roles and actual connection targets remain NOT IDENTIFIED.
 | Blockchain `trade.db` | Blockchain collector | SQLite lease/ACK lifecycle on a verified local copy or approved DB | Expected frontend Compose mount `/app/data/trade.db`; live host NOT VERIFIED |
 | Python Intelligence SQLite | Python Intelligence worker | Local Python runtime state; Admin reads the shared volume read-only | Expected `intelligence-state` volume at `/var/lib/potapoff-intelligence/intelligence.sqlite3`; central backup artifact `intelligence.sqlite`; live host NOT VERIFIED |
 | Node Intelligence PostgreSQL | Node cross-source Intelligence | ETL writer; API reader should be SELECT-only | `INTELLIGENCE_DATABASE_URL` target / physical instance NOT VERIFIED; no verified production backup schedule |
-| Admin / product PostgreSQL | Admin / POTAPoff | Dedicated application roles; no shared owner credentials | Production host not provisioned at last confirmation |
+| Admin / product PostgreSQL | Admin / POTAPoff | Compose currently reuses POSTGRES_USER as the app DSN identity; superuser status is a P0 item to verify | Production host not provisioned at last confirmation |
 
 Before assigning a host or connection, record one row per physical database:
 environment, host or volume, database name/path, logical owner, login role,
 secret reference (never secret value), backup location, retention, last backup,
 restore evidence, RPO, RTO, primary operator and backup operator.
+
+**P0 privilege warning:** the current product Compose sets
+`POSTGRES_USER=potapoff` and the backend DSN uses `potapoff`; the Admin
+Compose sets `POSTGRES_USER=potapoff_admin` and the Admin state DSN uses
+`potapoff_admin`. The official PostgreSQL Docker image initializes
+`POSTGRES_USER` as a superuser on a fresh data directory. Existing volumes
+may have had roles altered, so do not assume the live roles are still
+superusers—but do not claim least privilege either. Run the read-only audit
+against each actual DSN and record the result. The central backup script also
+uses these role names for pg_dump; a separate backup role is not yet verified.
+Do not repair an existing volume with an init script: official image init
+scripts run only on an empty data directory. Role separation needs an explicit,
+reviewed, backed-up migration and rollback plan.
 
 Do not infer a database count from logical components. Redis and RabbitMQ are
 also persistent Compose volumes; their recovery requirements must be decided
@@ -87,7 +100,11 @@ Required access model before any service is enabled:
 - Intelligence ETL receives only required destination DML. API/read-only
   consumers receive SELECT only.
 - Schema migrations use a separate migration identity; runtime roles are not
-  database owners and are not superusers.
+  database owners and are not superusers. This is the **target access model**,
+  not a statement that the current Compose identities already satisfy it.
+  Current POSTGRES_USER/DSN reuse is unresolved until actual role attributes
+  are checked and any required role separation is rehearsed on a disposable
+  clone.
 - No inherited role or PUBLIC grant may reintroduce INSERT, UPDATE, DELETE,
   TRUNCATE, DDL or schema CREATE where the service does not need it.
 - The Admin X Collector editor allowlist in PR #208 is defense in depth, not a
