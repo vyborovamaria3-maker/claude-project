@@ -2,29 +2,46 @@
 
 ## Current snapshot — 2026-10-31
 
-Observed `main` SHA: `9f4a7e88afa80774633ee4a43221a621fe5f1922`. GitHub branch metadata reports `main.protected=false`; the repository rulesets endpoint returned no rulesets. A repository administrator must configure branch protection ([issue #170](https://github.com/vyborovamaria3-maker/claude-project/issues/170)).
+Observed `main` SHA: `9f4a7e88afa80774633ee4a43221a621fe5f1922`. GitHub branch metadata reports `main.protected=false`. Passing CI is not a substitute for human review or branch governance; administrator action remains tracked in [issue #170](https://github.com/vyborovamaria3-maker/claude-project/issues/170).
 
-Seven open PRs were returned by the current GitHub listing:
+Seven open PRs are currently returned by GitHub:
 
-| PR | Title | State | Head |
+| PR | Title | State | Latest observed head |
 | --- | --- | --- | --- |
-| [#207](https://github.com/vyborovamaria3-maker/claude-project/pull/207) | fix(event-outbox): use PostgreSQL clock for claims and retries | OPEN | `fix/three-source-outbox-tombstone-20261030` |
-| [#206](https://github.com/vyborovamaria3-maker/claude-project/pull/206) | feat(intelligence): add read-only supervisor health metrics | OPEN | `feat/intelligence-supervisor-health-20261030` |
-| [#205](https://github.com/vyborovamaria3-maker/claude-project/pull/205) | docs(architecture): refresh whole-repository baseline and technical debt | OPEN | `docs/repository-baseline-20261030` |
-| [#204](https://github.com/vyborovamaria3-maker/claude-project/pull/204) | fix(admin): relocate collector workspaces exclusively to standalone Control Center | OPEN DRAFT | `feat/admin-relocate-collectors-tginvite-20261029` |
-| [#203](https://github.com/vyborovamaria3-maker/claude-project/pull/203) | UI: единая вкладка Analysis с графиком и подробной панелью | OPEN | `feature/unified-analysis-v1-modal` |
-| [#202](https://github.com/vyborovamaria3-maker/claude-project/pull/202) | feat: Hood Hunt-style evidence-first analytics, DEV setups and target review | OPEN DRAFT | `fix/hood-hunt-analytics-foundation-20261028` |
-| [#195](https://github.com/vyborovamaria3-maker/claude-project/pull/195) | feat: split FOMO pressure and quality metrics | OPEN DRAFT | `feat/fomo-pressure-quality-2026-10-27` |
+| [#207](https://github.com/vyborovamaria3-maker/claude-project/pull/207) | fix(event-outbox): use PostgreSQL clock for claims and retries | OPEN | `4a9d0362f855b8242ccebfe64988e45b1dc1769a` |
+| [#206](https://github.com/vyborovamaria3-maker/claude-project/pull/206) | feat(intelligence): add read-only supervisor health metrics | OPEN | `d2b22ea369042952e6d4c35d1a9732f7ace6b05a` |
+| [#205](https://github.com/vyborovamaria3-maker/claude-project/pull/205) | docs(architecture): refresh whole-repository baseline and technical debt | OPEN | This documentation branch |
+| [#204](https://github.com/vyborovamaria3-maker/claude-project/pull/204) | fix(admin): relocate collector workspaces exclusively to standalone Control Center | OPEN DRAFT | `2f4bf7e09be402230307073de8754cc389f2a9db` |
+| [#203](https://github.com/vyborovamaria3-maker/claude-project/pull/203) | UI: единая вкладка Analysis с графиком и подробной панелью | OPEN | `1ba1f6bf561a082c59d924d440891c1f9924cb00` |
+| [#202](https://github.com/vyborovamaria3-maker/claude-project/pull/202) | feat: Hood Hunt-style evidence-first analytics, DEV setups and target review | OPEN DRAFT | `40131ff79600c7767dfec7f262d67058724ac046` |
+| [#195](https://github.com/vyborovamaria3-maker/claude-project/pull/195) | feat: split FOMO pressure and quality metrics | OPEN DRAFT | `fbdbf4ddd1590982fd71142784acbd9a32e1f68b` |
 
-- PR #207 is ready for review, targets `main`, and is not merged. On head `4a9d0362f855b8242ccebfe64988e45b1dc1769a`, Transactional outbox adapters passed **16/16**, Intelligence foundation passed **247/247**, Intelligence CI, Native social token-link CI and Repository hygiene passed; Security Lock Refresh was skipped. Live PostgreSQL regressions passed for both claim eligibility and retry-backoff scheduling with a simulated host clock one minute behind DB time.
-- PR #206 is ready for review, targets `main`, and is not merged. On head `24018ced0ff22433f2daa76bbfd3f66f1bb03fe7`, Intelligence foundation passed **251/251**, Intelligence CI, Native social token-link CI and Repository hygiene passed; Security Lock Refresh was skipped. It adds read-only supervisor queue/lag/progress/retry/DLQ/schema-skew metrics and structured alert records; it does not configure an external alert sink or production process manager.
-- PR #203 remains open and unmerged. Latest head `1ba1f6bf561a082c59d924d440891c1f9924cb00` (128 commits; 43 files, +2,553/−1,106). Current GitHub check-runs: **33 succeeded, 1 skipped (refresh-lockfiles), 0 failed/pending**. The PR description records the unified 141-row Analysis view, request-only AI behavior, regression coverage, security gates, frontend/backend typechecks and production builds. GitHub reports `mergeable_state=clean`, but there are **no review submissions**. The PR is broader than its title: it changes the launcher UI, Admin Control Center links, Intelligence API/AI gateway and CI.
-- PR #204 remains an open **draft**, head `2f4bf7e09be402230307073de8754cc389f2a9db` (16 commits; 81 files, +1,809/−245). Current GitHub check-runs: **30 succeeded, 1 skipped, 0 failed/pending**. It has no review submissions and overlaps PR #203 in nine paths; do not merge either without a reviewed integration order.
-- PR #205 is documentation-only and remains open, head `b4682fce32090d2f99888817fd19ba13038f73e5` (57 commits; 19 files, +305/−41). Current GitHub check-runs: **5 succeeded, 1 skipped, 0 failed/pending**. This update is being added to the same documentation branch; its checks must be re-read after the new commit.
+- **PR #207 — Outbox clock correctness.** Open, unmerged, targets `main`, 7 files. On the latest observed head, Transactional outbox adapters passed **16/16**, including real PostgreSQL 16 tests for claim and retry behavior under a simulated host clock one minute behind DB time. Intelligence foundation passed **247/247**; Intelligence CI, Native social token-link CI and Repository hygiene passed; Security Lock Refresh was skipped because no lockfile changes were needed. GitHub reports mergeable. No human review submission exists.
+- **PR #206 — supervisor health metrics.** Open, unmerged, targets `main`, 5 files. Follow-up audit found and corrected PostgreSQL health metrics that had used the supervisor host clock. Latest head `d2b22ea369042952e6d4c35d1a9732f7ace6b05a` now uses one DB-side `statement_timestamp()` observation for queue predicates and age calculations, returns `measuredAt`, preserves deterministic overrides, and includes a real PostgreSQL 16 clock-skew/alert-boundary regression. Latest Intelligence foundation passed **252/252**; Intelligence CI, Native social token-link CI and Repository hygiene passed; Security Lock Refresh was skipped. GitHub reports mergeable. No human review submission exists. Alerts remain structured stdout records, not an external notification service.
+- **PR #205 — architecture documentation.** Open and unmerged, 19 files. This inventory is itself part of #205, so its own head SHA and commit count are intentionally omitted to avoid embedding a self-stale value. The pre-refresh head `a4b48f7465fa495b77ef33607f91ebb6eee982ab` had 5 successful checks and 1 skipped check; re-read CI for the new documentation commit before any integration. No human review submission exists.
+- **PR #204 — Admin Control Center migration.** Open draft, 81 files, 16 commits. Last observed checks: 30 successful, 1 skipped, 0 failed/pending. No human review submission exists. It overlaps #203 in nine paths and remains a draft; no merge or rollout.
+- **PR #203 — unified Analysis UI.** Open, unmerged, 43 files, 128 commits. Latest observed head `1ba1f6bf561a082c59d924d440891c1f9924cb00` had 33 successful checks and 1 skipped, 0 failed/pending. GitHub reports mergeable, but no human review submission exists. The PR is broader than its UI title and also changes Admin links, Intelligence API/AI gateway and CI.
+- **PR #202 — Hood Hunt analytics foundation.** Open draft, targets `main`, 18 files. Latest observed head had 10 successful workflows and 1 skipped; no human review submission exists. The current filename audit found no direct overlap with #207, #206, #205, #203, #204 or #195. Re-check its base/head and mergeability before future integration.
+- **PR #195 — FOMO pressure/quality.** Open draft, 23 files, 60 commits. GitHub reports it is not mergeable (`mergeable=false`); no workflow runs were returned for its current head and no human review submission exists. Do not integrate until its dirty state and overlapping files are reconciled.
 
-Path-overlap audit: #203/#204 share 9 files; #203/#195 share 5; #204/#195 share 3; #205/#206 both edit `intelligence/README.md`; #206/#207 both edit `intelligence/scripts/etl-connections.mjs`. PR #202 has no direct path overlap with these PRs. PR #195 is still draft and GitHub reports `mergeable_state=dirty`; no check-runs were returned for its current head. Suggested sequence, subject to human review: #207 → rebase/reconcile #206 → refresh/rebase #205; separately resolve #195/#204 overlaps before #203. See the technical-debt register for details.
+### Path-overlap and integration order
 
-Human review/approval remains outstanding for the active PR set (#202–#207); GitHub returned no review submissions for these PRs. Passing CI is not permission to merge. Check each current PR page for its latest head, review state and checks before acting.
+| PR pair | Shared paths | Integration note |
+| --- | ---: | --- |
+| #207 / #206 | 1 | Both edit `intelligence/scripts/etl-connections.mjs`. Current hunks are separate: #207 changes the PostgreSQL source failure adapter; #206 changes the read-only health query. Re-check after #207 is integrated. |
+| #205 / #206 | 1 | Both edit `intelligence/README.md` in different sections; reconcile the combined operator documentation. |
+| #203 / #204 | 9 | Shared Admin navigation, styles, package and context files; do not merge independently without a reviewed combined diff. |
+| #203 / #195 | 5 | Includes `SocialIntelligencePanel.tsx`, `package.json` and analysis regressions; reconcile FOMO capture/UI behavior with unified Analysis. |
+| #204 / #195 | 3 | Shared docs and package metadata; reconcile after the primary UI overlap. |
+| #202 / other listed PRs | 0 | No direct changed-path overlap found in the current filename audit. |
+
+Suggested sequence, subject to human review: **#207 → reconcile/integrate #206 → refresh #205 documentation**. The #206 PostgreSQL clock-skew correction is already committed and CI-green, but its integration with #207 still needs a post-merge-base check. Separately resolve #203/#204/#195 overlaps before considering #203. Keep #202 as an independent draft until its product scope and review are ready.
+
+### Issue #174 — delivery and recovery acceptance
+
+Issue [#174](https://github.com/vyborovamaria3-maker/claude-project/issues/174) remains **OPEN**. #207 improves DB-clock correctness; #206 adds read-only queue/progress/retry/DLQ/schema-skew metrics and structured alert records. Neither PR proves production operation or closes the operational acceptance. Still outstanding: named owner and start/stop procedure per source/destination, approved external alert delivery, supervised restart/rollout/rollback, disposable end-to-end source/destination failure-and-recovery rehearsal, and verified backup/restore. No production DB, collector, credentials, external alert sink or deployment was accessed.
+
+Human review/approval remains outstanding for the active PR set. GitHub returned no review submissions for #195 and #202–#207. Passing CI and `mergeable=true` are not permission to merge. Always re-read current head SHA, mergeability, reviews and checks on GitHub immediately before acting.
 
 ## Historical inventory snapshot — 2026-10-24
 
