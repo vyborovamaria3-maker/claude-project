@@ -49,11 +49,23 @@ docker volume create "$intelligence_volume" >/dev/null
 docker run -d --rm --network none --name "$intelligence" \
   -v "$intelligence_volume:/var/lib/potapoff-intelligence" \
   python:3.12-alpine sleep infinity >/dev/null
+intelligence_ready=0
+for i in $(seq 1 15); do
+  if docker exec "$intelligence" python -c 'pass' >/dev/null 2>&1; then
+    intelligence_ready=1
+    break
+  fi
+  sleep 1
+done
+[[ "$intelligence_ready" = 1 ]] || {
+  echo "Synthetic Intelligence SQLite container failed to start" >&2
+  exit 1
+}
 docker exec "$intelligence" python -c '
 import sqlite3
 db = sqlite3.connect("/var/lib/potapoff-intelligence/intelligence.sqlite3")
 db.execute("CREATE TABLE synthetic_intelligence(id INTEGER PRIMARY KEY, tag TEXT NOT NULL)")
-db.execute("INSERT INTO synthetic_intelligence VALUES(3, 'safe-fixture')")
+db.execute("INSERT INTO synthetic_intelligence VALUES(?, ?)", (3, "safe-fixture"))
 db.commit()
 db.close()
 ' >/dev/null
