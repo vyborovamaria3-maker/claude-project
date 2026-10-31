@@ -1,60 +1,79 @@
-# Telegram Mini App Premium Swap (demo)
+# Telegram MiniApp workspace
 
-## Что внутри
-- Бот на aiogram 3 + SQLite + bcrypt (логин 32 символа, пароль в хэше)
-- Демо-оплата 1000 USDT с выбором сети (mock), выдача логина
-- Watchlist + быстрый swap-просмотр (mock)
-- Фронтенд: Vite + React + TS + Tailwind + framer-motion + lucide, Telegram WebApp SDK, темы RU/EN
+This folder contains related prototypes and support tools, not one unified
+backend. The current user-facing POTAPoff Mini App and its payment API live in
+the solana-launcher workspace.
 
-## Запуск фронтенда (Vite)
-```bash
-cd frontend
-npm install
-npm run dev
-```
-Задеплойте на Vercel/Netlify, URL вставьте в WEBAPP_URL и в BotFather (/setdomain).
+## Current Mini App flow
 
-## Запуск бота (polling)
-```bash
-cd backend
-python -m venv .venv
-. .venv/bin/activate  # Windows: .venv\\Scripts\\activate
-pip install -r requirements.txt
-export BOT_TOKEN=... WEBAPP_URL=https://your-frontend.example.com
-python bot.py
-```
+- Page: solana-launcher/app/miniapp/page.tsx
+- Create checkout: solana-launcher/app/api/miniapp/create-invoice/route.ts
+- Verify payment: solana-launcher/app/api/miniapp/verify-payment/route.ts
+- Telegram bot: telegram-miniapp/bot (Node.js, polling)
+- The bot opens the URL configured by WEBAPP_URL; for the current Next.js
+  application it should end in /miniapp.
 
-## Webhook через ngrok (опционально)
-```bash
-ngrok http 8080
-export WEBHOOK_URL=https://<ngrok-id>.ngrok.io/webhook
-python bot.py
-```
-В BotFather: /setdomain -> ваш https домен (ngrok/VPS). 
+The current Next.js app is the API origin as well as the Mini App page. Start it
+from the repository root:
 
-## Docker
-```bash
-cd backend
-docker build -t tg-miniapp .
-docker run -e BOT_TOKEN=... -e WEBAPP_URL=... -p 8080:8080 tg-miniapp
-# либо docker compose
-```
+    cd solana-launcher
+    npm ci --legacy-peer-deps
+    npm run dev
 
-## Протокол WebAppData
-- payment: {action:'payment', amount_usdt:1000, network:'Solana'}
-- access: {action:'access', password:'...'}
-- watchlist: {action:'watchlist', symbol:'SOL', note:'...'}
-- create: {action:'create', title:'...', description:'...'}
+Configure solana-launcher/.env.local with the settings required by the
+Mini App routes, including TELEGRAM_BOT_TOKEN and the selected subscription
+storage/RPC settings. Do not copy production secrets into this repository.
 
-## Переменные окружения
-- BOT_TOKEN — токен бота
-- WEBAPP_URL — URL фронтенда
-- WEBHOOK_URL — опционально, если webhook
-- DATABASE_PATH — путь к SQLite (miniapp.db по умолчанию)
-- WEBAPP_HOST, WEBAPP_PORT — для webhook-сервера
+Configure the bot:
 
-## Замечания
-- Оплата — mock, без Telegram Payments. Для реальной оплаты нужен provider token.
-- SQLite подходит для прототипа. Для продакшена используйте Postgres.
-- HTTPS обязателен для Mini App. 
-```
+    cd telegram-miniapp/bot
+    npm ci
+
+Copy bot/.env.example to .env and set:
+
+- BOT_TOKEN — token issued by BotFather;
+- WEBAPP_URL — the public HTTPS URL of the current app, ending in /miniapp.
+
+Then run npm run dev from telegram-miniapp/bot. The bot does not host the
+Mini App or payment API.
+
+## Local Windows helpers
+
+- start-all.bat starts the Next.js application and the Node Telegram bot
+  using repository-relative paths. It expects dependencies and environment
+  files to be prepared first.
+- start-tunnel.bat and start-tunnel.ps1 expose the Next.js app on port
+  3000, where the actual /miniapp page and API routes live. They no longer
+  tunnel the Vite preview on port 5173.
+- For a temporary tunnel, copy its HTTPS URL and set
+  WEBAPP_URL=https://<tunnel-host>/miniapp in telegram-miniapp/bot/.env,
+  then restart the bot.
+
+A tunnel makes the development app publicly reachable. Use test accounts and
+non-production data only; do not expose a production database or secrets through
+a development server.
+
+## Other code in this folder — do not conflate it with the current flow
+
+### Vite frontend prototype
+
+frontend/ is a separate Vite/React prototype. Its current App.tsx calls
+/api/miniapp/* on the same origin, but the Vite config has no proxy to the
+Next.js API. It is not the canonical deployed page and should not be deployed
+as a standalone frontend without an explicitly designed same-origin/API
+routing setup.
+
+The PayButton and useSubscription components are not imported by the
+current frontend/src/App.tsx.
+
+### Express/Prisma experiment
+
+backend-new/ is a separate Express service with /api/subscription/*
+routes and a Helius webhook. Its Prisma schema uses SQLite
+(provider = "sqlite", DATABASE_URL=file:./dev.db), not PostgreSQL.
+It is not the API used by the current solana-launcher Mini App flow or by
+the Vite App.tsx. See README-SOLANA-PAY.md and HELIUS-SETUP.md before working
+on that experiment.
+
+The previous telegram-miniapp/backend/ Python/aiogram path is absent from
+the current repository tree. Do not use old commands that reference it.
