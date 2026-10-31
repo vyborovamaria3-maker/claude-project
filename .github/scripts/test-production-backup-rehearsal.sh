@@ -77,14 +77,46 @@ docker volume create "$intelligence_volume" >/dev/null
 docker run -d --rm --network none --name "$intelligence" \
   -v "$intelligence_volume:/var/lib/potapoff-intelligence" \
   python:3.12-alpine sleep infinity >/dev/null
-docker exec "$intelligence" python -c '
-import sqlite3
-db = sqlite3.connect("/var/lib/potapoff-intelligence/intelligence.sqlite3")
-db.execute("CREATE TABLE synthetic_intelligence(id INTEGER PRIMARY KEY, tag TEXT NOT NULL)")
-db.execute("INSERT INTO synthetic_intelligence VALUES(3, ?)", ("safe-fixture",))
-db.commit()
-db.close()
-' >/dev/null
+# Keep a Python SQLite writer open with a committed row still in WAL.
+# This proves the worker's Online Backup API captures WAL-only state too.
+docker exec -d "$intelligence" python -c '
+import sqlite3, time
+path = "/var/lib/potapoff-intelligence/intelligence.sqlite3"
+try:
+    db = sqlite3.connect(path)
+    mode = db.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+    if mode.lower() != "wal":
+        raise RuntimeError("Python Intelligence fixture did not enter WAL mode")
+    db.execute("PRAGMA wal_autocheckpoint=0")
+    db.execute("CREATE TABLE synthetic_intelligence(id INTEGER PRIMARY KEY, tag TEXT NOT NULL)")
+    db.execute("INSERT INTO synthetic_intelligence VALUES(3, ?)", ("safe-fixture",))
+    db.commit()
+    with open("/tmp/intelligence-fixture-ready", "w") as marker:
+        marker.write("ready")
+    while True:
+        time.sleep(60)
+except Exception as error:
+    with open("/tmp/intelligence-fixture-error", "w") as marker:
+        marker.write(str(error))
+    raise
+'
+ready=0
+for i in $(seq 1 50); do
+  if docker exec "$intelligence" test -s /tmp/intelligence-fixture-ready >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  if docker exec "$intelligence" test -s /tmp/intelligence-fixture-error >/dev/null 2>&1; then
+    docker exec "$intelligence" cat /tmp/intelligence-fixture-error >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+[[ "$ready" = 1 ]] || {
+  echo "Python Intelligence WAL fixture did not become ready" >&2
+  exit 1
+}
+docker exec "$intelligence" test -s /var/lib/potapoff-intelligence/intelligence.sqlite3-wal
 
 # These are disposable test-only PostgreSQL containers; no live host is used.
 docker run -d --rm --network none --name "$product" \
