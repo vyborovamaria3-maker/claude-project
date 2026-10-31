@@ -16,7 +16,7 @@ off-site copies, live collection or a deployment are correct.
 
 Workflow: .github/workflows/source-producer-to-consumer.yml
 
-Test: intelligence/tests/source-producer-to-consumer.test.mjs
+Test: intelligence/integration/source-producer-to-consumer.test.mjs
 
 The test uses an isolated PostgreSQL service, a separate PostgreSQL schema for
 each source and an in-memory SQLite database for Blockchain. It invokes:
