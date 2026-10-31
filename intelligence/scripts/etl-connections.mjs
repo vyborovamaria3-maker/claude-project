@@ -65,14 +65,18 @@ function isoOrNull(value){
 }
 
 /** Read-only queue health snapshot; does not claim, lease, ACK or mutate events. */
-export async function outboxStatus(source,now=new Date()){
+export async function outboxStatus(source,now){
   if(!source||!["pg","sqlite"].includes(source.kind)||!source.connection){
     throw new TypeError("invalid outbox source");
   }
-  if(!(now instanceof Date)||!Number.isFinite(now.getTime()))throw new TypeError("invalid health timestamp");
-  const at=now.toISOString();
+  if(now!==undefined&&(!(now instanceof Date)||!Number.isFinite(now.getTime()))){
+    throw new TypeError("invalid health timestamp");
+  }
   let row;
+  let measuredAt;
   if(source.kind==="sqlite"){
+    const localNow=now??new Date();
+    const at=localNow.toISOString();
     row=source.connection.prepare(`SELECT
       count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS pending,
       count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
@@ -93,19 +97,24 @@ export async function outboxStatus(source,now=new Date()){
       max(processed_at) AS last_progress_at,
       max(attempts) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS max_attempts
     FROM outbox_events`).get(at,at,at,at);
+    measuredAt=at;
   }else{
     await checkPgOutbox(source.connection);
-    const result=await source.connection.query(`SELECT
+    const explicitAt=now===undefined?null:now.toISOString();
+    const result=await source.connection.query(`WITH observation AS (
+      SELECT COALESCE($1::timestamptz, statement_timestamp()) AS measured_at
+    )
+    SELECT
       count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL)::text AS pending,
       count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
-        AND next_attempt_at<=$1::timestamptz
-        AND (lease_until IS NULL OR lease_until<=$1::timestamptz))::text AS ready,
+        AND next_attempt_at<=observation.measured_at
+        AND (lease_until IS NULL OR lease_until<=observation.measured_at))::text AS ready,
       count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
-        AND lease_until>$1::timestamptz)::text AS leased,
+        AND lease_until>observation.measured_at)::text AS leased,
       count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL AND attempts>0)::text AS retry_count,
       coalesce(sum(attempts) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL),0)::text AS retry_attempts_total,
       count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
-        AND attempts>0 AND next_attempt_at>$1::timestamptz)::text AS retry_delayed,
+        AND attempts>0 AND next_attempt_at>observation.measured_at)::text AS retry_delayed,
       count(*) FILTER (WHERE dead_lettered_at IS NOT NULL)::text AS dead_letter,
       (SELECT count(*) FROM (
         SELECT event_kind FROM outbox_events
@@ -114,14 +123,21 @@ export async function outboxStatus(source,now=new Date()){
       ) AS version_skew)::text AS schema_version_skew_kinds,
       min(created_at) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS oldest_pending_at,
       max(processed_at) AS last_progress_at,
-      coalesce(max(attempts) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL),0)::text AS max_attempts
-    FROM outbox_events`,[at]);
+      coalesce(max(attempts) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL),0)::text AS max_attempts,
+      observation.measured_at AS measured_at
+    FROM outbox_events CROSS JOIN observation`,[explicitAt]);
     row=result.rows[0];
+    measuredAt=isoOrNull(row.measured_at);
+  }
+  if(!measuredAt||!Number.isFinite(Date.parse(measuredAt))){
+    throw new TypeError("invalid outbox observation timestamp");
   }
   const oldestPendingAt=isoOrNull(row.oldest_pending_at);
   const lastProgressAt=isoOrNull(row.last_progress_at);
-  const age=(value)=>value===null?null:Math.max(0,now.getTime()-Date.parse(value));
+  const measuredAtMs=Date.parse(measuredAt);
+  const age=(value)=>value===null?null:Math.max(0,measuredAtMs-Date.parse(value));
   return {
+    measuredAt,
     pending:Number(row.pending),ready:Number(row.ready),leased:Number(row.leased),
     retryCount:Number(row.retry_count),retryAttemptsTotal:Number(row.retry_attempts_total),
     retryDelayed:Number(row.retry_delayed),deadLetter:Number(row.dead_letter),
