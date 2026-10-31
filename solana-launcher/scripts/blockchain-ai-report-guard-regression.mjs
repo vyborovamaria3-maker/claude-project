@@ -13,7 +13,8 @@ assert(!route.includes("upstreamMessage"), "upstream provider error bodies must 
 assert(!route.includes('console.error("[blockchain-ai-report] failed", error)'), "raw exception objects must not be logged");
 assert(route.includes('console.error("[blockchain-ai-report] failed")'), "failure logging must remain observable without raw details");
 assert(route.includes("result.finalIntelligence.socialState"), "social-only AI output must count as report content");
-assert(route.includes("body = record(await req.json())"), "non-object request bodies must be rejected");
+assert(route.includes("const parsedBody = await readBoundedJson(req)"), "request bodies must be size-bounded before parsing");
+assert(route.includes("const body = record(parsedBody.value)"), "non-object request bodies must be rejected after bounded parsing");
 assert(route.includes('if (!body) return NextResponse.json({ error: "invalid request body" }, { status: 400 });'));
 assert(route.includes('typeof body.mint === "string"'), "mint must be a string before normalization");
 assert(route.includes("usable: verification.usable"));
