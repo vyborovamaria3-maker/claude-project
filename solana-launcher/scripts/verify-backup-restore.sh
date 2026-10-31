@@ -133,11 +133,13 @@ docker run -d --rm --name "$container" \
   -e POSTGRES_HOST_AUTH_METHOD=trust \
   postgres:17-alpine >/dev/null
 ready=0
-for i in $(seq 1 45); do
-  # Ignore PostgreSQL's temporary bootstrap server, which accepts requests
-  # before the entrypoint stops and restarts the final postmaster.
+for i in $(seq 1 60); do
+  # Ignore PostgreSQL's temporary bootstrap server. After the entrypoint
+  # completes initdb, require both pg_isready and a successful SQL round-trip.
   if docker logs "$container" 2>&1 | grep -Fq 'PostgreSQL init process complete; ready for start up.' &&
-     docker exec "$container" pg_isready -U postgres >/dev/null 2>&1; then
+     docker exec "$container" pg_isready -h /var/run/postgresql -U postgres >/dev/null 2>&1 &&
+     docker exec "$container" psql -h /var/run/postgresql -U postgres -d postgres -X -Atq \
+       -v ON_ERROR_STOP=1 -c 'SELECT 1' 2>/dev/null | grep -qx '1'; then
     ready=1
     break
   fi
