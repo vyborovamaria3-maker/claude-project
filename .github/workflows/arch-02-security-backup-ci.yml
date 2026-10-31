@@ -21,6 +21,8 @@ on:
       - "solana-launcher/Dockerfile.frontend.prod"
       - "solana-launcher/docker-compose.production.yml"
       - "docs/DB_OWNERSHIP.md"
+      - "docs/architecture/ARCH_02_RECOVERY_AND_GOVERNANCE.md"
+      - "docs/architecture/ARCHITECTURE_AUDIT_PLAN.md"
       - "docs/operations/**"
   push:
     branches:
