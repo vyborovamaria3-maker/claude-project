@@ -9,6 +9,7 @@ import {
 } from "./etl-connections.mjs";
 import { runSourceLoop } from "./supervisor-core.mjs";
 import { createAiRuntime } from "./ai-runtime.mjs";
+import { createAlertWebhookSink, parseAlertWebhookConfig } from "./alert-webhook.mjs";
 
 /**
  * Foreground-only, laptop-local ETL process. Nothing runs unless explicitly
@@ -158,6 +159,7 @@ async function main(){
   }
   const resources=[];
   let destination;
+  let alertWebhook;
   const stop=new AbortController();
   const stopSignals=["SIGINT","SIGTERM"];
   const onStop=()=>stop.abort();
@@ -175,9 +177,19 @@ async function main(){
     destination=destinationConnection();
     await checkDestination(destination,{requireBlockchainRevisions:options.sources.includes('blockchain')});
     const ai=await createAiRuntime(destination,Object.fromEntries(sources.filter(s=>s.connection.kind==='pg').map(s=>[s.name,s.connection.connection])));
-    const report=event=>console.log(JSON.stringify({
-      timestamp:new Date().toISOString(),...event,
-    }));
+    const webhookConfig=parseAlertWebhookConfig(process.env);
+    if(webhookConfig){
+      alertWebhook=createAlertWebhookSink(webhookConfig,{
+        onStatus:event=>console.error(JSON.stringify({
+          timestamp:new Date().toISOString(),...event,
+        })),
+      });
+    }
+    const report=event=>{
+      const record={timestamp:new Date().toISOString(),...event};
+      console.log(JSON.stringify(record));
+      alertWebhook?.enqueue(record);
+    };
     const alertTracker=createAlertTransitionTracker();
     const emitHealth=async(name,connection)=>{
       const health=await outboxStatus(connection);
@@ -193,7 +205,8 @@ async function main(){
     report({kind:"startup",sources:options.sources,mode:"foreground",
       perSourceClaimLimit:1,leaseMs:options.leaseMs,
       healthIntervalMs:options.healthIntervalMs,
-      alertOldestPendingMs:options.alertOldestPendingMs});
+      alertOldestPendingMs:options.alertOldestPendingMs,
+      alertWebhookEnabled:Boolean(alertWebhook)});
     for(const source of sources)await probeHealth(source.name,source.connection);
     const executions=sources.map(async({name,connection,workerId})=>{
       let lastHealthAt=Date.now();
@@ -230,6 +243,12 @@ async function main(){
   }finally{
     stop.abort();
     for(const name of stopSignals)process.removeListener(name,onStop);
+    if(alertWebhook){
+      const delivery=await alertWebhook.flush(5000);
+      console.log(JSON.stringify({
+        timestamp:new Date().toISOString(),kind:"alert_delivery_summary",...delivery,
+      }));
+    }
     if(destination)await destination.end();
     for(const connection of resources.reverse())await connection.close();
   }
