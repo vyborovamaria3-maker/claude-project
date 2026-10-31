@@ -79,12 +79,14 @@ backup="$(bash "$root/solana-launcher/scripts/backup-production.sh")"
 }
 bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" |
   grep -Fq 'BACKUP_RESTORE_REHEARSAL_OK'
+mkdir -p "$scratch/sqlite-restore"
+cp -- "$backup/intelligence.sqlite" "$scratch/sqlite-restore/intelligence.sqlite"
 docker run --rm --network none --read-only --pids-limit 32 \
   --tmpfs /tmp:size=16m,mode=1777 \
-  --mount "type=bind,src=$backup/intelligence.sqlite,dst=/intelligence.sqlite,readonly" \
+  --mount "type=bind,src=$scratch/sqlite-restore,dst=/backup,readonly" \
   python:3.12-alpine python -c '
 import sqlite3
-source = sqlite3.connect("file:/intelligence.sqlite?mode=ro", uri=True)
+source = sqlite3.connect("file:/backup/intelligence.sqlite?mode=ro", uri=True)
 target = sqlite3.connect("/tmp/restored.sqlite")
 try:
     source.backup(target)
