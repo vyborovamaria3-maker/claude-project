@@ -35,6 +35,8 @@ Seven open PRs are currently returned by GitHub:
 | #204 / #195 | 3 | Shared docs and package metadata; reconcile after the primary UI overlap. |
 | #202 / other listed PRs | 0 | No direct changed-path overlap found in the current filename audit. |
 
+Concrete semantic conflict in #203/#195: #195 adds three rows to the "Growth / Quality / Manipulation" group (FOMO Pressure, FOMO Quality, FOMO Quality feature coverage). #203's analysis-feature-provenance.json still lists the original 16 labels, while its analysis-regression.mjs enforces exact UI/catalog row parity. The combined change must append those three labels as extended rows (keep coreCount=16 unless the core contract is deliberately changed), preserve #203's embedded/focus/request-only SocialIntelligencePanel behavior together with #195's FOMO capture/KPIs, and retain both sets of regression assertions. #203/#204/#195 also all edit solana-launcher/package.json; build one deliberate analysis:test command that preserves the FOMO, admin-navigation, compact-schema, unified-analysis and existing blockchain regressions rather than taking one branch's script wholesale.
+
 Suggested sequence, subject to human review: **#207 → reconcile/integrate #206 → refresh #205 documentation**. The #206 PostgreSQL clock-skew correction is already committed and CI-green, but its integration with #207 still needs a post-merge-base check. Separately resolve #203/#204/#195 overlaps before considering #203. Keep #202 as an independent draft until its product scope and review are ready.
 
 ### Issue #174 — delivery and recovery acceptance
