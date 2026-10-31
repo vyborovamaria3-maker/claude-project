@@ -22,6 +22,7 @@ on:
       - "solana-launcher/docker-compose.production.yml"
       - "docs/DB_OWNERSHIP.md"
       - "docs/architecture/ARCH_02_RECOVERY_AND_GOVERNANCE.md"
+      - "docs/architecture/END_TO_END_AND_RECOVERY_REHEARSAL_20261031.md"
       - "docs/architecture/ARCHITECTURE_AUDIT_PLAN.md"
       - "docs/operations/**"
   push:
