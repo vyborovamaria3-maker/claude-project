@@ -50,7 +50,7 @@ test("webhook is disabled by default and rejects unsafe or incomplete configurat
   assert.throws(
     () => parseAlertWebhookConfig({
       INTELLIGENCE_ALERT_WEBHOOK_URL: "https://monitor.invalid/hook",
-      INTELLIGENCE_ALERT_WEBHOOK_TOKEN: "bad\\nheader",
+      INTELLIGENCE_ALERT_WEBHOOK_TOKEN: "bad\nheader",
     }),
     /token/,
   );
