@@ -174,26 +174,60 @@ INTELLIGENCE_CONTAINER="$(
   exit 1
 }
 docker exec "$INTELLIGENCE_CONTAINER" python -c '
-import os, sqlite3, sys
-source = sqlite3.connect("file:/var/lib/potapoff-intelligence/intelligence.sqlite3?mode=ro", uri=True)
-target_path = "/tmp/potapoff-intelligence-backup.sqlite"
-target = sqlite3.connect(target_path)
+import os, sqlite3, sys, tempfile
+
+source = None
+target = None
+target_path = None
 try:
+    source = sqlite3.connect(
+        "file:/var/lib/potapoff-intelligence/intelligence.sqlite3?mode=ro",
+        uri=True,
+    )
+    if source.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+        raise RuntimeError("Python Intelligence source quick_check failed")
+
+    fd, target_path = tempfile.mkstemp(
+        prefix="potapoff-intelligence-backup-",
+        suffix=".sqlite",
+        dir="/tmp",
+    )
+    os.close(fd)
+    target = sqlite3.connect(target_path)
     source.backup(target)
-    if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
-        raise RuntimeError("SQLite online backup integrity check failed")
+
+    if target.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+        raise RuntimeError("Python Intelligence snapshot integrity_check failed")
     tables = target.execute(
-        "SELECT count(*) FROM sqlite_master WHERE type=char(116,97,98,108,101)"
+        "SELECT count(*) FROM sqlite_master "
+        "WHERE type=\'table\' AND name NOT LIKE \'sqlite_%\'"
     ).fetchone()[0]
-    if tables < 1:
-        raise RuntimeError("Python Intelligence SQLite backup contains no tables")
-finally:
+    if not isinstance(tables, int) or tables < 1:
+        raise RuntimeError("Python Intelligence snapshot contains no application tables")
+
     target.close()
+    target = None
     source.close()
-with open(target_path, "rb") as stream:
-    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-        sys.stdout.buffer.write(chunk)
-os.remove(target_path)
+    source = None
+
+    if not os.path.isfile(target_path) or os.path.getsize(target_path) <= 0:
+        raise RuntimeError("Python Intelligence snapshot is empty")
+    os.chmod(target_path, 0o600)
+    with open(target_path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            sys.stdout.buffer.write(chunk)
+    print("PYTHON_INTELLIGENCE_SQLITE_BACKUP_OK tables=" + str(tables),
+          file=sys.stderr)
+finally:
+    if target is not None:
+        target.close()
+    if source is not None:
+        source.close()
+    if target_path is not None:
+        try:
+            os.unlink(target_path)
+        except FileNotFoundError:
+            pass
 ' > "$DEST/intelligence.sqlite"
 test -s "$DEST/intelligence.sqlite"
 
