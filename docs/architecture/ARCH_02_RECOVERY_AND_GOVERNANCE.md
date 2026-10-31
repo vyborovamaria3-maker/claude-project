@@ -125,3 +125,37 @@ The `POTAPoff production deploy` `workflow_run` path is intentionally **disabled
 **Operator approval sequence:** confirm the genuine SSH host fingerprint through an independent trusted channel; repair pinned GitHub Secrets without disabling strict checking; successfully run manual SSH check, production backup, disposable verified product/admin restore, and production predeploy and smoke tests; configure required `main` branch reviews and repository/environment protection. **Only then** explicitly set `POTAPOFF_AUTODEPLOY_ENABLED=true` under GitHub Settings → Secrets and variables → Actions → Variables (with suitable environment/repository control and independent review). Remove/disable the variable to pause further automatic deployments. `workflow_dispatch` remains available for an operator's intentional manual deployment, still subject to strict release SHA/SSH/predeploy checks.
 
 Until that approval, merging release-workflow corrections can still publish images, **but must not attempt automatic production deployment**.
+
+
+## 8. Python Intelligence SQLite recovery extension — 2026-10-31
+
+The Admin Compose stack contains a third persistent store in addition to the
+product and Admin PostgreSQL databases: the Python Intelligence worker's
+SQLite file at
+/var/lib/potapoff-intelligence/intelligence.sqlite3 in the named
+intelligence-state volume.
+
+The production backup script now requires the potapoff-intelligence worker
+container and creates intelligence.sqlite through Python sqlite3's online
+backup API from inside that container. This is WAL-consistent; the script does
+not copy the live SQLite database file or its WAL/SHM files. It runs
+PRAGMA integrity_check, requires at least one table, and includes the artifact
+in the same SHA256 manifest before the backup directory is promoted.
+
+The restore rehearsal now requires intelligence.sqlite and verifies its
+manifest. It restores the SQLite snapshot into a temporary file inside an
+isolated python:3.12-alpine container with no network, a read-only mount of
+the backup artifact and a temporary filesystem. It checks integrity and table
+presence. The synthetic ARCH-02 CI rehearsal now creates a disposable Python
+container plus named SQLite volume, writes a fixture row, runs the production
+backup/restore scripts, and checks that the row survives the restore.
+
+This extension covers the Python Intelligence SQLite volume only. It does not
+cover the separate Node cross-source ETL PostgreSQL target configured by
+INTELLIGENCE_DATABASE_URL. The Node target still needs an assigned production
+owner, backup schedule, encrypted destination, retention, RPO/RTO and an
+operator-verified restore plan before that ETL target is deployed.
+
+The historical two-PostgreSQL restore and corruption checks remain in force.
+No live database, named production volume, real backup, SSH host or deployment
+was accessed while adding this extension.
