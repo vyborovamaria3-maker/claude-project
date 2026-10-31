@@ -9,7 +9,7 @@ test("all tracked SQL migrations are classified before database access", async (
   const inventory = assertMigrationCatalog(files);
   assert.equal(inventory.errors.length, 0);
   assert.equal(inventory.appliedOrder.length, REQUIRED.length);
-  assert.equal(REQUIRED.at(-1), "050_intelligence_source_outbox.sql");
+  assert.equal(REQUIRED.at(-1), "051_intelligence_outbox_health_indexes.sql");
   assert.deepEqual(inventory.collisions.map(item => item.sequence), ["012", "013", "014", "036"]);
   assert.equal(inventory.excluded.length, Object.keys(EXCLUDED_MIGRATIONS).length);
   assert(inventory.appliedOrder.includes("044_browser_checkpoints.sql"));
@@ -20,7 +20,9 @@ test("all tracked SQL migrations are classified before database access", async (
   assert(inventory.appliedOrder.includes("048_signal_registry_versions.sql"));
   assert(inventory.appliedOrder.includes("049_raw_retention_author_id.sql"));
   assert(inventory.appliedOrder.includes("050_intelligence_source_outbox.sql"));
+  assert(inventory.appliedOrder.includes("051_intelligence_outbox_health_indexes.sql"));
   assert(REQUIRED.indexOf("049_raw_retention_author_id.sql") < REQUIRED.indexOf("050_intelligence_source_outbox.sql"));
+  assert(REQUIRED.indexOf("050_intelligence_source_outbox.sql") < REQUIRED.indexOf("051_intelligence_outbox_health_indexes.sql"));
   assert(REQUIRED.indexOf("048_signal_registry_versions.sql") < REQUIRED.indexOf("049_raw_retention_author_id.sql"));
   assert(REQUIRED.indexOf("047_signal_quality_marts.sql") < REQUIRED.indexOf("048_signal_registry_versions.sql"));
 });

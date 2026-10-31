@@ -17,7 +17,14 @@ export const POSTGRES_OUTBOX_DDL = `CREATE TABLE IF NOT EXISTS outbox_events (
   UNIQUE (source_system, event_kind, event_key)
 );
 CREATE INDEX IF NOT EXISTS outbox_pending_idx ON outbox_events(next_attempt_at,id)
-WHERE processed_at IS NULL AND dead_lettered_at IS NULL;`;
+WHERE processed_at IS NULL AND dead_lettered_at IS NULL;
+CREATE INDEX IF NOT EXISTS outbox_pending_health_idx ON outbox_events(created_at,event_kind,schema_version)
+INCLUDE (next_attempt_at,lease_until,attempts)
+WHERE processed_at IS NULL AND dead_lettered_at IS NULL;
+CREATE INDEX IF NOT EXISTS outbox_dead_lettered_at_idx ON outbox_events(dead_lettered_at)
+WHERE dead_lettered_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS outbox_processed_at_desc_idx ON outbox_events(processed_at DESC)
+WHERE processed_at IS NOT NULL;`;
 
 export const SQLITE_OUTBOX_DDL = `CREATE TABLE IF NOT EXISTS outbox_events (
   id INTEGER PRIMARY KEY,
@@ -37,4 +44,11 @@ export const SQLITE_OUTBOX_DDL = `CREATE TABLE IF NOT EXISTS outbox_events (
   UNIQUE (source_system, event_kind, event_key)
 );
 CREATE INDEX IF NOT EXISTS outbox_pending_idx ON outbox_events(next_attempt_at,id)
-WHERE processed_at IS NULL AND dead_lettered_at IS NULL;`;
+WHERE processed_at IS NULL AND dead_lettered_at IS NULL;
+CREATE INDEX IF NOT EXISTS outbox_pending_health_idx
+ON outbox_events(created_at,event_kind,schema_version,next_attempt_at,lease_until,attempts)
+WHERE processed_at IS NULL AND dead_lettered_at IS NULL;
+CREATE INDEX IF NOT EXISTS outbox_dead_lettered_at_idx ON outbox_events(dead_lettered_at)
+WHERE dead_lettered_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS outbox_processed_at_desc_idx ON outbox_events(processed_at DESC)
+WHERE processed_at IS NOT NULL;`;
