@@ -6,8 +6,11 @@ root="$(cd -- "$(dirname -- "$0")/../.." && pwd)"
 scratch="$(mktemp -d)"
 product="potapoff-ci-product-$$"
 admin="potapoff-admin-postgres"
+intelligence="potapoff-intelligence"
+intelligence_volume="potapoff-intelligence-ci-$"
 cleanup(){
-  docker rm -f "$product" "$admin" >/dev/null 2>&1 || true
+  docker rm -f "$product" "$admin" "$intelligence" >/dev/null 2>&1 || true
+  docker volume rm "$intelligence_volume" >/dev/null 2>&1 || true
   rm -rf -- "$scratch"
 }
 trap cleanup EXIT
@@ -40,6 +43,21 @@ docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
 docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
   -c "CREATE TABLE synthetic_admin(id integer primary key, tag text); INSERT INTO synthetic_admin VALUES (2,'safe-fixture');" >/dev/null
 
+# This is a disposable stand-in for the Python Intelligence worker container
+# and its named SQLite volume; no user or production data is mounted.
+docker volume create "$intelligence_volume" >/dev/null
+docker run -d --rm --network none --name "$intelligence" \
+  -v "$intelligence_volume:/var/lib/potapoff-intelligence" \
+  python:3.12-alpine sleep infinity >/dev/null
+docker exec "$intelligence" python -c '
+import sqlite3
+db = sqlite3.connect("/var/lib/potapoff-intelligence/intelligence.sqlite3")
+db.execute("CREATE TABLE synthetic_intelligence(id INTEGER PRIMARY KEY, tag TEXT NOT NULL)")
+db.execute("INSERT INTO synthetic_intelligence VALUES(3, \"safe-fixture\")")
+db.commit()
+db.close()
+' >/dev/null
+
 mkdir -p "$scratch/deploy" "$scratch/admin"
 printf 'POSTGRES_PASSWORD=ci-synthetic\n' > "$scratch/deploy/.env.server"
 printf 'TEST_ONLY=1\n' > "$scratch/deploy/backend.env"
@@ -54,7 +72,7 @@ export DEPLOY_DIR="$scratch/deploy"
 export BACKUP_ROOT="$scratch/backups"
 export ADMIN_DIR="$scratch/admin"
 backup="$(bash "$root/solana-launcher/scripts/backup-production.sh")"
-[[ -s "$backup/postgres.dump" && -s "$backup/admin-postgres.dump" ]]
+[[ -s "$backup/postgres.dump" && -s "$backup/admin-postgres.dump" && -s "$backup/intelligence.sqlite" ]]
 [[ -s "$backup/SHA256SUMS" && -r "$backup/admin-site/.env" ]]
 [[ ! -e "$BACKUP_ROOT/.incomplete-" ]] || {
   echo "Incomplete backup was promoted" >&2; exit 1;
