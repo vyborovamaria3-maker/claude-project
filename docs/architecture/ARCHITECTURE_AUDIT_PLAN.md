@@ -374,7 +374,7 @@ W0 (сегодня, блокирует всё)
 
 | ID | Риск | Локация | Действие до первого деплоя |
 |---|---|---|---|
-| DEP-501 | **`trade.db` (1.6 ГБ) не входил в центральный бэкап на baseline аудита.** `backup-production.sh` снимал только Postgres и env-файлы; БД смонтирована как `./data:/app/data`. | `backup-production.sh` + `docker-compose.production.yml` | Draft PR #211 adds a `better-sqlite3` Online Backup API snapshot, integrity checks and `SHA256SUMS`; CI pending, real staging/production restore NOT RUN. Keep DEP-501 OPEN until an operator verifies an actual backup and restore. |
+| DEP-501 | **`trade.db` (1.6 ГБ) не входил в центральный бэкап на baseline аудита.** `backup-production.sh` снимал только Postgres и env-файлы; БД смонтирована как `./data:/app/data`. | `backup-production.sh` + `docker-compose.production.yml` | Draft PR #212 adds WAL-safe Online Backup API snapshots for both Blockchain `trade.db` and the separate Python Intelligence SQLite store, includes both in the complete `SHA256SUMS` manifest, and extends isolated restore/corruption tests; integrated CI pending, real staging/production restore NOT RUN. Keep DEP-501 OPEN until an operator verifies an actual backup and restore. |
 | DEP-502 | **Миграции применяются после подъёма контейнеров** (`up -d` на строке 192, `alembic upgrade heads` на 197): существует окно, когда новый код работает против старой схемы | `deploy-production.sh:192,197` | Либо перенести миграции до `up -d`, либо принять правило «только обратно совместимые миграции» и зафиксировать его в `docs/architecture/SERVICES.md` |
 | DEP-503 | **`rollback()` не откатывает схему БД** — `downgrade` не вызывается нигде. Необратимая миграция делает откат образов бессмысленным | `deploy-production.sh:126-167` | Обязательное правило: каждая миграция имеет рабочий `downgrade`; в rollback добавить `alembic downgrade` до ревизии, соответствующей `PREVIOUS_TAG` |
 | DEP-504 | При пустом `.current-image-tag` откат невозможен: «manual recovery is required» | `deploy-production.sh:133-136` | Перед первым деплоем убедиться, что файл существует и содержит рабочий тег |
@@ -385,7 +385,7 @@ W0 (сегодня, блокирует всё)
 Порядок обязателен.
 
 1. Убедиться, что W0 полностью выполнен: ротация подтверждена, `secret-scan --mode current` и `--mode history` зелёные, `git rev-list --all --max-parents=0` возвращает единственный корень.
-2. DEP-501: review and merge the code-level fix in draft PR #211 only after CI; keep the issue open until a named operator completes an actual staging backup/restore and records RPO/RTO.
+2. DEP-501: review and merge the consolidated code-level fix in Draft PR #212 only after integrated CI; keep the issue open until a named operator completes an actual staging backup/restore and records RPO/RTO.
 3. Принять решение по DEP-502/DEP-503 и зафиксировать его в документации; при выборе «downgrade обязателен» — проверить наличие рабочего `downgrade` во всех 11 ревизиях.
 4. Прогнать локально: `pnpm turbo typecheck lint test build`, `npm audit --omit=dev` (без high), `npm run hygiene:check`, `python security/audit/secret-scan.py --mode current`.
 5. Прогнать миграции на копии продакшн-базы: `alembic upgrade heads`, затем `alembic downgrade` до предыдущей ревизии и снова `upgrade`.
