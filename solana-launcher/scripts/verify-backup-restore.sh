@@ -60,23 +60,26 @@ def inspect_readonly(path):
     finally:
         connection.close()
 
-source_tables = inspect_readonly(source)
-with tempfile.TemporaryDirectory(prefix="potapoff-sqlite-restore-") as directory:
-    restored = pathlib.Path(directory) / "trade.db"
-    shutil.copy2(source, restored)
-    connection = sqlite3.connect(str(restored))
-    try:
-        integrity = connection.execute("PRAGMA integrity_check").fetchall()
-        if integrity != [("ok",)]:
-            raise RuntimeError("Restored SQLite copy failed integrity check")
-        restored_tables = connection.execute(
-            "SELECT count(*) FROM sqlite_master "
-            "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-        ).fetchone()[0]
-        if restored_tables != source_tables:
-            raise RuntimeError("Restored SQLite table count differs")
-    finally:
-        connection.close()
+with tempfile.TemporaryDirectory(prefix="potapoff-sqlite-source-") as source_directory:
+    source_copy = pathlib.Path(source_directory) / "trade.db"
+    shutil.copy2(source, source_copy)
+    source_tables = inspect_readonly(source_copy)
+    with tempfile.TemporaryDirectory(prefix="potapoff-sqlite-restore-") as directory:
+        restored = pathlib.Path(directory) / "trade.db"
+        shutil.copy2(source_copy, restored)
+        connection = sqlite3.connect(str(restored))
+        try:
+            integrity = connection.execute("PRAGMA integrity_check").fetchall()
+            if integrity != [("ok",)]:
+                raise RuntimeError("Restored SQLite copy failed integrity check")
+            restored_tables = connection.execute(
+                "SELECT count(*) FROM sqlite_master "
+                "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchone()[0]
+            if restored_tables != source_tables:
+                raise RuntimeError("Restored SQLite table count differs")
+        finally:
+            connection.close()
 
 print(f"DISPOSABLE_SQLITE_RESTORE_OK tables={source_tables}")
 PY
@@ -90,32 +93,35 @@ import sys
 import tempfile
 
 source = pathlib.Path(sys.argv[1]).resolve()
-connection = sqlite3.connect(source.as_uri() + "?mode=ro", uri=True)
-try:
-    if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
-        raise RuntimeError("Python Intelligence SQLite snapshot failed integrity check")
-    tables = connection.execute(
-        "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-    ).fetchone()[0]
-    if not isinstance(tables, int) or tables < 1:
-        raise RuntimeError("Python Intelligence SQLite snapshot has no application tables")
-finally:
-    connection.close()
-
-with tempfile.TemporaryDirectory(prefix="potapoff-intelligence-restore-") as directory:
-    restored = pathlib.Path(directory) / "intelligence.sqlite"
-    shutil.copy2(source, restored)
-    db = sqlite3.connect(str(restored))
+with tempfile.TemporaryDirectory(prefix="potapoff-intelligence-source-") as source_directory:
+    source_copy = pathlib.Path(source_directory) / "intelligence.sqlite"
+    shutil.copy2(source, source_copy)
+    connection = sqlite3.connect(source_copy.as_uri() + "?mode=ro", uri=True)
     try:
-        if db.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
-            raise RuntimeError("Restored Python Intelligence SQLite copy failed integrity check")
-        restored_tables = db.execute(
+        if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+            raise RuntimeError("Python Intelligence SQLite snapshot failed integrity check")
+        tables = connection.execute(
             "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         ).fetchone()[0]
-        if restored_tables != tables:
-            raise RuntimeError("Restored Python Intelligence table count differs")
+        if not isinstance(tables, int) or tables < 1:
+            raise RuntimeError("Python Intelligence SQLite snapshot has no application tables")
     finally:
-        db.close()
+        connection.close()
+
+    with tempfile.TemporaryDirectory(prefix="potapoff-intelligence-restore-") as directory:
+        restored = pathlib.Path(directory) / "intelligence.sqlite"
+        shutil.copy2(source_copy, restored)
+        db = sqlite3.connect(str(restored))
+        try:
+            if db.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+                raise RuntimeError("Restored Python Intelligence SQLite copy failed integrity check")
+            restored_tables = db.execute(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchone()[0]
+            if restored_tables != tables:
+                raise RuntimeError("Restored Python Intelligence table count differs")
+        finally:
+            db.close()
 print(f"DISPOSABLE_INTELLIGENCE_SQLITE_RESTORE_OK tables={tables}")
 PY
 
