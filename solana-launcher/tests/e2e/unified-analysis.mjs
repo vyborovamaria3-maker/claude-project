@@ -52,7 +52,7 @@ export async function checkUnifiedDetails(page, baseUrl, mint) {
       // Synthetic source fixture: verifies API -> computed metric -> visible value.
       await route.fulfill({ json: {
         symbol: "TEST", totalTweets: 7, totalViews: 70, totalLikes: 3, totalRetweets: 2,
-        uniqueMentioners: 1, botRiskScore: 0, anomalyCount: 0, topTweets: [{ author: "fixture", text: "Synthetic token launch discussion with enough text to create evidence." }], shillers: [],
+        uniqueMentioners: 1, botRiskScore: 0, anomalyCount: 0, topTweets: [{ id: "fixture-1", author: "fixture", text: "Synthetic token launch discussion with enough text to create evidence.", likes: 3, retweets: 2, views: 70, timestamp: null, isSuspicious: false }], shillers: [],
         aggregated: { totalEngagement: 5, engagementRate: 5 / 70, verifiedAuthors: 0, botRatio: 0 },
       } });
     } else {
