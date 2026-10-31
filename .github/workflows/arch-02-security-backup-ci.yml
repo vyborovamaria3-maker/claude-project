@@ -6,6 +6,9 @@ on:
       - ".github/scripts/prepare-pinned-ssh.sh"
       - ".github/scripts/test-pinned-ssh.sh"
       - ".github/scripts/test-production-backup-rehearsal.sh"
+      - ".github/scripts/test-intelligence-pg-backup-restore.sh"
+      - ".github/workflows/source-producer-to-consumer.yml"
+      - ".github/workflows/x-collector-ci.yml"
       - ".github/workflows/arch-02-security-backup-ci.yml"
       - ".github/workflows/ssh-check.yml"
       - ".github/workflows/potapoff-backup.yml"
@@ -23,6 +26,7 @@ on:
       - "docs/DB_OWNERSHIP.md"
       - "docs/architecture/ARCH_02_RECOVERY_AND_GOVERNANCE.md"
       - "docs/architecture/ARCHITECTURE_AUDIT_PLAN.md"
+      - "docs/architecture/END_TO_END_AND_RECOVERY_REHEARSAL_20261031.md"
       - "docs/operations/**"
   push:
     branches:
