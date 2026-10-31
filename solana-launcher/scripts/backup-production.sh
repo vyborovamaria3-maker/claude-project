@@ -163,6 +163,40 @@ chmod 0600 "$DEST/trade.db"
 docker exec "$FRONTEND_CONTAINER" rm -f "$SQLITE_CONTAINER_TMP"
 SQLITE_CONTAINER_TMP=""
 
+# The Python Intelligence worker owns a separate SQLite file in the named
+# intelligence-state volume. Use SQLite's online backup API inside the owner
+# container so committed WAL pages are included; never cp the live DB file.
+INTELLIGENCE_CONTAINER="$(
+  docker ps --filter 'name=^/potapoff-intelligence$' --format '{{.Names}}' | head -n1
+)"
+[[ -n "$INTELLIGENCE_CONTAINER" ]] || {
+  echo "Python Intelligence worker container was not found" >&2
+  exit 1
+}
+docker exec "$INTELLIGENCE_CONTAINER" python -c '
+import os, sqlite3, sys
+source = sqlite3.connect("file:/var/lib/potapoff-intelligence/intelligence.sqlite3?mode=ro", uri=True)
+target_path = "/tmp/potapoff-intelligence-backup.sqlite"
+target = sqlite3.connect(target_path)
+try:
+    source.backup(target)
+    if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+        raise RuntimeError("SQLite online backup integrity check failed")
+    tables = target.execute(
+        "SELECT count(*) FROM sqlite_master WHERE type=char(116,97,98,108,101)"
+    ).fetchone()[0]
+    if tables < 1:
+        raise RuntimeError("Python Intelligence SQLite backup contains no tables")
+finally:
+    target.close()
+    source.close()
+with open(target_path, "rb") as stream:
+    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+        sys.stdout.buffer.write(chunk)
+os.remove(target_path)
+' > "$DEST/intelligence.sqlite"
+test -s "$DEST/intelligence.sqlite"
+
 # Do not publish symlinks: they can point outside the recovery set and would
 # not be covered by the regular-file SHA256 manifest.
 if find "$DEST" -type l -print -quit | grep -q .; then

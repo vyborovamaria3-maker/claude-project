@@ -18,7 +18,7 @@ if find "$backup" -type l -print -quit | grep -q .; then
   echo "Backup contains a symlink; refusing restore verification" >&2
   exit 1
 fi
-for file in SHA256SUMS postgres.dump admin-postgres.dump trade.db; do
+for file in SHA256SUMS postgres.dump admin-postgres.dump trade.db intelligence.sqlite; do
   [[ -s "$backup/$file" && ! -L "$backup/$file" ]] || {
     echo "Backup missing required file or contains a symlink" >&2
     exit 1
@@ -79,6 +79,44 @@ with tempfile.TemporaryDirectory(prefix="potapoff-sqlite-restore-") as directory
         connection.close()
 
 print(f"DISPOSABLE_SQLITE_RESTORE_OK tables={source_tables}")
+PY
+
+# Independently restore the Python Intelligence SQLite snapshot as well.
+python3 - "$backup/intelligence.sqlite" <<'PY'
+import pathlib
+import shutil
+import sqlite3
+import sys
+import tempfile
+
+source = pathlib.Path(sys.argv[1]).resolve()
+connection = sqlite3.connect(source.as_uri() + "?mode=ro", uri=True)
+try:
+    if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+        raise RuntimeError("Python Intelligence SQLite snapshot failed integrity check")
+    tables = connection.execute(
+        "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+    ).fetchone()[0]
+    if not isinstance(tables, int) or tables < 1:
+        raise RuntimeError("Python Intelligence SQLite snapshot has no application tables")
+finally:
+    connection.close()
+
+with tempfile.TemporaryDirectory(prefix="potapoff-intelligence-restore-") as directory:
+    restored = pathlib.Path(directory) / "intelligence.sqlite"
+    shutil.copy2(source, restored)
+    db = sqlite3.connect(str(restored))
+    try:
+        if db.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+            raise RuntimeError("Restored Python Intelligence SQLite copy failed integrity check")
+        restored_tables = db.execute(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchone()[0]
+        if restored_tables != tables:
+            raise RuntimeError("Restored Python Intelligence table count differs")
+    finally:
+        db.close()
+print(f"DISPOSABLE_INTELLIGENCE_SQLITE_RESTORE_OK tables={tables}")
 PY
 
 container="potapoff-restore-test-$$-$RANDOM"

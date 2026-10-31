@@ -7,9 +7,12 @@ scratch="$(mktemp -d)"
 product="potapoff-ci-product-$$"
 admin="potapoff-admin-postgres"
 frontend="potapoff-ci-frontend-$$"
+intelligence="potapoff-intelligence"
+intelligence_volume="potapoff-intelligence-ci-$$"
 
 cleanup(){
-  docker rm -f "$product" "$admin" "$frontend" >/dev/null 2>&1 || true
+  docker rm -f "$product" "$admin" "$frontend" "$intelligence" >/dev/null 2>&1 || true
+  docker volume rm "$intelligence_volume" >/dev/null 2>&1 || true
   rm -rf -- "$scratch"
 }
 trap cleanup EXIT
@@ -68,6 +71,21 @@ done
 }
 docker exec "$frontend" test -s /app/data/trade.db-wal
 
+# Separate synthetic Python Intelligence worker and named volume. This proves
+# that trade.db backup does not replace the Intelligence recovery artifact.
+docker volume create "$intelligence_volume" >/dev/null
+docker run -d --rm --network none --name "$intelligence" \
+  -v "$intelligence_volume:/var/lib/potapoff-intelligence" \
+  python:3.12-alpine sleep infinity >/dev/null
+docker exec "$intelligence" python -c '
+import sqlite3
+db = sqlite3.connect("/var/lib/potapoff-intelligence/intelligence.sqlite3")
+db.execute("CREATE TABLE synthetic_intelligence(id INTEGER PRIMARY KEY, tag TEXT NOT NULL)")
+db.execute("INSERT INTO synthetic_intelligence VALUES(3, ?)", ("safe-fixture",))
+db.commit()
+db.close()
+' >/dev/null
+
 # These are disposable test-only PostgreSQL containers; no live host is used.
 docker run -d --rm --network none --name "$product" \
   --label com.docker.compose.project=potapoff \
@@ -115,8 +133,9 @@ export BACKUP_ROOT="$scratch/backups"
 export ADMIN_DIR="$scratch/admin"
 backup="$(bash "$root/solana-launcher/scripts/backup-production.sh")"
 [[ -s "$backup/postgres.dump" && -s "$backup/admin-postgres.dump" ]]
-[[ -s "$backup/trade.db" && -s "$backup/SHA256SUMS" && -r "$backup/admin-site/.env" ]]
+[[ -s "$backup/trade.db" && -s "$backup/intelligence.sqlite" && -s "$backup/SHA256SUMS" && -r "$backup/admin-site/.env" ]]
 grep -Fq "  ./trade.db" "$backup/SHA256SUMS"
+grep -Fq "  ./intelligence.sqlite" "$backup/SHA256SUMS"
 [[ ! -e "$BACKUP_ROOT/.incomplete-" ]] || {
   echo "Incomplete backup was promoted" >&2; exit 1;
 }
@@ -134,6 +153,27 @@ docker exec --user root -e "BACKUP_SQLITE_PATH=/backup/$(basename "$backup")/tra
       db.close();
     }
   ' | grep -Fq "SQLITE_WAL_ROW_RESTORED_OK"
+
+# Verify the Python Intelligence snapshot includes its synthetic committed row.
+docker run --rm --network none --read-only --pids-limit 32 \
+  --tmpfs /tmp:size=16m,mode=1777 \
+  --mount "type=bind,src=$backup,dst=/backup,readonly" \
+  python:3.12-alpine python -c '
+import sqlite3
+source = sqlite3.connect("file:/backup/intelligence.sqlite?mode=ro", uri=True)
+target = sqlite3.connect("/tmp/intelligence-restored.sqlite")
+try:
+    source.backup(target)
+    if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+        raise SystemExit("Python Intelligence restore integrity mismatch")
+    row = target.execute("SELECT tag FROM synthetic_intelligence WHERE id=3").fetchone()
+    if row != ("safe-fixture",):
+        raise SystemExit("Python Intelligence restore marker mismatch")
+    print("INTELLIGENCE_SQLITE_RESTORED_OK")
+finally:
+    target.close()
+    source.close()
+' | grep -Fq "INTELLIGENCE_SQLITE_RESTORED_OK"
 
 bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" |
   grep -Fq 'BACKUP_RESTORE_REHEARSAL_OK'
@@ -158,6 +198,15 @@ fi
 mv "$scratch/trade.db.original" "$backup/trade.db"
 echo "CORRUPTED_SQLITE_BACKUP_REJECTED_OK"
 
+cp "$backup/intelligence.sqlite" "$scratch/intelligence.sqlite.original"
+printf 'corruption' >> "$backup/intelligence.sqlite"
+if bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" >/dev/null 2>&1; then
+  echo "Corrupted Python Intelligence backup passed restore gate" >&2
+  exit 1
+fi
+mv "$scratch/intelligence.sqlite.original" "$backup/intelligence.sqlite"
+echo "CORRUPTED_INTELLIGENCE_SQLITE_REJECTED_OK"
+
 # A symlink copied from a config source must not escape the checksum manifest.
 mv "$scratch/admin/sources.json" "$scratch/admin/sources.json.original"
 ln -s .env "$scratch/admin/sources.json"
@@ -173,6 +222,19 @@ if find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name '.incomplete-*' -pr
   exit 1
 fi
 echo "SYMLINKED_BACKUP_SOURCE_REJECTED_OK"
+
+# Missing Python Intelligence source must fail closed and clean the incomplete set.
+docker stop "$intelligence" >/dev/null
+sleep 1
+if bash "$root/solana-launcher/scripts/backup-production.sh" >/dev/null 2>&1; then
+  echo "Backup unexpectedly passed without the Python Intelligence source container" >&2
+  exit 1
+fi
+if find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name '.incomplete-*' -print -quit | grep -q .; then
+  echo "Failed Intelligence backup left an incomplete directory behind" >&2
+  exit 1
+fi
+echo "MISSING_INTELLIGENCE_SOURCE_REJECTED_OK"
 
 # Missing frontend/SQLite source must fail closed and remove its incomplete set.
 docker stop "$frontend" >/dev/null
