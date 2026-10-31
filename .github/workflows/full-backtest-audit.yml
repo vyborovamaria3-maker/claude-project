@@ -123,7 +123,7 @@ jobs:
           cp -R node_modules/playwright .next/standalone/node_modules/playwright
           cp -R node_modules/playwright-core .next/standalone/node_modules/playwright-core
           test -f .next/standalone/node_modules/playwright-core/browsers.json
-          PORT="$AUDIT_ROUTES_PORT" HOSTNAME=127.0.0.1 node .next/standalone/server.js > "$AUDIT_ROUTES_LOG" 2>&1 &
+          ADMIN_SITE_URL= PORT="$AUDIT_ROUTES_PORT" HOSTNAME=127.0.0.1 node .next/standalone/server.js > "$AUDIT_ROUTES_LOG" 2>&1 &
           pid=$!
           trap 'kill $pid 2>/dev/null || true; wait $pid 2>/dev/null || true' EXIT
           for i in {1..60}; do

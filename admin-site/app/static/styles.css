@@ -129,3 +129,9 @@ tr:hover td { background: rgba(147,249,185,.025); }
   .toolbar, .toolbar.compact, .lookup { grid-template-columns: 1fr; }
   .login-card { padding: 28px; }
 }
+
+/* Keep all original admin sections reachable in the fixed-height sidebar. */
+@media (min-width: 761px) {
+  .sidebar > #navigation { flex: 1; min-height: 0; overflow-y: auto; align-content: start; }
+  .sidebar-brand, .sidebar-footer { flex-shrink: 0; }
+}

@@ -21,7 +21,9 @@ services:
       start_period: 10s
 
   admin:
-    build: .
+    build:
+      context: ..
+      dockerfile: admin-site/Dockerfile
     image: "admin-site-admin:${ADMIN_IMAGE_TAG:-latest}"
     container_name: potapoff-admin
     restart: unless-stopped
@@ -35,7 +37,7 @@ services:
       admin-postgres:
         condition: service_healthy
     ports:
-      - "127.0.0.1:18080:8080"
+      - "127.0.0.1:8888:8080"
     volumes:
       - ./sources.json:/config/sources.json:ro
       - ./logs.json:/config/logs.json:ro

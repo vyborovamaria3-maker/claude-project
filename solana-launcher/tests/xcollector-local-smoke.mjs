@@ -1,8 +1,6 @@
 // Run against an isolated local development server; every browser API call is mocked.
 import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
-const require=createRequire(new URL('../../x-collector/package.json',import.meta.url));
-const {chromium}=require('playwright');
+import {chromium} from 'playwright';
 const base=process.env.X_COLLECTOR_SMOKE_URL||'http://127.0.0.1:3310';
 assert.equal(new URL(base).hostname,'127.0.0.1');
 const browser=await chromium.launch({headless:true});
@@ -39,12 +37,7 @@ try{
  });
  async function open(){
   try{
-   await page.goto(base+'/settings',{waitUntil:'load',timeout:180000});
-   await page.waitForFunction(()=>{
-    const button=document.querySelector('[data-tag="settings.tab.xcollector"]')?.closest('button');
-    return button&&Object.keys(button).some(key=>key.startsWith('__reactProps$')&&typeof button[key]?.onClick==='function');
-   });
-   await page.locator('[data-tag="settings.tab.xcollector"]').click();
+   await page.goto(base+'/collectors/x-collector',{waitUntil:'load',timeout:180000});
    await page.getByRole('heading',{name:'X Collector',exact:true}).waitFor();
    await page.getByRole('button',{name:'Автопостинг',exact:true}).click();
    await page.getByRole('heading',{name:'Автопостинг и активность X'}).waitFor();
@@ -54,7 +47,7 @@ try{
  const agent=page.locator('div.rounded-xl').filter({has:page.locator('p',{hasText:/^Агент$/})});
  assert.match(await agent.innerText(),/Нет данных/);check('API outage leaves agent status unknown');
  assert.equal(await page.getByText('Неопределённых отправок нет.',{exact:true}).count(),0);check('API outage does not claim an empty reconciliation queue');
- outage=false;await open();await page.getByText('Работает · ожидание',{exact:true}).first().waitFor();check('settings recover after API recovery');
+ outage=false;await open();await page.getByText('Работает · ожидание',{exact:true}).first().waitFor();check('admin collector recovers after API recovery');
  for(const status of ['В очереди','Выполняется','Проверьте X','Выполнено','Ошибка до отправки'])await page.getByRole('cell',{name:status+' mock only',exact:false}).waitFor();check('all five queue states render');
  await page.getByText('ИИ-провайдер:',{exact:false}).waitFor();await page.getByText('Проверка восстановления',{exact:false}).waitFor();
  for(const button of await page.getByRole('button',{name:'Сбросить паузу после проверки'}).all())assert.equal(await button.isDisabled(),true);check('open and half_open breakers require explicit checked acknowledgement');

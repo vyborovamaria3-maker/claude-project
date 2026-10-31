@@ -1,6 +1,6 @@
-# AI Reply Guy Backend
+# POTAPoff FastAPI backend
 
-[Быстрая 감독ировка]
+Backend identity, subscription checks, Telegram vault and TG Invite ledger are served on port 8000. The separate admin-site session does not replace this backend.
 
 ## Быстрый старт
 
@@ -10,12 +10,21 @@ cd backend
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# Установка
-pip install -r requirements.txt
+# Установка из backend/ (requirements.txt не используется)
+pip install -e '.[dev]'
 
-# Запуск
-uvicorn app.main:app --reload --port 8000
+# Проверка существующих настроек, без запуска и обращения к базе
+python scripts/run_local.py --check --env-file /absolute/path/to/backend.env
+
+# Запуск разрешён только после проверки настроек и отдельного решения о rollout
+python scripts/run_local.py --env-file /absolute/path/to/backend.env
 ```
+
+Из `solana-launcher/` доступны `npm run backend:check -- --env-file <path>` и `npm run backend:dev -- --env-file <path>`. По умолчанию используется `backend/.env`. Процесс слушает только `127.0.0.1:8000`; автоперезагрузка отключена.
+
+`SECRET_KEY` обязателен. Файлы `.env.local` Next.js и `admin-site/.env` автоматически не читаются. Укажите существующий ключ подписи и явный `DATABASE_URL` существующей продуктовой базы: новый ключ инвалидирует JWT, а новая пустая база не содержит владельцев и TG Invite vault. Launcher не подставляет эти значения и не создаёт их. Окружение процесса имеет приоритет над выбранным файлом. Проверка `--check` не запускает lifespan, миграции, bootstrap администратора или Telegram runtime; успешная проверка конфигурации не доказывает доступность базы или авторизацию Telegram.
+
+Шаблон актуальных параметров: `backend/.env.example`. Приведённые ниже legacy Reply Guy разделы не описывают текущую конфигурацию POTAPoff; используйте этот шаблон и актуальные схемы `app/api/v1`.
 
 ## Структура
 - `app/main.py` - основной Entry Point
@@ -83,3 +92,5 @@ LLM_PROVIDER=openai
 ## Telegram dataset integration
 
 See [TELEGRAM_DATASETS.md](TELEGRAM_DATASETS.md) for public dataset sync, local TGDataset import, provenance, and operational limits.
+
+For API-only local recovery, set `TG_BACKGROUND_ENABLED=false`; this prevents scheduling the Telegram background loop without changing existing worker processes. `run_local.py --check` now also rejects a Settings validator silently selecting a different database than the explicit configuration. Existing local administrator addresses (for example a reserved .local domain) remain readable through `/users/me`; new-user input validation is unchanged.

@@ -134,13 +134,16 @@ def create_app() -> FastAPI:
                 return Response(status_code=403, content="Forbidden")
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
+        embedded_workspace = request.url.path.startswith("/collectors/") and request.query_params.get("embedded") == "1"
+        response.headers["X-Frame-Options"] = "SAMEORIGIN" if embedded_workspace else "DENY"
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         response.headers["Cache-Control"] = "no-store"
+        style_policy = "'self' 'unsafe-inline'" if request.url.path.startswith("/collectors/") else "'self'"
+        frame_policy = "'self'" if embedded_workspace else "'none'"
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; "
-            "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+            f"default-src 'self'; style-src {style_policy}; script-src 'self'; img-src 'self' data:; "
+            f"connect-src 'self'; frame-ancestors {frame_policy}; base-uri 'self'; form-action 'self'"
         )
         return response
 

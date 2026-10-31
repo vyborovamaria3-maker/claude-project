@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getBackendBaseUrl } from "@/lib/authProxy";
+import { isLocalAdminDevelopment } from "./adminAuth";
 
 type AuthSuccess = { ownerId: string; authorization: string; error?: never };
 type AuthFailure = { ownerId?: never; error: NextResponse };
@@ -59,7 +60,10 @@ export async function requireTGInviteUser(request: Request): Promise<AuthSuccess
     if (!identity.ok) {
       return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
     }
-    const user = (await identity.json()) as { id?: unknown };
+    const user = (await identity.json()) as { id?: unknown; is_active?: unknown; is_superuser?: unknown };
+    if (!isLocalAdminDevelopment(request) && (user.is_active !== true || user.is_superuser !== true)) {
+      return { error: NextResponse.json({ error: "Administrator access required" }, { status: 403 }) };
+    }
     if (typeof user.id !== "string" || !/^[0-9a-f-]{36}$/i.test(user.id)) {
       return { error: NextResponse.json({ error: "Invalid identity" }, { status: 401 }) };
     }

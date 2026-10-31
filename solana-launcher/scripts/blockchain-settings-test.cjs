@@ -97,6 +97,11 @@ async function main(){
  const run=adapter.overview().runs[0];
  assert.equal(run.state,'finished');assert.equal(run.targets,1);assert.equal(run.errors,0);
  assert.equal(adapter.overview().alchemyConfigured,true);
+ const compactDb=global.__TRADE_DB__;
+ require(path.join(root,'scripts/chain-raw-compact.cjs')).install(compactDb);
+ compactDb.pragma('query_only = ON');
+ try { assert.doesNotThrow(()=>adapter.overview(),'compact status must not run schema DDL or checkpoint writes'); }
+ finally { compactDb.pragma('query_only = OFF'); }
  assert.equal(runtime.db().prepare('SELECT COUNT(*) AS n FROM blockchain_http_leases').get().n,0);
  console.log('Blockchain settings: OK — validation, persistence, operator/CSRF API, real XLSX dedup, fallback, RPC errors, rate/concurrency limits and secret redaction');
 }

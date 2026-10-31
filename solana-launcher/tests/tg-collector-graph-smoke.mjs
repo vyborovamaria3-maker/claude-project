@@ -4,9 +4,11 @@ import { chromium } from 'playwright';
 const browser=await chromium.launch({headless:true});
 try {
  const page=await browser.newPage();let release,requested=false;
+ await page.route('**/api/me', route => route.fulfill({json:{username:'fixture-admin'}}));
  const pending=new Promise(resolve=>{release=resolve});
  await page.route('**/api/integrations/tg-collector**',async route=>{
   const url=new URL(route.request().url());
+  if(url.searchParams.get('mode')==='memecoin') return route.fulfill({status:503,json:{error:'Synthetic analytics unavailable'}});
   if(url.pathname.endsWith('/session')) return route.fulfill({status:404,json:{error:'Manual fixture access'}});
   if(url.searchParams.get('mode')==='evidence'){
    const second=url.searchParams.get('targetKey')==='second';
@@ -16,7 +18,7 @@ try {
   if(url.pathname.endsWith('/graph')) return route.fulfill({json:{nodes:[{id:'s',label:'Fixture source',kind:'source'},...['first','second'].map(id=>({id,label:id+' target',kind:'telegram_username'}))],edges:['first','second'].map(id=>({id,from:'s',to:id,sourceId:'1',kind:'mention',targetKind:'telegram_username',targetKey:id,strength:1,sampleUrl:'https://t.me/fixture_source/10',lastSeen:null})),metrics:[],sharedAddresses:[],observedAddresses:[],sampled:false,days:90}});
   return route.fulfill({json:{configured:true,workerOnline:false,runtimeMetrics:{messages_total:2,messages_per_day:2,links_total:2,links_per_day:2,jobs_pending:0,jobs_failed:0,flood_wait_active:false},stats:{sources:1,messages:2,running:0,failed:0},sources:[],messages:[],page:0}});
  });
- await page.goto((process.env.TG_COLLECTOR_SMOKE_URL||'http://127.0.0.1:3171')+'/tg-collector',{waitUntil:'networkidle',timeout:120000});
+ await page.goto((process.env.TG_COLLECTOR_SMOKE_URL||'http://127.0.0.1:3171')+'/collectors/tg-collector',{waitUntil:'networkidle',timeout:120000});
  await page.waitForFunction(()=>{const input=document.querySelector('[aria-label="Ключ доступа TG Collector"]');return input&&Object.keys(input).some(key=>key.startsWith('__reactProps$'))});
  await page.getByLabel('Ключ доступа TG Collector').fill('local-browser-fixture-access-key');
  await page.getByRole('button',{name:'Открыть',exact:true}).click();

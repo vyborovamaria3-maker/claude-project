@@ -308,6 +308,8 @@ MIT License - см. LICENSE file
 
 **AI Reply Guy** - Автоматизируйте ответы в X (Twitter) с профессиональным качеством! 🚀
 
-## TG Collector UI
+## Collector administration
 
-The Settings page contains a **TG Collector** tab for runtime controls, source management, metrics, message search, graph/evidence and Telegram proxy settings. The admin area exposes the same collector through `/admin/tg-collector`, with an **X Collector / TG Collector** switcher alongside the existing X Registry.
+TG Invite, TG Collector and X Collector are available only in the separate Python `admin-site`, under `/collectors/tg-invite`, `/collectors/tg-collector` and `/collectors/x-collector`. Product Settings and the main sidebar show none of these operational tools. Former product routes redirect to the configured server-only `ADMIN_SITE_URL`; they return 404 when it is unset. Components and APIs are reused without copying databases, queues or Telegram sessions. X Registry remains a separate module.
+
+The standalone admin uses its own HttpOnly session and a bounded server-side bridge. TG Invite's existing owner identity requires an operator-supplied server token. Local API/network connectivity and live service continuity remain rollout prerequisites; the existing Next TG Collector API stays disabled in production. See `docs/architecture/ADMIN_WORKSPACE_MIGRATION_20261029.md` in the repository root.

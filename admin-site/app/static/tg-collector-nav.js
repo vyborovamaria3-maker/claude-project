@@ -113,5 +113,5 @@
   }
   document.getElementById('navigation').addEventListener('click', e => {if (e.target.closest('[data-view]')?.dataset.view !== 'tgCollector') {clearTimeout(timer); ++generation;}});
   document.getElementById('logoutButton').addEventListener('click', () => {clearTimeout(timer); ++generation;}, true);
-  window.TGCollector = Object.freeze({render});
+  window.TGCollector = Object.freeze({render, deactivate() { clearTimeout(timer); ++generation; busy=false; }});
 })();

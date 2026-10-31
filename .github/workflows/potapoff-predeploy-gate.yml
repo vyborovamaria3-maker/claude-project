@@ -73,7 +73,7 @@ jobs:
           test "$current_head" = "$expected_head"
       - name: Run Twitter, KOL and migration regression tests
         working-directory: solana-launcher/backend
-        run: pytest -q tests/test_twitter*.py tests/test_kol*.py tests/test_alembic_revision_ids.py
+        run: pytest -q tests/test_twitter*.py tests/test_kol*.py tests/test_alembic_revision_ids.py tests/test_local_backend_launcher.py tests/test_existing_local_user_read.py tests/test_telegram_background_optout.py
 
   frontend:
     name: Frontend typecheck, regressions and build
@@ -95,12 +95,24 @@ jobs:
         run: npm ci --legacy-peer-deps
       - name: Security regression
         run: npm run security:test
+      - name: Administrator role and legacy navigation regression
+        run: npx vitest run --environment node lib/adminAuth.test.ts lib/tginvite-auth.test.ts lib/standaloneAdmin.test.ts lib/xcollector-register.test.ts lib/xcollector-summary.test.ts
+      - name: Build standalone admin collector workspaces
+        run: node node_modules/vite/bin/vite.js build --configLoader native --config ../admin-site/ui/vite.config.mjs
+      - name: Standalone admin workspace typecheck
+        run: npx tsc --noEmit -p ../admin-site/ui/tsconfig.json
+      - name: Standalone admin workspace browser smoke (synthetic APIs)
+        run: |
+          npx playwright install --with-deps chromium
+          node ../admin-site/tests/collector-workspaces-browser.mjs
       - name: KOL regression
         run: npm run kols:test
       - name: TypeScript typecheck
         run: npx tsc --noEmit
       - name: Production build
         run: npm run build
+      - name: Production collector route and access smoke
+        run: node scripts/admin-routes-http-smoke.mjs
 
   admin-control-center:
     name: Control Center regression and Compose

@@ -140,7 +140,7 @@ async function fetchRpcHealth(url: string, timeoutMs = 7000): Promise<{ ok: bool
   }
 }
 
-export default function DiagnosticsTab() {
+export default function DiagnosticsTab({ standaloneAdmin = false }: { standaloneAdmin?: boolean } = {}) {
   const [rpcStatus, setRpcStatus] = useState<CheckItem>({
     title: "RPC Health",
     status: "checking",
@@ -152,15 +152,18 @@ export default function DiagnosticsTab() {
   const [loading, setLoading] = useState(true);
 
   const rpcUrl = useMemo(
-    () => process.env.NEXT_PUBLIC_HELIUS_RPC_URL || "https://api.mainnet-beta.solana.com",
-    []
+    () => standaloneAdmin ? "/api/rpc-health" : process.env.NEXT_PUBLIC_HELIUS_RPC_URL || "https://api.mainnet-beta.solana.com",
+    [standaloneAdmin]
   );
 
   const runChecks = useCallback(async () => {
     setLoading(true);
 
     const [rpcResult, ...endpointResults] = await Promise.all([
-      fetchRpcHealth(rpcUrl),
+      standaloneAdmin ? fetch("/api/rpc-health", { cache: "no-store" }).then(async response => {
+        const health = await response.json();
+        return { ok: response.ok && health.status === "ok", elapsed: health.latency ?? 0, status: response.status, detail: health.status === "ok" ? "RPC healthy" : "RPC unavailable or degraded" };
+      }).catch(() => ({ ok: false, elapsed: 0, status: 0, detail: "RPC check failed" })) : fetchRpcHealth(rpcUrl),
       ...ENDPOINTS.map(async (endpoint) => {
         const result = await fetchJsonWithTimeout(endpoint.url);
         let status: CheckStatus = "ok";
@@ -218,7 +221,7 @@ export default function DiagnosticsTab() {
     setWallets(walletsSnapshot);
     setLastCheckedAt(Date.now());
     setLoading(false);
-  }, [rpcUrl]);
+  }, [rpcUrl, standaloneAdmin]);
 
   useEffect(() => {
     void runChecks();

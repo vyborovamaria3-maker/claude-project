@@ -1,5 +1,2 @@
-import { redirect } from "next/navigation";
-
-export default function TradeTGInvitePage() {
-  redirect("/settings/tginvite");
-}
+import { redirectToStandaloneAdmin } from "@/lib/standaloneAdmin";
+export default function LegacyCollectorPage() { redirectToStandaloneAdmin("tg-invite"); }

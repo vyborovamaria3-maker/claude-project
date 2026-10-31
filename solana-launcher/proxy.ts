@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireProdAuth } from "@/lib/routeAuth";
+import { requireAdminAuth } from "@/lib/adminAuth";
+import { standaloneAdminUrl, type CollectorModule } from "@/lib/standaloneAdmin";
 
 const PAID_ROUTE_PREFIXES = [
   "/api/trade",
@@ -154,6 +156,45 @@ export async function proxy(request: NextRequest) {
   const nonce = crypto.randomUUID().replaceAll("-", "");
   const csp = buildCsp(nonce);
 
+  const legacyCollectorRoutes: Record<string, CollectorModule | null> = {
+    "/admin": null,
+    "/admin/x-collector": "x-collector",
+    "/admin/tg-collector": "tg-collector",
+    "/admin/tg-invite": "tg-invite",
+    "/tg-collector": "tg-collector",
+    "/tginvite": "tg-invite",
+    "/settings/tginvite": "tg-invite",
+    "/launch/tginvite": "tg-invite",
+    "/trade/tginvite": "tg-invite",
+  };
+  if (Object.hasOwn(legacyCollectorRoutes, pathname)) {
+    const destination = standaloneAdminUrl(legacyCollectorRoutes[pathname] ?? undefined);
+    if (!destination) return applyCsp(new NextResponse(null, { status: 404 }), csp);
+    const target = new URL(destination);
+    searchParams.forEach((value, key) => target.searchParams.append(key, value));
+    return applyCsp(NextResponse.redirect(target), csp);
+  }
+
+  if (pathname === "/settings") {
+    const legacyTab = searchParams.get("tab");
+    const collectorModule: CollectorModule | null = legacyTab === "xcollector" ? "x-collector"
+      : legacyTab === "tgcollector" ? "tg-collector"
+      : legacyTab === "tginvite" ? "tg-invite"
+      : legacyTab === "diagnostics" || legacyTab === "apify" || legacyTab === "blockchain" ? legacyTab : null;
+    if (collectorModule) {
+      const destination = standaloneAdminUrl(collectorModule);
+      if (!destination) return applyCsp(new NextResponse(null, { status: 404 }), csp);
+      const target = new URL(destination);
+      searchParams.forEach((value, key) => { if (key !== "tab") target.searchParams.append(key, value); });
+      return applyCsp(NextResponse.redirect(target), csp);
+    }
+  }
+
+  if (matchesPrefix(pathname, ["/admin/twitter-registry"])) {
+    const denied = await requireAdminAuth(request);
+    if (denied) return applyCsp(denied, csp);
+  }
+
   if (pathname === "/" && searchParams.has("api")) {
     const safeUrl = request.nextUrl.clone();
     safeUrl.searchParams.delete("api");
@@ -179,7 +220,7 @@ export async function proxy(request: NextRequest) {
   const response = NextResponse.next({
     request: { headers: requestHeaders },
   });
-  if (matchesPrefix(pathname, PAID_ROUTE_PREFIXES) || matchesPrefix(pathname, PRIVATE_PRODUCTION_PREFIXES)) {
+  if (matchesPrefix(pathname, ["/admin"]) || matchesPrefix(pathname, PAID_ROUTE_PREFIXES) || matchesPrefix(pathname, PRIVATE_PRODUCTION_PREFIXES)) {
     response.headers.set("Cache-Control", "private, no-store, max-age=0");
   }
   return applyCsp(response, csp);

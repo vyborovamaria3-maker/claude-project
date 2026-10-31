@@ -21,6 +21,9 @@ class UserCreate(UserBase):
 
 
 class UserRead(UserBase):
+    # Persisted administrator identities may use a reserved local domain.
+    # Validate email on creation, not again when serializing an existing user.
+    email: str | None = None
     id: UUID
     is_active: bool
     is_superuser: bool

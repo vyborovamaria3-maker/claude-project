@@ -13,7 +13,10 @@ export const categories=['migrated','dex_trending','profitable_wallets'] as cons
 export function overview() {
   let alchemyConfigured=false;
   try { getAlchemyConfig(); alchemyConfigured=true; } catch { /* No credential details in the response. */ }
-  const database=getDb();initDb(database);
+  const database=getDb();
+  // A compact RAW installation already owns its schema and immutable view.
+  // Opening its status page must not rerun legacy DDL or rewrite checkpoints.
+  if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chain_raw_compact_meta'").get()) initDb(database);
   const runs=settingsDb().prepare('SELECT * FROM blockchain_runs ORDER BY started_at DESC LIMIT 10').all();
   return { ...publicSettings(), alchemyConfigured, heliusConfigured:getHeliusApiKeys().length>0, collection:status(database), runs,
     imports:settingsDb().prepare('SELECT id,name,category,status,records,invalid_rows,error,created_at FROM blockchain_imports ORDER BY created_at DESC LIMIT 30').all(),
