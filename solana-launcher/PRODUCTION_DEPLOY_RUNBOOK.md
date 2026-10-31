@@ -246,3 +246,4 @@ Stop and do not merge/deploy when any of the following is true:
 - settings no-op write / stale-409 smoke fails;
 - served frontend build SHA differs from the deployed image tag;
 - `main` moved after the reviewed integration base and the branch has not been reconciled again.
+- The actual PostgreSQL runtime DSN roles have not been audited, or an application runtime role is confirmed to have SUPERUSER, CREATEDB, CREATEROLE, REPLICATION or BYPASSRLS without an explicitly reviewed exception.
