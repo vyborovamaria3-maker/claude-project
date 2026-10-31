@@ -48,17 +48,17 @@ for file in .env .env.intelligence sources.json logs.json; do
   fi
 done
 
-POSTGRES_CONTAINER="$(
+mapfile -t POSTGRES_CONTAINERS < <(
   docker ps \
     --filter label=com.docker.compose.project=potapoff \
     --filter label=com.docker.compose.service=postgres \
-    --format '{{.Names}}' | head -n1
-)"
-
-if [[ -z "$POSTGRES_CONTAINER" ]]; then
-  echo "PostgreSQL container was not found" >&2
+    --format '{{.Names}}'
+)
+if [[ "${#POSTGRES_CONTAINERS[@]}" -ne 1 ]]; then
+  echo "Expected exactly one running POTAPoff PostgreSQL container" >&2
   exit 1
 fi
+POSTGRES_CONTAINER="${POSTGRES_CONTAINERS[0]}"
 
 docker exec "$POSTGRES_CONTAINER" \
   pg_dump -U potapoff -d potapoff -Fc \
