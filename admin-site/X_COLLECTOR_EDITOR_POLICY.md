@@ -12,8 +12,8 @@ Only `public.feature_flags` has an application-level mutation allowlist:
 
 | Operation | Allowed columns | Notes |
 | --- | --- | --- |
-| INSERT | `name`, `enabled`, `rollout_pct`, `description`, `updated_at` | `payload` is deliberately excluded |
-| UPDATE | `enabled`, `rollout_pct`, `description`, `updated_at` | Primary key `name` cannot be changed |
+| INSERT | `name`, `enabled`, `rollout_pct`, `description` | `updated_at` is assigned by the API; `payload` is deliberately excluded |
+| UPDATE | `enabled`, `rollout_pct`, `description` | `updated_at` is assigned by the API; primary key `name` cannot be changed |
 | DELETE | None | Delete is disabled |
 
 Every other table and view is read-only through this editor. This includes source
