@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from app.auth import require_admin
+from app import x_collector_admin
 from app.x_collector_admin import build_x_collector_router
 
 
@@ -79,6 +80,40 @@ class CollectorApiTest(unittest.TestCase):
             patch('app.x_collector_admin.connection', connection),
             patch('app.x_collector_admin.metadata', return_value=meta),
         )
+
+    def test_metadata_exposes_only_allowlisted_actions_and_columns(self):
+        columns = [
+            {'name': 'name', 'type': 'text', 'nullable': False, 'default': None, 'identity': '', 'generated': '', 'primary_key': True},
+            {'name': 'enabled', 'type': 'boolean', 'nullable': False, 'default': 'false', 'identity': '', 'generated': '', 'primary_key': False},
+            {'name': 'payload', 'type': 'jsonb', 'nullable': True, 'default': None, 'identity': '', 'generated': '', 'primary_key': False},
+            {'name': 'updated_at', 'type': 'bigint', 'nullable': False, 'default': None, 'identity': '', 'generated': '', 'primary_key': False},
+        ]
+
+        class Cursor:
+            def fetchall(self):
+                return columns
+
+        db = SimpleNamespace(execute=lambda *args: Cursor())
+        with patch(
+            'app.x_collector_admin.catalog',
+            return_value=[{'name': 'feature_flags', 'kind': 'r', 'estimated_rows': 1}],
+        ):
+            meta = x_collector_admin.metadata(db, 'feature_flags')
+
+        self.assertEqual(meta['allowed_actions'], ['insert', 'update'])
+        editable = {column['name']: column['editable_actions'] for column in meta['columns']}
+        self.assertEqual(editable['name'], ['insert'])
+        self.assertEqual(editable['enabled'], ['insert', 'update'])
+        self.assertEqual(editable['payload'], [])
+        self.assertEqual(editable['updated_at'], [])
+
+        with patch(
+            'app.x_collector_admin.catalog',
+            return_value=[{'name': 'x_tasks', 'kind': 'r', 'estimated_rows': 1}],
+        ):
+            read_only = x_collector_admin.metadata(db, 'x_tasks')
+        self.assertEqual(read_only['allowed_actions'], [])
+        self.assertFalse(read_only['editable'])
 
     def test_update_requires_confirmation_and_version(self):
         connection_patch, metadata_patch = self.setup_database()
