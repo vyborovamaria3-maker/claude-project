@@ -3,16 +3,18 @@ set -Eeuo pipefail
 umask 077
 
 # Independent, NONDESTRUCTIVE restore rehearsal. Never connects to a live DB.
-# Only writes into two brand-new databases inside a temporary Docker container
-# with NO network, published ports or persistent volumes.
+# PostgreSQL restores run in a temporary Docker container with NO network,
+# published ports or persistent volumes. SQLite is copied to a temporary
+# directory and opened independently; no application database is modified.
 if [[ "$#" -ne 1 || ! -d "$1" ]]; then
   echo "Usage: verify-backup-restore.sh /path/to/backup-directory" >&2
   exit 2
 fi
 command -v docker >/dev/null
 command -v sha256sum >/dev/null
+command -v python3 >/dev/null
 backup="$(cd -- "$1" && pwd -P)"
-for file in SHA256SUMS postgres.dump admin-postgres.dump; do
+for file in SHA256SUMS postgres.dump admin-postgres.dump trade.db; do
   [[ -s "$backup/$file" && ! -L "$backup/$file" ]] || {
     echo "Backup missing required file or contains a symlink" >&2
     exit 1
@@ -24,6 +26,56 @@ done
     { echo "Backup SHA256 manifest mismatch" >&2; exit 1; }
 )
 echo "BACKUP_MANIFEST_VERIFIED"
+
+# Verify and restore the SQLite snapshot into a fresh temporary path. The
+# backup itself is never opened for writes; the restored copy must pass a full
+# integrity check and contain application tables.
+python3 - "$backup/trade.db" <<'PY'
+import pathlib
+import shutil
+import sqlite3
+import sys
+import tempfile
+
+source = pathlib.Path(sys.argv[1]).resolve()
+
+def inspect_readonly(path):
+    uri = path.resolve().as_uri() + "?mode=ro"
+    connection = sqlite3.connect(uri, uri=True)
+    try:
+        integrity = connection.execute("PRAGMA integrity_check").fetchall()
+        if integrity != [("ok",)]:
+            raise RuntimeError("SQLite integrity check failed")
+        tables = connection.execute(
+            "SELECT count(*) FROM sqlite_master "
+            "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchone()[0]
+        if not isinstance(tables, int) or tables < 1:
+            raise RuntimeError("SQLite snapshot has no application tables")
+        return tables
+    finally:
+        connection.close()
+
+source_tables = inspect_readonly(source)
+with tempfile.TemporaryDirectory(prefix="potapoff-sqlite-restore-") as directory:
+    restored = pathlib.Path(directory) / "trade.db"
+    shutil.copy2(source, restored)
+    connection = sqlite3.connect(str(restored))
+    try:
+        integrity = connection.execute("PRAGMA integrity_check").fetchall()
+        if integrity != [("ok",)]:
+            raise RuntimeError("Restored SQLite copy failed integrity check")
+        restored_tables = connection.execute(
+            "SELECT count(*) FROM sqlite_master "
+            "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchone()[0]
+        if restored_tables != source_tables:
+            raise RuntimeError("Restored SQLite table count differs")
+    finally:
+        connection.close()
+
+print(f"DISPOSABLE_SQLITE_RESTORE_OK tables={source_tables}")
+PY
 
 container="potapoff-restore-test-$$-$RANDOM"
 cleanup(){
