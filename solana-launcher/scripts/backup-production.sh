@@ -147,7 +147,7 @@ const backupPath = process.env.POTAPOFF_TRADE_DB_BACKUP;
       throw new Error("sqlite_backup_is_empty");
     }
     fs.chmodSync(backupPath, 0o600);
-    console.log("SQLITE_BACKUP_OK tables=" + tables + " bytes=" + stat.size);
+    console.error("SQLITE_BACKUP_OK tables=" + tables + " bytes=" + stat.size);
   } finally {
     snapshot.close();
   }
