@@ -133,7 +133,7 @@ Restart procedure for local tests:
 
 1. Stop the current process gracefully; do not kill it while a batch is active.
 2. Confirm the process exited and no local test process still owns the source.
-3. Run the read-only `node scripts/run.mjs --status` check.
+3. Run the read-only `node scripts/run.mjs --source tg --status` check (substitute `x` or `blockchain` when checking another source).
 4. Confirm the previous failure cause is understood and the destination/source
    schema versions are compatible.
 5. Restart with a finite `--max-batches 1` test first.
