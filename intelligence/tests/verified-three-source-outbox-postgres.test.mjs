@@ -270,6 +270,18 @@ test("P0 #173: isolated X/TG PG and chain SQLite outboxes deliver verified sourc
       dst,formatTokenId("solana","So11111111111111111111111111111111111111112"),
       "2026-10-20T02:00:00Z",future)).length,0);
 
+    // A later, independently verified TG revision after the edit creates
+    // a new assertion for the same message evidence. It is not resurrected by
+    // replay of the older assertion; it is a genuinely later source revision.
+    const tgReverified=verified("tg","2026-10-20T01:27:00Z","f");
+    await commitSource(tgPool,"tg-reverify-201",tgReverified);
+    const reverified=await deliver(ports[1],dst,"tg-reverify");
+    assert.equal(reverified.delivered,1);
+    assert.equal(reverified.failed,0);
+    await dst.query("UPDATE token_link_observations SET inserted_at=observed_at");
+    assert.deepEqual(new Set((await active()).map(row=>row.source_system)),
+      new Set(["x","tg"]));
+
     // A later X text revision retracts only X's assertion. TG evidence and
     // independently sourced Blockchain evidence must remain untouched.
     const xTombstone=invalidated("x","2026-10-20T01:30:00Z","edited");
@@ -317,7 +329,7 @@ test("P0 #173: isolated X/TG PG and chain SQLite outboxes deliver verified sourc
     sqlite.prepare(
       "UPDATE outbox_events SET processed_at=NULL,lease_owner=NULL,lease_until=NULL"
     ).run();
-    const expected=[2,3,2];
+    const expected=[2,4,2];
     for(const [i,source] of ports.entries()){
       for(let n=0;n<expected[i];n++){
         const replay=await deliver(source,dst,"replay-"+i+"-"+n);
@@ -326,8 +338,8 @@ test("P0 #173: isolated X/TG PG and chain SQLite outboxes deliver verified sourc
         });
       }
     }
-    assert.equal(await count(dst,"intelligence_inbox"),7);
-    assert.equal(await count(dst,"token_link_observations"),5);
+    assert.equal(await count(dst,"intelligence_inbox"),8);
+    assert.equal(await count(dst,"token_link_observations"),6);
     assert.equal(await count(dst,"blockchain_swap_evidence_revisions"),2);
     assert.equal((await active()).length,0);
     assert.equal((await chain()).length,0);
