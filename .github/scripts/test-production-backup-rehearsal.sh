@@ -98,6 +98,10 @@ docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
 docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
   -c "CREATE TABLE synthetic_admin(id integer primary key, tag text); INSERT INTO synthetic_admin VALUES (2,'safe-fixture');" >/dev/null
 
+# The role audit is observational and must parse on a disposable PostgreSQL DB.
+docker exec -i "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 -f - \
+  < "$root/docs/operations/postgres-effective-privileges.sql" >/dev/null
+
 printf 'POSTGRES_PASSWORD=ci-synthetic\n' > "$scratch/deploy/.env.server"
 printf 'TEST_ONLY=1\n' > "$scratch/deploy/backend.env"
 printf 'services: {}\n' > "$scratch/deploy/docker-compose.production.yml"
