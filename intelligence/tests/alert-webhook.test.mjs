@@ -84,6 +84,7 @@ test("only allowlisted alert transitions are posted with minimal payload and bea
   assert.equal(requests.length, 1);
   assert.equal(requests[0].url, config().url);
   assert.equal(requests[0].init.method, "POST");
+  assert.equal(requests[0].init.redirect, "error");
   assert.equal(requests[0].init.headers.authorization, "Bearer test-token");
   assert.equal(requests[0].init.headers["content-type"], "application/json");
 
