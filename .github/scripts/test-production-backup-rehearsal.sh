@@ -147,9 +147,27 @@ docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
 docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
   -c "CREATE TABLE synthetic_admin(id integer primary key, tag text); INSERT INTO synthetic_admin VALUES (2,'safe-fixture');" >/dev/null
 
-# The role audit is observational and must parse on a disposable PostgreSQL DB.
-docker exec -i "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 -f - \
-  < "$root/docs/operations/postgres-effective-privileges.sql" >/dev/null
+# Exercise the read-only privilege audit as a least-privilege role on
+# both PostgreSQL majors; do not run it only as the fixture superuser.
+for database in "product potapoff potapoff synthetic_product" "admin potapoff_admin potapoff_admin synthetic_admin"; do
+  read -r container db_user db_name table_name <<< "$database"
+  docker exec "$container" psql -X -U "$db_user" -d "$db_name" -v ON_ERROR_STOP=1 \
+    -c "CREATE ROLE backup_audit_probe NOLOGIN; GRANT CONNECT ON DATABASE $db_name TO backup_audit_probe; GRANT USAGE ON SCHEMA public TO backup_audit_probe; GRANT SELECT ON TABLE public.$table_name TO backup_audit_probe" >/dev/null
+
+  audit_output="$(
+    { printf 'SET ROLE backup_audit_probe;\\n'; cat "$root/docs/operations/postgres-effective-privileges.sql"; } |
+      docker exec -i "$container" psql -X -U "$db_user" -d "$db_name" -v ON_ERROR_STOP=1
+  )"
+  grep -Fq "backup_audit_probe" <<< "$audit_output"
+
+  privilege_flags="$(docker exec "$container" psql -X -U "$db_user" -d "$db_name" -Atq \
+    -v ON_ERROR_STOP=1 \
+    -c "SET ROLE backup_audit_probe; SELECT rolsuper::text || ':' || has_table_privilege(current_user, 'public.$table_name', 'SELECT')::text || ':' || has_table_privilege(current_user, 'public.$table_name', 'INSERT')::text FROM pg_roles WHERE rolname=current_user")"
+  [[ "$privilege_flags" == "false:true:false" ]] || {
+    echo "Least-privilege audit fixture returned unexpected grants for $container: $privilege_flags" >&2
+    exit 1
+  }
+done
 
 printf 'POSTGRES_PASSWORD=ci-synthetic\n' > "$scratch/deploy/.env.server"
 printf 'TEST_ONLY=1\n' > "$scratch/deploy/backend.env"
