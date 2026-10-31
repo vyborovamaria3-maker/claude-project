@@ -1,151 +1,64 @@
-# Настройка Helius Webhook
+# Helius setup — Express/Prisma experiment only
 
-## 1. Регистрация в Helius
+This guide applies only to telegram-miniapp/backend-new. It does not configure
+the current POTAPoff Mini App routes in solana-launcher.
 
-1. Перейдите на https://www.helius.dev/
-2. Зарегистрируйтесь / войдите
-3. Получите API ключ в разделе Dashboard
+## Required configuration
 
-## 2. Создание Webhook
+Copy backend-new/.env.example to backend-new/.env and configure:
 
-В личном кабинете Helius:
+- DATABASE_URL=file:./dev.db for the checked-in SQLite Prisma schema;
+- SOLANA_RPC_URL;
+- USDT_MINT;
+- MERCHANT_WALLET;
+- HELIUS_API_KEY;
+- HELIUS_WEBHOOK_SECRET — required, random and at least 32 characters;
+- FRONTEND_URL;
+- TELEGRAM_BOT_TOKEN.
 
-**Webhook URL:**
-```
-https://your-backend-url.com/webhook/helius
-```
+Do not substitute a PostgreSQL URL without first changing and reviewing the
+Prisma schema, migrations, tests and deployment design.
 
-Для локального тестирования используйте ngrok:
-```bash
-npx ngrok http 3001
-```
-Полученный URL (например `https://abc123.ngrok.io`) + `/webhook/helius`
+## Webhook
 
-**Account Addresses:**
-- Добавьте ваш `MERCHANT_WALLET` адрес (куда будут приходить USDT)
+Configure Helius to send notifications to:
 
-**Transaction Types:**
-- ☑️ NATIVE_TRANSFERS
-- ☑️ TOKEN_TRANSFERS
-- ☑️ ANY
+    https://<your-backend-host>/webhook/helius
 
-**Webhook Secret (опционально):**
-- Установите в поле "Webhook Secret"
-- Добавьте в `.env`: `HELIUS_WEBHOOK_SECRET=your_secret`
+Use the configured merchant wallet as the watched account. The service expects
+the webhook secret in the Authorization header (Bearer form is accepted).
+Keep the secret private.
 
-## 3. Тестирование webhook локально
+## Authenticated API contract
 
-### Через ngrok:
+Payment creation requires Telegram's raw signed initData:
 
-```bash
-# Терминал 1 - запуск ngrok
-npx ngrok http 3001
+    curl -X POST http://localhost:3001/api/subscription/create \
+      -H "Content-Type: application/json" \
+      -d '{"initData":"<raw Telegram.WebApp.initData>","plan":"premium"}'
 
-# Получите URL типа https://abc123.ngrok.io
-# Используйте: https://abc123.ngrok.io/webhook/helius
-```
+Subscription status uses the same signed Telegram data in a header:
 
-### Тест создания платежа:
+    curl http://localhost:3001/api/subscription/status \
+      -H "x-telegram-init-data: <raw Telegram.WebApp.initData>"
 
-```bash
-# Терминал 2 - тест API
-curl -X POST http://localhost:3001/api/subscription/create \
-  -H "Content-Type: application/json" \
-  -d '{"telegramId":123456789,"plan":"premium"}'
-```
+Do not use the old examples that submit a bare telegramId or a
+userId query parameter; those do not match the current controller contract.
 
-Ответ:
-```json
-{
-  "success": true,
-  "payUrl": "solana:YOUR_WALLET?amount=1000&spl-token=...&memo=123456789_...",
-  "paymentId": "uuid",
-  "memo": "123456789_1699999999999",
-  "amount": 1000
-}
-```
+## Local checks
 
-### Тест webhook (mock):
+    cd telegram-miniapp/backend-new
+    npm ci
+    npx prisma generate
+    npm run build
+    npm run dev
 
-```bash
-# Используем скрипт
-cd backend-new
-npx ts-node scripts/test-webhook.ts 123456789_1699999999999
-```
+- Health: GET /health
+- Webhook health: GET /webhook/helius/health
+- Create payment: POST /api/subscription/create
+- Check status: GET /api/subscription/status
 
-Или вручную:
-```bash
-curl -X POST http://localhost:3001/webhook/helius \
-  -H "Content-Type: application/json" \
-  -d '[{
-    "signature": "5x...",
-    "type": "TRANSFER",
-    "memo": "123456789_1699999999999",
-    "tokenTransfers": [{
-      "mint": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
-      "toUserAccount": "YOUR_MERCHANT_WALLET",
-      "fromUserAccount": "SENDER_WALLET",
-      "tokenAmount": 1000
-    }]
-  }]'
-```
-
-## 4. Проверка подписки
-
-```bash
-npx ts-node scripts/check-subscription.ts 123456789
-```
-
-## 5. Полный flow тестирования
-
-1. **Запустить бэкенд:** `npm run dev` (port 3001)
-2. **Запустить ngrok:** `npx ngrok http 3001`
-3. **Скопировать ngrok URL** в Helius webhook settings
-4. **Открыть Mini App** в Telegram (http://localhost:5173 для локального теста)
-5. **Нажать "Pay 1000 USDT"**
-6. **Получить Solana Pay URL** открыть в Phantom/Solflare
-7. **Выполнить тестовую транзакцию** (на devnet или mainnet)
-8. **Helius отправит webhook** → подписка активируется
-9. **Mini App определит** активную подписку через polling
-
-## Продакшен деплой
-
-### Backend (Render/Railway):
-```env
-PORT=3001
-DATABASE_URL=postgresql://...
-SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=...
-USDT_MINT=Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB
-MERCHANT_WALLET=your_real_wallet_address
-HELIUS_API_KEY=...
-HELIUS_WEBHOOK_SECRET=...
-FRONTEND_URL=https://your-frontend.vercel.app
-TELEGRAM_BOT_TOKEN=...
-```
-
-### Helius Webhook URL:
-```
-https://your-backend.onrender.com/webhook/helius
-```
-
-### Frontend (Vercel):
-```env
-VITE_API_URL=https://your-backend.onrender.com
-```
-
-## Устранение неполадок
-
-**Webhook не приходит:**
-- Проверьте URL в Helius dashboard
-- Проверьте MERCHANT_WALLET адрес
-- Проверьте что бэкенд доступен извне (ngrok/деплой)
-
-**Платёж не подтверждается:**
-- Проверьте логи бэкенда
-- Проверьте что memo в транзакции совпадает
-- Проверьте что USDT mint правильный
-
-**Mini App не видит подписку:**
-- Проверьте console в браузере
-- Проверьте polling каждые 5 секунд
-- Обновите страницу
+A mock webhook payload is not proof of a finalized payment. The handler performs
+a separate RPC verification before confirming a subscription. Keep any test
+wallet, provider quota and Telegram account within an explicitly approved test
+environment.
