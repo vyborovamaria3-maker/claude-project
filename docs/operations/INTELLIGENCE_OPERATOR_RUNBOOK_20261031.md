@@ -31,6 +31,14 @@ fixtures or a runbook as evidence of a live service.
   adds read-only queue health snapshots and structured stdout alert records,
   but remains open and unmerged in this snapshot. Do not assume those metrics
   exist on `main` until the PR is reviewed and merged.
+- PR [#213](https://github.com/vyborovamaria3-maker/claude-project/pull/213)
+  is a Draft stacked on #206. It adds an optional bounded HTTPS webhook adapter
+  for allowlisted alert transitions, but no endpoint/token is configured, the
+  adapter is not in `main`, and its in-memory queue is not durable.
+- Draft PR [#212](https://github.com/vyborovamaria3-maker/claude-project/pull/212)
+  consolidates the four-artifact recovery bundle and mocked source-producer →
+  Intelligence consumer tests. Its CI is synthetic evidence only; no live
+  backup, source connection, RPC or production delivery has been performed.
 - The current Prometheus configuration scrapes the main backend at
   `backend:8000/metrics`. It does not scrape the Intelligence supervisor and
   no Alertmanager or external Intelligence alert sink is configured.
@@ -168,9 +176,12 @@ have been approved.
 ## 5. Monitoring, alert delivery and DLQ
 
 The current main Prometheus scrape target is the application backend only.
-PR #206's proposed supervisor health records are structured stdout JSON, not an
-external notification service. They do not provide durable alert history across
-process restarts.
+PR #206 proposes structured stdout health/alert records; Draft #213 adds an
+optional HTTPS webhook adapter on top of that work. Neither PR is merged, and
+no endpoint, token, receiver or delivery history is configured. The webhook
+adapter's queue is bounded but in-memory; it does not provide durable alert
+history across process restarts. Therefore no external Intelligence alert
+delivery is currently verified.
 
 Before a production process can be enabled, an operator must:
 
