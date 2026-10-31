@@ -17,7 +17,7 @@ postgres_tool_major() {
 
 postgres_server_major() {
   local database_url="$1" version_num
-  version_num="$(psql "$database_url" -X -v ON_ERROR_STOP=1 -Atc 'SHOW server_version_num')" || return 1
+  version_num="$(psql -X -v ON_ERROR_STOP=1 -Atc 'SHOW server_version_num' "$database_url")" || return 1
   if [[ ! "$version_num" =~ ^[0-9]+$ ]]; then
     echo "Cannot parse PostgreSQL server_version_num: $version_num" >&2
     return 1
