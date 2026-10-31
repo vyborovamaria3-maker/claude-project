@@ -173,12 +173,16 @@ INTELLIGENCE_CONTAINER="$(
   echo "Python Intelligence worker container was not found" >&2
   exit 1
 }
-docker exec "$INTELLIGENCE_CONTAINER" python -c '
+INTELLIGENCE_SQLITE_CONTAINER_TMP="/tmp/potapoff-intelligence-backup-$STAMP-$.sqlite"
+docker exec -e "POTAPOFF_INTELLIGENCE_BACKUP=$INTELLIGENCE_SQLITE_CONTAINER_TMP" \
+  "$INTELLIGENCE_CONTAINER" python -c '
 import os, sqlite3, sys
-source = sqlite3.connect("file:/var/lib/potapoff-intelligence/intelligence.sqlite3?mode=ro", uri=True)
-target_path = "/tmp/potapoff-intelligence-backup.sqlite"
-target = sqlite3.connect(target_path)
+source = None
+target = None
+target_path = os.environ["POTAPOFF_INTELLIGENCE_BACKUP"]
 try:
+    source = sqlite3.connect("file:/var/lib/potapoff-intelligence/intelligence.sqlite3?mode=ro", uri=True)
+    target = sqlite3.connect(target_path)
     source.backup(target)
     if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
         raise RuntimeError("SQLite online backup integrity check failed")
@@ -187,13 +191,22 @@ try:
     ).fetchone()[0]
     if tables < 1:
         raise RuntimeError("Python Intelligence SQLite backup contains no tables")
-finally:
     target.close()
+    target = None
     source.close()
-with open(target_path, "rb") as stream:
-    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-        sys.stdout.buffer.write(chunk)
-os.remove(target_path)
+    source = None
+    with open(target_path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            sys.stdout.buffer.write(chunk)
+finally:
+    if target is not None:
+        target.close()
+    if source is not None:
+        source.close()
+    try:
+        os.remove(target_path)
+    except FileNotFoundError:
+        pass
 ' > "$DEST/intelligence.sqlite"
 test -s "$DEST/intelligence.sqlite"
 
