@@ -25,9 +25,13 @@ done
 )
 echo "BACKUP_MANIFEST_VERIFIED"
 
-container="potapoff-restore-test-$$-$RANDOM"
+container="potapoff-restore-test-$-$RANDOM"
+sqlite_scratch="$(mktemp -d)"
+cp -- "$backup/intelligence.sqlite" "$sqlite_scratch/intelligence.sqlite"
+chmod 0400 "$sqlite_scratch/intelligence.sqlite"
 cleanup(){
   docker rm -f "$container" >/dev/null 2>&1 || true
+  rm -rf -- "$sqlite_scratch"
 }
 trap cleanup EXIT
 
@@ -86,10 +90,10 @@ done
 # mounted read-only; no named volume, host path or live database is modified.
 docker run --rm --network none --read-only --pids-limit 64 \
   --tmpfs /tmp:size=64m,mode=1777 \
-  --mount "type=bind,src=$backup/intelligence.sqlite,dst=/intelligence.sqlite,readonly" \
+  --mount "type=bind,src=$sqlite_scratch,dst=/backup,readonly" \
   python:3.12-alpine python -c '
 import sqlite3
-source = sqlite3.connect("file:/intelligence.sqlite?mode=ro", uri=True)
+source = sqlite3.connect("file:/backup/intelligence.sqlite?mode=ro", uri=True)
 target = sqlite3.connect("/tmp/intelligence-restored.sqlite")
 try:
     source.backup(target)
