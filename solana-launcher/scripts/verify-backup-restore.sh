@@ -3,8 +3,9 @@ set -Eeuo pipefail
 umask 077
 
 # Independent, NONDESTRUCTIVE restore rehearsal. Never connects to a live DB.
-# Only writes into two brand-new databases inside a temporary Docker container
-# with NO network, published ports or persistent volumes.
+# Restores two PostgreSQL dumps into brand-new databases inside a temporary
+# container, then verifies SQLite in a separate temporary container. Neither
+# container has network access or persistent volumes.
 if [[ "$#" -ne 1 || ! -d "$1" ]]; then
   echo "Usage: verify-backup-restore.sh /path/to/backup-directory" >&2
   exit 2
