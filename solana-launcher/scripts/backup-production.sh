@@ -163,6 +163,13 @@ chmod 0600 "$DEST/trade.db"
 docker exec "$FRONTEND_CONTAINER" rm -f "$SQLITE_CONTAINER_TMP"
 SQLITE_CONTAINER_TMP=""
 
+# Do not publish symlinks: they can point outside the recovery set and would
+# not be covered by the regular-file SHA256 manifest.
+if find "$DEST" -type l -print -quit | grep -q .; then
+  echo "Backup contains a symlink; refusing to publish an incomplete recovery set" >&2
+  exit 1
+fi
+
 # Hash the complete recovery set, not just the database dumps. Run from inside
 # the backup directory so SHA256SUMS contains stable relative paths and never
 # embeds the host's absolute deployment path.
