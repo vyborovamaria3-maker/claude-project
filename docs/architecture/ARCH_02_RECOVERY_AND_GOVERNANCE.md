@@ -163,10 +163,11 @@ is unique per backup and is cleaned on success or failure.
 PostgreSQL custom-format dumps into a network-isolated disposable container,
 and independently restores/checks copies of both SQLite files. The synthetic
 ARCH-02 rehearsal additionally:
-- keeps a Blockchain SQLite writer open with committed data in WAL and
-  confirms that the backup contains the row;
+- keeps both the Blockchain SQLite writer and Python Intelligence SQLite
+  writer open with committed rows still in WAL and confirms that both rows
+  survive their respective Online Backup API snapshots;
 - creates a separate Python Intelligence worker and named test volume and
-  confirms the restored fixture row;
+  verifies the restored fixture row after the WAL-aware snapshot;
 - rejects corrupted PostgreSQL, Blockchain SQLite and Python Intelligence
   SQLite artifacts;
 - rejects symlinked configuration and missing SQLite source containers;
