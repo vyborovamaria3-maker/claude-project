@@ -37,7 +37,7 @@ mkdir -p "$scratch/deploy" "$scratch/admin" "$scratch/frontend-data"
     db.exec("CREATE TABLE backup_fixture(id INTEGER PRIMARY KEY, payload TEXT NOT NULL)");
     db.prepare("INSERT INTO backup_fixture(id,payload) VALUES(1,?)").run("written-to-wal");
     console.log("SQLITE_FIXTURE_READY");
-    setInterval(() => {}, 1000);
+    setInterval(() => { db.pragma("data_version"); }, 1000);
   '
 ) > "$scratch/sqlite-writer.log" 2>&1 &
 sqlite_writer_pid=$!
