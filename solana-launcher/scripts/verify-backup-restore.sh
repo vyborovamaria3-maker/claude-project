@@ -3,16 +3,22 @@ set -Eeuo pipefail
 umask 077
 
 # Independent, NONDESTRUCTIVE restore rehearsal. Never connects to a live DB.
-# Only writes into two brand-new databases inside a temporary Docker container
-# with NO network, published ports or persistent volumes.
+# PostgreSQL restores run in a temporary Docker container with NO network,
+# published ports or persistent volumes. SQLite is copied to a temporary
+# directory and opened independently; no application database is modified.
 if [[ "$#" -ne 1 || ! -d "$1" ]]; then
   echo "Usage: verify-backup-restore.sh /path/to/backup-directory" >&2
   exit 2
 fi
 command -v docker >/dev/null
 command -v sha256sum >/dev/null
+command -v python3 >/dev/null
 backup="$(cd -- "$1" && pwd -P)"
-for file in SHA256SUMS postgres.dump admin-postgres.dump; do
+if find "$backup" -type l -print -quit | grep -q .; then
+  echo "Backup contains a symlink; refusing restore verification" >&2
+  exit 1
+fi
+for file in SHA256SUMS postgres.dump admin-postgres.dump trade.db intelligence.sqlite; do
   [[ -s "$backup/$file" && ! -L "$backup/$file" ]] || {
     echo "Backup missing required file or contains a symlink" >&2
     exit 1
@@ -24,6 +30,100 @@ done
     { echo "Backup SHA256 manifest mismatch" >&2; exit 1; }
 )
 echo "BACKUP_MANIFEST_VERIFIED"
+
+# Verify and restore the SQLite snapshot into a fresh temporary path. The
+# backup itself is never opened for writes; the restored copy must pass a full
+# integrity check and contain application tables.
+python3 - "$backup/trade.db" <<'PY'
+import pathlib
+import shutil
+import sqlite3
+import sys
+import tempfile
+
+source = pathlib.Path(sys.argv[1]).resolve()
+
+def inspect_readonly(path):
+    uri = path.resolve().as_uri() + "?mode=ro"
+    connection = sqlite3.connect(uri, uri=True)
+    try:
+        integrity = connection.execute("PRAGMA integrity_check").fetchall()
+        if integrity != [("ok",)]:
+            raise RuntimeError("SQLite integrity check failed")
+        tables = connection.execute(
+            "SELECT count(*) FROM sqlite_master "
+            "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchone()[0]
+        if not isinstance(tables, int) or tables < 1:
+            raise RuntimeError("SQLite snapshot has no application tables")
+        return tables
+    finally:
+        connection.close()
+
+with tempfile.TemporaryDirectory(prefix="potapoff-sqlite-source-") as source_directory:
+    source_copy = pathlib.Path(source_directory) / "trade.db"
+    shutil.copy2(source, source_copy)
+    source_tables = inspect_readonly(source_copy)
+    with tempfile.TemporaryDirectory(prefix="potapoff-sqlite-restore-") as directory:
+        restored = pathlib.Path(directory) / "trade.db"
+        shutil.copy2(source_copy, restored)
+        connection = sqlite3.connect(str(restored))
+        try:
+            integrity = connection.execute("PRAGMA integrity_check").fetchall()
+            if integrity != [("ok",)]:
+                raise RuntimeError("Restored SQLite copy failed integrity check")
+            restored_tables = connection.execute(
+                "SELECT count(*) FROM sqlite_master "
+                "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchone()[0]
+            if restored_tables != source_tables:
+                raise RuntimeError("Restored SQLite table count differs")
+        finally:
+            connection.close()
+
+print(f"DISPOSABLE_SQLITE_RESTORE_OK tables={source_tables}")
+PY
+
+# Independently restore the Python Intelligence SQLite snapshot as well.
+python3 - "$backup/intelligence.sqlite" <<'PY'
+import pathlib
+import shutil
+import sqlite3
+import sys
+import tempfile
+
+source = pathlib.Path(sys.argv[1]).resolve()
+with tempfile.TemporaryDirectory(prefix="potapoff-intelligence-source-") as source_directory:
+    source_copy = pathlib.Path(source_directory) / "intelligence.sqlite"
+    shutil.copy2(source, source_copy)
+    connection = sqlite3.connect(source_copy.as_uri() + "?mode=ro", uri=True)
+    try:
+        if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+            raise RuntimeError("Python Intelligence SQLite snapshot failed integrity check")
+        tables = connection.execute(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchone()[0]
+        if not isinstance(tables, int) or tables < 1:
+            raise RuntimeError("Python Intelligence SQLite snapshot has no application tables")
+    finally:
+        connection.close()
+
+    with tempfile.TemporaryDirectory(prefix="potapoff-intelligence-restore-") as directory:
+        restored = pathlib.Path(directory) / "intelligence.sqlite"
+        shutil.copy2(source_copy, restored)
+        db = sqlite3.connect(str(restored))
+        try:
+            if db.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+                raise RuntimeError("Restored Python Intelligence SQLite copy failed integrity check")
+            restored_tables = db.execute(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchone()[0]
+            if restored_tables != tables:
+                raise RuntimeError("Restored Python Intelligence table count differs")
+        finally:
+            db.close()
+print(f"DISPOSABLE_INTELLIGENCE_SQLITE_RESTORE_OK tables={tables}")
+PY
 
 container="potapoff-restore-test-$$-$RANDOM"
 cleanup(){
@@ -39,11 +139,15 @@ docker run -d --rm --name "$container" \
   -e POSTGRES_HOST_AUTH_METHOD=trust \
   postgres:17-alpine >/dev/null
 ready=0
-for i in $(seq 1 45); do
-  # Ignore PostgreSQL's temporary bootstrap server, which accepts requests
-  # before the entrypoint stops and restarts the final postmaster.
+for i in $(seq 1 60); do
+  # Ignore PostgreSQL's temporary bootstrap server. After the entrypoint
+  # completes initdb, require both pg_isready and a successful SQL round-trip.
+  # The bootstrap server listens only on a Unix socket. Require the final
+  # postmaster to answer over loopback TCP and execute a successful query.
   if docker logs "$container" 2>&1 | grep -Fq 'PostgreSQL init process complete; ready for start up.' &&
-     docker exec "$container" pg_isready -U postgres >/dev/null 2>&1; then
+     docker exec "$container" pg_isready -h 127.0.0.1 -U postgres -d postgres >/dev/null 2>&1 &&
+     docker exec "$container" psql -h 127.0.0.1 -U postgres -d postgres -X -Atq \
+       -v ON_ERROR_STOP=1 -c 'SELECT 1' 2>/dev/null | grep -qx '1'; then
     ready=1
     break
   fi
@@ -64,15 +168,15 @@ for source in postgres admin-postgres; do
     echo "Invalid custom-format PostgreSQL dump: $source" >&2
     exit 1
   fi
-  docker exec "$container" createdb -U postgres "$db" >/dev/null
+  docker exec "$container" createdb -h 127.0.0.1 -U postgres "$db" >/dev/null
   if ! docker exec -i "$container" pg_restore \
-      --exit-on-error --no-owner --no-acl \
-      -U postgres -d "$db" \
+      --exit-on-error --single-transaction --no-owner --no-acl \
+      -h 127.0.0.1 -U postgres -d "$db" \
       < "$backup/$source.dump" >/dev/null 2>&1; then
     echo "Disposable restore failed: $source" >&2
     exit 1
   fi
-  tables="$(docker exec "$container" psql -U postgres -d "$db" -Atc \
+  tables="$(docker exec "$container" psql -h 127.0.0.1 -U postgres -d "$db" -X -Atq -v ON_ERROR_STOP=1 -c \
     "SELECT count(*) FROM pg_class WHERE relkind IN ('r','p') AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg_%' OR nspname='information_schema')")"
   if [[ ! "$tables" =~ ^[1-9][0-9]*$ ]]; then
     echo "Restored database has no application tables: $source" >&2

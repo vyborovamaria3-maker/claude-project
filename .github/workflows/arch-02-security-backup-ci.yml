@@ -6,6 +6,9 @@ on:
       - ".github/scripts/prepare-pinned-ssh.sh"
       - ".github/scripts/test-pinned-ssh.sh"
       - ".github/scripts/test-production-backup-rehearsal.sh"
+      - ".github/scripts/test-intelligence-pg-backup-restore.sh"
+      - ".github/workflows/source-producer-to-consumer.yml"
+      - ".github/workflows/x-collector-ci.yml"
       - ".github/workflows/arch-02-security-backup-ci.yml"
       - ".github/workflows/ssh-check.yml"
       - ".github/workflows/potapoff-backup.yml"
@@ -13,6 +16,18 @@ on:
       - ".github/workflows/landing-release.yml"
       - "solana-launcher/scripts/backup-production.sh"
       - "solana-launcher/scripts/verify-backup-restore.sh"
+      - "solana-launcher/scripts/blockchain-sqlite-health.cjs"
+      - "solana-launcher/scripts/blockchain-sqlite-health-regression.cjs"
+      - "solana-launcher/package.json"
+      - "solana-launcher/package-lock.json"
+      - "solana-launcher/PRODUCTION_DEPLOY_RUNBOOK.md"
+      - "solana-launcher/Dockerfile.frontend.prod"
+      - "solana-launcher/docker-compose.production.yml"
+      - "docs/DB_OWNERSHIP.md"
+      - "docs/architecture/ARCH_02_RECOVERY_AND_GOVERNANCE.md"
+      - "docs/architecture/ARCHITECTURE_AUDIT_PLAN.md"
+      - "docs/architecture/END_TO_END_AND_RECOVERY_REHEARSAL_20261031.md"
+      - "docs/operations/**"
   push:
     branches:
       - fix/arch-02-pinned-ssh-backup-restore-20261020
@@ -41,12 +56,26 @@ jobs:
         run: bash .github/scripts/test-pinned-ssh.sh
 
   disposable-recovery:
-    name: Synthetic PG16 and PG17 full restore
+    name: Synthetic PG16, PG17 and SQLite WAL full restore
     runs-on: ubuntu-latest
-    timeout-minutes: 18
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - name: Verify backup, isolated restore and corruption rejection
+      - name: Install locked SQLite runtime dependency in the production-compatible image
+        run: |
+          docker run --rm \
+            -v "$PWD/solana-launcher:/app" \
+            -w /app \
+            node:20-bookworm-slim \
+            sh -lc 'apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/* && npm ci --legacy-peer-deps --no-audit --no-fund'
+      - name: Verify the WAL-aware SQLite online backup primitive
+        run: |
+          docker run --rm --network none \
+            -v "$PWD/solana-launcher:/app" \
+            -w /app \
+            node:20-bookworm-slim \
+            node scripts/blockchain-sqlite-health-regression.cjs
+      - name: Verify complete backup, isolated restore and corruption rejection
         run: bash .github/scripts/test-production-backup-rehearsal.sh
