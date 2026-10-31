@@ -140,6 +140,23 @@ export async function checkUnifiedDetails(page, baseUrl, mint) {
     return row?.querySelector(".font-mono")?.textContent === "—";
   }, null, { timeout: 5000 });
 
+  // Restore the valid token before later no-source/full-report checks.
+  const restoredSourceRequest = page.waitForRequest(request =>
+    new URL(request.url()).pathname === "/api/trade/dev-twitter"
+    && new URL(request.url()).searchParams.get("mint") === mint
+  );
+  await dialog.getByPlaceholder("Вставь contract").fill(mint);
+  await dialog.getByRole("button", { name: "Анализ", exact: true }).click();
+  await page.waitForURL(url => url.searchParams.get("mint") === mint);
+  await restoredSourceRequest;
+  await page.waitForFunction(() => {
+    const table = document.querySelector('[data-tag="trade.social.metrics"]');
+    const row = [...(table?.querySelectorAll(".divide-y > div") || [])].find(item =>
+      item.querySelector(".text-content-muted")?.textContent === "Mentions"
+    );
+    return row?.querySelector(".font-mono")?.textContent === "7";
+  }, null, { timeout: 5000 });
+
   await dialog.getByRole("button", { name: "Cross-platform / Timing", exact: true }).click();
   for (const label of ["Cross-platform score", "Cross matched share", "Both platforms active"]) {
     const row = groupRows("Cross-platform / Timing").filter({ has: page.getByText(label, { exact: true }) });
