@@ -84,8 +84,8 @@ jobs:
           npm --prefix intelligence run typecheck
 
       - name: Run actual producer and destination integration with mocked RPC
-        working-directory: x-collector
-        run: node --import tsx --test ../intelligence/tests/source-producer-to-consumer.test.mjs
+        working-directory: tg-collector
+        run: node --import tsx --test ../intelligence/integration/source-producer-to-consumer.test.mjs
 
       - name: Install PostgreSQL client for isolated archive rehearsal
         run: |
