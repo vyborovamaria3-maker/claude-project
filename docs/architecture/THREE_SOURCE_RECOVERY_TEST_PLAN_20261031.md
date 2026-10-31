@@ -66,6 +66,8 @@ retry scheduling, source identity collision and event payload validation:
 `intelligence/tests/delivery.test.mjs`,
 `intelligence/tests/isolated-source-delivery.test.mjs`,
 `intelligence/tests/postgres.test.mjs`,
+`intelligence/tests/token-links-postgres.test.mjs`,
+`intelligence/tests/blockchain-swap-revisions-postgres.test.mjs`,
 `packages/event-outbox/tests/outbox.test.mjs` and
 `packages/event-outbox/tests/postgres-live.test.mjs`.
 
@@ -122,7 +124,7 @@ node --import tsx --test tests/verified-token-links.test.ts
 
 cd ../tg-collector
 npm ci
-node --import tsx --test tests/verified-token-link.test.ts
+node --import tsx --test tests/verified-token-link.test.ts tests/token-link-invalidation.test.ts
 
 cd ../solana-launcher
 node scripts/blockchain-token-swap-outbox-test.cjs
