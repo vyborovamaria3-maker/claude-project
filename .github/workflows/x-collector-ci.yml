@@ -30,8 +30,10 @@ jobs:
       run:
         working-directory: x-collector
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22'
           cache: npm
@@ -84,8 +86,10 @@ jobs:
             # The official image starts a temporary server during initdb.
             # Wait for initdb completion before probing the final server.
             if docker logs "$restore_container" 2>&1 | grep -q "PostgreSQL init process complete; ready for start up."; then
-              if docker exec "$restore_container" pg_isready -h /var/run/postgresql -U postgres >/dev/null 2>&1 \
-                && docker exec "$restore_container" psql -h /var/run/postgresql -U postgres -d postgres -X -Atq \
+              # The bootstrap server listens only on a Unix socket. TCP
+              # loopback is available only after the final postmaster starts.
+              if docker exec "$restore_container" pg_isready -h 127.0.0.1 -U postgres -d postgres >/dev/null 2>&1 \
+                && docker exec "$restore_container" psql -h 127.0.0.1 -U postgres -d postgres -X -Atq \
                   -v ON_ERROR_STOP=1 -c "SELECT 1" 2>/dev/null | grep -qx "1"; then
                 ready=1
                 break
@@ -98,10 +102,10 @@ jobs:
             docker logs "$restore_container" >&2 || true
             exit 1
           fi
-          docker exec "$restore_container" createdb -U postgres "$restore_db"
-          docker exec -i "$restore_container" pg_restore -U postgres -d "$restore_db" \
+          docker exec "$restore_container" createdb -h 127.0.0.1 -U postgres "$restore_db"
+          docker exec -i "$restore_container" pg_restore -h 127.0.0.1 -U postgres -d "$restore_db" \
             --no-owner --no-privileges --exit-on-error --single-transaction < "$archive"
-          restored="$(docker exec "$restore_container" psql -U postgres -d "$restore_db" -v ON_ERROR_STOP=1 -Atc "SELECT marker FROM public.x_backup_restore_fixture WHERE id=1")"
+          restored="$(docker exec "$restore_container" psql -h 127.0.0.1 -U postgres -d "$restore_db" -v ON_ERROR_STOP=1 -Atc "SELECT marker FROM public.x_backup_restore_fixture WHERE id=1")"
           test "$restored" = "x-collector-ci-fixture"
           head -c 64 "$archive" > "$corrupt"
           if pg_restore --list "$corrupt" >/dev/null 2>&1; then
