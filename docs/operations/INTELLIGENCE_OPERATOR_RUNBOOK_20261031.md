@@ -73,8 +73,8 @@ psql "$AUDIT_DSN" -X -v ON_ERROR_STOP=1 \
 ```
 
 The query reports the current database/login/effective role, role attributes,
-inherited memberships, effective database/schema/table/sequence privileges,
-PUBLIC table grants and default ACLs. It does not create, grant, revoke, alter
+inherited memberships, database/schema/table/sequence ownership, effective
+privileges, PUBLIC table grants and default ACLs. It does not create, grant, revoke, alter
 or migrate anything. Never put a DSN or password in a command transcript,
 issue, workflow log or this repository.
 
