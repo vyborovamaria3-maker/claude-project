@@ -331,6 +331,42 @@ test("P0 #173: isolated X/TG PG and chain SQLite outboxes deliver verified sourc
     assert.equal(await count(dst,"blockchain_swap_evidence_revisions"),2);
     assert.equal((await active()).length,0);
     assert.equal((await chain()).length,0);
+
+    // Repeated permanent failure reaches the bounded DLQ threshold and the
+    // dead-lettered row is no longer eligible for normal claims.
+    const dlqEvent={
+      sourceSystem:"x",eventKind:"fixture_dead_letter",
+      eventKey:"fixture:dead-letter:"+suffix,schemaVersion:"fixture-v1",
+      payload:{fixture:true},
+    };
+    const dlqWriter=await xPool.connect();
+    try{
+      await dlqWriter.query("BEGIN");
+      await emitPostgres(dlqWriter,dlqEvent);
+      await dlqWriter.query("COMMIT");
+    }catch(error){
+      try{await dlqWriter.query("ROLLBACK")}catch{}
+      throw error;
+    }finally{dlqWriter.release()}
+    const dlqClaim=(await claimPostgres(xPool,{
+      workerId:"dlq-threshold",batchSize:1,leaseMs:120000,
+    }))[0];
+    assert.ok(dlqClaim);
+    assert.equal(await failPostgres(
+      xPool,dlqClaim.id,dlqClaim.leaseOwner,dlqClaim.leaseUntil,
+      "fixture_permanent",new Date(Date.now()+1000),1,1000,
+    ),true);
+    const dlqState=await xPool.query(
+      "SELECT attempts,dead_lettered_at,lease_owner,lease_until FROM outbox_events WHERE event_key=$1",
+      [dlqEvent.eventKey],
+    );
+    assert.equal(Number(dlqState.rows[0].attempts),1);
+    assert.ok(dlqState.rows[0].dead_lettered_at);
+    assert.equal(dlqState.rows[0].lease_owner,null);
+    assert.equal(dlqState.rows[0].lease_until,null);
+    assert.equal((await claimPostgres(xPool,{
+      workerId:"after-dlq",batchSize:1,leaseMs:120000,
+    })).length,0,"normal worker must not reclaim a dead-lettered event");
   }finally{
     if(sqlite)sqlite.close();
     for(const p of [xPool,tgPool,dst])if(p)await p.end();
