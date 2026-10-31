@@ -136,8 +136,12 @@ ready=0
 for i in $(seq 1 45); do
   # Ignore PostgreSQL's temporary bootstrap server, which accepts requests
   # before the entrypoint stops and restarts the final postmaster.
+  # The temporary bootstrap server listens only on a Unix socket. Require
+  # the final postmaster to answer over loopback TCP and execute a query.
   if docker logs "$container" 2>&1 | grep -Fq 'PostgreSQL init process complete; ready for start up.' &&
-     docker exec "$container" pg_isready -U postgres >/dev/null 2>&1; then
+     docker exec "$container" pg_isready -h 127.0.0.1 -U postgres -d postgres >/dev/null 2>&1 &&
+     docker exec "$container" psql -h 127.0.0.1 -U postgres -d postgres -X -Atq \
+       -v ON_ERROR_STOP=1 -c "SELECT 1" 2>/dev/null | grep -qx "1"; then
     ready=1
     break
   fi
@@ -158,15 +162,15 @@ for source in postgres admin-postgres; do
     echo "Invalid custom-format PostgreSQL dump: $source" >&2
     exit 1
   fi
-  docker exec "$container" createdb -U postgres "$db" >/dev/null
+  docker exec "$container" createdb -h 127.0.0.1 -U postgres "$db" >/dev/null
   if ! docker exec -i "$container" pg_restore \
-      --exit-on-error --no-owner --no-acl \
-      -U postgres -d "$db" \
+      --exit-on-error --single-transaction --no-owner --no-acl \
+      -h 127.0.0.1 -U postgres -d "$db" \
       < "$backup/$source.dump" >/dev/null 2>&1; then
     echo "Disposable restore failed: $source" >&2
     exit 1
   fi
-  tables="$(docker exec "$container" psql -U postgres -d "$db" -Atc \
+  tables="$(docker exec "$container" psql -h 127.0.0.1 -U postgres -d "$db" -X -Atq -v ON_ERROR_STOP=1 -c \
     "SELECT count(*) FROM pg_class WHERE relkind IN ('r','p') AND relnamespace NOT IN (SELECT oid FROM pg_namespace WHERE nspname LIKE 'pg_%' OR nspname='information_schema')")"
   if [[ ! "$tables" =~ ^[1-9][0-9]*$ ]]; then
     echo "Restored database has no application tables: $source" >&2
