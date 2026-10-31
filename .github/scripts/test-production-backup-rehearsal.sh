@@ -7,7 +7,7 @@ scratch="$(mktemp -d)"
 product="potapoff-ci-product-$$"
 admin="potapoff-admin-postgres"
 intelligence="potapoff-intelligence"
-intelligence_volume="potapoff-intelligence-ci-$"
+intelligence_volume="potapoff-intelligence-ci-$$"
 cleanup(){
   docker rm -f "$product" "$admin" "$intelligence" >/dev/null 2>&1 || true
   docker volume rm "$intelligence_volume" >/dev/null 2>&1 || true
@@ -79,7 +79,23 @@ backup="$(bash "$root/solana-launcher/scripts/backup-production.sh")"
 }
 bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" |
   grep -Fq 'BACKUP_RESTORE_REHEARSAL_OK'
-echo "SYNTHETIC_RESTORE_TEST_OK both_databases"
+docker run --rm --network none --read-only --pids-limit 32 \
+  --tmpfs /tmp:size=16m,mode=1777 \
+  --mount "type=bind,src=$backup/intelligence.sqlite,dst=/intelligence.sqlite,readonly" \
+  python:3.12-alpine python -c '
+import sqlite3
+source = sqlite3.connect("file:/intelligence.sqlite?mode=ro", uri=True)
+target = sqlite3.connect("/tmp/restored.sqlite")
+try:
+    source.backup(target)
+    value = target.execute("SELECT tag FROM synthetic_intelligence WHERE id=3").fetchone()
+    if value != ("safe-fixture",):
+        raise SystemExit("SQLite restore marker mismatch")
+finally:
+    target.close()
+    source.close()
+'
+echo "SYNTHETIC_RESTORE_TEST_OK product_postgres admin_postgres intelligence_sqlite"
 
 # Mutation must invalidate checksums before any database is restored.
 printf 'corruption' >> "$backup/postgres.dump"
