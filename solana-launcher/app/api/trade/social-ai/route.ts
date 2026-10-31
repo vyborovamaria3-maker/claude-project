@@ -402,10 +402,25 @@ function plannerCandidates(report: AdvancedReport | null) {
 
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
+  const rate = checkRateLimit(
+    'social-ai:' + getClientIp(req as unknown as Request),
+    5,
+    60,
+  );
+  if (!rate.success) {
+    return NextResponse.json(
+      { error: "rate_limited" },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(rate.retryAfter || 60),
+          "Cache-Control": "private, no-store",
+        },
+      },
+    );
+  }
   if(process.env.INTELLIGENCE_AI_ON_DEMAND_ENABLED==='true'){
     const auth=await requireProdAuth(req);if(auth)return auth;
-    const rate=checkRateLimit('token-ai:'+getClientIp(req as unknown as Request),5,60);
-    if(!rate.success)return NextResponse.json({error:'rate_limited'},{status:429});
     let mint: string;
     try{
       ({mint}=await readTokenAnalysisRequest(req));

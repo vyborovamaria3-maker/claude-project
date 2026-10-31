@@ -4,24 +4,24 @@
 
 :root {
   color-scheme: dark;
-  --theme-bg: #17120a;
-  --theme-bg-soft: #110d07;
-  --theme-bg-card: #241c10;
-  --theme-bg-elevated: #302513;
-  --theme-bg-overlay: #382c17;
-  --theme-bg-border: #42301a;
-  --theme-content: #f7ead5;
-  --theme-content-soft: #d7c39c;
-  --theme-content-muted: #ad956d;
-  --theme-content-faint: #806c50;
+  --theme-bg: #101113;
+  --theme-bg-soft: #0d0e10;
+  --theme-bg-card: #18191c;
+  --theme-bg-elevated: #202125;
+  --theme-bg-overlay: #242529;
+  --theme-bg-border: #303136;
+  --theme-content: #eeeef0;
+  --theme-content-soft: #c2c3c8;
+  --theme-content-muted: #9b9da6;
+  --theme-content-faint: #737680;
   --theme-content-inverted: #09090b;
-  --theme-primary: #f59e0b;
-  --theme-primary-foreground: #fcfcfd;
-  --theme-primary-soft: #f59e0b24;
-  --theme-primary-border: #f59e0b57;
-  --theme-primary-glow: #f59e0b85;
-  --theme-secondary: #14f195;
-  --theme-ring: #f59e0b6b;
+  --theme-primary: #d6c19b;
+  --theme-primary-foreground: #09090b;
+  --theme-primary-soft: #d6c19b24;
+  --theme-primary-border: #d6c19b57;
+  --theme-primary-glow: #d6c19b50;
+  --theme-secondary: #d6c19b;
+  --theme-ring: #d6c19b6b;
   --theme-success: #22c55e;
   --theme-success-foreground: #08130d;
   --theme-success-soft: #22c55e24;
@@ -37,9 +37,9 @@
   --theme-info: #38bdf8;
   --theme-accent: var(--theme-primary);
   --theme-accent-glow: var(--theme-primary-glow);
-  --theme-warm-glow: rgba(245,158,11,0.14);
-  --theme-cool-glow: rgba(20,241,149,0.10);
-  --theme-ambient-glow: rgba(56,189,248,0.07);
+  --theme-warm-glow: rgba(214,193,155,0.07);
+  --theme-cool-glow: rgba(214,193,155,0.04);
+  --theme-ambient-glow: rgba(214,193,155,0.035);
   --theme-surface: linear-gradient(160deg,
     color-mix(in srgb, var(--theme-bg-elevated) 100%, white 3%),
     var(--theme-bg-card) 72%);
@@ -48,8 +48,8 @@
     var(--theme-bg-card) 80%);
   --page-accent: var(--theme-primary);
   --page-accent-2: var(--theme-secondary);
-  --page-glow: rgba(245,158,11,0.14);
-  --page-glow-2: rgba(20,241,149,0.10);
+  --page-glow: rgba(214,193,155,0.07);
+  --page-glow-2: rgba(214,193,155,0.04);
 }
 
 html {
@@ -59,7 +59,7 @@ html {
 html, body {
   background: var(--theme-bg);
   color: var(--theme-content);
-  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-inter, ui-sans-serif), system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   max-width: 100%;
   overflow-x: hidden;
@@ -363,7 +363,7 @@ table, pre, code {
     background-size: 32px 32px;
   }
   .monitoring-field-label {
-    font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+    font-family: var(--font-inter, ui-sans-serif), system-ui, sans-serif;
     font-weight: 600;
     letter-spacing: 0.08em;
   }
@@ -373,7 +373,7 @@ table, pre, code {
     border: 1px solid color-mix(in srgb, var(--theme-bg-border) 80%, white 20%);
     background: linear-gradient(180deg, color-mix(in srgb, var(--theme-bg-elevated) 100%, white 3%), var(--theme-bg-card));
     color: var(--theme-content);
-    font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+    font-family: var(--font-inter, ui-sans-serif), system-ui, sans-serif;
     font-size: 0.95rem;
     font-weight: 500;
     letter-spacing: -0.01em;
@@ -404,7 +404,7 @@ table, pre, code {
     background: linear-gradient(180deg, color-mix(in srgb, var(--theme-bg-elevated) 100%, white 6%), color-mix(in srgb, var(--theme-bg-card) 100%, white 2%));
   }
   .monitoring-control option {
-    font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+    font-family: var(--font-inter, ui-sans-serif), system-ui, sans-serif;
     background: var(--theme-bg-card);
     color: var(--theme-content);
   }

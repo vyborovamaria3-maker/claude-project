@@ -396,8 +396,8 @@ export function createAiGateway(options: AiGatewayOptions) {
           attemptCharged = true;
         };
         let response: Response;
+        const timeoutSignal = AbortSignal.timeout(provider.timeoutMs);
         try {
-          const timeoutSignal = AbortSignal.timeout(provider.timeoutMs);
           const requestSignal = signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal;
           response = await fetchImpl(new URL(path, provider.baseUrl + "/"), {
             method: "POST",
@@ -409,6 +409,7 @@ export function createAiGateway(options: AiGatewayOptions) {
         } catch {
           chargeAttempt();
           if (signal?.aborted) throw new AiGatewayError("ai_request_aborted");
+          if (timeoutSignal.aborted && attempt >= maxAttempts) throw new AiGatewayError("ai_provider_timeout", null, true);
           if (attempt >= maxAttempts) throw new AiGatewayError("ai_provider_network_error", null, true);
           await sleep(Math.min(1_000, 100 * (2 ** (attempt - 1))));
           continue;

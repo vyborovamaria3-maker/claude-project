@@ -99,14 +99,75 @@ test('request parser validates JSON shapes and stops a chunked body at its limit
  await assert.rejects(readTokenAnalysisRequest({headers:new Headers(),body}),/request_too_large/);
  assert.equal(cancelled,true);
 });
+test('legacy AI empty state explains explicit generation instead of promising an automatic run',async()=>{
+ const panel=await readFile(new URL('../components/trade/SocialIntelligencePanel.tsx',import.meta.url),'utf8');
+ assert.match(panel,/Snapshot готов\. Нажмите «Анализ», чтобы запустить Qwen\./);
+ assert.match(panel,/В snapshot нет пригодных доказательств\. Qwen не запускается\./);
+ assert.match(panel,/aiLoading \? "Qwen выполняет анализ…"/);
+ assert.match(panel,/loading \? "Собираем источники и готовим snapshot…"/);
+ assert.match(panel,/Детерминированные показатели, entity graph и cross-platform evidence\. AI-гипотезы формируются отдельным запросом\./);
+ assert.match(panel,/Trade history загружается параллельно с социальными источниками\./);
+ assert.doesNotMatch(panel,/AI запускается после сборки unified snapshot/);
+});
+
+test('legacy Social Intelligence loads deterministic sources on mount but defers AI until explicit action',async()=>{
+ const panel=await readFile(new URL('../components/trade/SocialIntelligencePanel.tsx',import.meta.url),'utf8');
+ assert.match(panel,/async \(next: string, generateAi = true\)/);
+ assert.match(panel,/if \(generateAi && nextSnapshot\.evidence\.length\)/);
+ assert.match(panel,/void run\(initialMint, false\)/);
+ assert.match(panel,/if \(next === initialMintRef\.current\) return;/);
+ assert.match(panel,/if \(!MINT_RE\.test\(next\)\) \{[\s\S]*?setSnapshot\(null\);[\s\S]*?return;/,
+   "Clearing the embedded mint must abort and clear stale source/AI state");
+ assert.match(panel,/void run\(query\)/);
+});
+
 test('request-only panel does not depend on legacy sources and never analyzes on mount',async()=>{
  const panel=await readFile(new URL('../components/trade/SocialIntelligencePanel.tsx',import.meta.url),'utf8');
  const page=await readFile(new URL('../app/trade/analysis/social/page.tsx',import.meta.url),'utf8');
+ const unified=await readFile(new URL('../components/trade/UnifiedAnalysisClient.tsx',import.meta.url),'utf8');
  const start=panel.indexOf('      if(requestOnly){'),end=panel.indexOf('      const { x: xParams',start),branch=panel.slice(start,end);
  assert.ok(start>0);assert.match(branch,/body:JSON.stringify\(\{mint:contract\}\)/);assert.match(branch,/return;/);
  assert.ok(start<panel.indexOf('const chainPromise'));
  assert.match(panel,/if \(!requestOnly && initialMint/);assert.match(panel,/if\(requestOnly\)return;/);
  assert.match(panel,/requestOnly && <TokenRequestPanel/);assert.match(page,/requestOnly=\{process.env.INTELLIGENCE_AI_ON_DEMAND_ENABLED === "true"\}/);
+ assert.match(unified,/focus=\{id\}[\s\S]*requestOnly=\{requestOnly\}/,
+  'The unified Social Intelligence panel must preserve the server-configured request-only policy');
+ assert.match(unified,/BlockchainAiReportPanel mint=\{mint\} requestOnly/,
+  'The blockchain AI report must also wait for an explicit click in the unified dialog');
+});
+
+test('blockchain AI waits for an explicit request, preserves default autoload and hides a previous mint report',async()=>{
+ const ts=await import('typescript'),{runInNewContext}=await import('node:vm');
+ const source=await readFile(new URL('../components/trade/BlockchainAiReportPanel.tsx',import.meta.url),'utf8');
+ const compiled=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;
+ const calls=[];
+ function render(props,previous=null){
+  const effects=[],exports={};let stateIndex=0;
+  const jsx=(type,props)=>({type,props});
+  const react={useCallback:fn=>fn,useEffect:fn=>effects.push(fn),useRef:value=>({current:value}),
+   useState:value=>[stateIndex++===0?previous:value,()=>{}]};
+  runInNewContext(compiled,{exports,AbortController,require:name=>{
+   if(name==='react')return react;
+   if(name==='react/jsx-runtime')return {jsx,jsxs:jsx};
+   if(name==='lucide-react')return {};
+   throw new Error('Unexpected component dependency: '+name);
+  },fetch:async(url,init)=>{
+   calls.push({url,...JSON.parse(init.body)});
+   return {ok:true,json:async()=>({available:true,mint,result:{summary:'fixture'}})};
+  }});
+  const tree=exports.default(props);
+  return {tree,mount:()=>effects.map(effect=>effect()).filter(Boolean)};
+ }
+ const nodes=node=>Array.isArray(node)?node.flatMap(nodes):node&&typeof node==='object'?[node,...nodes(node.props?.children)]:[];
+ const manual=render({mint,requestOnly:true});
+ const cleanup=manual.mount();assert.equal(calls.length,0,'opening request-only AI must not POST');
+ const button=nodes(manual.tree).find(node=>node.type==='button');assert.ok(button);
+ button.props.onClick();assert.equal(calls.length,1,'explicit AI action must POST once');
+ assert.equal(calls[0].url,'/api/trade/blockchain-ai-report');assert.equal(calls[0].mint,mint);assert.equal(calls[0].refresh,false);
+ cleanup.forEach(fn=>fn());
+ render({mint}).mount().forEach(fn=>fn());assert.equal(calls.length,2,'default mode must retain autoload');
+ const stale=render({mint,requestOnly:true},{mint:'Bi6z17iWRMRejRHM56LHEdD5UQVsoexho5aeTR7kpump',result:{summary:'PREVIOUS_MINT_REPORT'}});
+ assert.equal(JSON.stringify(stale.tree).includes('PREVIOUS_MINT_REPORT'),false,'new mint must not render the previous report before effects');
 });
 
 test('new exclusion counters survive strict projection; old cached reports remain compatible',async()=>{
@@ -126,4 +187,10 @@ test('author caveats reach the visible summary, stay bounded and do not leak nes
  for(const caveats of [null,[{evidenceRef:'x:tweet:999',quote:'low liquidity'}],[{evidenceRef:'x:tweet:123',quote:'x'.repeat(241)}]]){
   report.interpretation.caveats=caveats;await assert.rejects(requestTokenAnalysis(mint,{env,fetchImpl:async()=>new Response(JSON.stringify(report))}),/token_analysis_invalid/);
  }
+});
+
+test('unified Analysis embeds blockchain AI in request-only mode',async()=>{
+ const source=await readFile(new URL('../components/trade/UnifiedAnalysisClient.tsx',import.meta.url),'utf8');
+ assert.match(source,/<BlockchainAiReportPanel mint=\{mint\} requestOnly \/>/);
+ assert.doesNotMatch(source,/<BlockchainAiReportPanel mint=\{mint\} requestOnly=\{requestOnly\}/);
 });

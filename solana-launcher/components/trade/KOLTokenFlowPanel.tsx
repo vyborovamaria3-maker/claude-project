@@ -1,8 +1,10 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, Loader2, Search, Users } from "lucide-react";
 import { siteDesign } from "@/lib/siteDesign";
+import { MINT_RE } from "@/lib/trade/social-intelligence";
 
 type FlowWindow = {
   buyers: number;
@@ -35,9 +37,10 @@ type TokenKOLResponse = {
 };
 
 function money(value: number | null | undefined) {
-  if (value == null) return "—";
-  const sign = value > 0 ? "+" : "";
-  return `${sign}$${Math.abs(value) >= 1000 ? `${(value / 1000).toFixed(1)}k` : value.toFixed(0)}`;
+  if (value == null || !Number.isFinite(value)) return "—";
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+  const magnitude = Math.abs(value);
+  return `${sign}$${magnitude >= 1000 ? `${(magnitude / 1000).toFixed(1)}k` : magnitude.toFixed(2)}`;
 }
 
 function signalLabel(signal?: string) {
@@ -54,28 +57,53 @@ function signalClass(signal?: string) {
 }
 
 export default function KOLTokenFlowPanel() {
-  const [mint, setMint] = useState("");
+  const params = useSearchParams();
+  const queryMint = params.get("mint")?.trim() || "";
+  const initialMint = MINT_RE.test(queryMint) ? queryMint : "";
+  const [mint, setMint] = useState(initialMint);
   const [data, setData] = useState<TokenKOLResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const pending = useRef<AbortController | null>(null);
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    const value = mint.trim();
-    if (!value) return;
+  const load = useCallback(async (value: string) => {
+    pending.current?.abort();
+    if (!value) {
+      pending.current = null;
+      setLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    pending.current = controller;
     setLoading(true);
     setError(null);
+    setData(null);
     try {
-      const response = await fetch(`/api/kols/token/${encodeURIComponent(value)}`, { cache: "no-store" });
+      const response = await fetch(`/api/kols/token/${encodeURIComponent(value)}`, { cache: "no-store", signal: controller.signal });
       const payload = (await response.json()) as TokenKOLResponse;
       if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-      setData(payload);
+      if (!controller.signal.aborted) setData(payload);
     } catch (loadError) {
+      if (controller.signal.aborted) return;
       setData(null);
       setError(loadError instanceof Error ? loadError.message : "Не удалось загрузить KOL flow");
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    setMint(initialMint);
+    setData(null);
+    setError(null);
+    setLoading(false);
+    if (initialMint) void load(initialMint);
+    return () => pending.current?.abort();
+  }, [initialMint, load]);
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    void load(mint.trim());
   }
 
   const windows = data?.windows ?? {};

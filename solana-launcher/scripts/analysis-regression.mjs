@@ -5,7 +5,11 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const metricsPath = join(root, "lib", "trade", "social-intelligence.ts");
 const layoutPath = join(root, "app", "trade", "analysis", "layout.tsx");
+const overviewPath = join(root, "app", "trade", "analysis", "page.tsx");
+const overviewClientPath = join(root, "components", "trade", "UnifiedAnalysisClient.tsx");
+const socialPagePath = join(root, "app", "trade", "analysis", "social", "page.tsx");
 const panelPath = join(root, "components", "trade", "SocialIntelligencePanel.tsx");
+const chartHeaderPath = join(root, "components", "chart", "ChartHeader.tsx");
 const routePath = join(root, "app", "api", "trade", "social-ai", "route.ts");
 const wrapperPath = join(root, "lib", "trade", "intelligence-agent-provenance.ts");
 const provenancePath = join(root, "lib", "trade", "analysis-feature-provenance.json");
@@ -13,7 +17,11 @@ const tsconfigPath = join(root, "tsconfig.json");
 
 const metricsSource = readFileSync(metricsPath, "utf8");
 const layoutSource = readFileSync(layoutPath, "utf8");
+const overviewSource = readFileSync(overviewPath, "utf8");
+const overviewClientSource = readFileSync(overviewClientPath, "utf8");
+const socialPageSource = readFileSync(socialPagePath, "utf8");
 const panelSource = readFileSync(panelPath, "utf8");
+const chartHeaderSource = readFileSync(chartHeaderPath, "utf8");
 const routeSource = readFileSync(routePath, "utf8");
 const wrapperSource = readFileSync(wrapperPath, "utf8");
 const provenance = JSON.parse(readFileSync(provenancePath, "utf8"));
@@ -24,12 +32,41 @@ function assert(condition, message) {
 }
 
 assert(
-  layoutSource.includes('href: "/trade/analysis/social"'),
-  "the Social Intelligence route must remain in the Trade Analysis tabs",
+  layoutSource.includes('trade.analysis.layout'),
+  "Trade Analysis shared layout must still wrap the detailed routes",
+);
+assert(!chartHeaderSource.includes("вЂ"), "chart header must not contain mojibake fallback symbols");
+assert(chartHeaderSource.includes("…"), "chart header mint abbreviation must use a proper ellipsis");
+assert(
+  overviewClientSource.includes('trade.analysis.unified_v1') && overviewClientSource.includes('trade.analysis.detail_modal'),
+  "unified Analysis overview and detailed modal must exist",
 );
 assert(
-  layoutSource.includes('label: "Анализ · 129"'),
-  "the visible 129-parameter Analysis tab must remain present",
+  overviewClientSource.includes('blockchain') && overviewClientSource.includes('telegram')
+    && overviewClientSource.includes('twitter') && overviewClientSource.includes('fomo')
+    && overviewClientSource.includes('ai'),
+  "unified Analysis must expose every existing source",
+);
+assert(
+  overviewClientSource.includes('id: "cross"') && overviewClientSource.includes('id: "price"'),
+  "unified Analysis must expose existing Cross-platform / Timing and Price event evidence detail groups",
+);
+assert(
+  panelSource.includes('group.title === "Cross-platform / Timing"')
+    && panelSource.includes('group.title === "Price event evidence"'),
+  "focused modal views must reuse both existing derived source groups",
+);
+assert(
+  overviewSource.includes('INTELLIGENCE_AI_ON_DEMAND_ENABLED'),
+  "the unified Analysis server route must honor request-only AI policy",
+);
+assert(
+  overviewClientSource.includes('requestOnly={requestOnly}'),
+  "the server-configured request-only policy must propagate to embedded Social Intelligence",
+);
+assert(
+  socialPageSource.includes("SocialIntelligencePanel"),
+  "the existing 129-parameter Social Intelligence deep link must remain functional",
 );
 assert(
   panelSource.includes('>Все параметры</h2>'),

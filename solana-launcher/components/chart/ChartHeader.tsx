@@ -6,7 +6,7 @@ import React, { useEffect, useState, useMemo } from "react";
 import { Copy, ExternalLink, Download, Globe, Send } from "lucide-react";
 import { exportCandles, formatExportFilename } from "@/lib/chart/csvExport";
 import type { Candle } from "@/lib/chart/types";
-import { formatUsd, formatNumber, formatAge, formatMcap as fmtMcapConfig } from "@/lib/chart/config";
+import { formatUsd, formatNumber, formatAge, formatPrice } from "@/lib/chart/config";
 
 interface Props {
   mint: string;
@@ -49,9 +49,6 @@ interface PairInfo {
   website: string | null;
 }
 
-// Re-export from config for backward compatibility
-const fmtMcap = fmtMcapConfig;
-
 const ChartHeader = React.memo(function ChartHeader({
   mint, symbol, name, lastPrice, change24h, isOnline,
   candles = [], timeframe = "1m",
@@ -78,7 +75,7 @@ const ChartHeader = React.memo(function ChartHeader({
   const changeColor = up ? "text-[#a855f7]" : "text-[#10b981]";
   const changeBg = up ? "bg-[#a855f7]/10 border-[#a855f7]/20" : "bg-[#10b981]/10 border-[#10b981]/20";
 
-  const displaySymbol = pair?.symbol || symbol || "вЂ”";
+  const displaySymbol = pair?.symbol || symbol || "—";
   const displayName = pair?.name || name || "";
   const displayPrice = pair?.priceUsd ?? lastPrice;
 
@@ -97,14 +94,14 @@ const ChartHeader = React.memo(function ChartHeader({
   // Memoized formatted values for performance
   const feeStr = useMemo(() => {
     const feeSol = pair?.totalFeesSol;
-    if (!feeSol || feeSol <= 0) return "вЂ”";
+    if (!feeSol || feeSol <= 0) return "—";
     if (feeSol >= 1000) return `${(feeSol / 1000).toFixed(2)}K SOL`;
     if (feeSol >= 0.01) return `${feeSol.toFixed(2)} SOL`;
     return `${(feeSol * 1000).toFixed(2)}m SOL`;
   }, [pair?.totalFeesSol]);
 
   const metrics = useMemo(() => ({
-    mcap: fmtMcap(pair?.marketCap || (displayPrice * 1_000_000_000)),
+    mcap: formatUsd(pair?.marketCap),
     vol24h: formatUsd(pair?.volumeH24),
     vol1h: formatUsd(pair?.volumeH1),
     liquidity: formatUsd(pair?.liquidityUsd),
@@ -142,7 +139,7 @@ const ChartHeader = React.memo(function ChartHeader({
               )}
             </div>
             <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-              <span className="text-[10px] text-[#d1d4dc]/40 font-mono">{mint.slice(0, 4)}вЂ¦{mint.slice(-4)}</span>
+              <span className="text-[10px] text-[#d1d4dc]/40 font-mono">{mint.slice(0, 4)}…{mint.slice(-4)}</span>
               <button type="button" onClick={handleCopy} className="p-0.5 rounded text-[#d1d4dc]/30 hover:text-[#d1d4dc] transition" title="Copy mint">
                 <Copy className="w-2.5 h-2.5" />
               </button>
@@ -171,7 +168,7 @@ const ChartHeader = React.memo(function ChartHeader({
 
         {/* Price */}
         <div className="flex items-baseline gap-2">
-          <span className="text-2xl font-bold text-white tabular-nums">{fmtMcap(displayPrice)}</span>
+          <span className="text-2xl font-bold text-white tabular-nums">{displayPrice > 0 ? formatPrice(displayPrice) : "—"}</span>
         </div>
 
         {/* Age */}

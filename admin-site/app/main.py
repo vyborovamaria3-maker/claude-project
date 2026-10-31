@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ipaddress
+import os
+from html import escape
 import json
 import time
 import re
@@ -9,7 +11,7 @@ from typing import Any
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -415,8 +417,12 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=502, detail="Solana RPC request failed") from None
 
     @app.get("/")
-    def index() -> FileResponse:
-        return FileResponse(STATIC_DIR / "index.html")
+    def index(request: Request) -> HTMLResponse:
+        site_url = os.getenv("POTAPOFF_SITE_URL", "").strip()
+        if not site_url and request.url.hostname in {"127.0.0.1", "localhost", "::1"}:
+            site_url = "http://127.0.0.1:3100"
+        source = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        return HTMLResponse(source.replace("__POTAPOFF_SITE_URL__", escape(site_url, quote=True)))
 
     app.include_router(build_tg_collector_router())
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

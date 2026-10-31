@@ -25,6 +25,7 @@ const advanced = read("backend/app/api/v1/advanced_intelligence.py");
 const tasks = read("backend/app/tasks/kols.py");
 const celery = read("backend/app/tasks/celery_app.py");
 const page = read("app/trade/kols-twitter/page.tsx");
+const tokenFlowPanel = read("components/trade/KOLTokenFlowPanel.tsx");
 const resolver = read("lib/kols/resolver.ts");
 
 assert(proxy.includes('"/api/kols"'), "KOL API must remain protected and rate limited");
@@ -33,10 +34,15 @@ assert(
   "KOL backtest must keep its strict rate limit",
 );
 assert(
-  siteDesign.includes('{ href: "/trade/kols-twitter", labelKey: "nav.xAnalysis", icon: "twitter", tag: "nav.kols_twitter" }'),
-  "KOL workspace must be registered in shared trade navigation",
+  !siteDesign.includes('tag: "nav.kols_twitter"') && read("components/trade/UnifiedAnalysisClient.tsx").includes('path="/trade/kols-twitter"'),
+  "KOL workspace must live in unified Analysis rather than the main sidebar",
 );
 assert(!sidebar.includes("KOLS_TWITTER_NAV_ITEM"), "Sidebar must use shared navigation only");
+assert(tokenFlowPanel.includes('value > 0 ? "+" : value < 0 ? "-" : ""'), "negative KOL PnL must retain its minus sign");
+assert(tokenFlowPanel.includes("const magnitude = Math.abs(value)"), "KOL PnL magnitude must not duplicate the sign");
+assert(tokenFlowPanel.includes("magnitude.toFixed(2)"), "KOL PnL values below one thousand must retain cents");
+assert(tokenFlowPanel.includes('return `${sign}$${magnitude >= 1000 ? `${(magnitude / 1000).toFixed(1)}k` : magnitude.toFixed(2)}`;'), "KOL USD flow must retain its dollar marker");
+assert(tokenFlowPanel.includes('value == null || !Number.isFinite(value)'), "non-finite KOL PnL must remain unknown");
 assert(
   page.includes("<KolsTwitterPanel />") &&
     page.includes("<KOLTokenFlowPanel />") &&

@@ -1,9 +1,22 @@
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
+import { checkUnifiedDetails } from "./unified-analysis.mjs";
 
 const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:3000";
 const MINT = "Bi6z17iWRMRejRHM56LHEdD5UQVsoexho5aeTR7kpump";
 const browser = await chromium.launch({ headless: true });
+
+async function waitForSearchReady(page) {
+  const input = page.locator('[data-tag="trade.search_input"]');
+  const submit = page.locator('[data-tag="trade.search_submit"]');
+  for (let attempt = 0; attempt < 50 && !(await submit.isEnabled()); attempt++) {
+    await input.fill("hydration probe");
+    if (!(await submit.isEnabled())) await page.waitForTimeout(100);
+  }
+  assert(await submit.isEnabled(), "SearchBar must be interactive before clipboard or modal checks");
+  await input.fill("");
+  await input.press("Escape");
+}
 
 try {
   const context = await browser.newContext({
@@ -11,10 +24,15 @@ try {
     serviceWorkers: "block",
   });
   try {
+    // Exercise UI contracts with bounded fixtures; never query live data services.
+    await context.route(url => url.pathname.startsWith("/api/") || url.pathname.startsWith("/fastapi/"), route =>
+      route.fulfill({ status: 503, json: { error: "source_unavailable" } })
+    );
     const page = await context.newPage();
 
-    await page.goto(`${BASE_URL}/trade/analysis`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE_URL}/trade/analysis/onchain`, { waitUntil: "domcontentloaded" });
     await page.waitForLoadState("load");
+    await waitForSearchReady(page);
     let requestedMint = null;
     await page.route(url => url.pathname === "/api/trade/analyze-stream", async route => {
       requestedMint = new URL(route.request().url()).searchParams.get("mint");
@@ -54,6 +72,32 @@ try {
     await page.getByRole("button", { name: /Trades\s+137\b/ })
       .waitFor({ state: "visible" });
 
+    // Unified overview: the original SearchBar must also work in the redesigned page.
+    // This UI-only check intentionally does not query live data services.
+    const unified = await context.newPage();
+    try {
+      await unified.goto(`${BASE_URL}/trade/analysis`, { waitUntil: "domcontentloaded" });
+      await unified.waitForLoadState("load");
+      await waitForSearchReady(unified);
+      await unified.locator('[data-tag="trade.analysis.unified_v1"]').waitFor({ state: "visible" });
+      assert.equal(await unified.locator("article").count(), 4, "Unified overview must show four source cards");
+      assert(await unified.locator('[data-tag="trade.paste_btn"]').isVisible(), "Unified overview must retain clipboard paste");
+      await unified.getByRole("button", { name: /Уменьшить/ }).click();
+      await unified.getByRole("button", { name: /Обычный размер/ }).waitFor({ state: "visible" });
+      await unified.getByRole("button", { name: /Свернуть/ }).click();
+      await unified.getByRole("button", { name: /Показать/ }).waitFor({ state: "visible" });
+      await unified.locator("article").first().getByRole("button", { name: /Открыть подробно/ }).click();
+      const dialog = unified.getByRole("dialog");
+      await dialog.waitFor({ state: "visible" });
+      await dialog.getByText("Для этого анализа сначала укажите mint").waitFor({ state: "visible" });
+      assert.equal(new URL(unified.url()).pathname, "/trade/analysis", "Modal must not navigate away");
+      await unified.keyboard.press("Escape");
+      await dialog.waitFor({ state: "hidden" });
+      await checkUnifiedDetails(unified, BASE_URL, MINT);
+    } finally {
+      await unified.close();
+    }
+
     // Test invalid input on a fresh tab to avoid state persisted by the
     // successful analysis and in-flight navigation from the previous scenario.
     const invalidPage = await context.newPage();
@@ -63,7 +107,7 @@ try {
         invalidRequests += 1;
         await route.abort();
       });
-      await invalidPage.goto(`${BASE_URL}/trade/analysis`, { waitUntil: "domcontentloaded" });
+      await invalidPage.goto(`${BASE_URL}/trade/analysis/onchain`, { waitUntil: "domcontentloaded" });
       await invalidPage.waitForLoadState("load");
       const input = invalidPage.locator('[data-tag="trade.search_input"]');
       const submit = invalidPage.locator('[data-tag="trade.search_submit"]');

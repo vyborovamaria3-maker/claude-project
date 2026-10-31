@@ -62,6 +62,26 @@ assert(tokenInfo.includes("MAX_METADATA_BYTES"), "metadata response size must be
 
 const proxy = read("proxy.ts");
 assert(proxy.includes('"/api/trade"'), "all trade routes must be behind the paid gateway");
+const blockchainAiReport = read("app/api/trade/blockchain-ai-report/route.ts");
+const blockchainAiPost = blockchainAiReport.slice(blockchainAiReport.indexOf("export async function POST"));
+assert(blockchainAiReport.includes('import { checkRateLimit, getClientIp } from "@/lib/rateLimit";'), "blockchain AI report must use server-side rate limiting");
+assert(blockchainAiPost.includes("checkRateLimit("), "blockchain AI report must rate-limit before doing expensive work");
+assert(blockchainAiPost.indexOf("checkRateLimit(") < blockchainAiPost.indexOf("getBlockchainAiSnapshot("), "rate limit must run before snapshot collection");
+assert(blockchainAiPost.includes("`blockchain-ai-report:${getClientIp(req as unknown as Request)}`"), "blockchain AI report limit must be scoped by trusted client IP");
+assert(blockchainAiPost.includes("    5,\n    60,"), "blockchain AI report must allow at most five requests per minute per IP");
+assert(blockchainAiPost.includes("status: 429"), "blockchain AI report must reject excess requests with HTTP 429");
+assert(blockchainAiPost.includes("const parsedBody = await readBoundedJson(req)"), "blockchain AI report must parse only bounded request bodies");
+assert(blockchainAiPost.includes("const body = record(parsedBody.value)"), "blockchain AI report must reject non-object request bodies after bounded parsing");
+assert(blockchainAiPost.includes('if (!body) return NextResponse.json({ error: "invalid request body" }, { status: 400 });'));
+assert(blockchainAiPost.includes('typeof body.mint === "string"'), "blockchain AI report must validate mint type before normalization");
+const socialAi = read("app/api/trade/social-ai/route.ts");
+const socialAiPost = socialAi.slice(socialAi.indexOf("export async function POST"));
+assert(socialAiPost.includes("checkRateLimit("), "social AI route must rate-limit every request");
+assert(socialAiPost.indexOf("checkRateLimit(") < socialAiPost.indexOf("requestTokenAnalysis("), "social AI limit must run before on-demand analysis");
+assert(socialAiPost.indexOf("checkRateLimit(") < socialAiPost.indexOf("runQwen("), "social AI limit must run before legacy model calls");
+assert(socialAiPost.includes("'social-ai:'"), "social AI requests must share one per-IP budget across modes");
+assert(socialAiPost.includes("    5,\n    60,"), "social AI must allow at most five requests per minute per IP");
+assert(socialAiPost.includes("status: 429"), "social AI must reject excess requests with HTTP 429");
 assert(proxy.includes('"/api/database"'), "database diagnostics must be private in production");
 assert(proxy.includes("HEAVY_ROUTE_PREFIXES"), "expensive API routes must be rate limited");
 assert(proxy.includes("strict-dynamic"), "production CSP must be nonce-aware");

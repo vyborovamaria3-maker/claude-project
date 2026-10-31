@@ -27,6 +27,7 @@ import {
   Zap,
 } from "lucide-react";
 import { siteDesign } from "@/lib/siteDesign";
+import featureProvenance from "@/lib/trade/analysis-feature-provenance.json";
 import {
   DEFAULT_SOCIAL_OPTIONS,
   IMPULSE_THRESHOLD_PCT,
@@ -62,11 +63,29 @@ import {
 } from "@/lib/trade/intelligence-agent";
 
 const BACKEND = (process.env.NEXT_PUBLIC_BACKEND_URL || "/fastapi").replace(/\/$/, "");
+type FeatureRule = { source: string; sources: string[] };
+const featureGroups = featureProvenance.groups as Record<string, {
+  default: FeatureRule;
+  overrides?: Record<string, FeatureRule>;
+}>;
 
-export default function SocialIntelligencePanel({ requestOnly = false }: { requestOnly?: boolean } = {}) {
+export type SocialAnalysisFocus = "all" | "twitter" | "telegram" | "fomo" | "cross" | "price" | "ai";
+export default function SocialIntelligencePanel({
+  requestOnly = false,
+  focus = "all",
+  embedded = false,
+  mintOverride,
+  onMintChange,
+}: {
+  requestOnly?: boolean;
+  focus?: SocialAnalysisFocus;
+  embedded?: boolean;
+  mintOverride?: string;
+  onMintChange?: (mint: string) => void;
+} = {}) {
   const router = useRouter();
   const params = useSearchParams();
-  const initialMintRef = useRef(params.get("mint")?.trim() || "");
+  const initialMintRef = useRef(mintOverride?.trim() || params.get("mint")?.trim() || "");
   const initialMint = initialMintRef.current;
 
   const [query, setQuery] = useState(initialMint);
@@ -80,6 +99,7 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
   const [snapshot, setSnapshot] = useState<AnalysisSnapshot | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [loading, setLoading] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
   const [chainLoading, setChainLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -93,9 +113,27 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
   }, [requestOnly]);
 
   const run = useCallback(
-    async (next: string) => {
+    async (next: string, generateAi = true) => {
       const contract = next.trim();
       if (!MINT_RE.test(contract)) {
+        if (embedded) {
+          abortRef.current?.abort();
+          abortRef.current = null;
+          initialMintRef.current = contract;
+          onMintChange?.(contract);
+          setMint(contract);
+          setQuery(contract);
+          setLoading(false);
+          setAiLoading(false);
+          setChainLoading(false);
+          setWarnings([]);
+          setX(null);
+          setTg(null);
+          setMarket(null);
+          setChain(null);
+          setAi(null);
+          setSnapshot(null);
+        }
         setError("Введи корректный Solana mint / CA.");
         return;
       }
@@ -107,6 +145,7 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
       setMint(contract);
       setQuery(contract);
       setLoading(true);
+      setAiLoading(false);
       setChainLoading(true);
       setError(null);
       setWarnings([]);
@@ -116,9 +155,18 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
       setChain(null);
       setAi(null);
       setSnapshot(null);
-      router.replace(`/trade/analysis/social?mint=${encodeURIComponent(contract)}`, { scroll: false });
+      if (embedded) {
+        if (contract !== initialMintRef.current) {
+          // Keep the embedded request alive while synchronizing the parent URL/mint.
+          initialMintRef.current = contract;
+          onMintChange?.(contract);
+        }
+      } else {
+        router.replace(`/trade/analysis/social?mint=${encodeURIComponent(contract)}`, { scroll: false });
+      }
 
       if(requestOnly){
+        setAiLoading(true);
         try{
           const answer=await fetchJson<TokenRequestEnvelope>("/api/trade/social-ai",controller.signal,{
             method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({mint:contract}),
@@ -127,7 +175,7 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
         }catch{
           if(!controller.signal.aborted)setError("Не удалось подготовить проверенный ответ. Проверьте адрес и повторите запрос.");
         }finally{
-          if(!controller.signal.aborted){setLoading(false);setChainLoading(false);}
+          if(!controller.signal.aborted){setAiLoading(false);setLoading(false);setChainLoading(false);}
         }
         return;
       }
@@ -200,7 +248,8 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
       });
       setSnapshot(nextSnapshot);
 
-      if (nextSnapshot.evidence.length) {
+      if (generateAi && nextSnapshot.evidence.length) {
+        setAiLoading(true);
         try {
           const qwen = await fetchJson<AiEnvelope>("/api/trade/social-ai", controller.signal, {
             method: "POST",
@@ -220,25 +269,84 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
             setWarnings((value) => upsertWarning(value, `Qwen: ${message}`));
             setAi({ agent: "qwen", available: false, error: message });
           }
+        } finally {
+          if (!controller.signal.aborted) setAiLoading(false);
         }
       }
 
       if (!controller.signal.aborted) setLoading(false);
     },
-    [channels, options, router, requestOnly],
+    [channels, options, router, requestOnly, embedded, onMintChange],
   );
 
   useEffect(() => {
-    if (!requestOnly && initialMint && MINT_RE.test(initialMint)) void run(initialMint);
+    // Load deterministic source data on open; AI generation is reserved for an explicit user action.
+    if (!requestOnly && initialMint && MINT_RE.test(initialMint)) void run(initialMint, false);
     return () => abortRef.current?.abort();
     // Initial URL mint is intentionally analyzed only once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    const next = mintOverride?.trim() || "";
+    if (next === initialMintRef.current) return;
+    initialMintRef.current = next;
+    if (!MINT_RE.test(next)) {
+      abortRef.current?.abort();
+      abortRef.current = null;
+      setMint(next);
+      setQuery(next);
+      setLoading(false);
+      setAiLoading(false);
+      setChainLoading(false);
+      setError(null);
+      setWarnings([]);
+      setX(null);
+      setTg(null);
+      setMarket(null);
+      setChain(null);
+      setAi(null);
+      setSnapshot(null);
+      return;
+    }
+    void run(next, false);
+  }, [mintOverride, run]);
+
   const derived = useMemo(
     () => deriveSocialMetrics(x, tg, market, chain, ai, channels, options),
     [x, tg, market, chain, ai, channels, options],
   );
+
+  const focusedGroups = derived.groups.filter((group) =>
+    focus === "all" || focus === "ai" ||
+    (focus === "twitter" && group.title === "X / Twitter") ||
+    (focus === "telegram" && group.title === "Telegram") ||
+    (focus === "fomo" && group.title === "Growth / Quality / Manipulation") ||
+    (focus === "cross" && group.title === "Cross-platform / Timing") ||
+    (focus === "price" && group.title === "Price event evidence")
+  ).map((group) => ({
+    ...group,
+    rows: group.rows.map((row) => {
+      const provenance = featureGroups[group.title];
+      const rule = provenance.overrides?.[row.label] || provenance.default;
+      const missingSocialInput = rule.source === "derived"
+        && rule.sources.some((source) => source === "x" || source === "telegram") && !(x || tg);
+      const missingCrossInput = group.title === "Cross-platform / Timing" && !(x && tg)
+        && ["Cross-platform score", "Cross matched share", "Both platforms active"].includes(row.label);
+      return requestOnly || !(x || tg || market || chain || ai?.result) || missingSocialInput || missingCrossInput
+        ? { ...row, value: "—" }
+        : row;
+    }),
+  }));
+  const focusTitle: Record<SocialAnalysisFocus, string> = {
+    all: "Social Intelligence · X + Telegram + Graph + Qwen",
+    twitter: "X / Twitter · расширенный анализ",
+    telegram: "Telegram · расширенный анализ",
+    fomo: "FOMO · рост, качество и манипуляции",
+    cross: "Cross-platform · X / Telegram / Timing",
+    price: "Price event evidence · история и цена",
+    ai: "ИИ · общий анализ источников",
+  };
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -251,9 +359,9 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
         <div>
           <div className="flex items-center gap-2">
             <Network className="h-5 w-5 text-primary" />
-            <h1 className="text-lg font-semibold text-content">{requestOnly ? "Анализ токена · Twitter + Telegram + блокчейн" : "Social Intelligence · X + Telegram + Graph + Qwen"}</h1>
+            <h1 className="text-lg font-semibold text-content">{requestOnly ? "Анализ токена · Twitter + Telegram + блокчейн" : focusTitle[focus]}</h1>
           </div>
-          <p className="mt-1 text-xs text-content-muted">{requestOnly ? "Анализ запускается только по кнопке и использует собранные данные трёх источников." : "Все deterministic-параметры, entity graph, cross-platform evidence и AI-гипотезы в одном snapshot."}</p>
+          <p className="mt-1 text-xs text-content-muted">{requestOnly ? "Анализ запускается только по кнопке и использует собранные данные трёх источников." : "Детерминированные показатели, entity graph и cross-platform evidence. AI-гипотезы формируются отдельным запросом."}</p>
         </div>
         {mint && <div className="font-mono text-[10px] text-content-faint">{mint.slice(0, 8)}…{mint.slice(-7)}</div>}
       </header>
@@ -288,7 +396,7 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
 
       {requestOnly && <TokenRequestPanel ai={ai} loading={loading} error={error} />}
       {!requestOnly && (x || tg) && <>
-        <MainFindings derived={derived} x={x} tg={tg} chain={chain} market={market} snapshot={snapshot} />
+        {(focus === "all" || focus === "ai") && <MainFindings derived={derived} x={x} tg={tg} chain={chain} market={market} snapshot={snapshot} />}
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 xl:grid-cols-9">
           <Kpi label="Social score" value={score(derived.socialScore)} icon={<Gauge />} />
           <Kpi label="X score" value={score(derived.xScore)} icon={<Twitter />} />
@@ -300,17 +408,20 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
           <Kpi label="Alpha" value={score(derived.alpha)} icon={<Radar />} />
           <Kpi label="AI confidence" value={ai?.result?.overallConfidence != null ? pct(ai.result.overallConfidence * 100) : "—"} icon={<BrainCircuit />} />
         </section>
-        {snapshot && <GraphStats snapshot={snapshot} />}
-        <PricePanel price={derived.price} loading={chainLoading} />
-        <section className="surface-panel rounded-2xl border border-bg-border p-4">
+        {(focus === "all" || focus === "ai") && snapshot && <GraphStats snapshot={snapshot} />}
+        {(focus === "all" || focus === "fomo" || focus === "cross" || focus === "price") && <PricePanel price={derived.price} loading={chainLoading} />}
+      </>}
+        <section className="surface-panel rounded-2xl border border-bg-border p-4" data-tag="trade.social.metrics">
           <div className="mb-3 flex items-center justify-between">
             <div><h2 className="text-sm font-semibold text-content">Все параметры</h2><p className="text-[10px] text-content-faint">Snapshot передаёт агенту все отображаемые поля; отсутствующие данные остаются «—».</p></div>
-            <button type="button" onClick={() => void run(mint)} disabled={loading || !mint} className={siteDesign.controls.actionButtonClassName}><RefreshCw className="h-4 w-4" />Обновить</button>
+            <button type="button" onClick={() => void run(mint)} disabled={loading || !MINT_RE.test(mint)} className={`${siteDesign.controls.actionButtonClassName} shrink-0 whitespace-nowrap`}><RefreshCw className="h-4 w-4" />Обновить</button>
           </div>
-          <div className="grid gap-4 xl:grid-cols-2">{derived.groups.map((group) => <MetricTable key={group.title} title={group.title} rows={group.rows} />)}</div>
+          <p role="status" className="mb-3 text-xs text-content-muted">{loading ? "Данные загружаются. Недоступные значения обозначены «—»." : requestOnly ? "В этом режиме доступен ответ по кнопке «Анализ». Детальные значения каталога не получены и обозначены «—»." : !(x || tg || market || chain || ai?.result) ? "Данные источников не получены. Все названия показателей доступны; значения обозначены «—»." : "Значения из доступных источников; отсутствующие данные обозначены «—»."}</p>
+          <div className="grid gap-4 xl:grid-cols-2">{focusedGroups.map((group) => <MetricTable key={group.title} title={group.title} rows={group.rows} />)}</div>
         </section>
-        <AiPanel ai={ai} snapshot={snapshot} />
-        <TimelinePanel x={x} tg={tg} impulseAt={derived.price.impulseTime} impulseChange={derived.price.impulseChange} />
+      {!requestOnly && (x || tg) && <>
+        {(focus === "all" || focus === "ai") && <AiPanel ai={ai} snapshot={snapshot} loading={loading} aiLoading={aiLoading} />}
+        {(focus === "all" || focus === "twitter" || focus === "telegram") && <TimelinePanel x={x} tg={tg} impulseAt={derived.price.impulseTime} impulseChange={derived.price.impulseChange} />}
       </>}
     </div>
   );
@@ -469,9 +580,9 @@ function MetricTable({ title, rows }: { title: string; rows: Metric[] }) {
   return <div className="overflow-hidden rounded-xl border border-bg-border"><div className="border-b border-bg-border bg-bg-elevated/60 px-3 py-2 text-xs font-semibold text-content">{title}</div><div className="divide-y divide-bg-border">{rows.map((row) => <div key={row.label} className="grid grid-cols-[minmax(0,1fr)_minmax(90px,.8fr)] gap-3 px-3 py-2 text-[11px]"><div><div className="text-content-muted">{row.label}</div>{row.note && <div className="mt-0.5 text-[9px] text-content-faint">{row.note}</div>}</div><div className="break-words text-right font-mono font-semibold text-content">{row.value}</div></div>)}</div></div>;
 }
 function PricePanel({ price, loading }: { price: PriceSocial; loading: boolean }) {
-  return <section className="surface-panel rounded-2xl border border-bg-border p-4"><div className="mb-3 flex items-center gap-2"><TrendingUp className="h-4 w-4 text-primary" /><div><h2 className="text-sm font-semibold text-content">Price ↔ Social lead/lag</h2><p className="text-[10px] text-content-faint">{loading ? "Trade history загружается параллельно — social уже доступен." : `Ближайший price impulse ≥ ${IMPULSE_THRESHOLD_PCT}% за 5 минут.`}</p></div></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8"><Kpi label="Direction" value={price.leadDirection} icon={<Zap />} /><Kpi label="Lead / lag" value={price.leadLagMinutes == null ? "—" : `${Math.abs(price.leadLagMinutes).toFixed(1)}m`} icon={<Gauge />} /><Kpi label="Confidence" value={score(price.leadLagConfidence)} icon={<Radar />} /><Kpi label="+5m" value={signedPct(price.reaction5)} icon={<TrendingUp />} /><Kpi label="+15m" value={signedPct(price.reaction15)} icon={<TrendingUp />} /><Kpi label="+1h" value={signedPct(price.reaction60)} icon={<TrendingUp />} /><Kpi label="Max up 1h" value={signedPct(price.maxUpside)} icon={<TrendingUp />} /><Kpi label="Max DD 1h" value={signedPct(price.maxDrawdown)} icon={<ShieldAlert />} /></div></section>;
+  return <section className="surface-panel rounded-2xl border border-bg-border p-4"><div className="mb-3 flex items-center gap-2"><TrendingUp className="h-4 w-4 text-primary" /><div><h2 className="text-sm font-semibold text-content">Price ↔ Social lead/lag</h2><p className="text-[10px] text-content-faint">{loading ? "Trade history загружается параллельно с социальными источниками." : `Ближайший price impulse ≥ ${IMPULSE_THRESHOLD_PCT}% за 5 минут.`}</p></div></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8"><Kpi label="Direction" value={price.leadDirection} icon={<Zap />} /><Kpi label="Lead / lag" value={price.leadLagMinutes == null ? "—" : `${Math.abs(price.leadLagMinutes).toFixed(1)}m`} icon={<Gauge />} /><Kpi label="Confidence" value={score(price.leadLagConfidence)} icon={<Radar />} /><Kpi label="+5m" value={signedPct(price.reaction5)} icon={<TrendingUp />} /><Kpi label="+15m" value={signedPct(price.reaction15)} icon={<TrendingUp />} /><Kpi label="+1h" value={signedPct(price.reaction60)} icon={<TrendingUp />} /><Kpi label="Max up 1h" value={signedPct(price.maxUpside)} icon={<TrendingUp />} /><Kpi label="Max DD 1h" value={signedPct(price.maxDrawdown)} icon={<ShieldAlert />} /></div></section>;
 }
-function AiPanel({ ai, snapshot }: { ai: AiEnvelope | null; snapshot: AnalysisSnapshot | null }) {
+function AiPanel({ ai, snapshot, loading, aiLoading }: { ai: AiEnvelope | null; snapshot: AnalysisSnapshot | null; loading: boolean; aiLoading: boolean }) {
   const result = ai?.result;
   const advanced = result as (typeof result & {
     discoveredRelationships?: Array<{ source?: string; target?: string; type?: string; confidence?: number; status?: string; rationale?: string }>;
@@ -480,7 +591,7 @@ function AiPanel({ ai, snapshot }: { ai: AiEnvelope | null; snapshot: AnalysisSn
     whatWouldChangeConclusion?: string[];
     finalIntelligence?: { marketState?: string; socialState?: string; manipulationAssessment?: string; bullCase?: string; bearCase?: string; unknowns?: string[]; confidence?: number };
   }) | undefined;
-  return <section className="surface-panel rounded-2xl border border-bg-border p-4"><div className="mb-3 flex items-center gap-2"><BrainCircuit className="h-4 w-4 text-primary" /><div><h2 className="text-sm font-semibold text-content">Qwen AI · Full Intelligence Analyst</h2><p className="text-[10px] text-content-faint">{snapshot ? `${snapshot.featureCount} features · ${snapshot.graph.stats.nodes} nodes · ${snapshot.graph.stats.edges} deterministic edges` : "Ожидается unified snapshot"}</p></div></div>{!ai ? <div className="text-xs text-content-faint">AI запускается после сборки unified snapshot.</div> : !result ? <div className="text-xs text-warning">Qwen недоступен: {ai.error || "нет результата"}</div> : <div className="space-y-4"><div className="grid gap-4 lg:grid-cols-[1.1fr_.9fr]"><div><p className="text-sm leading-6 text-content-soft">{result.summary || "—"}</p><div className="mt-3 rounded-xl border border-bg-border bg-bg-card p-3"><div className="text-[10px] uppercase tracking-wider text-content-faint">Campaign narrative</div><div className="mt-1 text-xs leading-5 text-content-muted">{result.campaignHypothesis?.narrative || "—"}</div></div></div><div className="space-y-2">{(result.reasoningSummary || []).map((value, index) => <div key={`${index}-${value.slice(0, 24)}`} className="rounded-lg border border-bg-border bg-bg-elevated/50 px-3 py-2 text-xs text-content-muted">{value}</div>)}</div></div>{advanced?.finalIntelligence && <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3"><Insight label="Market state" text={advanced.finalIntelligence.marketState} /><Insight label="Social state" text={advanced.finalIntelligence.socialState} /><Insight label="Manipulation" text={advanced.finalIntelligence.manipulationAssessment} /><Insight label="Bull case" text={advanced.finalIntelligence.bullCase} /><Insight label="Bear case" text={advanced.finalIntelligence.bearCase} /><Insight label="Unknowns" text={(advanced.finalIntelligence.unknowns || []).join(" · ")} /></div>}{Boolean(advanced?.discoveredRelationships?.length) && <AdvancedList title="New graph relationships" rows={(advanced?.discoveredRelationships || []).slice(0, 20).map((item) => `${item.type || "link"}: ${item.source || "?"} → ${item.target || "?"} · ${item.status || "hypothesis"} · ${item.confidence == null ? "—" : pct(item.confidence * 100)} · ${item.rationale || ""}`)} />}{Boolean(advanced?.anomalies?.length) && <AdvancedList title="Anomalies" rows={(advanced?.anomalies || []).slice(0, 20).map((item) => `${item.severity || "info"} · ${item.type || "anomaly"} · ${item.explanation || ""}`)} />}{Boolean(advanced?.contradictions?.length) && <AdvancedList title="Contradictions" rows={(advanced?.contradictions || []).slice(0, 15).map((item) => item.statement || "—")} />}{Boolean(advanced?.whatWouldChangeConclusion?.length) && <AdvancedList title="What would change the conclusion" rows={(advanced?.whatWouldChangeConclusion || []).slice(0, 15)} />}</div>}</section>;
+  return <section className="surface-panel rounded-2xl border border-bg-border p-4"><div className="mb-3 flex items-center gap-2"><BrainCircuit className="h-4 w-4 text-primary" /><div><h2 className="text-sm font-semibold text-content">Qwen AI · Full Intelligence Analyst</h2><p className="text-[10px] text-content-faint">{snapshot ? `${snapshot.featureCount} features · ${snapshot.graph.stats.nodes} nodes · ${snapshot.graph.stats.edges} deterministic edges` : "Ожидается unified snapshot"}</p></div></div>{!ai ? <div className="text-xs text-content-faint">{aiLoading ? "Qwen выполняет анализ…" : loading ? "Собираем источники и готовим snapshot…" : snapshot ? snapshot.evidence.length ? "Snapshot готов. Нажмите «Анализ», чтобы запустить Qwen." : "В snapshot нет пригодных доказательств. Qwen не запускается." : "Нет готового snapshot. Укажите mint и нажмите «Анализ»."}</div> : !result ? <div className="text-xs text-warning">Qwen недоступен: {ai.error || "нет результата"}</div> : <div className="space-y-4"><div className="grid gap-4 lg:grid-cols-[1.1fr_.9fr]"><div><p className="text-sm leading-6 text-content-soft">{result.summary || "—"}</p><div className="mt-3 rounded-xl border border-bg-border bg-bg-card p-3"><div className="text-[10px] uppercase tracking-wider text-content-faint">Campaign narrative</div><div className="mt-1 text-xs leading-5 text-content-muted">{result.campaignHypothesis?.narrative || "—"}</div></div></div><div className="space-y-2">{(result.reasoningSummary || []).map((value, index) => <div key={`${index}-${value.slice(0, 24)}`} className="rounded-lg border border-bg-border bg-bg-elevated/50 px-3 py-2 text-xs text-content-muted">{value}</div>)}</div></div>{advanced?.finalIntelligence && <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3"><Insight label="Market state" text={advanced.finalIntelligence.marketState} /><Insight label="Social state" text={advanced.finalIntelligence.socialState} /><Insight label="Manipulation" text={advanced.finalIntelligence.manipulationAssessment} /><Insight label="Bull case" text={advanced.finalIntelligence.bullCase} /><Insight label="Bear case" text={advanced.finalIntelligence.bearCase} /><Insight label="Unknowns" text={(advanced.finalIntelligence.unknowns || []).join(" · ")} /></div>}{Boolean(advanced?.discoveredRelationships?.length) && <AdvancedList title="New graph relationships" rows={(advanced?.discoveredRelationships || []).slice(0, 20).map((item) => `${item.type || "link"}: ${item.source || "?"} → ${item.target || "?"} · ${item.status || "hypothesis"} · ${item.confidence == null ? "—" : pct(item.confidence * 100)} · ${item.rationale || ""}`)} />}{Boolean(advanced?.anomalies?.length) && <AdvancedList title="Anomalies" rows={(advanced?.anomalies || []).slice(0, 20).map((item) => `${item.severity || "info"} · ${item.type || "anomaly"} · ${item.explanation || ""}`)} />}{Boolean(advanced?.contradictions?.length) && <AdvancedList title="Contradictions" rows={(advanced?.contradictions || []).slice(0, 15).map((item) => item.statement || "—")} />}{Boolean(advanced?.whatWouldChangeConclusion?.length) && <AdvancedList title="What would change the conclusion" rows={(advanced?.whatWouldChangeConclusion || []).slice(0, 15)} />}</div>}</section>;
 }
 function Insight({ label, text }: { label: string; text?: string }) {
   return <div className="rounded-xl border border-bg-border bg-bg-card p-3"><div className="text-[9px] uppercase tracking-wider text-content-faint">{label}</div><div className="mt-1 text-xs leading-5 text-content-muted">{text || "—"}</div></div>;

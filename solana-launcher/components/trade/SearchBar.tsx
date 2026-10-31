@@ -133,6 +133,7 @@ export default function SearchBar({ onSearch, isLoading, initialValue = "" }: Pr
             onFocus={() => setShowHistory(history.length > 0)}
             onBlur={() => setTimeout(() => setShowHistory(false), 150)}
             placeholder="Введи или вставь mint адрес токена..."
+            aria-label="Адрес токена Solana"
             disabled={isLoading}
             className="w-full pl-10 pr-24 py-3 rounded-lg bg-white/5 border border-bg-border text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-[color-mix(in_srgb,var(--theme-secondary)_50%,transparent)] disabled:opacity-50"
             data-tag="trade.search_input"
