@@ -96,7 +96,7 @@ try:
     if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
         raise RuntimeError("SQLite online backup integrity check failed")
     tables = target.execute(
-        "SELECT count(*) FROM sqlite_master WHERE type='table'"
+        "SELECT count(*) FROM sqlite_master WHERE type=char(116,97,98,108,101)"
     ).fetchone()[0]
     if tables < 1:
         raise RuntimeError("Python Intelligence SQLite backup contains no tables")
