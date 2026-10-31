@@ -62,10 +62,39 @@ Therefore physical production hosts, actual DB paths, live grants, off-host
 backup delivery, restore duration and RPO/RTO remain **NOT VERIFIED**. Reconfirm
 this status before any live operation.
 
+### PostgreSQL privilege configuration warning — P0, live state NOT VERIFIED
+
+The repository's Compose configuration currently uses the PostgreSQL image's
+`POSTGRES_USER` as the application connection identity:
+
+- `solana-launcher/docker-compose.production.yml`: `POSTGRES_USER=potapoff`
+  and the backend `DATABASE_URL` also authenticates as `potapoff`.
+- `admin-site/docker-compose.yml`: `POSTGRES_USER=potapoff_admin`
+  and `ADMIN_STATE_POSTGRES_DSN` also authenticates as `potapoff_admin`.
+
+The official PostgreSQL image creates the configured `POSTGRES_USER` with
+**superuser power on first initialization**. Existing persistent volumes are
+not rewritten merely because the environment variable changes on a later
+container start. Therefore the repository configuration is a strong warning
+that application identities may be superusers on newly initialized databases;
+the actual deployed `rolsuper`, memberships and grants remain **NOT VERIFIED**
+because no production database was accessed. Do not describe these identities
+as least-privilege until the read-only audit proves their actual attributes.
+See the [official PostgreSQL image documentation](https://hub.docker.com/_/postgres).
+
+The current central backup script also runs `pg_dump` using these same
+configured role names; a separate backup identity has not been provisioned or
+verified. Before production activation, design and test distinct bootstrap,
+migration, runtime and backup roles. Do not assume a new
+`docker-entrypoint-initdb.d` script will repair an existing volume: the
+official image runs initialization scripts only when the data directory is
+empty. Any existing-volume role/ownership migration requires a separately
+reviewed, backed-up and reversible operator procedure.
+
 | Store / environment | Physical location | Backup coverage | Restore evidence | Operator |
 | --- | --- | --- | --- | --- |
-| POTAPoff product PostgreSQL | Production host not provisioned / NOT IDENTIFIED | Central backup script: `postgres.dump` | Disposable PG restore only; live restore NOT RUN | NOT ASSIGNED |
-| Control Center PostgreSQL | Production host not provisioned / NOT IDENTIFIED | Central backup script: `admin-postgres.dump` | Disposable PG restore only; live restore NOT RUN | NOT ASSIGNED |
+| POTAPoff product PostgreSQL | Compose sets `POSTGRES_USER=potapoff`; backend `DATABASE_URL` uses the same role; live role attributes NOT VERIFIED | Central backup script: `postgres.dump` | Disposable PG restore only; live restore NOT RUN | NOT ASSIGNED |
+| Control Center PostgreSQL | Compose sets `POSTGRES_USER=potapoff_admin`; `ADMIN_STATE_POSTGRES_DSN` uses the same role; live role attributes NOT VERIFIED | Central backup script: `admin-postgres.dump` | Disposable PG restore only; live restore NOT RUN | NOT ASSIGNED |
 | Blockchain `trade.db` | Expected Compose mount `/app/data/trade.db`; host path depends on deploy directory | Central backup script now snapshots through SQLite Online Backup API and includes `trade.db` in `SHA256SUMS` | Synthetic WAL fixture + isolated integrity/restore check; real database NOT RUN | NOT ASSIGNED |
 | X Collector PostgreSQL | Local/remote physical instance NOT IDENTIFIED | Separate Windows backup helper; not part of the POTAPoff central bundle | Actual isolated restore NOT RUN | NOT ASSIGNED |
 | TG Collector PostgreSQL | Local/remote physical instance NOT IDENTIFIED | Separate TG backup/restore scripts; not part of the POTAPoff central bundle | CI disposable restore is distinct from any live restore | NOT ASSIGNED |
@@ -80,8 +109,14 @@ this status before any live operation.
   destination, retention, last successful backup, restore rehearsal, RPO, RTO,
   primary operator and backup operator.
 - Run `docs/operations/postgres-effective-privileges.sql` with a read-only
-  audit connection for each PostgreSQL instance. The query is observational;
-  it does not grant, revoke or alter roles.
+  audit connection for each PostgreSQL instance. Explicitly verify that each
+  runtime role has `rolsuper=false`, `rolcreatedb=false`,
+  `rolcreaterole=false`, `rolreplication=false` and
+  `rolbypassrls=false`, and inspect inherited memberships and PUBLIC grants.
+  The query is observational; it does not grant, revoke or alter roles.
+- Treat the current Compose `POSTGRES_USER`/application-DSN identity reuse as
+  a P0 privilege gap until a live audit proves the roles were safely demoted
+  or replaced with distinct non-superuser identities.
 - Verify X, TG and Intelligence stores independently. A successful
   `trade.db` snapshot does not cover those stores.
 - Do not mark a backup as verified until its checksum, isolated restore and
