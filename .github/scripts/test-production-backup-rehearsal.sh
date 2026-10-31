@@ -149,7 +149,7 @@ docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1
 
 # Exercise the read-only privilege audit as a least-privilege role on
 # both PostgreSQL majors; do not run it only as the fixture superuser.
-for database in "product potapoff potapoff synthetic_product" "admin potapoff_admin potapoff_admin synthetic_admin"; do
+for database in "$product potapoff potapoff synthetic_product" "$admin potapoff_admin potapoff_admin synthetic_admin"; do
   read -r container db_user db_name table_name <<< "$database"
   docker exec "$container" psql -X -U "$db_user" -d "$db_name" -v ON_ERROR_STOP=1 \
     -c "CREATE ROLE backup_audit_probe NOLOGIN; GRANT CONNECT ON DATABASE $db_name TO backup_audit_probe; GRANT USAGE ON SCHEMA public TO backup_audit_probe; GRANT SELECT ON TABLE public.$table_name TO backup_audit_probe" >/dev/null
