@@ -41,7 +41,7 @@ assert(!sidebar.includes("KOLS_TWITTER_NAV_ITEM"), "Sidebar must use shared navi
 assert(tokenFlowPanel.includes('value > 0 ? "+" : value < 0 ? "-" : ""'), "negative KOL PnL must retain its minus sign");
 assert(tokenFlowPanel.includes("const magnitude = Math.abs(value)"), "KOL PnL magnitude must not duplicate the sign");
 assert(tokenFlowPanel.includes("magnitude.toFixed(2)"), "KOL PnL values below one thousand must retain cents");
-assert(tokenFlowPanel.includes('return `${sign}${magnitude >= 1000 ? `${(magnitude / 1000).toFixed(1)}k` : magnitude.toFixed(2)}`;'), "KOL USD flow must retain its dollar marker");
+assert(tokenFlowPanel.includes('return `${sign}$${magnitude >= 1000 ? `${(magnitude / 1000).toFixed(1)}k` : magnitude.toFixed(2)}`;'), "KOL USD flow must retain its dollar marker");
 assert(tokenFlowPanel.includes('value == null || !Number.isFinite(value)'), "non-finite KOL PnL must remain unknown");
 assert(
   page.includes("<KolsTwitterPanel />") &&
