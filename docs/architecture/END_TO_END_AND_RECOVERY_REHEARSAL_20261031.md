@@ -71,8 +71,9 @@ intelligence-state SQLite volume. The Node cross-source ETL package uses a
 separate PostgreSQL target via INTELLIGENCE_DATABASE_URL. Do not assume these
 are the same database or that backing up one protects the other.
 
-The production backup script now requires the potapoff-intelligence worker
-container and includes a WAL-consistent SQLite online snapshot. If the worker
+The central backup script now requires both the frontend container and the
+`potapoff-intelligence` worker container. It creates separate WAL-consistent
+SQLite Online Backup snapshots for `trade.db` and `intelligence.sqlite`. If the worker
 container or database file is missing, the backup fails instead of silently
 publishing an incomplete recovery set.
 
@@ -83,7 +84,7 @@ encryption, retention, restore cadence and RPO/RTO for that target.
 
 ## Operator runbooks
 
-### POTAPoff product, Admin and Python Intelligence
+### POTAPoff product, Admin, Blockchain and Python Intelligence
 
 Run only on the trusted deployment host, after verifying host identity and
 backup storage capacity:
@@ -91,7 +92,7 @@ backup storage capacity:
     BACKUP="$(bash /opt/potapoff-deploy/scripts/backup-production.sh)"
     bash /opt/potapoff-deploy/scripts/verify-backup-restore.sh "$BACKUP"
 
-The backup is promoted only after all three database artifacts, archive
+The backup is promoted only after all four database artifacts, archive
 inspection and SHA256 manifest verification succeed. The restore rehearsal
 writes only into new PostgreSQL databases inside a temporary --network none
 container and a temporary Python container. It does not restore over a live
