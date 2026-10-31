@@ -59,8 +59,10 @@ for i in $(seq 1 60); do
   # The official image briefly starts a temporary server during initdb.
   # Wait until initdb has fully completed, then probe the final server.
   if docker logs "$restore_container" 2>&1 | grep -q "PostgreSQL init process complete; ready for start up."; then
-    if docker exec "$restore_container" pg_isready -h /var/run/postgresql -U postgres >/dev/null 2>&1 \
-      && docker exec "$restore_container" psql -h /var/run/postgresql -U postgres -d postgres -X -Atq \
+    # The bootstrap server listens only on a Unix socket. TCP loopback is
+    # available only after the final postmaster has started.
+    if docker exec "$restore_container" pg_isready -h 127.0.0.1 -U postgres -d postgres >/dev/null 2>&1 \
+      && docker exec "$restore_container" psql -h 127.0.0.1 -U postgres -d postgres -X -Atq \
         -v ON_ERROR_STOP=1 -c "SELECT 1" 2>/dev/null | grep -qx "1"; then
       ready=1
       break
@@ -73,12 +75,12 @@ if [[ "$ready" != 1 ]]; then
   docker logs "$restore_container" >&2 || true
   exit 1
 fi
-docker exec "$restore_container" createdb -U postgres "$restore_db"
-docker exec -i "$restore_container" pg_restore -U postgres -d "$restore_db" \
+docker exec "$restore_container" createdb -h 127.0.0.1 -U postgres "$restore_db"
+docker exec -i "$restore_container" pg_restore -h 127.0.0.1 -U postgres -d "$restore_db" \
   --no-owner --no-privileges --exit-on-error --single-transaction < "$archive"
 
 restored="$(
-  docker exec "$restore_container" psql -U postgres -d "$restore_db" -X -Atq \
+  docker exec "$restore_container" psql -h 127.0.0.1 -U postgres -d "$restore_db" -X -Atq \
     -v ON_ERROR_STOP=1 \
     -c "SELECT marker FROM backup_restore_probe.recovery_marker WHERE id=1"
 )"
