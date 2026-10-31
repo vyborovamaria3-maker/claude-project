@@ -53,7 +53,7 @@ docker exec "$intelligence" python -c '
 import sqlite3
 db = sqlite3.connect("/var/lib/potapoff-intelligence/intelligence.sqlite3")
 db.execute("CREATE TABLE synthetic_intelligence(id INTEGER PRIMARY KEY, tag TEXT NOT NULL)")
-db.execute("INSERT INTO synthetic_intelligence VALUES(3, \"safe-fixture\")")
+db.execute("INSERT INTO synthetic_intelligence VALUES(3, 'safe-fixture')")
 db.commit()
 db.close()
 ' >/dev/null
