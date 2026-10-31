@@ -114,6 +114,7 @@ The backup contains:
 
 - product PostgreSQL custom-format dump (`postgres.dump`);
 - Control Center PostgreSQL custom-format dump (`admin-postgres.dump`);
+- the Blockchain SQLite database (`trade.db`) captured with the SQLite Online Backup API while the frontend container is running;
 - `.env.server`;
 - `backend.env`;
 - production Compose file;
@@ -123,7 +124,11 @@ The backup contains:
 
 The script immediately runs `sha256sum -c SHA256SUMS`. The backup directory is mode `0700` and backups older than 14 days are pruned.
 
-If either product PostgreSQL or Control Center PostgreSQL cannot be dumped, deployment stops before migration.
+The frontend container is the owner of the `/app/data/trade.db` mount. The backup uses `better-sqlite3` Online Backup API inside that container, checks the source with `quick_check`, checks the snapshot with `integrity_check`, copies the completed snapshot into the same incomplete recovery directory, and includes it in `SHA256SUMS`. A plain filesystem copy of a live `trade.db` is forbidden because committed pages may still be in the WAL file. If the frontend container or database is missing, the whole backup fails closed and the incomplete directory is removed.
+
+`verify-backup-restore.sh` verifies the complete checksum manifest, restores both PostgreSQL dumps into a network-isolated disposable Docker container, and copies the SQLite snapshot into a fresh temporary path for an independent integrity check. This proves archive readability in CI; it does not prove a live host backup, off-host copy, or a measured RPO/RTO.
+
+If either PostgreSQL dump or the SQLite snapshot cannot be created and verified, deployment stops before migration.
 
 ## 6. Schema transition and service switch
 
@@ -218,7 +223,9 @@ cd /opt/potapoff-deploy/backups/<timestamp>
 sha256sum -c SHA256SUMS
 ```
 
-Product and Control Center dumps are PostgreSQL custom format and must be restored with `pg_restore` into the correct databases. Database restore is a destructive emergency action; do not perform it merely because an application image rollback was needed.
+Product and Control Center dumps are PostgreSQL custom format and must be restored with `pg_restore` into the correct databases. The `trade.db` snapshot is a standalone SQLite database. Stop the frontend and every other writer to the `/app/data` mount before replacing it; verify the manifest and run `PRAGMA integrity_check` on the restored copy before starting the application. Keep the previous file quarantined until the application healthcheck passes. Never overwrite an open SQLite database or copy a live `trade.db` without the Online Backup API.
+
+Database restore is a destructive emergency action; do not perform it merely because an application image rollback was needed.
 
 ## 10. Merge/deploy stop conditions
 
@@ -228,7 +235,7 @@ Stop and do not merge/deploy when any of the following is true:
 - predeploy or Security Gates are red for an actual code/test step;
 - Alembic does not report a single merged head at `0021_twitter_run_singleton` or later reviewed head;
 - exact-SHA release images are absent;
-- product or admin PostgreSQL backup fails;
+- product or admin PostgreSQL backup fails, `trade.db` is missing, or the SQLite integrity check fails;
 - `TWITTER_CRAWLER_ADMIN_KEY` is present in `.env.server` or differs between backend/admin server-only files;
 - Control Center cannot reach the protected crawler settings endpoint;
 - Twitter daemon does not stay running;
