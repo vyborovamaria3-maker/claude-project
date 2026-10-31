@@ -15,6 +15,16 @@ from pydantic import BaseModel, Field
 from .auth import require_admin
 from .database import _mask_nested, is_sensitive
 
+# The collector editor is intentionally narrow. All source, queue, credential,
+# evidence and derived-data tables remain read-only in the Control Center.
+MUTATION_POLICY = {
+    'feature_flags': {
+        'insert': frozenset({'name', 'enabled', 'rollout_pct', 'description', 'updated_at'}),
+        'update': frozenset({'enabled', 'rollout_pct', 'description', 'updated_at'}),
+    },
+}
+MUTATION_ACTIONS = ('insert', 'update', 'delete')
+
 LABELS = {
     'twitter_tweets': 'Твиты', 'twitter_profiles': 'Профили авторов',
     'tweet_token_links': 'Связи твитов и токенов', 'x_accounts': 'Аккаунты коллектора',
@@ -129,15 +139,32 @@ def metadata(db, table):
         JOIN pg_namespace n ON n.oid=c.relnamespace
         LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
         WHERE n.nspname='public' AND c.relname=%s AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum""", (table,)).fetchall()
+    policy = MUTATION_POLICY.get(table, {})
+    allowed_actions = [
+        action for action in MUTATION_ACTIONS
+        if entry['kind'] in ('r', 'p') and policy.get(action)
+    ]
     for c in columns:
         c['sensitive'] = is_sensitive(c['name']) or c['type'] == 'bytea' or c['name'] in ('proxy_json', 'credentials')
-    entry.update(columns=columns, label=LABELS.get(table, table), description=description(table), editable=entry['kind'] in ('r','p') and table != 'schema_migrations')
+        c['editable_actions'] = [
+            action for action in allowed_actions
+            if c['name'] in policy.get(action, frozenset())
+        ]
+    entry.update(
+        columns=columns,
+        label=LABELS.get(table, table),
+        description=description(table),
+        allowed_actions=allowed_actions,
+        editable=bool(allowed_actions),
+    )
     return entry
 
 
 def validate_mutation(meta, body, action):
-    if not meta['editable']:
-        raise HTTPException(403, 'Представления и история миграций доступны только для просмотра')
+    policy = MUTATION_POLICY.get(meta.get('name', ''), {})
+    allowed_fields = policy.get(action)
+    if not meta.get('editable') or not allowed_fields:
+        raise HTTPException(403, 'Эта операция для таблицы запрещена политикой редактора')
     if not body.confirm:
         raise HTTPException(422, 'Подтвердите изменение записи')
     fields = {c['name']: c for c in meta['columns']}
@@ -147,6 +174,8 @@ def validate_mutation(meta, body, action):
             raise HTTPException(422, 'Для изменения нужны полный первичный ключ и версия записи')
     for name in body.values:
         c = fields.get(name)
+        if name not in allowed_fields:
+            raise HTTPException(422, 'Поле не входит в список разрешённых: ' + name)
         if not c or c['sensitive'] or c['generated'] or c['identity'] == 'a' or (action == 'update' and c['primary_key']):
             raise HTTPException(422, 'Поле недоступно для редактирования: ' + name)
     return fields
