@@ -60,7 +60,7 @@ Proposed next contract, after evidence review: a separate, *revisioned and retra
 
 ## Independent migration contracts
 
-- X: the **explicitly ordered** `x-collector/lib/trade/migrations.ts` manifest, including repeated historical numeric prefixes and `050_intelligence_source_outbox.sql`; never sort just by prefix or rewrite applied files.
+- X: the **explicitly ordered** `x-collector/lib/trade/migrations.ts` manifest, including repeated historical numeric prefixes, `050_intelligence_source_outbox.sql` and additive `051_intelligence_outbox_health_indexes.sql`; never sort just by prefix or rewrite applied files.
 - TG: its own native SQL/checksum runner; `015_intelligence_outbox.sql` is followed by later independent migrations through `022_external_discovery.sql`.
 - Blockchain: existing WAL-aware SQLite `trade.db`; source outbox table is additive in the opted-in local startup path.
 - Node Intelligence: isolated destination PostgreSQL migration order `001_entity_registry.sql`, `002_timeline.sql`, `003_feature_store.sql`.

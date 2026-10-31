@@ -1,8 +1,10 @@
 # X Collector → Intelligence source bridge
 
-Additive migration 050_intelligence_source_outbox.sql is appended to the
-X Collector's **explicit migration manifest**. Existing historical migration
-files/numbering and the existing social reply/publishing outbox are untouched.
+Additive migration 050_intelligence_source_outbox.sql creates the source
+outbox. Migration 051_intelligence_outbox_health_indexes.sql adds partial
+covering indexes for read-only Intelligence health snapshots. Both are appended
+to the X Collector's **explicit migration manifest**. Existing historical
+migration files/numbering and the existing social reply/publishing outbox are untouched.
 
 The new source producer is OFF by default. To opt in AFTER source migration,
 backup and independent destination consumer deployment:
