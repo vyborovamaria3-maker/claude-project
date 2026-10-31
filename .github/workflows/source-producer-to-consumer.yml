@@ -1,0 +1,96 @@
+name: Verified source producer to Intelligence integration
+
+on:
+  pull_request:
+    paths:
+      - "intelligence/**"
+      - "packages/contracts/**"
+      - "packages/event-outbox/**"
+      - "packages/ai-gateway/**"
+      - "x-collector/scripts/verify-x-token-links.ts"
+      - "x-collector/src/collector/persistence/solana-mint-proof.ts"
+      - "x-collector/src/collector/persistence/verified-token-links.ts"
+      - "tg-collector/src/analytics/solana-mint-rpc.ts"
+      - "tg-collector/src/persistence/outbox.ts"
+      - "solana-launcher/scripts/blockchain-forensics-core.cjs"
+      - "solana-launcher/scripts/blockchain-token-swap-outbox.cjs"
+      - "solana-launcher/scripts/blockchain-token-swap-revisions.cjs"
+      - ".github/scripts/test-intelligence-pg-backup-restore.sh"
+      - ".github/workflows/source-producer-to-consumer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  producer-to-consumer:
+    name: Mocked X/TG/Blockchain producers to isolated Intelligence PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: intelligence_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d intelligence_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      INTELLIGENCE_TEST_DB_URL: postgresql://test:testpass@127.0.0.1:5432/intelligence_test
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGUSER: test
+      PGPASSWORD: testpass
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+
+      - name: Install and build shared contracts
+        run: |
+          npm install --prefix packages/contracts --ignore-scripts --no-package-lock --no-audit --no-fund
+          npm --prefix packages/contracts run build
+          npm install --prefix packages/event-outbox --ignore-scripts --no-package-lock --no-audit --no-fund
+          npm --prefix packages/event-outbox run build
+          npm install --prefix packages/ai-gateway --ignore-scripts --no-package-lock --no-audit --no-fund
+          npm --prefix packages/ai-gateway run build
+
+      - name: Install Intelligence dependencies and build destination consumer
+        run: |
+          npm install --prefix intelligence --no-package-lock --no-audit --no-fund
+          npm --prefix intelligence run build
+
+      - name: Install X and Telegram producer dependencies without browsers or sessions
+        run: |
+          npm ci --prefix x-collector --ignore-scripts --no-audit --no-fund
+          npm ci --prefix tg-collector --ignore-scripts --no-audit --no-fund
+
+      - name: Typecheck source producer modules
+        run: |
+          npm --prefix x-collector run typecheck
+          npm --prefix tg-collector run typecheck
+          npm --prefix intelligence run typecheck
+
+      - name: Run actual producer and destination integration with mocked RPC
+        working-directory: x-collector
+        run: node --import tsx --test ../intelligence/tests/source-producer-to-consumer.test.mjs
+
+      - name: Install PostgreSQL client for isolated archive rehearsal
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Verify disposable Intelligence PostgreSQL backup and restore
+        run: bash .github/scripts/test-intelligence-pg-backup-restore.sh
