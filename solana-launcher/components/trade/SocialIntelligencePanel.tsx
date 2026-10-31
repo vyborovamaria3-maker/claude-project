@@ -116,6 +116,24 @@ export default function SocialIntelligencePanel({
     async (next: string, generateAi = true) => {
       const contract = next.trim();
       if (!MINT_RE.test(contract)) {
+        if (embedded) {
+          abortRef.current?.abort();
+          abortRef.current = null;
+          initialMintRef.current = contract;
+          onMintChange?.(contract);
+          setMint(contract);
+          setQuery(contract);
+          setLoading(false);
+          setAiLoading(false);
+          setChainLoading(false);
+          setWarnings([]);
+          setX(null);
+          setTg(null);
+          setMarket(null);
+          setChain(null);
+          setAi(null);
+          setSnapshot(null);
+        }
         setError("Введи корректный Solana mint / CA.");
         return;
       }
