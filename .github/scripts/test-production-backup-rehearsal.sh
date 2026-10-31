@@ -122,7 +122,7 @@ grep -Fq "  ./trade.db" "$backup/SHA256SUMS"
 }
 
 # Verify the row that was committed only to the WAL is present in the backup.
-docker exec -e "BACKUP_SQLITE_PATH=/backup/$(basename "$backup")/trade.db" \
+docker exec --user root -e "BACKUP_SQLITE_PATH=/backup/$(basename "$backup")/trade.db" \
   "$frontend" node -e '
     const Database = require("better-sqlite3");
     const db = new Database(process.env.BACKUP_SQLITE_PATH, { readonly: true, fileMustExist: true });
