@@ -298,7 +298,7 @@ test("actual X/TG mint verifiers and source emitters plus Blockchain revision em
       });
     }
     const occurredBefore=new Date(Date.now()+86400000).toISOString();
-    const knownBeforeEdit=new Date(Date.now()+1000).toISOString();
+    const knownBeforeEdit=new Date(Date.now()+60000).toISOString();
     const activeBefore=await queryActiveTokenLinks(dst,token,occurredBefore,knownBeforeEdit);
     assert.deepEqual(new Set(activeBefore.map(row=>row.source_system)),new Set(["x","tg"]));
     assert.equal((await queryActiveBlockchainSwapEvidence(
@@ -314,6 +314,10 @@ test("actual X/TG mint verifiers and source emitters plus Blockchain revision em
     const xTombstoneTx=await xPool.connect();
     try{
       await xTombstoneTx.query("BEGIN");
+      await xTombstoneTx.query(
+        "UPDATE twitter_tweets SET text=$2 WHERE tweet_id=$1",
+        ["101","Edited PRIVATE X fixture text; literal mint "+mint],
+      );
       await emitXTokenLinksInvalidation(xTombstoneTx,{
         tweetId:"101",authorId:"999",reason:"edited",
         sourceRevisionSha256:createHash("sha256").update("x-edited-revision").digest("hex"),
@@ -328,6 +332,10 @@ test("actual X/TG mint verifiers and source emitters plus Blockchain revision em
     const tgTombstoneTx=await tgPool.connect();
     try{
       await tgTombstoneTx.query("BEGIN");
+      await tgTombstoneTx.query(
+        "UPDATE tg_messages SET text=$3 WHERE source_id=$1 AND message_id=$2",
+        ["1",201,"Edited PRIVATE TG fixture text; literal mint "+mint],
+      );
       await emitTgTokenLinksInvalidation(tgTombstoneTx,"1",{
         messageId:201,reason:"edited",
         sourceRevisionSha256:createHash("sha256").update("tg-edited-revision").digest("hex"),
