@@ -66,9 +66,12 @@ may have had roles altered, so do not assume the live roles are still
 superusers—but do not claim least privilege either. Run the read-only audit
 against each actual DSN and record the result. The central backup script also
 uses these role names for pg_dump; a separate backup role is not yet verified.
-Do not repair an existing volume with an init script: official image init
-scripts run only on an empty data directory. Role separation needs an explicit,
-reviewed, backed-up migration and rollback plan.
+This warning is specifically about the product and Admin state DB identities;
+the separate `admin_reader` and `intelligence_reader` roles for read-only
+source/telemetry access in `admin-site/deploy/DEPLOY_ADMIN_POTAPOFF.md` do not
+resolve it. Do not repair an existing volume with an init script: official
+image init scripts run only on an empty data directory. Role separation needs
+an explicit, reviewed, backed-up migration and rollback plan.
 
 Do not infer a database count from logical components. Redis and RabbitMQ are
 also persistent Compose volumes; their recovery requirements must be decided
