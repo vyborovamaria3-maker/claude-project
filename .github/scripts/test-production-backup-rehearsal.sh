@@ -19,11 +19,12 @@ trap cleanup EXIT
   exit 1
 }
 mkdir -p "$scratch/deploy" "$scratch/admin" "$scratch/frontend-data" "$scratch/backups"
+chmod 0777 "$scratch/frontend-data"
 
 # This test-only frontend container mirrors the production /app/data mount and
 # uses the exact locked better-sqlite3 package. It has no network and cannot
 # reach any production resource.
-docker run -d --rm --network none --name "$frontend" \
+docker run -d --rm --network none --user node --name "$frontend" \
   --label com.docker.compose.project=potapoff \
   --label com.docker.compose.service=frontend \
   -v "$scratch/frontend-data:/app/data" \
