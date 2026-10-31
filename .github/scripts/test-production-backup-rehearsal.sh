@@ -6,11 +6,69 @@ root="$(cd -- "$(dirname -- "$0")/../.." && pwd)"
 scratch="$(mktemp -d)"
 product="potapoff-ci-product-$$"
 admin="potapoff-admin-postgres"
+frontend="potapoff-ci-frontend-$$"
+sqlite_writer_pid=""
+
 cleanup(){
-  docker rm -f "$product" "$admin" >/dev/null 2>&1 || true
+  if [[ -n "$sqlite_writer_pid" ]]; then
+    kill "$sqlite_writer_pid" >/dev/null 2>&1 || true
+    wait "$sqlite_writer_pid" >/dev/null 2>&1 || true
+  fi
+  docker rm -f "$product" "$admin" "$frontend" >/dev/null 2>&1 || true
   rm -rf -- "$scratch"
 }
 trap cleanup EXIT
+
+[[ -d "$root/solana-launcher/node_modules/better-sqlite3" ]] || {
+  echo "Install solana-launcher dependencies before this rehearsal" >&2
+  exit 1
+}
+mkdir -p "$scratch/deploy" "$scratch/admin" "$scratch/frontend-data"
+
+# Keep a writer open with committed rows still in WAL. The production backup
+# must capture these rows through SQLite Online Backup, not by copying trade.db.
+(
+  cd "$root/solana-launcher"
+  TEST_SQLITE_DB_PATH="$scratch/frontend-data/trade.db" node -e '
+    const Database = require("better-sqlite3");
+    const db = new Database(process.env.TEST_SQLITE_DB_PATH);
+    db.pragma("journal_mode=WAL");
+    db.pragma("wal_autocheckpoint=0");
+    db.exec("CREATE TABLE backup_fixture(id INTEGER PRIMARY KEY, payload TEXT NOT NULL)");
+    db.prepare("INSERT INTO backup_fixture(id,payload) VALUES(1,?)").run("written-to-wal");
+    console.log("SQLITE_FIXTURE_READY");
+    setInterval(() => {}, 1000);
+  '
+) > "$scratch/sqlite-writer.log" 2>&1 &
+sqlite_writer_pid=$!
+ready=0
+for i in $(seq 1 50); do
+  if grep -Fq "SQLITE_FIXTURE_READY" "$scratch/sqlite-writer.log"; then
+    ready=1
+    break
+  fi
+  if ! kill -0 "$sqlite_writer_pid" 2>/dev/null; then
+    cat "$scratch/sqlite-writer.log" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+[[ "$ready" = 1 && -s "$scratch/frontend-data/trade.db-wal" ]] || {
+  echo "SQLite WAL fixture did not become ready" >&2
+  cat "$scratch/sqlite-writer.log" >&2
+  exit 1
+}
+
+# This test-only frontend container mirrors the production mount and includes
+# the exact locked better-sqlite3 package from the checked-out application.
+# It has no network and cannot reach any production resource.
+docker run -d --rm --network none --name "$frontend" \
+  --label com.docker.compose.project=potapoff \
+  --label com.docker.compose.service=frontend \
+  -v "$scratch/frontend-data:/app/data" \
+  -v "$root/solana-launcher/node_modules:/app/node_modules:ro" \
+  -w /app node:20-bookworm-slim sleep infinity >/dev/null
+
 # These are disposable test-only PostgreSQL containers; no live host is used.
 docker run -d --rm --network none --name "$product" \
   --label com.docker.compose.project=potapoff \
@@ -40,7 +98,6 @@ docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
 docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
   -c "CREATE TABLE synthetic_admin(id integer primary key, tag text); INSERT INTO synthetic_admin VALUES (2,'safe-fixture');" >/dev/null
 
-mkdir -p "$scratch/deploy" "$scratch/admin"
 printf 'POSTGRES_PASSWORD=ci-synthetic\n' > "$scratch/deploy/.env.server"
 printf 'TEST_ONLY=1\n' > "$scratch/deploy/backend.env"
 printf 'services: {}\n' > "$scratch/deploy/docker-compose.production.yml"
@@ -55,18 +112,60 @@ export BACKUP_ROOT="$scratch/backups"
 export ADMIN_DIR="$scratch/admin"
 backup="$(bash "$root/solana-launcher/scripts/backup-production.sh")"
 [[ -s "$backup/postgres.dump" && -s "$backup/admin-postgres.dump" ]]
-[[ -s "$backup/SHA256SUMS" && -r "$backup/admin-site/.env" ]]
+[[ -s "$backup/trade.db" && -s "$backup/SHA256SUMS" && -r "$backup/admin-site/.env" ]]
+grep -Fq "  ./trade.db" "$backup/SHA256SUMS"
 [[ ! -e "$BACKUP_ROOT/.incomplete-" ]] || {
   echo "Incomplete backup was promoted" >&2; exit 1;
 }
+
+# Verify the row that was committed only to the WAL is present in the backup.
+(
+  cd "$root/solana-launcher"
+  BACKUP_SQLITE_PATH="$backup/trade.db" node -e '
+    const Database = require("better-sqlite3");
+    const db = new Database(process.env.BACKUP_SQLITE_PATH, { readonly: true, fileMustExist: true });
+    try {
+      const row = db.prepare("SELECT payload FROM backup_fixture WHERE id=1").get();
+      if (!row || row.payload !== "written-to-wal") process.exit(1);
+      console.log("SQLITE_WAL_ROW_RESTORED_OK");
+    } finally {
+      db.close();
+    }
+  '
+) | grep -Fq "SQLITE_WAL_ROW_RESTORED_OK"
+
 bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" |
   grep -Fq 'BACKUP_RESTORE_REHEARSAL_OK'
-echo "SYNTHETIC_RESTORE_TEST_OK both_databases"
+echo "SYNTHETIC_RESTORE_TEST_OK product_pg admin_pg sqlite_wal"
 
-# Mutation must invalidate checksums before any database is restored.
+# Corruption of either database family must invalidate the whole recovery set.
+cp "$backup/postgres.dump" "$scratch/postgres.dump.original"
 printf 'corruption' >> "$backup/postgres.dump"
 if bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" >/dev/null 2>&1; then
-  echo "Corrupted database backup passed restore gate" >&2
+  echo "Corrupted PostgreSQL backup passed restore gate" >&2
   exit 1
 fi
-echo "CORRUPTED_BACKUP_REJECTED_OK"
+mv "$scratch/postgres.dump.original" "$backup/postgres.dump"
+echo "CORRUPTED_POSTGRES_BACKUP_REJECTED_OK"
+
+cp "$backup/trade.db" "$scratch/trade.db.original"
+printf 'corruption' >> "$backup/trade.db"
+if bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" >/dev/null 2>&1; then
+  echo "Corrupted SQLite backup passed restore gate" >&2
+  exit 1
+fi
+mv "$scratch/trade.db.original" "$backup/trade.db"
+echo "CORRUPTED_SQLITE_BACKUP_REJECTED_OK"
+
+# Missing frontend/SQLite source must fail closed and remove its incomplete set.
+docker stop "$frontend" >/dev/null
+sleep 1
+if bash "$root/solana-launcher/scripts/backup-production.sh" >/dev/null 2>&1; then
+  echo "Backup unexpectedly passed without the SQLite source container" >&2
+  exit 1
+fi
+if find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name '.incomplete-*' -print -quit | grep -q .; then
+  echo "Failed backup left an incomplete directory behind" >&2
+  exit 1
+fi
+echo "MISSING_SQLITE_SOURCE_REJECTED_OK"
