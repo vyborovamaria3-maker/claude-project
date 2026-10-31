@@ -80,28 +80,7 @@ docker exec -i "$ADMIN_POSTGRES_CONTAINER" pg_restore --list < "$DEST/admin-post
 # intelligence-state volume. Use SQLite's online backup API inside the owner
 # container so committed WAL pages are included; never cp the live DB file.
 INTELLIGENCE_CONTAINER="$(
-  docker ps --filter 'name=^/potapoff-intelligence, not just the database dumps. Run from inside
-# the backup directory so SHA256SUMS contains stable relative paths and never
-# embeds the host's absolute deployment path.
-(
-  cd "$DEST"
-  find . -type f ! -name SHA256SUMS -print0 \
-    | sort -z \
-    | xargs -0 sha256sum \
-    > SHA256SUMS
-  sha256sum -c SHA256SUMS >/dev/null
-)
-
-mv -T -- "$DEST" "$FINAL_DEST"
-DEST="" # disarm failed-backup cleanup after atomic promotion
-# Prune only completed, verified timestamp directories. Never delete
-# .incomplete-* while another backup could still be writing one.
-find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d \
-  -name '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]' \
-  -mtime +14 -exec rm -rf -- {} +
-
-echo "$FINAL_DEST"
- --format '{{.Names}}' | head -n1
+  docker ps --filter 'name=^/potapoff-intelligence$' --format '{{.Names}}' | head -n1
 )"
 [[ -n "$INTELLIGENCE_CONTAINER" ]] || {
   echo "Python Intelligence worker container was not found" >&2
