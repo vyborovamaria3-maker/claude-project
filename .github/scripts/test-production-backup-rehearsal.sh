@@ -133,8 +133,12 @@ for i in $(seq 1 45); do
   # server; it is intentionally stopped before the final server starts.
   if docker logs "$product" 2>&1 | grep -Fq 'PostgreSQL init process complete; ready for start up.' &&
      docker logs "$admin" 2>&1 | grep -Fq 'PostgreSQL init process complete; ready for start up.' &&
-     docker exec "$product" pg_isready -U potapoff >/dev/null 2>&1 &&
-     docker exec "$admin" pg_isready -U potapoff_admin >/dev/null 2>&1; then
+     # The bootstrap server is Unix-socket-only; TCP plus SELECT 1 proves
+     # that each final postmaster is ready after initdb has completed.
+     docker exec "$product" pg_isready -h 127.0.0.1 -U potapoff -d potapoff >/dev/null 2>&1 &&
+     docker exec "$product" psql -h 127.0.0.1 -U potapoff -d potapoff -X -Atq -v ON_ERROR_STOP=1 -c "SELECT 1" 2>/dev/null | grep -qx "1" &&
+     docker exec "$admin" pg_isready -h 127.0.0.1 -U potapoff_admin -d potapoff_admin >/dev/null 2>&1 &&
+     docker exec "$admin" psql -h 127.0.0.1 -U potapoff_admin -d potapoff_admin -X -Atq -v ON_ERROR_STOP=1 -c "SELECT 1" 2>/dev/null | grep -qx "1"; then
     ready=1
     break
   fi
@@ -276,6 +280,40 @@ if find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name '.incomplete-*' -pr
   exit 1
 fi
 echo "SYMLINKED_BACKUP_SOURCE_REJECTED_OK"
+
+# Missing Python Intelligence database file must fail closed even while
+# its owner container is running; the incomplete recovery set must be removed.
+docker exec "$intelligence" mv \
+  /var/lib/potapoff-intelligence/intelligence.sqlite3 \
+  /var/lib/potapoff-intelligence/intelligence.sqlite3.missing
+sleep 1
+if bash "$root/solana-launcher/scripts/backup-production.sh" >/dev/null 2>&1; then
+  echo "Backup unexpectedly passed without the Python Intelligence database file" >&2
+  exit 1
+fi
+docker exec "$intelligence" mv \
+  /var/lib/potapoff-intelligence/intelligence.sqlite3.missing \
+  /var/lib/potapoff-intelligence/intelligence.sqlite3
+if find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name '.incomplete-*' -print -quit | grep -q .; then
+  echo "Missing Python Intelligence DB left an incomplete directory behind" >&2
+  exit 1
+fi
+echo "MISSING_INTELLIGENCE_DATABASE_REJECTED_OK"
+
+# Missing Blockchain trade.db file must fail closed even while the frontend
+# container remains running.
+docker exec "$frontend" mv /app/data/trade.db /app/data/trade.db.missing
+sleep 1
+if bash "$root/solana-launcher/scripts/backup-production.sh" >/dev/null 2>&1; then
+  echo "Backup unexpectedly passed without the Blockchain trade.db file" >&2
+  exit 1
+fi
+docker exec "$frontend" mv /app/data/trade.db.missing /app/data/trade.db
+if find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name '.incomplete-*' -print -quit | grep -q .; then
+  echo "Missing Blockchain trade.db left an incomplete directory behind" >&2
+  exit 1
+fi
+echo "MISSING_TRADE_DATABASE_REJECTED_OK"
 
 # Missing Python Intelligence source must fail closed and clean the incomplete set.
 docker stop "$intelligence" >/dev/null
