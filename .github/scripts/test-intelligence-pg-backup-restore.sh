@@ -55,14 +55,24 @@ pg_restore --list "$archive" > "$toc"
 docker run -d --rm --network none --name "$restore_container" \
   -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17-alpine >/dev/null
 ready=0
-for i in $(seq 1 45); do
-  if docker exec "$restore_container" pg_isready -U postgres >/dev/null 2>&1; then
-    ready=1
-    break
+for i in $(seq 1 60); do
+  # The official image briefly starts a temporary server during initdb.
+  # Wait until initdb has fully completed, then probe the final server.
+  if docker logs "$restore_container" 2>&1 | grep -q "PostgreSQL init process complete; ready for start up."; then
+    if docker exec "$restore_container" pg_isready -h /var/run/postgresql -U postgres >/dev/null 2>&1 \
+      && docker exec "$restore_container" psql -h /var/run/postgresql -U postgres -d postgres -X -Atq \
+        -v ON_ERROR_STOP=1 -c "SELECT 1" 2>/dev/null | grep -qx "1"; then
+      ready=1
+      break
+    fi
   fi
   sleep 1
 done
-[[ "$ready" = 1 ]] || { echo "Disposable PostgreSQL 17 restore target failed to start" >&2; exit 1; }
+if [[ "$ready" != 1 ]]; then
+  echo "Disposable PostgreSQL 17 restore target failed to reach final ready state" >&2
+  docker logs "$restore_container" >&2 || true
+  exit 1
+fi
 docker exec "$restore_container" createdb -U postgres "$restore_db"
 docker exec -i "$restore_container" pg_restore -U postgres -d "$restore_db" \
   --no-owner --no-privileges --exit-on-error --single-transaction < "$archive"
