@@ -4,8 +4,13 @@ set -euo pipefail
 archive="${1:?usage: restore-check.sh /path/to/tg-collector-YYYYMMDDTHHMMSSZ.dump}"
 [[ -f "$archive" ]] || { echo "Archive not found: $archive" >&2; exit 1; }
 : "${TG_RESTORE_CHECK_DATABASE_URL:?Set TG_RESTORE_CHECK_DATABASE_URL to an EMPTY disposable PostgreSQL database. This script restores into it.}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+source "$SCRIPT_DIR/postgres-client-compat.sh"
+# pg_restore must match the target server major; the archive may come from an
+# older PostgreSQL major, but never from a newer one.
+require_postgres_tool_matches_server "$TG_RESTORE_CHECK_DATABASE_URL" pg_restore
+require_archive_not_newer_than_target "$archive" "$TG_RESTORE_CHECK_DATABASE_URL"
 
-pg_restore --list "$archive" >/dev/null
 existing_objects="$(psql "$TG_RESTORE_CHECK_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc \
   "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace \
    WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND c.relkind IN ('r','p','v','m','S')")"

@@ -50,6 +50,13 @@ jobs:
         run: npm run typecheck
       - name: Unit and database integration tests
         run: npm test
+      - name: Install PostgreSQL 16 client matching service
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y postgresql-client-16
+          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+          /usr/lib/postgresql/16/bin/pg_dump --version
+          /usr/lib/postgresql/16/bin/pg_restore --version
       - name: Backup and clean restore round-trip
         shell: bash
         run: |
