@@ -158,6 +158,22 @@ fi
 mv "$scratch/trade.db.original" "$backup/trade.db"
 echo "CORRUPTED_SQLITE_BACKUP_REJECTED_OK"
 
+# A symlink copied from a config source must not escape the checksum manifest.
+mv "$scratch/admin/sources.json" "$scratch/admin/sources.json.original"
+ln -s .env "$scratch/admin/sources.json"
+sleep 1
+if bash "$root/solana-launcher/scripts/backup-production.sh" >/dev/null 2>&1; then
+  echo "Backup unexpectedly accepted a symlinked config file" >&2
+  exit 1
+fi
+rm "$scratch/admin/sources.json"
+mv "$scratch/admin/sources.json.original" "$scratch/admin/sources.json"
+if find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name '.incomplete-*' -print -quit | grep -q .; then
+  echo "Symlink rejection left an incomplete directory behind" >&2
+  exit 1
+fi
+echo "SYMLINKED_BACKUP_SOURCE_REJECTED_OK"
+
 # Missing frontend/SQLite source must fail closed and remove its incomplete set.
 docker stop "$frontend" >/dev/null
 sleep 1
