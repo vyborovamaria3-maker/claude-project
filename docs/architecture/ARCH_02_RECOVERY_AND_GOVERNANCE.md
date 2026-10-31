@@ -127,34 +127,79 @@ The `POTAPoff production deploy` `workflow_run` path is intentionally **disabled
 Until that approval, merging release-workflow corrections can still publish images, **but must not attempt automatic production deployment**.
 
 
-## 8. SQLite recovery coverage delta — 2026-10-31 (draft PR #211)
+## 8. Unified recovery set and source-to-consumer rehearsal — 2026-10-31 (Draft PR #212)
 
-The earlier sections above describe the ARCH-02 baseline before the central
-POTAPoff backup bundle included Blockchain SQLite. Do not read the historical
-statement that this script does not create Blockchain backups as a current
-description of the proposed branch.
+This section supersedes the historical statements above that the central
+POTAPoff backup omitted SQLite stores. The integrated Draft branch keeps the
+two independent SQLite databases distinct and includes both in one recovery
+set alongside the two PostgreSQL dumps.
 
-Draft [PR #211](https://github.com/vyborovamaria3-maker/claude-project/pull/211)
-adds the following code-level coverage:
+### Central POTAPoff backup contents
 
-- `backup-production.sh` discovers the single Compose frontend container and
-  uses its existing `better-sqlite3` module to snapshot
-  `/app/data/trade.db` with SQLite Online Backup API. A raw filesystem copy of
-  a live WAL-backed database is not used.
-- The snapshot is integrity-checked, copied into the incomplete recovery set,
-  protected with mode 0600 and included in the complete `SHA256SUMS` manifest.
-  Missing frontend/container DB or a failed snapshot rejects the whole backup.
-- `verify-backup-restore.sh` checks the manifest and restores a copy of
-  `trade.db` to a fresh temporary path for a full SQLite integrity check, in
-  addition to the existing network-isolated PostgreSQL restore.
-- The synthetic rehearsal holds a writer open with a committed row in WAL,
-  asserts that row is present in the backup, rejects PostgreSQL and SQLite
-  corruption, and verifies that a missing SQLite source leaves no incomplete
-  recovery directory.
+- `postgres.dump`: product PostgreSQL custom-format dump.
+- `admin-postgres.dump`: Control Center PostgreSQL custom-format dump.
+- `trade.db`: Blockchain SQLite store at the frontend container's
+  `/app/data/trade.db`, captured with `better-sqlite3` SQLite Online Backup
+  API. The source is checked, the snapshot receives a full integrity check,
+  and the synthetic test proves a committed WAL-only row is present.
+- `intelligence.sqlite`: separate Python Intelligence worker database at
+  `/var/lib/potapoff-intelligence/intelligence.sqlite3` in the
+  `potapoff-intelligence` container and `intelligence-state` volume. It is
+  captured with Python's `sqlite3.Connection.backup()`, integrity-checked,
+  and included as a standalone file.
+- Deployment configuration and Control Center server-only configuration
+  required by the existing recovery procedure.
 
-**Evidence boundary:** PR #211 is Draft. Its CI is still required; no production
-server, live database, SSH secret or off-host backup was accessed. A real
-staging/production backup and timed restore remain NOT RUN, and RPO/RTO remain
-NOT MEASURED. ARCH-02 and issue #172 must stay OPEN until an accountable
-operator verifies the physical DB inventory, off-host copy and a restore from
-an actual backup on trusted isolated infrastructure.
+The script builds the recovery set in a private `.incomplete-*` directory,
+rejects missing database sources and symlinks, creates one SHA256 manifest
+covering every regular file, verifies that manifest, and atomically promotes
+the directory only after all required artifacts succeed. A failed attempt
+removes its incomplete directory. The Python worker's temporary snapshot path
+is unique per backup and is cleaned on success or failure.
+
+### Isolated restore evidence
+
+`verify-backup-restore.sh` verifies the complete manifest, restores both
+PostgreSQL custom-format dumps into a network-isolated disposable container,
+and independently restores/checks copies of both SQLite files. The synthetic
+ARCH-02 rehearsal additionally:
+- keeps a Blockchain SQLite writer open with committed data in WAL and
+  confirms that the backup contains the row;
+- creates a separate Python Intelligence worker and named test volume and
+  confirms the restored fixture row;
+- rejects corrupted PostgreSQL, Blockchain SQLite and Python Intelligence
+  SQLite artifacts;
+- rejects symlinked configuration and missing SQLite source containers;
+- confirms that failed backups do not leave incomplete recovery directories.
+
+These are disposable CI fixtures. They do not prove a real host backup,
+off-host encrypted copy, live production restore, retention, or measured
+RPO/RTO.
+
+### Separate Node Intelligence PostgreSQL and producer integration
+
+The Node cross-source Intelligence PostgreSQL target configured by
+`INTELLIGENCE_DATABASE_URL` is **not** the Python worker's SQLite database
+and is not included in the central POTAPoff bundle. The producer integration
+workflow runs a synthetic custom-format PostgreSQL dump/restore into a
+network-isolated PostgreSQL 17 container, verifies a marker row, and rejects a
+truncated archive. The X Collector quality workflow has its own isolated
+custom-format PostgreSQL restore check. Neither establishes a production
+backup owner or schedule for the Node ETL target or the local X/TG databases.
+
+The producer-to-consumer integration invokes the actual bounded X verifier
+and X outbox emitter, the Telegram parsed-mint verifier and outbox emitter,
+the Blockchain swap-revision writer, and the real Intelligence batch consumer.
+Provider HTTPS responses are mocked; no browser, Telegram session, live RPC,
+production database or external account is used. It verifies source-specific
+provenance, tombstone/retraction behavior, independent Blockchain evidence,
+destination commit/ACK ordering and replay behavior. It is not a live
+collection or sustained-load test.
+
+**Evidence boundary:** the combined recovery and integration work remains in
+Draft PR #212. No production server, live database, SSH secret, provider
+account, off-host backup or deployment was accessed. Keep ARCH-02 and issue
+[#172](https://github.com/vyborovamaria3-maker/claude-project/issues/172)
+OPEN until a named operator inventories physical stores, verifies effective
+grants, creates an approved off-host backup, executes a real isolated restore,
+and records actual restore duration, RPO and RTO.
