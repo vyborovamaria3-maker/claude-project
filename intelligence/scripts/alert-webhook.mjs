@@ -92,10 +92,14 @@ export function createAlertWebhookSink(config, {
   maxAttempts = DEFAULT_ATTEMPTS,
   retryDelayMs = DEFAULT_RETRY_DELAY_MS,
 } = {}) {
-  if (!config || typeof config.url !== "string" ||
+  let target;
+  try { target = new URL(config?.url); } catch {}
+  if (!config || !target || target.protocol !== "https:" || !target.hostname ||
+      target.username || target.password || target.hash ||
       !Number.isSafeInteger(config.timeoutMs) ||
       config.timeoutMs < 250 || config.timeoutMs > MAX_TIMEOUT_MS ||
-      (config.token !== null && typeof config.token !== "string") ||
+      (config.token !== null && (typeof config.token !== "string" ||
+        config.token.length > 4096 || /[\\r\\n]/.test(config.token))) ||
       typeof fetchImpl !== "function" || typeof onStatus !== "function" ||
       !Number.isSafeInteger(maxQueue) || maxQueue < 1 || maxQueue > 64 ||
       !Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 2 ||
@@ -128,6 +132,7 @@ export function createAlertWebhookSink(config, {
           method: "POST",
           headers,
           body: JSON.stringify(item.payload),
+          redirect: "error",
           signal: controller.signal,
         });
         if (response?.ok === true) return true;
