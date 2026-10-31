@@ -31,7 +31,7 @@ test("SQLite outbox health is read-only and reports backlog, retry, DLQ and prog
   try{
     const before=db.prepare("SELECT COUNT(*) AS n FROM outbox_events").get().n;
     const plan=sql=>db.prepare("EXPLAIN QUERY PLAN "+sql).all().map(row=>row.detail).join("\n");
-    assert.match(plan("SELECT count(*),min(created_at),max(attempts) FROM outbox_events WHERE processed_at IS NULL AND dead_lettered_at IS NULL"),/outbox_pending_health_idx/);
+    assert.match(plan("SELECT count(*),min(created_at),max(attempts) FROM outbox_events INDEXED BY outbox_pending_health_idx WHERE processed_at IS NULL AND dead_lettered_at IS NULL"),/outbox_pending_health_idx/);
     assert.match(plan("SELECT count(*) FROM outbox_events WHERE dead_lettered_at IS NOT NULL"),/outbox_dead_lettered_at_idx/);
     assert.match(plan("SELECT processed_at FROM outbox_events WHERE processed_at IS NOT NULL ORDER BY processed_at DESC LIMIT 1"),/outbox_processed_at_desc_idx/);
     const health=await outboxStatus({kind:"sqlite",connection:db},now);

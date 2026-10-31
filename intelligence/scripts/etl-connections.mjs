@@ -106,13 +106,13 @@ export async function outboxStatus(source,now){
         count(*) FILTER (WHERE attempts>0 AND next_attempt_at>?) AS retry_delayed,
         min(created_at) AS oldest_pending_at,
         coalesce(max(attempts),0) AS max_attempts
-      FROM outbox_events
+      FROM outbox_events INDEXED BY outbox_pending_health_idx
       WHERE processed_at IS NULL AND dead_lettered_at IS NULL
     )
     SELECT pending_metrics.*,
       (SELECT count(*) FROM outbox_events WHERE dead_lettered_at IS NOT NULL) AS dead_letter,
       (SELECT count(*) FROM (
-        SELECT event_kind FROM outbox_events
+        SELECT event_kind FROM outbox_events INDEXED BY outbox_pending_health_idx
         WHERE processed_at IS NULL AND dead_lettered_at IS NULL
         GROUP BY event_kind HAVING count(DISTINCT schema_version)>1
       ) AS version_skew) AS schema_version_skew_kinds,
