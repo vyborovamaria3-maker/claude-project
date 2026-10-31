@@ -50,6 +50,8 @@ jobs:
         run: npm run typecheck
       - name: Unit and database integration tests
         run: npm test
+      - name: PostgreSQL backup compatibility unit tests
+        run: bash scripts/postgres-client-compat.test.sh
       - name: Install PostgreSQL 16 client matching service
         run: |
           sudo apt-get update
