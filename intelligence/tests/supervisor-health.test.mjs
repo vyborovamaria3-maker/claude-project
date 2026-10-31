@@ -34,6 +34,7 @@ test("SQLite outbox health is read-only and reports backlog, retry, DLQ and prog
     const after=db.prepare("SELECT COUNT(*) AS n FROM outbox_events").get().n;
     assert.equal(after,before,"health snapshots must not mutate or claim events");
     assert.deepEqual(health,{
+      measuredAt:now.toISOString(),
       pending:2,ready:1,leased:1,retryCount:1,retryAttemptsTotal:2,retryDelayed:0,deadLetter:1,
       schemaVersionSkewKinds:1,
       oldestPendingAt:"2026-10-30T19:50:00.000Z",oldestPendingAgeMs:600000,
