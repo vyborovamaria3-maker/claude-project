@@ -103,29 +103,31 @@ export async function outboxStatus(source,now){
     const explicitAt=now===undefined?null:now.toISOString();
     const result=await source.connection.query(`WITH observation AS (
       SELECT COALESCE($1::timestamptz, statement_timestamp()) AS measured_at
+    ), metrics AS (
+      SELECT
+        count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL)::text AS pending,
+        count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+          AND next_attempt_at<=observation.measured_at
+          AND (lease_until IS NULL OR lease_until<=observation.measured_at))::text AS ready,
+        count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+          AND lease_until>observation.measured_at)::text AS leased,
+        count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL AND attempts>0)::text AS retry_count,
+        coalesce(sum(attempts) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL),0)::text AS retry_attempts_total,
+        count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+          AND attempts>0 AND next_attempt_at>observation.measured_at)::text AS retry_delayed,
+        count(*) FILTER (WHERE dead_lettered_at IS NOT NULL)::text AS dead_letter,
+        (SELECT count(*) FROM (
+          SELECT event_kind FROM outbox_events
+          WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+          GROUP BY event_kind HAVING count(DISTINCT schema_version)>1
+        ) AS version_skew)::text AS schema_version_skew_kinds,
+        min(created_at) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS oldest_pending_at,
+        max(processed_at) AS last_progress_at,
+        coalesce(max(attempts) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL),0)::text AS max_attempts
+      FROM outbox_events CROSS JOIN observation
     )
-    SELECT
-      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL)::text AS pending,
-      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
-        AND next_attempt_at<=observation.measured_at
-        AND (lease_until IS NULL OR lease_until<=observation.measured_at))::text AS ready,
-      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
-        AND lease_until>observation.measured_at)::text AS leased,
-      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL AND attempts>0)::text AS retry_count,
-      coalesce(sum(attempts) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL),0)::text AS retry_attempts_total,
-      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
-        AND attempts>0 AND next_attempt_at>observation.measured_at)::text AS retry_delayed,
-      count(*) FILTER (WHERE dead_lettered_at IS NOT NULL)::text AS dead_letter,
-      (SELECT count(*) FROM (
-        SELECT event_kind FROM outbox_events
-        WHERE processed_at IS NULL AND dead_lettered_at IS NULL
-        GROUP BY event_kind HAVING count(DISTINCT schema_version)>1
-      ) AS version_skew)::text AS schema_version_skew_kinds,
-      min(created_at) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS oldest_pending_at,
-      max(processed_at) AS last_progress_at,
-      coalesce(max(attempts) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL),0)::text AS max_attempts,
-      observation.measured_at AS measured_at
-    FROM outbox_events CROSS JOIN observation`,[explicitAt]);
+    SELECT metrics.*, observation.measured_at AS measured_at
+    FROM metrics CROSS JOIN observation`,[explicitAt]);
     row=result.rows[0];
     measuredAt=isoOrNull(row.measured_at);
   }
