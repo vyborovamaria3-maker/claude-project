@@ -91,7 +91,7 @@ test("actual X/TG mint verifiers and source emitters plus Blockchain revision em
     dst:"producer_dst_"+suffix,
   };
   const admin=new pg.Client({connectionString:url});
-  let xPool,tgPool,dst,sqlite;
+  let xPool,tgPool,dst,sqlite,adminConnected=false;
   const envKeys=[
     "X_INTELLIGENCE_OUTBOX_ENABLED","X_INTELLIGENCE_TOKEN_LINKS_ENABLED",
     "X_INTELLIGENCE_MINT_VERIFY_ENABLED","ALCHEMY_SOLANA_RPC_URL",
@@ -101,6 +101,7 @@ test("actual X/TG mint verifiers and source emitters plus Blockchain revision em
   const oldEnv=new Map(envKeys.map(key=>[key,process.env[key]]));
   try{
     await admin.connect();
+    adminConnected=true;
     for(const schema of Object.values(schemas))
       await admin.query('CREATE SCHEMA "'+schema+'"');
 
@@ -162,10 +163,10 @@ test("actual X/TG mint verifiers and source emitters plus Blockchain revision em
           );
           return result.rows;
         },
-        verify:async(candidate=>verifySolanaMintViaAlchemy(
+        verify:async(candidate)=>verifySolanaMintViaAlchemy(
           "https://solana.example/rpc",candidate,
           rpcStub(X_TOKEN_PROGRAM,"spl-token"),
-        )),
+        ),
         emit:async(tweet,candidate,proof)=>{
           const tx=await xPool.connect();
           try{
@@ -381,7 +382,7 @@ test("actual X/TG mint verifiers and source emitters plus Blockchain revision em
     }
     if(sqlite)sqlite.close();
     for(const pool of [xPool,tgPool,dst])if(pool)await pool.end();
-    if(admin._connected){
+    if(adminConnected){
       for(const schema of Object.values(schemas).reverse()){
         try{await admin.query('DROP SCHEMA IF EXISTS "'+schema+'" CASCADE')}catch{/* preserve first failure */}
       }
