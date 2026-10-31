@@ -241,6 +241,11 @@ time and data coverage.
 | --- | --- |
 | Main source/destination supervisor | Foreground local code exists; production operation NOT RUN |
 | PR #206 queue health metrics | Open / unmerged |
+| PR #212 combined recovery / producer integration | Draft; disposable CI only |
+| PR #213 optional alert webhook adapter | Draft / unmerged; endpoint not configured |
+| Main branch protection | NOT CONFIGURED; issue #170 open |
+| PostgreSQL runtime least-privilege roles | NOT VERIFIED; Compose POSTGRES_USER matches application DSNs |
+| Separate PostgreSQL backup role | NOT CONFIGURED |
 | External Intelligence alert sink | NOT CONFIGURED |
 | Supervisor process manager / automatic restart | NOT CONFIGURED |
 | Physical production DB inventory | NOT IDENTIFIED |
