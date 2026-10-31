@@ -2,21 +2,21 @@
 set -Eeuo pipefail
 umask 077
 
-: "\${INTELLIGENCE_TEST_DB_URL:?INTELLIGENCE_TEST_DB_URL must point to a disposable CI PostgreSQL database}"
-: "\${PGHOST:?PGHOST is required}"
-: "\${PGPORT:?PGPORT is required}"
-: "\${PGUSER:?PGUSER is required}"
-: "\${PGPASSWORD:?PGPASSWORD is required}"
+: "${INTELLIGENCE_TEST_DB_URL:?INTELLIGENCE_TEST_DB_URL must point to a disposable CI PostgreSQL database}"
+: "${PGHOST:?PGHOST is required}"
+: "${PGPORT:?PGPORT is required}"
+: "${PGUSER:?PGUSER is required}"
+: "${PGPASSWORD:?PGPASSWORD is required}"
 
-restore_db="\${INTELLIGENCE_RESTORE_DB_NAME:-intelligence_restore_ci}"
+restore_db="${INTELLIGENCE_RESTORE_DB_NAME:-intelligence_restore_ci}"
 [[ "$restore_db" =~ ^[a-zA-Z][a-zA-Z0-9_]{0,62}$ ]] || {
   echo "Invalid disposable restore database name" >&2
   exit 2
 }
 
 archive="$(mktemp)"
-toc="\${archive}.toc"
-corrupt="\${archive}.corrupt"
+toc="${archive}.toc"
+corrupt="${archive}.corrupt"
 cleanup(){
   dropdb --if-exists "$restore_db" >/dev/null 2>&1 || true
   psql "$INTELLIGENCE_TEST_DB_URL" -v ON_ERROR_STOP=1 -q \
