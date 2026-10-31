@@ -5,7 +5,7 @@ import pg from "pg";
 import Database from "better-sqlite3";
 import {SQLITE_OUTBOX_DDL,POSTGRES_OUTBOX_DDL} from "@claude-project/event-outbox";
 import {outboxStatus} from "../scripts/etl-connections.mjs";
-import {classifyOutboxHealth,parseArguments} from "../scripts/supervise.mjs";
+import {classifyOutboxHealth,parseArguments,createAlertTransitionTracker,runHealthProbe} from "../scripts/supervise.mjs";
 
 const now=new Date("2026-10-30T20:00:00.000Z");
 
@@ -30,6 +30,10 @@ test("SQLite outbox health is read-only and reports backlog, retry, DLQ and prog
   const db=sqliteFixture();
   try{
     const before=db.prepare("SELECT COUNT(*) AS n FROM outbox_events").get().n;
+    const plan=sql=>db.prepare("EXPLAIN QUERY PLAN "+sql).all().map(row=>row.detail).join("\n");
+    assert.match(plan("SELECT count(*),min(created_at),max(attempts) FROM outbox_events WHERE processed_at IS NULL AND dead_lettered_at IS NULL"),/outbox_pending_health_idx/);
+    assert.match(plan("SELECT count(*) FROM outbox_events WHERE dead_lettered_at IS NOT NULL"),/outbox_dead_lettered_at_idx/);
+    assert.match(plan("SELECT processed_at FROM outbox_events WHERE processed_at IS NOT NULL ORDER BY processed_at DESC LIMIT 1"),/outbox_processed_at_desc_idx/);
     const health=await outboxStatus({kind:"sqlite",connection:db},now);
     const after=db.prepare("SELECT COUNT(*) AS n FROM outbox_events").get().n;
     assert.equal(after,before,"health snapshots must not mutate or claim events");
@@ -48,8 +52,12 @@ test("PostgreSQL health maps native timestamps and bigint counters without expos
   let calls=0;
   const connection={query:async(sql,params)=>{
     calls++;
-    if(sql.includes("to_regclass"))return {rows:[{present:true}]};
+    if(sql.includes("to_regclass"))return {rows:[{
+      present:true,pending_health_index:true,dead_lettered_index:true,processed_at_index:true,
+    }]};
     assert.match(sql,/COALESCE\(\$1::timestamptz, statement_timestamp\(\)\)/);
+    assert.match(sql,/WHERE processed_at IS NULL AND dead_lettered_at IS NULL/);
+    assert.match(sql,/ORDER BY processed_at DESC LIMIT 1/);
     assert.deepEqual(params,[now.toISOString()]);
     return {rows:[{
       pending:"3",ready:"2",leased:"1",retry_count:"2",retry_attempts_total:"6",
@@ -60,7 +68,7 @@ test("PostgreSQL health maps native timestamps and bigint counters without expos
     }]};
   }};
   const health=await outboxStatus({kind:"pg",connection},now);
-  assert.equal(calls,2);
+  assert.equal(calls,3);
   assert.equal(health.measuredAt,now.toISOString());
   assert.equal(health.pending,3);
   assert.equal(health.ready,2);
@@ -94,6 +102,27 @@ test("PostgreSQL health uses the database clock when the application host is one
       max:2,
     });
     await pool.query(POSTGRES_OUTBOX_DDL);
+    const planClient=await pool.connect();
+    try{
+      await planClient.query("BEGIN");
+      await planClient.query("SET LOCAL enable_seqscan=off");
+      const plans=[];
+      for(const sql of [
+        "EXPLAIN (COSTS OFF) SELECT count(*),min(created_at),max(attempts) FROM outbox_events WHERE processed_at IS NULL AND dead_lettered_at IS NULL",
+        "EXPLAIN (COSTS OFF) SELECT count(*) FROM outbox_events WHERE dead_lettered_at IS NOT NULL",
+        "EXPLAIN (COSTS OFF) SELECT processed_at FROM outbox_events WHERE processed_at IS NOT NULL ORDER BY processed_at DESC LIMIT 1",
+      ]){
+        const result=await planClient.query(sql);
+        plans.push(result.rows.map(row=>row["QUERY PLAN"]).join("\n"));
+      }
+      assert.match(plans[0],/outbox_pending_health_idx/);
+      assert.match(plans[1],/outbox_dead_lettered_at_idx/);
+      assert.match(plans[2],/outbox_processed_at_desc_idx/);
+      await planClient.query("ROLLBACK");
+    }catch(error){
+      try{await planClient.query("ROLLBACK")}catch{}
+      throw error;
+    }finally{planClient.release();}
     await pool.query(`INSERT INTO outbox_events
       (source_system,event_kind,event_key,schema_version,payload)
       VALUES ('x','tweet_observed','clock-skew','v1','{}'::jsonb)`);
@@ -122,7 +151,7 @@ test("PostgreSQL health uses the database clock when the application host is one
     assert.ok(health.oldestPendingAgeMs>=330_000&&health.oldestPendingAgeMs<360_000,
       "oldest-pending age must be calculated from the PostgreSQL observation time");
     assert.deepEqual(classifyOutboxHealth(health,{
-      alertOldestPendingMs:300_000,maxFailures:5,
+      alertOldestPendingMs:300_000,alertMaxAttempts:5,
     }),["oldest_pending_age_exceeded"]);
   }finally{
     await pool?.end();
@@ -137,19 +166,51 @@ test("health alerts use conservative configurable thresholds and remain machine-
   const health={
     pending:2,deadLetter:1,maxAttempts:5,schemaVersionSkewKinds:1,oldestPendingAgeMs:600001,
   };
-  assert.deepEqual(classifyOutboxHealth(health,{alertOldestPendingMs:300000,maxFailures:5}),[
+  assert.deepEqual(classifyOutboxHealth(health,{alertOldestPendingMs:300000,alertMaxAttempts:5}),[
     "dead_letter_events_present","oldest_pending_age_exceeded","pending_retry_threshold_exceeded",
   ]);
-  assert.deepEqual(classifyOutboxHealth(health,{alertOldestPendingMs:0,maxFailures:6}),[
+  assert.deepEqual(classifyOutboxHealth(health,{alertOldestPendingMs:0,alertMaxAttempts:6}),[
     "dead_letter_events_present",
   ]);
+  assert.deepEqual(classifyOutboxHealth({...health,maxAttempts:11},{alertMaxAttempts:11}),[
+    "dead_letter_events_present","oldest_pending_age_exceeded","pending_retry_threshold_exceeded",
+  ]);
+  assert.throws(()=>classifyOutboxHealth(health,{alertMaxAttempts:12}),/thresholds/);
   assert.throws(()=>classifyOutboxHealth({...health,pending:-1}),/health snapshot/);
 });
 
 test("supervisor health options are bounded and zero disables only the lag alert",()=>{
-  const parsed=parseArguments(["--sources","x,tg","--health-interval-ms","10000","--alert-oldest-pending-ms","0"]);
+  const parsed=parseArguments(["--sources","x,tg","--health-interval-ms","10000","--alert-oldest-pending-ms","0",
+    "--max-consecutive-failures","7","--alert-max-attempts","11"]);
   assert.equal(parsed.healthIntervalMs,10000);
   assert.equal(parsed.alertOldestPendingMs,0);
+  assert.equal(parsed.maxConsecutiveFailures,7);
+  assert.equal(parsed.alertMaxAttempts,11);
+  assert.equal(parseArguments(["--sources","x","--max-failures","4"]).maxConsecutiveFailures,4);
+  assert.throws(()=>parseArguments(["--sources","x","--alert-max-attempts","12"]),/invalid supervisor numeric option/);
   assert.throws(()=>parseArguments(["--sources","x","--health-interval-ms","0"]),/invalid supervisor numeric option/);
   assert.throws(()=>parseArguments(["--sources","x","--alert-oldest-pending-ms","86400001"]),/invalid supervisor numeric option/);
+});
+
+
+test("alert transitions are deduplicated per source and emit recovery",()=>{
+  const tracker=createAlertTransitionTracker();
+  assert.deepEqual(tracker.update("x",["dead_letter_events_present"]),{raised:["dead_letter_events_present"],recovered:[]});
+  assert.deepEqual(tracker.update("x",["dead_letter_events_present"]),{raised:[],recovered:[]});
+  assert.deepEqual(tracker.probeFailed("x"),{raised:["health_probe_failed"],recovered:[]});
+  assert.deepEqual(tracker.probeFailed("x"),{raised:[],recovered:[]});
+  assert.deepEqual(tracker.update("x",["dead_letter_events_present"]),{raised:[],recovered:["health_probe_failed"]});
+  assert.deepEqual(tracker.update("x",[]),{raised:[],recovered:["dead_letter_events_present"]});
+  assert.deepEqual(tracker.update("tg",[]),{raised:[],recovered:[]});
+});
+
+test("startup and periodic health probe failures are advisory and deduplicated",async()=>{
+  const tracker=createAlertTransitionTracker(),reports=[];
+  const failed=async()=>{throw new Error("raw source failure must not be logged");};
+  const report=event=>reports.push(event);
+  assert.equal(await runHealthProbe({source:"x",probe:failed,report,tracker}),false);
+  assert.equal(await runHealthProbe({source:"x",probe:failed,report,tracker}),false);
+  assert.deepEqual(reports,[{kind:"alert",source:"x",code:"health_probe_failed"}]);
+  assert.deepEqual(tracker.update("x",[]),{raised:[],recovered:["health_probe_failed"]});
+  assert.equal(await runHealthProbe({source:"x",probe:async()=>{},report,tracker}),true);
 });

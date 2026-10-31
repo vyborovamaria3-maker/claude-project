@@ -101,7 +101,9 @@ with a **temporary copy** of SQLite and a disposable destination PostgreSQL.
 
 Options: `--sources x,tg,blockchain` (any nonempty distinct subset),
 `--poll-ms 2000`, `--pace-ms 100`, `--lease-ms 120000`,
-`--max-failures 5`, `--max-batches 0` (zero means until Ctrl+C).
+`--max-consecutive-failures 5` (legacy alias: `--max-failures 5`),
+`--alert-max-attempts 5` (allowed 1..11; source DLQ threshold is 12),
+`--max-batches 0` (zero means until Ctrl+C).
 
 Runtime safeguards:
 
@@ -125,12 +127,27 @@ Runtime safeguards:
   timestamp/age, last successful progress timestamp/age, maximum pending
   attempts and the number of event kinds with multiple schema versions in the
   pending queue (a diagnostic signal, not an automatic incompatibility claim).
-- Machine-readable alert records are emitted when any dead-letter exists, when
-  oldest pending age exceeds `--alert-oldest-pending-ms` (default 5 minutes;
-  zero disables this alert), or when pending attempts reach `--max-failures`.
-  Alert records contain only source, bounded counters and an allowlisted code.
+- Machine-readable alert records are emitted **on state transitions only**:
+  a condition produces one `kind=alert` record, repeated health polls are
+  deduplicated in-process, and a cleared condition produces
+  `kind=alert_recovered`. A process restart starts a fresh alert state.
+- Pending retry alerts use `--alert-max-attempts` (default 5, maximum 11).
+  PostgreSQL and SQLite source adapters dead-letter at 12 attempts, so the
+  alert threshold is constrained below that terminal threshold. Consecutive
+  failed-batch shutdown uses the independent `--max-consecutive-failures`
+  option; `--max-failures` remains a compatibility alias for that option.
+- A failed startup or periodic health probe emits one deduplicated
+  `health_probe_failed` alert and does **not** prevent delivery; the next
+  successful health snapshot emits its recovery transition.
 - These alerts are JSON log events, **not an external notification service**.
   A deployment must route supervisor stdout to its approved log/alert sink.
+- Health queries require source-side covering indexes: X migration
+  `051_intelligence_outbox_health_indexes.sql`, TG migration
+  `037_intelligence_outbox_health_indexes.sql`, and the opt-in Blockchain
+  collector's additive SQLite index bootstrap. Apply X/TG migrations or restart
+  the explicitly opted-in Blockchain collector before relying on health metrics.
+  If indexes are absent, the health probe emits `health_probe_failed`; delivery
+  itself remains independent of the advisory monitoring path.
 - Operator can inspect per-source backlog and dead letters using the existing
   read-only `run.mjs --source <source> --status`; it shares the same health
   metrics without claiming or mutating events.
