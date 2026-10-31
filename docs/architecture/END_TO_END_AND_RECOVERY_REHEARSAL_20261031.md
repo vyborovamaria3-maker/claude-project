@@ -61,7 +61,7 @@ Important semantic limits:
 | Python Intelligence SQLite | potapoff-intelligence, named intelligence-state volume, /var/lib/potapoff-intelligence/intelligence.sqlite3 | Same script → intelligence.sqlite, created with Python SQLite online backup API | Isolated Python container restores a copy, runs PRAGMA integrity_check, checks table presence and the CI rehearsal keeps a writer open with committed WAL data and checks the restored fixture row |
 | X Collector PostgreSQL | Local X Collector database | x-collector/scripts/backup-windows.ps1, custom-format archive | x-collector-ci.yml now runs a disposable custom-format dump/restore and truncated-archive rejection |
 | Telegram Collector PostgreSQL | Local TG Collector database | tg-collector/scripts/backup.sh, custom-format archive and SHA256; optional rclone remote | tg-collector.yml already runs a disposable full restore, row-count comparison and non-empty-target rejection |
-| Blockchain trade SQLite | Local trade.db | blockchain-sqlite-health.cjs backup, using better-sqlite3 online backup API | Existing WAL regression creates a backup, checks integrity and opens the snapshot to read the committed fixture row |
+| Blockchain trade SQLite | Frontend container at /app/data/trade.db | Central solana-launcher/scripts/backup-production.sh → trade.db, captured with better-sqlite3 Online Backup API | Existing WAL regression plus ARCH-02 full bundle rehearsal; committed WAL-only row, isolated restore, integrity and corrupt/missing-source rejection |
 | Node cross-source Intelligence PostgreSQL | Separate ETL target configured by INTELLIGENCE_DATABASE_URL | No dedicated production backup job or target-specific backup script was found in this repository snapshot | New producer workflow runs a synthetic PostgreSQL custom-format dump/restore, row check and corrupt-archive rejection |
 
 ### Important distinction: two Intelligence stores
@@ -141,8 +141,9 @@ From solana-launcher:
     npm run blockchain:db-backup
     npm run blockchain:db-check -- --db "<path to sqlite-backups/trade-....db>"
 
-The backup uses SQLite's online backup API; do not copy a live trade.db file
-or its WAL/SHM files independently. Validate the backup as a separate database
+The central bundle uses SQLite Online Backup API snapshots for both trade.db
+and intelligence.sqlite; do not copy either live database file or its WAL/SHM
+files independently. Validate the backup as a separate database
 before any recovery. To replace a local working copy, stop all writers, retain
 the original database and its recovery metadata, and only then copy the verified
 snapshot into the configured path. The RPC recovery-authority/challenge state
@@ -174,8 +175,9 @@ backup scheduling remains an operator gate.
   truncated archive rejection.
 - tg-collector.yml: existing custom-format PostgreSQL restore rehearsal.
 - arch-02-security-backup-ci.yml: product/Admin PostgreSQL backup and
-  isolated restore; the rehearsal now also creates, backs up and restores the
-  synthetic Python Intelligence SQLite volume.
+  isolated restore; the rehearsal creates both Blockchain trade.db and Python
+  Intelligence SQLite WAL-only fixtures, backs up and restores both snapshots,
+  and checks corruption/missing-source cleanup.
 - source-producer-to-consumer.yml: synthetic Node Intelligence PostgreSQL
   archive restore and corrupted archive rejection.
 - blockchain-sqlite-health-regression.cjs: existing WAL-aware SQLite
