@@ -115,6 +115,7 @@ The backup contains:
 - product PostgreSQL custom-format dump (`postgres.dump`);
 - Control Center PostgreSQL custom-format dump (`admin-postgres.dump`);
 - the Blockchain SQLite database (`trade.db`) captured with the SQLite Online Backup API while the frontend container is running;
+- the Python Intelligence SQLite database (`intelligence.sqlite`) captured with SQLite's online backup API inside `potapoff-intelligence` from the shared `intelligence-state` volume (also mounted read-only by the Admin container);
 - `.env.server`;
 - `backend.env`;
 - production Compose file;
@@ -126,9 +127,11 @@ The script immediately runs `sha256sum -c SHA256SUMS`. The backup directory is m
 
 The frontend container is the owner of the `/app/data/trade.db` mount. The backup uses `better-sqlite3` Online Backup API inside that container, checks the source with `quick_check`, checks the snapshot with `integrity_check`, copies the completed snapshot into the same incomplete recovery directory, and includes it in `SHA256SUMS`. A plain filesystem copy of a live `trade.db` is forbidden because committed pages may still be in the WAL file. If the frontend container or database is missing, the whole backup fails closed and the incomplete directory is removed.
 
-`verify-backup-restore.sh` verifies the complete checksum manifest, restores both PostgreSQL dumps into a network-isolated disposable Docker container, and copies the SQLite snapshot into a fresh temporary path for an independent integrity check. This proves archive readability in CI; it does not prove a live host backup, off-host copy, or a measured RPO/RTO.
+The Python Intelligence worker owns the `intelligence-state` named volume at `/var/lib/potapoff-intelligence/intelligence.sqlite3`; the Admin container mounts that same volume read-only. The backup invokes Python's SQLite online backup API inside `potapoff-intelligence`, runs `PRAGMA integrity_check`, requires application tables, and writes `intelligence.sqlite` into the same recovery set. A missing worker/database or failed snapshot rejects the entire backup. Do not substitute a filesystem copy of the live WAL database.
 
-If either PostgreSQL dump or the SQLite snapshot cannot be created and verified, deployment stops before migration.
+`verify-backup-restore.sh` verifies the complete checksum manifest, restores both PostgreSQL dumps into a network-isolated disposable Docker container, and independently restores/checks both `trade.db` and `intelligence.sqlite` in fresh temporary paths. This proves archive readability in CI; it does not prove a live host backup, off-host copy, or a measured RPO/RTO.
+
+If either PostgreSQL dump or either SQLite snapshot cannot be created and verified, deployment stops before migration.
 
 ## 6. Schema transition and service switch
 
@@ -223,7 +226,7 @@ cd /opt/potapoff-deploy/backups/<timestamp>
 sha256sum -c SHA256SUMS
 ```
 
-Product and Control Center dumps are PostgreSQL custom format and must be restored with `pg_restore` into the correct databases. The `trade.db` snapshot is a standalone SQLite database. Stop the frontend and every other writer to the `/app/data` mount before replacing it; verify the manifest and run `PRAGMA integrity_check` on the restored copy before starting the application. Keep the previous file quarantined until the application healthcheck passes. Never overwrite an open SQLite database or copy a live `trade.db` without the Online Backup API.
+Product and Control Center dumps are PostgreSQL custom format and must be restored with `pg_restore` into the correct databases. The `trade.db` snapshot is restored only after stopping the frontend and every writer to `/app/data`. The Python Intelligence `intelligence.sqlite` snapshot belongs to the shared `intelligence-state` volume: stop both `potapoff-intelligence` and `potapoff-admin` (the latter holds a read-only mount), identify the actual Compose volume name, restore the validated file to `/var/lib/potapoff-intelligence/intelligence.sqlite3` through a temporary container, preserve the volume's expected ownership, and run `PRAGMA integrity_check` before restarting either service. Do not assume the Compose volume's host path or restore over an open database. Keep the previous snapshots quarantined until service healthchecks pass. Never copy a live WAL-backed SQLite database as a substitute for Online Backup API.
 
 Database restore is a destructive emergency action; do not perform it merely because an application image rollback was needed.
 
@@ -235,7 +238,7 @@ Stop and do not merge/deploy when any of the following is true:
 - predeploy or Security Gates are red for an actual code/test step;
 - Alembic does not report a single merged head at `0021_twitter_run_singleton` or later reviewed head;
 - exact-SHA release images are absent;
-- product or admin PostgreSQL backup fails, `trade.db` is missing, or the SQLite integrity check fails;
+- product or admin PostgreSQL backup fails, `trade.db` or `intelligence.sqlite` is missing, or either SQLite integrity check fails;
 - `TWITTER_CRAWLER_ADMIN_KEY` is present in `.env.server` or differs between backend/admin server-only files;
 - Control Center cannot reach the protected crawler settings endpoint;
 - Twitter daemon does not stay running;

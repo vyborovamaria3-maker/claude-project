@@ -130,6 +130,36 @@ Until that approval, merging release-workflow corrections can still publish imag
 ## 8. SQLite recovery coverage delta — 2026-10-31 (draft PR #211)
 
 The earlier sections above describe the ARCH-02 baseline before the central
+POTAPoff bundle included SQLite recovery artifacts. The current PR #211 head
+`915f9092aaf72a2734943f693b9dd72103544700` includes both Blockchain
+`trade.db` and the separate Python Intelligence `intelligence.sqlite`.
+
+- `trade.db` is captured inside the frontend container with the
+  `better-sqlite3` Online Backup API while WAL writes are active.
+- `intelligence.sqlite` is captured inside `potapoff-intelligence` with
+  Python SQLite's online backup API from the shared `intelligence-state`
+  volume; Admin mounts that same volume read-only.
+- Both snapshots are integrity-checked, copied into the incomplete recovery
+  directory, included in the complete SHA256 manifest and required by the
+  restore verifier. Missing either source rejects the whole backup.
+- The synthetic rehearsal validates both snapshots, restores both to fresh
+  temporary destinations, rejects corruption in either artifact and fails
+  closed when either source container is absent. PostgreSQL product/Admin
+  dumps are restored into isolated PG16/PG17 test services.
+
+**CI evidence:** all 12 observed workflows passed on exact head
+`915f9092aaf72a2734943f693b9dd72103544700`, including ARCH-02, Security Gates,
+Full Backtest Audit and POTAPoff predeploy.
+
+**Evidence boundary:** this is disposable CI evidence only. No production
+server, live database, SSH secret or off-host backup was accessed. A real
+staging/production backup and timed restore remain NOT RUN, and RPO/RTO remain
+NOT MEASURED. ARCH-02 and issue #172 must stay OPEN until an accountable
+operator verifies the physical DB inventory, off-host copy and restore from an
+actual backup on trusted isolated infrastructure.
+
+
+The earlier sections above describe the ARCH-02 baseline before the central
 POTAPoff backup bundle included Blockchain SQLite. Do not read the historical
 statement that this script does not create Blockchain backups as a current
 description of the proposed branch.

@@ -10,7 +10,8 @@ document.
 | X PostgreSQL | X Collector | Tweets, authors, revisions, X graph, tasks | Outbox claim/ACK; bounded read-only AI source adapter |
 | Telegram PostgreSQL | TG Collector | Messages, edits, deletions, numeric peer IDs | Outbox claim/ACK; bounded read-only AI source adapter |
 | Solana SQLite trade.db | Blockchain collector | Wallet observations and local trades | SQLite leased Outbox; no inferred PnL |
-| Intelligence PostgreSQL | Intelligence | Inbox, Timeline, links, features, AI results, signals, backtests | Writer role for ETL, SELECT-only role for API |
+| Node Intelligence PostgreSQL | Node Intelligence | Inbox, Timeline, verified links, source evidence, features, signals and backtests | ETL writer role; API reader SELECT-only |
+| Python Intelligence SQLite | Python Intelligence worker | Normalized documents and durable jobs | Worker writes the shared `intelligence-state` volume; Admin mounts the same database read-only |
 | Legacy memecoin PostgreSQL | Memecoin app | Legacy analytics | Read-only compatibility, not a second cross-platform truth |
 | Admin DB | Admin site | Operator configuration and audit | Administrative observability only |
 
@@ -68,7 +69,8 @@ this status before any live operation.
 | Blockchain `trade.db` | Expected Compose mount `/app/data/trade.db`; host path depends on deploy directory | Central backup script now snapshots through SQLite Online Backup API and includes `trade.db` in `SHA256SUMS` | Synthetic WAL fixture + isolated integrity/restore check; real database NOT RUN | NOT ASSIGNED |
 | X Collector PostgreSQL | Local/remote physical instance NOT IDENTIFIED | Separate Windows backup helper; not part of the POTAPoff central bundle | Actual isolated restore NOT RUN | NOT ASSIGNED |
 | TG Collector PostgreSQL | Local/remote physical instance NOT IDENTIFIED | Separate TG backup/restore scripts; not part of the POTAPoff central bundle | CI disposable restore is distinct from any live restore | NOT ASSIGNED |
-| Intelligence PostgreSQL / SQLite | Backend selection and physical instance NOT VERIFIED | Must be inventoried from the actual deployment configuration before activation | NOT RUN | NOT ASSIGNED |
+| Node Intelligence PostgreSQL destination | Separate Node ETL/API destination; physical instance NOT IDENTIFIED | Not included in the central POTAPoff recovery bundle; separate backup/restore required | NOT RUN | NOT ASSIGNED |
+| Python Intelligence SQLite | Compose named volume `intelligence-state`; worker path `/var/lib/potapoff-intelligence/intelligence.sqlite3`; actual host mount NOT VERIFIED | Central bundle includes `intelligence.sqlite` via SQLite online backup and SHA256 manifest | Synthetic isolated restore/integrity/corruption/missing-source CI passed; live restore NOT RUN | NOT ASSIGNED |
 | Redis / RabbitMQ volumes | Expected Compose volumes; actual host not provisioned | Not included in the PostgreSQL/SQLite backup set | Recovery policy NOT VERIFIED | NOT ASSIGNED |
 
 ### Required evidence before production activation
@@ -80,8 +82,10 @@ this status before any live operation.
 - Run `docs/operations/postgres-effective-privileges.sql` with a read-only
   audit connection for each PostgreSQL instance. The query is observational;
   it does not grant, revoke or alter roles.
-- Verify X, TG and Intelligence stores independently. A successful
-  `trade.db` snapshot does not cover those stores.
+- The central bundle covers product/Admin PostgreSQL, Blockchain `trade.db`
+  and Python Intelligence `intelligence.sqlite`. It does **not** cover X/TG
+  PostgreSQL or the separate Node Intelligence PostgreSQL destination; those
+  still need independent backup and restore evidence.
 - Do not mark a backup as verified until its checksum, isolated restore and
   sample/schema assertions have been recorded against the exact source SHA.
 - Keep RPO/RTO as **NOT MEASURED** until an operator times a full restore from

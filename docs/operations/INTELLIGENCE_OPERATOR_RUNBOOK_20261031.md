@@ -48,7 +48,8 @@ volumes, deployed roles and actual connection targets remain NOT IDENTIFIED.
 | X PostgreSQL | X Collector | Source outbox claim/ACK lifecycle plus only required source reads | NOT IDENTIFIED |
 | Telegram PostgreSQL | TG Collector | Source outbox claim/ACK lifecycle plus only required source reads | NOT IDENTIFIED |
 | Blockchain `trade.db` | Blockchain collector | SQLite lease/ACK lifecycle on a verified local copy or approved DB | Expected Compose mount only; live host NOT VERIFIED |
-| Intelligence PostgreSQL | Intelligence | ETL writer; API reader should be SELECT-only | Backend selection / instance NOT VERIFIED |
+| Node Intelligence PostgreSQL | Node Intelligence | ETL writer; API reader should be SELECT-only | Separate destination; physical instance NOT VERIFIED |
+| Python Intelligence SQLite | Python Intelligence worker | Worker writer; Admin read-only mount | Shared `intelligence-state` volume; actual host mount NOT VERIFIED |
 | Admin / product PostgreSQL | Admin / POTAPoff | Dedicated application roles; no shared owner credentials | Production host not provisioned at last confirmation |
 
 Before assigning a host or connection, record one row per physical database:
@@ -170,30 +171,39 @@ weaken retry limits to make the queue appear healthy.
 
 ## 6. Backup and recovery
 
-The central POTAPoff backup bundle is being extended in this branch to include:
+The central POTAPoff backup bundle in PR #211 includes:
 
 - product PostgreSQL dump;
 - Control Center PostgreSQL dump;
 - `trade.db`, captured from the running frontend container using the SQLite
   Online Backup API so committed WAL pages are included;
+- Python Intelligence `intelligence.sqlite`, captured from
+  `potapoff-intelligence` using SQLite's online backup API from the shared
+  `intelligence-state` volume (also mounted read-only by Admin);
 - deployment and Control Center configuration files;
 - a SHA256 manifest over the complete recovery set.
 
 The updated isolated rehearsal validates the manifest, restores the two
-PostgreSQL dumps into a network-isolated temporary Docker container, restores
-the SQLite snapshot to a fresh temporary path, and rejects corruption. The CI
-fixture also keeps a SQLite writer open with a committed WAL row and asserts
-that the row appears in the snapshot.
+PostgreSQL dumps into network-isolated temporary PostgreSQL containers, restores
+both SQLite snapshots to fresh temporary paths, verifies integrity and
+synthetic row markers, rejects corruption in each artifact, and fails closed
+when either SQLite source container is missing. The trade.db fixture keeps a
+writer open with a committed WAL row and asserts that the row appears in the
+snapshot.
 
 This is synthetic evidence only. It does not prove that a real host has been
 backed up, that the backup was copied off-host, or that an actual production
-restore was timed. X Collector PostgreSQL, TG Collector PostgreSQL and any
-separate Intelligence store require independent backup and restore evidence;
-they are not silently covered by the POTAPoff product bundle.
+restore was timed. X Collector PostgreSQL, TG Collector PostgreSQL and the
+separate Node Intelligence PostgreSQL destination still require independent
+backup and restore evidence; they are not silently covered by the POTAPoff
+product bundle.
 
-Never copy a live `trade.db` file directly. Do not restore over an open
-database. Keep RPO and RTO as NOT MEASURED until a named operator completes a
-restore from an actual backup copy and records elapsed time and data coverage.
+Never copy a live `trade.db` or `intelligence.sqlite` file directly. Do not
+restore over an open database. The Python Intelligence SQLite volume is shared
+with the Admin container read-only, so both worker and Admin must be stopped
+before replacing it. Keep RPO and RTO as NOT MEASURED until a named operator
+completes a restore from an actual backup copy and records elapsed time and
+data coverage.
 
 ## 7. Activation gates
 
