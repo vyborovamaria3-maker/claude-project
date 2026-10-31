@@ -9,6 +9,8 @@ STAMP="$(date -u +%Y%m%d-%H%M%S)"
 FINAL_DEST="$BACKUP_ROOT/$STAMP"
 FRONTEND_CONTAINER=""
 SQLITE_CONTAINER_TMP=""
+INTELLIGENCE_CONTAINER=""
+INTELLIGENCE_SQLITE_CONTAINER_TMP=""
 
 install -d -m 0700 "$BACKUP_ROOT"
 chmod 0700 "$BACKUP_ROOT"
@@ -17,8 +19,11 @@ chmod 0700 "$BACKUP_ROOT"
 [[ ! -e "$FINAL_DEST" ]] || { echo "Backup timestamp already exists" >&2; exit 1; }
 DEST="$(mktemp -d "$BACKUP_ROOT/.incomplete-$STAMP.XXXXXX")"
 cleanup(){
-  if [[ -n "$SQLITE_CONTAINER_TMP" && -n "$FRONTEND_CONTAINER" ]]; then
+  if [[ -n "${SQLITE_CONTAINER_TMP:-}" && -n "${FRONTEND_CONTAINER:-}" ]]; then
     docker exec "$FRONTEND_CONTAINER" rm -f "$SQLITE_CONTAINER_TMP" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${INTELLIGENCE_SQLITE_CONTAINER_TMP:-}" && -n "${INTELLIGENCE_CONTAINER:-}" ]]; then
+    docker exec "$INTELLIGENCE_CONTAINER" rm -f "$INTELLIGENCE_SQLITE_CONTAINER_TMP" >/dev/null 2>&1 || true
   fi
   if [[ -n "$DEST" && -d "$DEST" ]]; then rm -rf -- "$DEST"; fi
 }
