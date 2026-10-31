@@ -64,6 +64,7 @@ Required deployment files live under `/opt/potapoff-deploy`:
 - `backend.env`
 - `docker-compose.production.yml`
 - `scripts/backup-production.sh`
+- `scripts/verify-backup-restore.sh`
 - `scripts/deploy-production.sh`
 - `scripts/healthcheck-production.sh`
 - `prometheus/prometheus.yml`
