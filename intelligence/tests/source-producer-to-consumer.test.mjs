@@ -130,7 +130,7 @@ test("actual X/TG mint verifiers and source emitters plus Blockchain revision em
     );
     await tgPool.query(
       "CREATE TABLE tg_messages(source_id BIGINT NOT NULL,message_id BIGINT NOT NULL,"+
-      "text TEXT NOT NULL,posted_at TIMESTAMPTZ,PRIMARY KEY(source_id,message_id))",
+      "text TEXT NOT NULL,posted_at TIMESTAMPTZ,edited_at TIMESTAMPTZ,PRIMARY KEY(source_id,message_id))",
     );
     await tgPool.query("INSERT INTO tg_sources(id,peer_id) VALUES(1,'123456789')");
 
@@ -314,13 +314,16 @@ test("actual X/TG mint verifiers and source emitters plus Blockchain revision em
     const xTombstoneTx=await xPool.connect();
     try{
       await xTombstoneTx.query("BEGIN");
+      const xEditedText="Edited PRIVATE X fixture text; literal mint "+mint;
       await xTombstoneTx.query(
         "UPDATE twitter_tweets SET text=$2 WHERE tweet_id=$1",
-        ["101","Edited PRIVATE X fixture text; literal mint "+mint],
+        ["101",xEditedText],
       );
       await emitXTokenLinksInvalidation(xTombstoneTx,{
         tweetId:"101",authorId:"999",reason:"edited",
-        sourceRevisionSha256:createHash("sha256").update("x-edited-revision").digest("hex"),
+        sourceRevisionSha256:createHash("sha256").update(JSON.stringify([
+          xEditedText,new Date(xPostedAt).toISOString(),
+        ])).digest("hex"),
         observedAt:new Date(Date.now()+2000),postedAt:new Date(xPostedAt),
       });
       await xTombstoneTx.query("COMMIT");
@@ -332,13 +335,17 @@ test("actual X/TG mint verifiers and source emitters plus Blockchain revision em
     const tgTombstoneTx=await tgPool.connect();
     try{
       await tgTombstoneTx.query("BEGIN");
+      const tgEditedText="Edited PRIVATE TG fixture text; literal mint "+mint;
+      const tgEditedAt=new Date(Date.now()+2000);
       await tgTombstoneTx.query(
-        "UPDATE tg_messages SET text=$3 WHERE source_id=$1 AND message_id=$2",
-        ["1",201,"Edited PRIVATE TG fixture text; literal mint "+mint],
+        "UPDATE tg_messages SET text=$3,edited_at=$4 WHERE source_id=$1 AND message_id=$2",
+        ["1",201,tgEditedText,tgEditedAt],
       );
       await emitTgTokenLinksInvalidation(tgTombstoneTx,"1",{
         messageId:201,reason:"edited",
-        sourceRevisionSha256:createHash("sha256").update("tg-edited-revision").digest("hex"),
+        sourceRevisionSha256:createHash("sha256").update(JSON.stringify([
+          tgEditedText,tgPostedAt.toISOString(),tgEditedAt.toISOString(),
+        ])).digest("hex"),
         observedAt:new Date(Date.now()+3000),postedAt:tgPostedAt,
       });
       await tgTombstoneTx.query("COMMIT");
