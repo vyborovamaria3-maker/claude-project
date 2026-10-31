@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import {randomBytes} from "node:crypto";
+import pg from "pg";
 import Database from "better-sqlite3";
-import {SQLITE_OUTBOX_DDL} from "@claude-project/event-outbox";
+import {SQLITE_OUTBOX_DDL,POSTGRES_OUTBOX_DDL} from "@claude-project/event-outbox";
 import {outboxStatus} from "../scripts/etl-connections.mjs";
 import {classifyOutboxHealth,parseArguments} from "../scripts/supervise.mjs";
 
@@ -43,18 +45,22 @@ test("SQLite outbox health is read-only and reports backlog, retry, DLQ and prog
 
 test("PostgreSQL health maps native timestamps and bigint counters without exposing payloads",async()=>{
   let calls=0;
-  const connection={query:async(sql)=>{
+  const connection={query:async(sql,params)=>{
     calls++;
     if(sql.includes("to_regclass"))return {rows:[{present:true}]};
+    assert.match(sql,/COALESCE\(\$1::timestamptz, statement_timestamp\(\)\)/);
+    assert.deepEqual(params,[now.toISOString()]);
     return {rows:[{
       pending:"3",ready:"2",leased:"1",retry_count:"2",retry_attempts_total:"6",
       retry_delayed:"1",dead_letter:"0",schema_version_skew_kinds:"1",
       oldest_pending_at:new Date("2026-10-30T19:40:00.000Z"),
       last_progress_at:new Date("2026-10-30T19:58:00.000Z"),max_attempts:"4",
+      measured_at:now,
     }]};
   }};
   const health=await outboxStatus({kind:"pg",connection},now);
   assert.equal(calls,2);
+  assert.equal(health.measuredAt,now.toISOString());
   assert.equal(health.pending,3);
   assert.equal(health.ready,2);
   assert.equal(health.leased,1);
@@ -67,6 +73,63 @@ test("PostgreSQL health maps native timestamps and bigint counters without expos
   assert.equal(health.lastProgressAgeMs,120000);
   assert.equal(health.maxAttempts,4);
   assert.equal(JSON.stringify(health).includes("payload"),false);
+});
+
+const postgresUrl=process.env.INTELLIGENCE_TEST_DB_URL;
+test("PostgreSQL health uses the database clock when the application host is one minute behind",{
+  skip:!postgresUrl,
+},async()=>{
+  const schema="health_clock_"+randomBytes(6).toString("hex");
+  const admin=new pg.Client({connectionString:postgresUrl});
+  let pool;
+  let schemaCreated=false;
+  await admin.connect();
+  try{
+    await admin.query('CREATE SCHEMA "'+schema+'"');
+    schemaCreated=true;
+    pool=new pg.Pool({
+      connectionString:postgresUrl,
+      options:"-c search_path="+schema,
+      max:2,
+    });
+    await pool.query(POSTGRES_OUTBOX_DDL);
+    await pool.query(`INSERT INTO outbox_events
+      (source_system,event_kind,event_key,schema_version,payload)
+      VALUES ('x','tweet_observed','clock-skew','v1','{}'::jsonb)`);
+    await pool.query(`UPDATE outbox_events SET
+      created_at=statement_timestamp()-interval '5 minutes 30 seconds',
+      next_attempt_at=statement_timestamp()-interval '30 seconds'`);
+
+    const NativeDate=globalThis.Date;
+    class SkewedDate extends NativeDate{
+      constructor(...args){
+        if(args.length===0)super(NativeDate.now()-60_000);
+        else super(...args);
+      }
+      static now(){return NativeDate.now()-60_000;}
+    }
+    globalThis.Date=SkewedDate;
+    let health;
+    try{
+      health=await outboxStatus({kind:"pg",connection:pool});
+    }finally{
+      globalThis.Date=NativeDate;
+    }
+
+    assert.equal(health.pending,1);
+    assert.equal(health.ready,1,"DB time must classify a due event as ready despite host clock skew");
+    assert.ok(health.oldestPendingAgeMs>=330_000&&health.oldestPendingAgeMs<360_000,
+      "oldest-pending age must be calculated from the PostgreSQL observation time");
+    assert.deepEqual(classifyOutboxHealth(health,{
+      alertOldestPendingMs:300_000,maxFailures:5,
+    }),["oldest_pending_age_exceeded"]);
+  }finally{
+    await pool?.end();
+    if(schemaCreated){
+      try{await admin.query('DROP SCHEMA IF EXISTS "'+schema+'" CASCADE')}catch{}
+    }
+    await admin.end();
+  }
 });
 
 test("health alerts use conservative configurable thresholds and remain machine-readable",()=>{
