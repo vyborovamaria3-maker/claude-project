@@ -10,7 +10,8 @@ document.
 | X PostgreSQL | X Collector | Tweets, authors, revisions, X graph, tasks | Outbox claim/ACK; bounded read-only AI source adapter |
 | Telegram PostgreSQL | TG Collector | Messages, edits, deletions, numeric peer IDs | Outbox claim/ACK; bounded read-only AI source adapter |
 | Solana SQLite trade.db | Blockchain collector | Wallet observations and local trades | SQLite leased Outbox; no inferred PnL |
-| Intelligence PostgreSQL | Intelligence | Inbox, Timeline, links, features, AI results, signals, backtests | Writer role for ETL, SELECT-only role for API |
+| Python Intelligence SQLite | Python Intelligence worker | Local Python runtime state in the `intelligence-state` volume | Admin mounts read-only; central backup uses SQLite Online Backup API |
+| Node Intelligence PostgreSQL | Node cross-source Intelligence | Inbox, Timeline, links, features, AI results, signals, backtests | Writer role for ETL, SELECT-only role for API |
 | Legacy memecoin PostgreSQL | Memecoin app | Legacy analytics | Read-only compatibility, not a second cross-platform truth |
 | Admin DB | Admin site | Operator configuration and audit | Administrative observability only |
 
@@ -68,7 +69,8 @@ this status before any live operation.
 | Blockchain `trade.db` | Expected Compose mount `/app/data/trade.db`; host path depends on deploy directory | Central backup script now snapshots through SQLite Online Backup API and includes `trade.db` in `SHA256SUMS` | Synthetic WAL fixture + isolated integrity/restore check; real database NOT RUN | NOT ASSIGNED |
 | X Collector PostgreSQL | Local/remote physical instance NOT IDENTIFIED | Separate Windows backup helper; not part of the POTAPoff central bundle | Actual isolated restore NOT RUN | NOT ASSIGNED |
 | TG Collector PostgreSQL | Local/remote physical instance NOT IDENTIFIED | Separate TG backup/restore scripts; not part of the POTAPoff central bundle | CI disposable restore is distinct from any live restore | NOT ASSIGNED |
-| Intelligence PostgreSQL / SQLite | Backend selection and physical instance NOT VERIFIED | Must be inventoried from the actual deployment configuration before activation | NOT RUN | NOT ASSIGNED |
+| Python Intelligence SQLite | Compose service `potapoff-intelligence`; expected named volume `intelligence-state`, file `/var/lib/potapoff-intelligence/intelligence.sqlite3`; live host NOT VERIFIED | Central bundle: `intelligence.sqlite`, created with SQLite Online Backup API and included in `SHA256SUMS` | Synthetic worker-volume fixture + isolated integrity/restore check; real database NOT RUN | NOT ASSIGNED |
+| Node cross-source Intelligence PostgreSQL | `INTELLIGENCE_DATABASE_URL`; physical target NOT IDENTIFIED | No verified production backup job/schedule in this repository | Synthetic custom-format dump/restore only; production restore NOT RUN | NOT ASSIGNED |
 | Redis / RabbitMQ volumes | Expected Compose volumes; actual host not provisioned | Not included in the PostgreSQL/SQLite backup set | Recovery policy NOT VERIFIED | NOT ASSIGNED |
 
 ### Required evidence before production activation
