@@ -13,12 +13,13 @@ restore_db="${INTELLIGENCE_RESTORE_DB_NAME:-intelligence_restore_ci}"
   echo "Invalid disposable restore database name" >&2
   exit 2
 }
+restore_container="intelligence-pg-restore-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
 
 archive="$(mktemp)"
 toc="${archive}.toc"
 corrupt="${archive}.corrupt"
 cleanup(){
-  dropdb --if-exists "$restore_db" >/dev/null 2>&1 || true
+  docker rm -f "$restore_container" >/dev/null 2>&1 || true
   psql "$INTELLIGENCE_TEST_DB_URL" -v ON_ERROR_STOP=1 -q \
     -c "DROP SCHEMA IF EXISTS backup_restore_probe CASCADE" >/dev/null 2>&1 || true
   rm -f -- "$archive" "$toc" "$corrupt"
@@ -28,8 +29,7 @@ trap cleanup EXIT
 command -v psql >/dev/null
 command -v pg_dump >/dev/null
 command -v pg_restore >/dev/null
-command -v createdb >/dev/null
-command -v dropdb >/dev/null
+command -v docker >/dev/null
 
 # A deterministic marker is written only to this disposable CI database.
 psql "$INTELLIGENCE_TEST_DB_URL" -v ON_ERROR_STOP=1 -q <<'SQL'
@@ -49,13 +49,27 @@ pg_dump --dbname="$INTELLIGENCE_TEST_DB_URL" \
 pg_restore --list "$archive" > "$toc"
 [[ -s "$toc" ]]
 
-dropdb --if-exists "$restore_db"
-createdb "$restore_db"
-pg_restore --dbname="$restore_db" --no-owner --no-privileges \
-  --exit-on-error --single-transaction "$archive"
+# pg_dump may be newer than the PostgreSQL 16 source service. Restore into
+# the matching PostgreSQL 17 disposable target so pg_restore never sends
+# version-specific settings (for example transaction_timeout) to PG16.
+docker run -d --rm --network none --name "$restore_container" \
+  -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17-alpine >/dev/null
+ready=0
+for i in $(seq 1 45); do
+  if docker exec "$restore_container" pg_isready -U postgres >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  sleep 1
+done
+[[ "$ready" = 1 ]] || { echo "Disposable PostgreSQL 17 restore target failed to start" >&2; exit 1; }
+docker exec "$restore_container" createdb -U postgres "$restore_db"
+docker exec -i "$restore_container" pg_restore -U postgres -d "$restore_db" \
+  --no-owner --no-privileges --exit-on-error --single-transaction < "$archive"
 
 restored="$(
-  PGDATABASE="$restore_db" psql -X -Atq -v ON_ERROR_STOP=1 \
+  docker exec "$restore_container" psql -U postgres -d "$restore_db" -X -Atq \
+    -v ON_ERROR_STOP=1 \
     -c "SELECT marker FROM backup_restore_probe.recovery_marker WHERE id=1"
 )"
 [[ "$restored" == "node-intelligence-ci-fixture" ]] || {
