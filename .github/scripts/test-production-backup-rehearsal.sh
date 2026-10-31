@@ -209,8 +209,12 @@ docker run --rm --network none --read-only --pids-limit 32 \
   --tmpfs /tmp:size=16m,mode=1777 \
   --mount "type=bind,src=$backup,dst=/backup,readonly" \
   python:3.12-alpine python -c '
+import shutil
 import sqlite3
-source = sqlite3.connect("file:/backup/intelligence.sqlite?mode=ro", uri=True)
+# A WAL-mode SQLite snapshot may need a writable directory for its shared
+# memory sidecar even when the database connection itself is read-only.
+shutil.copy2("/backup/intelligence.sqlite", "/tmp/intelligence-source.sqlite")
+source = sqlite3.connect("file:/tmp/intelligence-source.sqlite?mode=ro", uri=True)
 target = sqlite3.connect("/tmp/intelligence-restored.sqlite")
 try:
     source.backup(target)
@@ -227,7 +231,7 @@ finally:
 
 bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" |
   grep -Fq 'BACKUP_RESTORE_REHEARSAL_OK'
-echo "SYNTHETIC_RESTORE_TEST_OK product_pg admin_pg sqlite_wal"
+echo "SYNTHETIC_RESTORE_TEST_OK product_pg admin_pg blockchain_sqlite_wal intelligence_sqlite_wal"
 
 # Corruption of either database family must invalidate the whole recovery set.
 cp "$backup/postgres.dump" "$scratch/postgres.dump.original"
