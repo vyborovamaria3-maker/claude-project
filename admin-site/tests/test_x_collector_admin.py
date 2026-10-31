@@ -179,7 +179,7 @@ class CollectorApiTest(unittest.TestCase):
         with connection_patch, metadata_patch:
             response = self.client.post(
                 '/api/x-collector/tables/feature_flags',
-                json={'confirm': True, 'values': {'name': 'new.flag', 'enabled': False, 'updated_at': 1}},
+                json={'confirm': True, 'values': {'name': 'new.flag', 'enabled': False}},
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual([event['success'] for event in self.events], [True])
