@@ -372,7 +372,7 @@ def assert_runtime_restricted() -> None:
     with psycopg.connect(MIGRATE) as db:
         db.execute(
             "ALTER TABLE public.feature_flags "
-            "ADD CONSTRAINT suspicious_ci_check CHECK (char_length(name) < 5)"
+            "ADD CONSTRAINT suspicious_ci_check CHECK (char_length(name) < 5) NOT VALID"
         )
     try:
         verify_preprovisioned_schema(RUNTIME)
