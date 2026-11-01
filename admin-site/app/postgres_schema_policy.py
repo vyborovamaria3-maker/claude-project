@@ -39,6 +39,90 @@ INDEXES = (
 )
 
 
+
+# Versioned contract for the exact schema produced by the five legacy Admin
+# store constructors. All columns are checked, including nullability, primary
+# keys and index definitions; adding a store must update this contract.
+# PostgreSQL format_type() uses 'timestamp with time zone' for TIMESTAMPTZ.
+_T = "timestamp with time zone"
+SCHEMA_COLUMNS = {
+    "admin_audit": (
+        ("id", "bigint", True), ("created_at", _T, True),
+        ("username", "text", False), ("ip_address", "text", False),
+        ("action", "text", True), ("resource", "text", False),
+        ("success", "boolean", True), ("details_json", "jsonb", True),
+    ),
+    "revoked_admin_sessions": (
+        ("nonce", "text", True), ("expires_at", "bigint", True),
+        ("revoked_at", _T, True),
+    ),
+    "feature_flags": (
+        ("name", "text", True), ("enabled", "boolean", True),
+        ("description", "text", True), ("updated_by", "text", False),
+        ("updated_at", _T, True),
+    ),
+    "alerts": (
+        ("id", "bigint", True), ("level", "text", True),
+        ("title", "text", True), ("message", "text", True),
+        ("source", "text", True), ("status", "text", True),
+        ("created_at", _T, True), ("acknowledged_at", _T, False),
+        ("acknowledged_by", "text", False),
+    ),
+    "analysis_parameter_overrides": (
+        ("domain", "text", True), ("key", "text", True),
+        ("enabled", "integer", True), ("threshold", "text", True),
+        ("label", "text", False), ("source", "text", False),
+        ("value_type", "text", False), ("scale", "text", False),
+        ("description", "text", False), ("custom", "integer", True),
+        ("deleted", "integer", True), ("updated_by", "text", False),
+        ("updated_at", "text", True),
+    ),
+    "admin_background_tasks": (
+        ("id", "text", True), ("kind", "text", True),
+        ("owner", "text", True), ("state", "text", True),
+        ("payload_json", "jsonb", True), ("result_json", "jsonb", False),
+        ("error", "text", False), ("created_at", _T, True),
+        ("started_at", _T, False), ("finished_at", _T, False),
+        ("lease_owner", "text", False), ("lease_expires_at", _T, False),
+    ),
+    "admin_security_sessions": (
+        ("nonce", "text", True), ("username", "text", True),
+        ("issued_at", "bigint", True), ("expires_at", "bigint", True),
+        ("last_seen_at", "bigint", True), ("mfa_verified_at", "bigint", False),
+        ("reauth_until", "bigint", False), ("ip_hash", "text", False),
+        ("user_agent_hash", "text", False),
+    ),
+}
+PRIMARY_KEYS = {
+    "admin_audit": ("id",),
+    "revoked_admin_sessions": ("nonce",),
+    "feature_flags": ("name",),
+    "alerts": ("id",),
+    "analysis_parameter_overrides": ("domain", "key"),
+    "admin_background_tasks": ("id",),
+    "admin_security_sessions": ("nonce",),
+}
+# (owning table, index key expressions, optional partial predicate)
+INDEX_CONTRACT = {
+    "ix_admin_audit_created": ("admin_audit", ("created_at DESC",), None),
+    "ix_admin_audit_action_created": ("admin_audit", ("action", "created_at DESC"), None),
+    "ix_revoked_admin_sessions_expires": ("revoked_admin_sessions", ("expires_at",), None),
+    "ix_alerts_status_created": ("alerts", ("status", "created_at DESC"), None),
+    "ix_alerts_created": ("alerts", ("created_at DESC",), None),
+    "ix_analysis_overrides_domain": ("analysis_parameter_overrides", ("domain", "deleted", "enabled"), None),
+    "ix_analysis_overrides_active": ("analysis_parameter_overrides", ("domain", "key"), "deleted = 0"),
+    "ix_admin_tasks_claim": ("admin_background_tasks", ("state", "created_at"), None),
+    "ix_admin_tasks_owner_created": ("admin_background_tasks", ("owner", "created_at DESC"), None),
+    "ix_admin_security_sessions_expires": ("admin_security_sessions", ("expires_at",), None),
+    "ix_admin_security_sessions_user_expires": ("admin_security_sessions", ("username", "expires_at DESC"), None),
+}
+
+
+def _normal_sql(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return " ".join(value.lower().replace("(", " ").replace(")", " ").split())
+
 def preprovisioned_schema_enabled() -> bool:
     value = os.getenv("ADMIN_PG_SCHEMA_MODE", "legacy").strip().lower()
     if value not in {"legacy", "preprovisioned"}:
@@ -91,6 +175,19 @@ def verify_preprovisioned_schema(dsn: str) -> None:
             rights = cur.fetchone()
             if not rights or rights != (True, False):
                 raise RuntimeError("Admin runtime must have USAGE but not CREATE on public schema")
+            # Explicitly scan every non-system schema: a login with CREATE
+            # on an auxiliary schema can still issue DDL despite lacking
+            # CREATE on public and at the database level.
+            cur.execute(
+                "SELECT n.nspname, has_schema_privilege(current_user,n.oid,'CREATE'), "
+                "pg_has_role(n.nspowner,'MEMBER') "
+                "FROM pg_namespace n WHERE n.nspname <> 'information_schema' "
+                "AND n.nspname NOT LIKE 'pg_%'"
+            )
+            for schema, can_create, owner_member in cur.fetchall():
+                if can_create or owner_member:
+                    raise RuntimeError(f"Admin runtime has DDL privileges in schema: {schema}")
+
             cur.execute(
                 "SELECT has_database_privilege(current_user, current_database(), 'CONNECT'), "
                 "has_database_privilege(current_user, current_database(), 'CREATE'), "
@@ -144,6 +241,40 @@ def verify_preprovisioned_schema(dsn: str) -> None:
                 elif not all(dml):
                     raise RuntimeError(f"Admin runtime DML privilege missing for {name}")
 
+            # Reject a damaged/old schema that happens to reuse correct
+            # table names. Compare every application column's type/nullability
+            # and the ordered PK columns from real PostgreSQL catalogs.
+            cur.execute(
+                "SELECT c.relname, a.attname, "
+                "format_type(a.atttypid,a.atttypmod), a.attnotnull "
+                "FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "JOIN pg_attribute a ON a.attrelid=c.oid "
+                "WHERE n.nspname='public' AND c.relname=ANY(%s) "
+                "AND a.attnum>0 AND NOT a.attisdropped "
+                "ORDER BY c.relname,a.attnum",
+                (list(SCHEMA_COLUMNS),),
+            )
+            schema_columns = {name: [] for name in SCHEMA_COLUMNS}
+            for table, name, typ, notnull in cur.fetchall():
+                schema_columns[table].append((name, typ, notnull))
+            if {name: tuple(cols) for name, cols in schema_columns.items()} != SCHEMA_COLUMNS:
+                raise RuntimeError("Admin preprovisioned schema column contract mismatch")
+
+            cur.execute(
+                "SELECT c.relname, array_agg(a.attname ORDER BY k.ord) "
+                "FROM pg_constraint con "
+                "JOIN pg_class c ON c.oid=con.conrelid "
+                "JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS k(attnum,ord) ON true "
+                "JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum=k.attnum "
+                "WHERE con.contype='p' AND n.nspname='public' AND c.relname=ANY(%s) "
+                "GROUP BY c.relname",
+                (list(PRIMARY_KEYS),),
+            )
+            keys = {name: tuple(cols) for name, cols in cur.fetchall()}
+            if keys != PRIMARY_KEYS:
+                raise RuntimeError("Admin preprovisioned schema primary-key contract mismatch")
+
             cur.execute(
                 "SELECT c.relname, c.relkind FROM pg_class c "
                 "JOIN pg_namespace n ON n.oid=c.relnamespace "
@@ -151,8 +282,34 @@ def verify_preprovisioned_schema(dsn: str) -> None:
                 (list(INDEXES),),
             )
             actual_indexes = {name for name, kind in cur.fetchall() if kind in ("i", "I")}
-            if actual_indexes != set(INDEXES):
+            if actual_indexes != set(INDEX_CONTRACT):
                 raise RuntimeError("Admin preprovisioned schema is missing required indexes")
+            # An identically named index on the wrong table or on different
+            # columns must never satisfy the preflight gate.
+            cur.execute(
+                "SELECT idx.relname, tbl.relname, am.amname, "
+                "i.indisunique, i.indisvalid, i.indisready, "
+                "pg_get_expr(i.indpred,i.indrelid), "
+                "ARRAY(SELECT pg_get_indexdef(idx.oid,k,true) "
+                "FROM generate_series(1,i.indnkeyatts) k ORDER BY k) "
+                "FROM pg_class idx "
+                "JOIN pg_index i ON i.indexrelid=idx.oid "
+                "JOIN pg_class tbl ON tbl.oid=i.indrelid "
+                "JOIN pg_namespace n ON n.oid=idx.relnamespace "
+                "JOIN pg_am am ON am.oid=idx.relam "
+                "WHERE n.nspname='public' AND idx.relname=ANY(%s)",
+                (list(INDEX_CONTRACT),),
+            )
+            for name, table, method, unique, valid, ready, pred, exprs in cur.fetchall():
+                expected_table, expected_exprs, expected_pred = INDEX_CONTRACT[name]
+                if (
+                    table != expected_table or method != "btree"
+                    or unique or not valid or not ready
+                    or tuple(_normal_sql(x) for x in exprs)
+                    != tuple(_normal_sql(x) for x in expected_exprs)
+                    or _normal_sql(pred) != _normal_sql(expected_pred)
+                ):
+                    raise RuntimeError(f"Admin preprovisioned schema index definition mismatch: {name}")
 
             cur.execute(
                 "SELECT c.relname, pg_get_userbyid(c.relowner), "
