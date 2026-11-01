@@ -5,6 +5,11 @@ umask 077
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/potapoff-deploy}"
 BACKUP_ROOT="${BACKUP_ROOT:-$DEPLOY_DIR/backups}"
 ADMIN_DIR="${ADMIN_DIR:-/opt/claude-project/admin-site}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+ROLE_FINGERPRINT_SQL="$SCRIPT_DIR/postgres-role-restoration-fingerprint.sql"
+[[ -s "$ROLE_FINGERPRINT_SQL" ]] || {
+  echo "Missing role/ACL fingerprint SQL next to backup script" >&2; exit 1;
+}
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
 FINAL_DEST="$BACKUP_ROOT/$STAMP"
 FRONTEND_CONTAINER=""
@@ -67,6 +72,16 @@ docker exec "$POSTGRES_CONTAINER" \
 test -s "$DEST/postgres.dump"
 # CRC/TOC parse detects truncated dump archives before declaring success.
 docker exec -i "$POSTGRES_CONTAINER" pg_restore --list < "$DEST/postgres.dump" >/dev/null
+# Preserve non-secret global role declarations and an exact catalog fingerprint
+# for full owner/ACL restore in an offline, disconnected container.
+docker exec "$POSTGRES_CONTAINER" pg_dumpall -U potapoff \
+  --globals-only --no-role-passwords > "$DEST/postgres-roles.sql"
+test -s "$DEST/postgres-roles.sql"
+docker exec -i "$POSTGRES_CONTAINER" \
+  psql -X -A -t -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
+  < "$ROLE_FINGERPRINT_SQL" > "$DEST/postgres-role-fingerprint.txt"
+test -s "$DEST/postgres-role-fingerprint.txt"
+
 
 ADMIN_POSTGRES_CONTAINER="$(
   docker ps \
@@ -85,6 +100,14 @@ docker exec "$ADMIN_POSTGRES_CONTAINER" \
 
 test -s "$DEST/admin-postgres.dump"
 docker exec -i "$ADMIN_POSTGRES_CONTAINER" pg_restore --list < "$DEST/admin-postgres.dump" >/dev/null
+docker exec "$ADMIN_POSTGRES_CONTAINER" pg_dumpall -U potapoff_admin \
+  --globals-only --no-role-passwords > "$DEST/admin-postgres-roles.sql"
+test -s "$DEST/admin-postgres-roles.sql"
+docker exec -i "$ADMIN_POSTGRES_CONTAINER" \
+  psql -X -A -t -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
+  < "$ROLE_FINGERPRINT_SQL" > "$DEST/admin-postgres-role-fingerprint.txt"
+test -s "$DEST/admin-postgres-role-fingerprint.txt"
+
 
 # trade.db is mounted into the frontend container at /app/data/trade.db.
 # Use better-sqlite3's Online Backup API inside that container: a plain cp of
