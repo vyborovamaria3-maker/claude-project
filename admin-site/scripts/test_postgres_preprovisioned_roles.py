@@ -103,6 +103,10 @@ def bootstrap_schema_under_migration_owner() -> None:
             "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public "
             "TO admin_ci_runtime"
         )
+        # Keep audit history immutable to the live application login.
+        db.execute(
+            "REVOKE UPDATE, DELETE ON TABLE public.admin_audit FROM admin_ci_runtime"
+        )
         db.execute(
             "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public "
             "TO admin_ci_runtime"
@@ -114,6 +118,8 @@ def assert_runtime_restricted() -> None:
         for bad_sql in (
             "CREATE TABLE public.forbidden_runtime_table(id int)",
             "ALTER TABLE public.feature_flags ADD COLUMN forbidden_runtime_column text",
+            "UPDATE public.admin_audit SET action='tampered'",
+            "DELETE FROM public.admin_audit",
             "CREATE ROLE forbidden_admin_role LOGIN",
         ):
             try:
@@ -125,6 +131,20 @@ def assert_runtime_restricted() -> None:
                 raise AssertionError(f"Restricted runtime unexpectedly accepted {bad_sql}")
 
     os.environ["ADMIN_PG_SCHEMA_MODE"] = "preprovisioned"
+    verify_preprovisioned_schema(RUNTIME)
+
+    # A mistaken audit UPDATE grant must fail startup verification as well.
+    with psycopg.connect(MIGRATE) as db:
+        db.execute("GRANT UPDATE ON TABLE public.admin_audit TO admin_ci_runtime")
+    try:
+        verify_preprovisioned_schema(RUNTIME)
+    except RuntimeError as exc:
+        assert "append-only" in str(exc).lower(), str(exc)
+    else:
+        raise AssertionError("Writable audit history unexpectedly accepted")
+    finally:
+        with psycopg.connect(MIGRATE) as db:
+            db.execute("REVOKE UPDATE ON TABLE public.admin_audit FROM admin_ci_runtime")
     verify_preprovisioned_schema(RUNTIME)
 
     # A runtime account can be a non-INHERITING member of the schema-owner
