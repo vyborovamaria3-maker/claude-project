@@ -79,9 +79,9 @@ fetch a private real backup or certify encryption.
 
 ### Command: local-only verification (operator runs; not run by CI)
 
-Only after independent approval and capacity checks, from the exact reviewed
-checkout with adjacent
-`solana-launcher/scripts/postgres-role-restoration-fingerprint.sql`:
+Only after independent approval and capacity checks, from the **clean exact reviewed Git checkout** with adjacent
+`solana-launcher/scripts/postgres-role-restoration-fingerprint.sql`.
+The wrapper now requires that `--code-sha` equal this checkout's actual `HEAD` and that its tracked wrapper, verifier and fingerprint SQL have **no local modifications**. It fails closed for an absent Git checkout, a mismatched SHA, or changed/untracked verifier code:
 
 ```bash
 mkdir -p -m 0700 /isolated/private-recovery-evidence
