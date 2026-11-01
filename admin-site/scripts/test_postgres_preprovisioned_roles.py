@@ -229,7 +229,12 @@ def assert_runtime_restricted() -> None:
         try:
             verify_preprovisioned_schema(RUNTIME)
         except RuntimeError as exc:
-            assert "ownership" in str(exc).lower(), str(exc)
+            # The migration identity owns both the fixture database and
+            # application tables; either early gate must reject SET ROLE.
+            assert (
+                "ownership" in str(exc).lower()
+                or "database-level" in str(exc).lower()
+            ), str(exc)
         else:
             raise AssertionError("SET-only migration-role membership was not rejected")
     finally:
