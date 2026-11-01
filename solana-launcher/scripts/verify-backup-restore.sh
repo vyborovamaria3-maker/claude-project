@@ -203,6 +203,33 @@ for source in postgres admin-postgres; do
     echo "Restored database has no application tables: $source" >&2
     exit 1
   fi
+  # Semantic recovery gates: a dump containing only an unrelated table
+  # must never pass as a restored POTAPoff/Admin database. This is checked
+  # AFTER restore against the actual database, not just the pg_restore TOC.
+  if [[ "$source" == postgres ]]; then
+    ledger="$(docker exec "$container" psql -h 127.0.0.1 -U postgres \
+      -d "$db" -X -Atq -v ON_ERROR_STOP=1 \
+      -c "SELECT count(*) FROM public.alembic_version WHERE version_num <> ''")" || {
+        echo "Product Alembic migration ledger is missing" >&2; exit 1;
+      }
+    [[ "$ledger" =~ ^[1-9][0-9]*$ ]] || {
+      echo "Restored product Alembic ledger is empty" >&2; exit 1;
+    }
+  else
+    schema_contract="$(docker exec "$container" psql -h 127.0.0.1 -U postgres \
+      -d "$db" -X -Atq -v ON_ERROR_STOP=1 -c "
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND (
+        (table_name='admin_audit' AND column_name IN ('id','action')) OR
+        (table_name='feature_flags' AND column_name IN ('name','enabled')) OR
+        (table_name='admin_background_tasks' AND column_name IN ('id','state')) OR
+        (table_name='admin_security_sessions' AND column_name IN ('nonce','username'))
+       )")"
+    [[ "$schema_contract" == 8 ]] || {
+      echo "Restored Admin database lacks critical application schema" >&2
+      exit 1
+    }
+  fi
   echo "DISPOSABLE_PG_RESTORE_OK source=$source tables=$tables"
 done
 # Owner/ACL fidelity is a DIFFERENT gate from the data-only restore above.
