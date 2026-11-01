@@ -41,3 +41,24 @@ jobs:
             echo 'Offline recovery wrapper unexpectedly accepted missing operator approval' >&2
             exit 1
           fi
+
+      - name: Reject mismatched offline recovery code SHA before touching backup data
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          scratch="$(mktemp -d)"
+          trap 'rm -rf -- "$scratch"' EXIT
+          mkdir -p "$scratch/backup" "$scratch/evidence"
+          printf 'fixture-manifest\\n' > "$scratch/backup/SHA256SUMS"
+          digest="$(sha256sum "$scratch/backup/SHA256SUMS" | cut -d ' ' -f1)"
+          if bash solana-launcher/scripts/run-offhost-recovery-evidence.sh \
+              --backup-dir "$scratch/backup" \
+              --evidence-dir "$scratch/evidence" \
+              --code-sha 0000000000000000000000000000000000000000 \
+              --expected-manifest-sha256 "$digest" \
+              --ticket-id ci-code-mismatch \
+              --confirm-isolated-offhost > "$scratch/denied.log" 2>&1; then
+            echo 'Recovery evidence accepted a mismatched reviewed code SHA' >&2
+            exit 1
+          fi
+          grep -Fq 'Requested recovery code SHA does not match checked-out HEAD' "$scratch/denied.log"
