@@ -4,6 +4,8 @@
 
 This is the PostgreSQL X collector from fixed_project.zip, integrated as an isolated subsystem. It does not replace the existing SQLite collector inside solana-launcher.
 
+The optional historical blockchain evidence importer and adapter in this subsystem are **Solana-only**. New Ethereum/Bitcoin imports are rejected before database writes. Existing legacy rows are preserved and are not exposed as supported networks by the current registry.
+
 ## Migration chain and provenance
 
 The active migration manifest currently ends at `045_collector_trace.sql`. Numeric prefixes are not the execution order: the repository intentionally contains duplicate prefixes (`012`, `013`, `014`, and `036`) and explicit gaps. `lib/trade/migrations.ts` is the single ordered manifest; never infer migration order from the numeric prefix alone. `003_performance.sql` is an additive reconstruction, not the recovered original: it indexes `twitter_tweets.first_seen_at`, `tweet_token_links.linked_at`, terminal `x_tasks.created_at`, and terminal `scrape_runs.started_at`. These columns are defined by 001/002. Do not substitute the similarly named memecoin-intelligence migration. Apply the active manifest to a disposable dedicated PostgreSQL database before deployment; a file's presence does not prove it has been applied to your database. `npm run migrate -- --status` reports recorded migration state. The runner validates the chain and prevents concurrent migration runs.
