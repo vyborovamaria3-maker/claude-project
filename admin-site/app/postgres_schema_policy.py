@@ -73,7 +73,8 @@ def verify_preprovisioned_schema(dsn: str) -> None:
 
             cur.execute(
                 "SELECT c.relname, c.relkind, "
-                "pg_get_userbyid(c.relowner), c.relrowsecurity, c.relforcerowsecurity, "
+                "pg_get_userbyid(c.relowner), pg_has_role(c.relowner, 'MEMBER'), "
+                "c.relrowsecurity, c.relforcerowsecurity, "
                 "has_table_privilege(current_user, c.oid, 'SELECT'), "
                 "has_table_privilege(current_user, c.oid, 'INSERT'), "
                 "has_table_privilege(current_user, c.oid, 'UPDATE'), "
@@ -85,8 +86,10 @@ def verify_preprovisioned_schema(dsn: str) -> None:
             rows = {row[0]: row for row in cur.fetchall()}
             if set(rows) != set(TABLES):
                 raise RuntimeError("Admin preprovisioned schema is missing required tables")
-            for name, kind, owner, rls, forced_rls, *privileges in rows.values():
-                if kind not in ("r", "p") or owner == db.info.user or rls or forced_rls:
+            for name, kind, owner, member_of_owner, rls, forced_rls, *privileges in rows.values():
+                # A non-inheriting membership can still SET ROLE to the table
+                # owner and execute DDL, despite current_user not owning it.
+                if kind not in ("r", "p") or owner == db.info.user or member_of_owner or rls or forced_rls:
                     raise RuntimeError(f"Admin schema ownership/RLS gate failed for {name}")
                 if not all(privileges):
                     raise RuntimeError(f"Admin runtime DML privilege missing for {name}")
