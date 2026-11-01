@@ -3,12 +3,12 @@ import assert from "node:assert/strict";
 import { normalizeTarget } from "../src/analytics/normalize.js";
 import { extractLinks } from "../src/analytics/extract.js";
 
-test("EVM address is canonical regardless of casing and refuses truncation", () => {
+test("legacy EVM addresses are rejected by Solana-only normalization", () => {
   const raw = "0x" + "aBcD".repeat(10);
-  assert.equal(normalizeTarget("evm_address",raw), "0x"+"abcd".repeat(10));
-  assert.equal(normalizeTarget("evm_address",raw.toLowerCase()),"0x"+"abcd".repeat(10));
-  assert.equal(normalizeTarget("evm_address","0xabcd..."),null);
-  assert.equal(normalizeTarget("evm_address","abcd".repeat(10)),null);
+  assert.equal(normalizeTarget("solana_address",raw), null);
+  assert.equal(normalizeTarget("solana_address",raw.toLowerCase()),null);
+  assert.equal(normalizeTarget("solana_address","0xabcd..."),null);
+  assert.equal(normalizeTarget("solana_address","abcd".repeat(10)),null);
 });
 
 test("mentions and Telegram public post links map to same handle", () => {
@@ -26,11 +26,11 @@ test("Solana base58 case must not be folded, and truncated values rejected", () 
   assert.equal(normalizeTarget("solana_address",sol),sol);
   assert.equal(normalizeTarget("solana_address",sol.slice(0,10)+"..."),null);
 });
-test("dedup per message for same canonical mention / address", () => {
-  const evm = "0x" + "A".repeat(40);
-  const output = extractLinks({id:1,message:`@AlphaCalls t.me/alphacalls ${evm} ${evm.toLowerCase()}`});
+test("dedup per message for same canonical handle and Solana address", () => {
+  const sol = "So11111111111111111111111111111111111111112";
+  const output = extractLinks({id:1,message:`@AlphaCalls t.me/alphacalls ${sol} ${sol}`});
   assert.equal(output.filter(x=>x.targetKind==="handle").length,1);
-  assert.equal(output.filter(x=>x.targetKind==="evm_address").length,1);
+  assert.equal(output.filter(x=>x.targetKind==="solana_address").length,1);
 });
 test("Bot API channel-forward adapter and anonymity semantics", () => {
   assert.deepEqual(extractLinks({id:1,message:"",forward_from_chat:{id:-10012345,type:"channel"}}),[
