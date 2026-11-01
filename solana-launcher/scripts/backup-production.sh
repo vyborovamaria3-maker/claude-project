@@ -241,7 +241,7 @@ fi
 # embeds the host's absolute deployment path.
 (
   cd "$DEST"
-  find . -type f ! -name SHA256SUMS -print0 \
+  find . -type f ! -path './SHA256SUMS' -print0 \
     | sort -z \
     | xargs -0 sha256sum \
     > SHA256SUMS
