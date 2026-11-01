@@ -22,6 +22,7 @@ start_fixture() {
     -e POSTGRES_USER=fixture_bootstrap \
     -e POSTGRES_DB=role_fixture \
     -e POSTGRES_PASSWORD=fixture-bootstrap-ci-only \
+    -e POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256 \
     -e POSTGRES_HOST_AUTH_METHOD=scram-sha-256 \
     "postgres:${version}-alpine" >/dev/null
 }
