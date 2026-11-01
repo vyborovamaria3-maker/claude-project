@@ -63,6 +63,19 @@ def verify_preprovisioned_schema(dsn: str) -> None:
             flags = cur.fetchone()
             if not flags or any(flags):
                 raise RuntimeError("Admin runtime identity has unsafe PostgreSQL role flags")
+            # LOGIN flags alone do not show inherited or SET-able powerful
+            # predefined roles. Neither path is acceptable for an Admin DML
+            # identity, particularly pg_execute_server_program.
+            cur.execute(
+                "SELECT pg_has_role(current_user, 'pg_read_all_data', 'MEMBER'), "
+                "pg_has_role(current_user, 'pg_write_all_data', 'MEMBER'), "
+                "pg_has_role(current_user, 'pg_read_server_files', 'MEMBER'), "
+                "pg_has_role(current_user, 'pg_write_server_files', 'MEMBER'), "
+                "pg_has_role(current_user, 'pg_execute_server_program', 'MEMBER')"
+            )
+            powerful_memberships = cur.fetchone()
+            if not powerful_memberships or any(powerful_memberships):
+                raise RuntimeError("Admin runtime has unsafe PostgreSQL predefined-role membership")
             cur.execute(
                 "SELECT has_schema_privilege(current_user, 'public', 'USAGE'), "
                 "has_schema_privilege(current_user, 'public', 'CREATE')"
