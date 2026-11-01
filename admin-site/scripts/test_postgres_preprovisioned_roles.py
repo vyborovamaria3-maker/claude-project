@@ -299,6 +299,73 @@ def assert_runtime_restricted() -> None:
             "ON public.admin_background_tasks(owner, created_at DESC)"
         )
     verify_preprovisioned_schema(RUNTIME)
+
+    # A fake index with the expected name but WRONG target table/keys is
+    # not proof that the restored schema can serve live Admin queries.
+    with psycopg.connect(MIGRATE) as db:
+        db.execute("DROP INDEX public.ix_admin_tasks_owner_created")
+        db.execute(
+            "CREATE INDEX ix_admin_tasks_owner_created "
+            "ON public.feature_flags(name)"
+        )
+    try:
+        verify_preprovisioned_schema(RUNTIME)
+    except RuntimeError as exc:
+        assert "index definition" in str(exc).lower(), str(exc)
+    else:
+        raise AssertionError("Same-name wrong-table index was accepted")
+    finally:
+        with psycopg.connect(MIGRATE) as db:
+            db.execute("DROP INDEX public.ix_admin_tasks_owner_created")
+            db.execute(
+                "CREATE INDEX ix_admin_tasks_owner_created "
+                "ON public.admin_background_tasks(owner, created_at DESC)"
+            )
+    verify_preprovisioned_schema(RUNTIME)
+
+    # A repaired index must not hide a column type drift or missing PK.
+    with psycopg.connect(MIGRATE) as db:
+        db.execute("ALTER TABLE public.feature_flags ALTER COLUMN description TYPE varchar(500)")
+    try:
+        verify_preprovisioned_schema(RUNTIME)
+    except RuntimeError as exc:
+        assert "column contract" in str(exc).lower(), str(exc)
+    else:
+        raise AssertionError("Column type drift was accepted")
+    finally:
+        with psycopg.connect(MIGRATE) as db:
+            db.execute("ALTER TABLE public.feature_flags ALTER COLUMN description TYPE text")
+    verify_preprovisioned_schema(RUNTIME)
+
+    with psycopg.connect(MIGRATE) as db:
+        db.execute("ALTER TABLE public.feature_flags DROP CONSTRAINT feature_flags_pkey")
+    try:
+        verify_preprovisioned_schema(RUNTIME)
+    except RuntimeError as exc:
+        assert "primary-key" in str(exc).lower(), str(exc)
+    else:
+        raise AssertionError("Missing Admin primary key was accepted")
+    finally:
+        with psycopg.connect(MIGRATE) as db:
+            db.execute("ALTER TABLE public.feature_flags ADD PRIMARY KEY (name)")
+    verify_preprovisioned_schema(RUNTIME)
+
+    # Role granted CREATE on an *auxiliary* schema is not DML-only, even
+    # when public schema and database-level CREATE are denied.
+    with psycopg.connect(MIGRATE) as db:
+        db.execute("CREATE SCHEMA auxiliary_ci")
+        db.execute("GRANT CREATE ON SCHEMA auxiliary_ci TO admin_ci_runtime")
+    try:
+        verify_preprovisioned_schema(RUNTIME)
+    except RuntimeError as exc:
+        assert "schema: auxiliary_ci" in str(exc).lower(), str(exc)
+    else:
+        raise AssertionError("Auxiliary schema CREATE was accepted")
+    finally:
+        with psycopg.connect(MIGRATE) as db:
+            db.execute("DROP SCHEMA auxiliary_ci CASCADE")
+    verify_preprovisioned_schema(RUNTIME)
+
     print("ADMIN_PG_PREPROVISIONED_RUNTIME_OK disposable_pg17_only")
 
 
