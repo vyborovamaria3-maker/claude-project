@@ -147,6 +147,10 @@ jobs:
           pip install -r admin-site/requirements.txt
       - name: Run deep Control Center regression suite
         run: bash admin-site/scripts/test-deep.sh
+      - name: Prove Admin PostgreSQL 17 preprovisioned schema supports DML-only runtime
+        env:
+          ADMIN_PG_SCHEMA_MODE: legacy
+        run: python admin-site/scripts/test_postgres_preprovisioned_roles.py
       - name: Validate Control Center Compose
         run: |
           set -Eeuo pipefail
