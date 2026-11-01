@@ -19,6 +19,7 @@ from .observability import Observability, monotonic
 from .postgres_admin_state import PostgresAuditStore, PostgresControlStore, PostgresLiveAnalysisProfileStore
 from .postgres_pool import build_postgres_pool
 from .postgres_security_store import PostgresAdminSessionStore
+from .postgres_schema_policy import verify_preprovisioned_schema
 from .postgres_task_queue import PostgresTaskQueue
 from .x_collector_admin import build_x_collector_router
 from .subscription_admin import build_subscription_admin_router
@@ -56,6 +57,7 @@ def create_app() -> FastAPI:
     shared_security = None
     state_pool = None
     if state_dsn:
+        verify_preprovisioned_schema(state_dsn)
         state_pool = build_postgres_pool(state_dsn, name="admin-state")
         app.state.postgres_state_pool = state_pool
         app.state.audit = PostgresAuditStore(state_dsn, pool=state_pool)
