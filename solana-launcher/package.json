@@ -126,5 +126,8 @@
   "overrides": {
     "toml": "^5.0.1",
     "bigint-buffer": "$bigint-buffer"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }
