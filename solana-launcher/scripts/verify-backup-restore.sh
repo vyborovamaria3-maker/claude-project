@@ -12,6 +12,7 @@ if [[ "$#" -ne 1 || ! -d "$1" ]]; then
 fi
 command -v docker >/dev/null
 command -v sha256sum >/dev/null
+command -v cmp >/dev/null
 command -v python3 >/dev/null
 backup="$(cd -- "$1" && pwd -P)"
 if find "$backup" -type l -print -quit | grep -q .; then
@@ -33,8 +34,8 @@ done
   cd "$backup"
   expected_manifest="$(mktemp)"
   trap 'rm -f -- "$expected_manifest"' EXIT
-  find . -type f ! -path './SHA256SUMS' -print0 \\
-    | sort -z \\
+  find . -type f ! -path './SHA256SUMS' -print0 \
+    | sort -z \
     | xargs -0 sha256sum > "$expected_manifest"
   cmp -s SHA256SUMS "$expected_manifest" ||
     { echo "Backup SHA256 manifest is incomplete or mismatched" >&2; exit 1; }
