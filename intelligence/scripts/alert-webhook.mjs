@@ -135,7 +135,7 @@ export function createAlertWebhookSink(config, {
           redirect: "error",
           signal: controller.signal,
         });
-        if (response?.ok === true) return true;
+        if (response?.ok === true) return { ok: true, attempts: attempt };
         const status = Number(response?.status);
         retry = status === 429 || status >= 500;
       } catch {
@@ -144,10 +144,10 @@ export function createAlertWebhookSink(config, {
         clearTimeout(timer);
       }
 
-      if (!retry || attempt === maxAttempts) return false;
+      if (!retry || attempt === maxAttempts) return { ok: false, attempts: attempt };
       await pause(retryDelayMs);
     }
-    return false;
+    return { ok: false, attempts: maxAttempts };
   }
 
   async function drain() {
@@ -156,7 +156,8 @@ export function createAlertWebhookSink(config, {
     try {
       while (queue.length) {
         const item = queue.shift();
-        if (await deliver(item)) {
+        const outcome = await deliver(item);
+        if (outcome.ok) {
           delivered++;
         } else {
           failed++;
@@ -164,7 +165,7 @@ export function createAlertWebhookSink(config, {
             kind: "alert_delivery",
             source: item.event.source,
             code: "webhook_delivery_failed",
-            attempts: maxAttempts,
+            attempts: outcome.attempts,
           });
         }
       }
