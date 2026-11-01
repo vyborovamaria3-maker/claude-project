@@ -91,7 +91,12 @@ def verify_preprovisioned_schema(dsn: str) -> None:
                 # owner and execute DDL, despite current_user not owning it.
                 if kind not in ("r", "p") or owner == db.info.user or member_of_owner or rls or forced_rls:
                     raise RuntimeError(f"Admin schema ownership/RLS gate failed for {name}")
-                if not all(privileges):
+                if name == "admin_audit":
+                    # The audit log is append-only: SELECT and INSERT are
+                    # required, but UPDATE/DELETE would allow log tampering.
+                    if privileges != [True, True, False, False]:
+                        raise RuntimeError("Admin runtime audit log must be append-only")
+                elif not all(privileges):
                     raise RuntimeError(f"Admin runtime DML privilege missing for {name}")
 
             cur.execute(
