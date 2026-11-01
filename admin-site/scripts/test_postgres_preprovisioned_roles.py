@@ -366,6 +366,40 @@ def assert_runtime_restricted() -> None:
             db.execute("DROP SCHEMA auxiliary_ci CASCADE")
     verify_preprovisioned_schema(RUNTIME)
 
+    # SET-able helper role has CREATE, while the runtime login itself does
+    # not and neither role owns the application tables. Owner-only scans miss
+    # this precise privilege escalation through SET ROLE.
+    with psycopg.connect(FIXTURE) as bootstrap:
+        bootstrap.execute("CREATE ROLE admin_ci_ddl_helper NOLOGIN")
+        bootstrap.execute(
+            "GRANT admin_ci_ddl_helper TO admin_ci_runtime "
+            "WITH INHERIT FALSE, SET TRUE"
+        )
+    with psycopg.connect(MIGRATE) as db:
+        db.execute("GRANT CREATE ON SCHEMA public TO admin_ci_ddl_helper")
+    try:
+        with psycopg.connect(RUNTIME) as db:
+            assert db.execute(
+                "SELECT has_schema_privilege(current_user, 'public', 'CREATE')"
+            ).fetchone()[0] is False
+            db.execute("SET ROLE admin_ci_ddl_helper")
+            assert db.execute(
+                "SELECT has_schema_privilege(current_user, 'public', 'CREATE')"
+            ).fetchone()[0] is True
+        try:
+            verify_preprovisioned_schema(RUNTIME)
+        except RuntimeError as exc:
+            assert "SET-reachable schema DDL" in str(exc), str(exc)
+        else:
+            raise AssertionError("SET-only helper CREATE grant was accepted")
+    finally:
+        with psycopg.connect(MIGRATE) as db:
+            db.execute("REVOKE CREATE ON SCHEMA public FROM admin_ci_ddl_helper")
+        with psycopg.connect(FIXTURE) as bootstrap:
+            bootstrap.execute("REVOKE admin_ci_ddl_helper FROM admin_ci_runtime")
+            bootstrap.execute("DROP ROLE admin_ci_ddl_helper")
+    verify_preprovisioned_schema(RUNTIME)
+
     print("ADMIN_PG_PREPROVISIONED_RUNTIME_OK disposable_pg17_only")
 
 
