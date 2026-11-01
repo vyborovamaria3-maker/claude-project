@@ -146,8 +146,8 @@ def _index_key_signature(expr: str, sort_options: int) -> tuple[str, bool, bool]
     pg_get_indexdef(column) can render explicit default NULLS FIRST/LAST.
     The indoption bits are authoritative: 1=DESC and 2=NULLS_FIRST.
     """
-    plain = re.sub(r"\\s+NULLS\\s+(?:FIRST|LAST)\\s*$", "", expr, flags=re.I)
-    plain = re.sub(r"\\s+(?:ASC|DESC)\\s*$", "", plain, flags=re.I)
+    plain = re.sub(r"\s+NULLS\s+(?:FIRST|LAST)\s*$", "", expr, flags=re.I)
+    plain = re.sub(r"\s+(?:ASC|DESC)\s*$", "", plain, flags=re.I)
     return (_normal_sql(plain) or "", bool(sort_options & 1), bool(sort_options & 2))
 
 
