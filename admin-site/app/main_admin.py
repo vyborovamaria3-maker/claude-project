@@ -19,7 +19,7 @@ from .observability import Observability, monotonic
 from .postgres_admin_state import PostgresAuditStore, PostgresControlStore, PostgresLiveAnalysisProfileStore
 from .postgres_pool import build_postgres_pool
 from .postgres_security_store import PostgresAdminSessionStore
-from .postgres_schema_policy import verify_preprovisioned_schema
+from .postgres_schema_policy import require_admin_postgres_dsn, verify_preprovisioned_schema
 from .postgres_task_queue import PostgresTaskQueue
 from .x_collector_admin import build_x_collector_router
 from .subscription_admin import build_subscription_admin_router
@@ -48,8 +48,9 @@ def _bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
 
 
 def create_app() -> FastAPI:
-    app = create_base_app()
     state_dsn = os.getenv("ADMIN_STATE_POSTGRES_DSN", "").strip()
+    require_admin_postgres_dsn(state_dsn)
+    app = create_base_app()
     web_workers = _bounded_int("ADMIN_WEB_WORKERS", 1, 1, 8)
     if web_workers > 1 and not state_dsn:
         raise RuntimeError("ADMIN_STATE_POSTGRES_DSN is required when ADMIN_WEB_WORKERS > 1")
