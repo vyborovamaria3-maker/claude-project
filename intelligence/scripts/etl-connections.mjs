@@ -46,7 +46,7 @@ export function sourceConnection(source,write) {
     port:{
       claim:options=>claimPostgres(pool,options),
       ack:event=>ackPostgres(pool,event.id,event.leaseOwner,event.leaseUntil),
-      fail:(event,code,next)=>failPostgres(pool,event.id,event.leaseOwner,event.leaseUntil,code,next),
+      fail:(event,code,next,retryDelayMs)=>failPostgres(pool,event.id,event.leaseOwner,event.leaseUntil,code,next,12,retryDelayMs),
       renew:(event,leaseMs)=>renewPostgres(pool,event.id,event.leaseOwner,event.leaseUntil,leaseMs),
     }
   };

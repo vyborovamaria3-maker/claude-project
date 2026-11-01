@@ -43,11 +43,44 @@ test("Postgres claim uses locked transaction, then release",async()=>{
   assert.deepEqual(calls.slice(-2),["COMMIT","RELEASE"]);
 });
 
+test("Postgres claims use the database statement clock unless a deterministic override is supplied",async()=>{
+  const calls=[];
+  const pool={connect:async()=>({
+    query:async(sql,params)=>{calls.push({sql,params});return{rows:[]}},
+    release:()=>calls.push({sql:"RELEASE"}),
+  })};
+  await claimPostgres(pool,{workerId:"db-clock",batchSize:1,leaseMs:5000});
+  const claim=calls.find(call=>call.sql.includes("RETURNING o.*"));
+  assert.ok(claim);
+  assert.equal(claim.params[0],null,"production claims must not depend on the host wall clock");
+  assert.equal(claim.params[3],5000);
+  assert.match(claim.sql,/DATE_TRUNC\('milliseconds', statement_timestamp\(\)\)/);
+  assert.match(claim.sql,/next_attempt_at <= COALESCE/);
+  assert.match(claim.sql,/lease_until=COALESCE/);
+});
+
+test("Postgres claim keeps an explicit deterministic clock override",async()=>{
+  const calls=[];
+  const pool={connect:async()=>({
+    query:async(sql,params)=>{calls.push({sql,params});return{rows:[]}},
+    release:()=>{},
+  })};
+  const now=new Date("2026-10-18T00:00:00.000Z");
+  await claimPostgres(pool,{workerId:"fixture-clock",batchSize:1,leaseMs:7000,now});
+  const claim=calls.find(call=>call.sql.includes("RETURNING o.*"));
+  assert.equal(claim.params[0],now.toISOString());
+  assert.equal(claim.params[3],7000);
+});
+
 test("Postgres ACK and failure require lease owner",async()=>{
   const calls=[];
   const client={query:async(sql,params)=>{calls.push({sql,params});return{rows:[{id:"7"}]}}};
   assert.equal(await ackPostgres(client,"7","w","2026-10-18T00:10:00Z"),true);
   assert.equal(await failPostgres(client,"7","w","2026-10-18T00:10:00Z","network",new Date()),true);
+  assert.equal(calls[1].params[6],null,"explicit nextAttemptAt remains available for deterministic callers");
+  assert.equal(await failPostgres(client,"7","w","2026-10-18T00:10:00Z","network",new Date("2026-10-18T00:00:00Z"),12,30000),true);
+  assert.equal(calls[2].params[6],30000);
+  assert.match(calls[2].sql,/DATE_TRUNC\('milliseconds', statement_timestamp\(\)\)/);
   assert.ok(calls.every(x=>x.sql.includes("lease_owner=$2")));
 });
 
