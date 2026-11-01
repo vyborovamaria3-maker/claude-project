@@ -134,6 +134,35 @@ SQL
   sql "$src" fixture_runtime \
     "UPDATE public.app_records SET note='ok' WHERE label='runtime'" >/dev/null
 
+  # Rehearse the actual migration trap: a schema grant does not let the
+  # migrator ALTER pre-existing objects still owned by the legacy bootstrap.
+  sql "$src" fixture_bootstrap "
+    CREATE TABLE public.legacy_records (id integer PRIMARY KEY, label text NOT NULL);
+    INSERT INTO public.legacy_records VALUES (1, 'legacy-owner');
+    CREATE TABLE public.alembic_version (version_num varchar(32) PRIMARY KEY);
+    INSERT INTO public.alembic_version VALUES ('test_revision');
+  " >/dev/null
+  reject_sql "$src" fixture_migration \
+    "ALTER TABLE public.legacy_records ADD COLUMN note text" \
+    'migration ALTER on legacy bootstrap-owned table before transfer'
+  # The isolated fixture uses an explicit, reviewed object allowlist rather
+  # than a dangerous database-wide REASSIGN OWNED operation.
+  sql "$src" fixture_bootstrap "
+    ALTER TABLE public.legacy_records OWNER TO fixture_migration;
+    ALTER TABLE public.alembic_version OWNER TO fixture_migration;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON public.legacy_records TO fixture_runtime;
+    GRANT SELECT ON public.legacy_records, public.alembic_version TO fixture_backup;
+  " >/dev/null
+  sql "$src" fixture_migration \
+    "ALTER TABLE public.legacy_records ADD COLUMN note text" >/dev/null
+  sql "$src" fixture_runtime \
+    "INSERT INTO public.legacy_records(id, label) VALUES (2, 'legacy-granted')" >/dev/null
+  reject_sql "$src" fixture_runtime \
+    "UPDATE public.alembic_version SET version_num='tampered'" \
+    'runtime write to Alembic migration ledger'
+  [[ "$(sql "$src" fixture_backup \
+    "SELECT count(*) FROM public.legacy_records")" == 2 ]]
+
   # Default privileges must apply to tables created AFTER the initial grants.
   sql "$src" fixture_migration \
     "CREATE TABLE public.later_records (id integer PRIMARY KEY, label text)" >/dev/null
@@ -175,6 +204,10 @@ SQL
     "SELECT string_agg(label, ',' ORDER BY id) FROM public.app_records")" == "migration,runtime" ]]
   [[ "$(sql "$dst" fixture_bootstrap \
     "SELECT label FROM public.later_records WHERE id=7")" == "granted-by-default" ]]
+  [[ "$(sql "$dst" fixture_bootstrap \
+    "SELECT count(*) FROM public.legacy_records")" == 2 ]]
+  [[ "$(sql "$dst" fixture_bootstrap \
+    "SELECT version_num FROM public.alembic_version")" == test_revision ]]
   [[ "$(sql "$dst" fixture_bootstrap \
     "INSERT INTO public.app_records(label) VALUES ('restored') RETURNING id")" == 3 ]]
   echo "ROLE_REHEARSAL_OK label=$label postgres=$version"
