@@ -131,3 +131,20 @@ For planned boundary choices, see [ADR-0001](ARCHITECTURE_DECISIONS/0001-indepen
 A bounded opt-in X mint verification CLI **already exists** at [`x-collector/scripts/verify-x-token-links.ts`](../../x-collector/scripts/verify-x-token-links.ts). It uses a dedicated source-row-lock/recheck after a valid RPC mint-account proof, enforces three independent opt-ins, RPC budgets and a dry-run default; it does not run automatically with X collection. See [X_MINT_VERIFICATION](X_MINT_VERIFICATION.md). The TG resolver has an opt-in transactional verified source producer. Blockchain is a separate supported/unsupported provider-parsed revision record; neither a raw wallet observation nor a chain revision proves a settled trade or PnL.
 
 Open [#166](https://github.com/vyborovamaria3-maker/claude-project/pull/166) and [#167](https://github.com/vyborovamaria3-maker/claude-project/pull/167) remain draft AI/read-model proposals: reconcile scopes before enabling provider calls or running new migrations. The physical production DB inventory remains unverified, and no real source collection, paid RPC, backup/restore or live cross-source emission was executed in this documentation work.
+
+
+## Solana-only target decision — 2026-11-01
+
+This addendum supersedes earlier references in this historical inventory that described EVM chains as supported product networks.
+
+**Approved target scope: Solana only.** New canonical token IDs, verified token links, Blockchain evidence and cross-source token timelines must use `solana:<full-base58-mint>`. Do not add Ethereum, Base, Arbitrum, Bitcoin or other chain collectors/producers.
+
+The current source snapshot still contains legacy non-Solana compatibility paths. They are not a supported target:
+- `packages/contracts/src/canonical-ids.ts` still lists Ethereum/Base/Arbitrum in `CHAINS`;
+- `x-collector/lib/intelligence/chain-adapter.ts` and `scripts/chain-ingest.ts` still include Ethereum/Bitcoin generic import/adapter support;
+- KOL and TG dataset modules retain EVM address paths;
+- `solana-wallet-warmup` retains cross-chain bridge prototype code.
+
+These are **legacy code paths to retire**, not evidence that the product has working multi-chain collectors. A dedicated cleanup must first stop new non-Solana writes, preserve historical rows, add safe schema/API compatibility handling, and update tests. Do not delete EVM/Bitcoin historical evidence or rewrite applied migrations as part of documentation work.
+
+The Solana-only decision does not change the independent source ownership model: X and TG remain social evidence sources; Blockchain remains a logical module inside Solana Launcher until an explicit extraction decision is implemented. See [ARCHITECTURE_AS_IS_20261101](ARCHITECTURE_AS_IS_20261101.md) and [ARCHITECTURE_TARGET_20261101](ARCHITECTURE_TARGET_20261101.md).
