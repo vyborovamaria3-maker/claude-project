@@ -14,12 +14,19 @@ command -v docker >/dev/null
 command -v sha256sum >/dev/null
 command -v cmp >/dev/null
 command -v python3 >/dev/null
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+ROLE_FINGERPRINT_SQL="$SCRIPT_DIR/postgres-role-restoration-fingerprint.sql"
+[[ -s "$ROLE_FINGERPRINT_SQL" ]] || {
+  echo "Missing canonical role/ACL fingerprint query" >&2; exit 1;
+}
 backup="$(cd -- "$1" && pwd -P)"
 if find "$backup" -type l -print -quit | grep -q .; then
   echo "Backup contains a symlink; refusing restore verification" >&2
   exit 1
 fi
-for file in SHA256SUMS postgres.dump admin-postgres.dump trade.db intelligence.sqlite; do
+for file in SHA256SUMS postgres.dump admin-postgres.dump trade.db intelligence.sqlite \
+  postgres-roles.sql admin-postgres-roles.sql \
+  postgres-role-fingerprint.txt admin-postgres-role-fingerprint.txt; do
   [[ -s "$backup/$file" && ! -L "$backup/$file" ]] || {
     echo "Backup missing required file or contains a symlink" >&2
     exit 1
@@ -137,8 +144,11 @@ print(f"DISPOSABLE_INTELLIGENCE_SQLITE_RESTORE_OK tables={tables}")
 PY
 
 container="potapoff-restore-test-$$-$RANDOM"
+acl_containers=()
+acl_temp_files=()
 cleanup(){
-  docker rm -f "$container" >/dev/null 2>&1 || true
+  docker rm -f "$container" "${acl_containers[@]}" >/dev/null 2>&1 || true
+  for tmp in "${acl_temp_files[@]}"; do rm -f -- "$tmp"; done
 }
 trap cleanup EXIT
 
@@ -195,4 +205,59 @@ for source in postgres admin-postgres; do
   fi
   echo "DISPOSABLE_PG_RESTORE_OK source=$source tables=$tables"
 done
+# Owner/ACL fidelity is a DIFFERENT gate from the data-only restore above.
+# Replay password-free pg_dumpall globals in new disposable clusters matching
+# each source major, then restore the original archives WITHOUT --no-owner or
+# --no-acl. Compare every scoped catalog owner and normalized ACL to the
+# recorded read-only source fingerprint. These containers have no network,
+# published ports, host mounts or persisted volumes.
+for source in postgres admin-postgres; do
+  if [[ "$source" == postgres ]]; then
+    major=16
+    original_owner=potapoff
+    restored_name=isolated_product_acl
+  else
+    major=17
+    original_owner=potapoff_admin
+    restored_name=isolated_admin_acl
+  fi
+  acl_container="potapoff-acl-restore-${major}-$-$RANDOM"
+  # Register immediately: trap cleans up even on partial startup or restore.
+  acl_containers+=("$acl_container")
+  docker run -d --rm --network none --pids-limit 256 \
+    --name "$acl_container" \
+    -e POSTGRES_HOST_AUTH_METHOD=trust \
+    "postgres:${major}-alpine" >/dev/null
+  ready=0
+  for i in $(seq 1 60); do
+    if docker logs "$acl_container" 2>&1 | grep -Fq 'PostgreSQL init process complete; ready for start up.' &&
+       [[ "$(docker exec "$acl_container" psql -X -U postgres -d postgres -Atq \
+         -v ON_ERROR_STOP=1 -c 'SELECT 1' 2>/dev/null)" == 1 ]]; then
+      ready=1
+      break
+    fi
+    sleep 1
+  done
+  [[ "$ready" == 1 ]] || {
+    echo "Failed isolated role recovery target for $source" >&2; exit 1;
+  }
+  docker exec -i "$acl_container" psql -X -U postgres -d postgres \
+    -v ON_ERROR_STOP=1 < "$backup/$source-roles.sql" >/dev/null
+  docker exec "$acl_container" createdb -U postgres \
+    -O "$original_owner" "$restored_name" >/dev/null
+  docker exec -i "$acl_container" pg_restore -U postgres -d "$restored_name" \
+    --exit-on-error --single-transaction \
+    < "$backup/$source.dump" >/dev/null
+  actual_catalog="$(mktemp)"
+  acl_temp_files+=("$actual_catalog")
+  docker exec -i "$acl_container" psql -X -A -t -U postgres \
+    -d "$restored_name" -v ON_ERROR_STOP=1 \
+    < "$ROLE_FINGERPRINT_SQL" > "$actual_catalog"
+  cmp -s "$actual_catalog" "$backup/$source-role-fingerprint.txt" || {
+    echo "Owner/ACL mismatch after isolated role-aware restore: $source" >&2
+    exit 1
+  }
+  echo "DISPOSABLE_PG_ROLE_ACL_RESTORE_OK source=$source version=$major"
+done
+echo "BACKUP_ROLE_ACL_RESTORE_OK isolated=true"
 echo "BACKUP_RESTORE_REHEARSAL_OK no_live_database_access=true"
