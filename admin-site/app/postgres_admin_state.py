@@ -10,6 +10,7 @@ from psycopg_pool import ConnectionPool
 
 from .analysis_editor import LiveAnalysisProfileStore
 from .postgres_pool import pooled_connection
+from .postgres_schema_policy import preprovisioned_schema_enabled
 
 
 _SCHEMA_LOCK_ID = 726824730
@@ -51,30 +52,32 @@ class PostgresAuditStore:
     def __init__(self, dsn: str, *, pool: ConnectionPool | None = None) -> None:
         self.dsn = dsn
         self.pool = pool
-        with self._connect() as db, db.cursor() as cur:
-            _lock_schema(cur)
-            cur.execute(
-                """CREATE TABLE IF NOT EXISTS admin_audit(
-                    id BIGSERIAL PRIMARY KEY,
-                    created_at TIMESTAMPTZ NOT NULL,
-                    username TEXT,
-                    ip_address TEXT,
-                    action TEXT NOT NULL,
-                    resource TEXT,
-                    success BOOLEAN NOT NULL,
-                    details_json JSONB NOT NULL DEFAULT '{}'::jsonb
-                )"""
-            )
-            cur.execute("CREATE INDEX IF NOT EXISTS ix_admin_audit_created ON admin_audit(created_at DESC)")
-            cur.execute("CREATE INDEX IF NOT EXISTS ix_admin_audit_action_created ON admin_audit(action, created_at DESC)")
-            cur.execute(
-                """CREATE TABLE IF NOT EXISTS revoked_admin_sessions(
-                    nonce TEXT PRIMARY KEY,
-                    expires_at BIGINT NOT NULL,
-                    revoked_at TIMESTAMPTZ NOT NULL
-                )"""
-            )
-            cur.execute("CREATE INDEX IF NOT EXISTS ix_revoked_admin_sessions_expires ON revoked_admin_sessions(expires_at)")
+        if not preprovisioned_schema_enabled():
+            if not preprovisioned_schema_enabled():
+            with self._connect() as db, db.cursor() as cur:
+                    _lock_schema(cur)
+                    cur.execute(
+                        """CREATE TABLE IF NOT EXISTS admin_audit(
+                            id BIGSERIAL PRIMARY KEY,
+                            created_at TIMESTAMPTZ NOT NULL,
+                            username TEXT,
+                            ip_address TEXT,
+                            action TEXT NOT NULL,
+                            resource TEXT,
+                            success BOOLEAN NOT NULL,
+                            details_json JSONB NOT NULL DEFAULT '{}'::jsonb
+                        )"""
+                    )
+                    cur.execute("CREATE INDEX IF NOT EXISTS ix_admin_audit_created ON admin_audit(created_at DESC)")
+                    cur.execute("CREATE INDEX IF NOT EXISTS ix_admin_audit_action_created ON admin_audit(action, created_at DESC)")
+                    cur.execute(
+                        """CREATE TABLE IF NOT EXISTS revoked_admin_sessions(
+                            nonce TEXT PRIMARY KEY,
+                            expires_at BIGINT NOT NULL,
+                            revoked_at TIMESTAMPTZ NOT NULL
+                        )"""
+                    )
+                    cur.execute("CREATE INDEX IF NOT EXISTS ix_revoked_admin_sessions_expires ON revoked_admin_sessions(expires_at)")
 
     def _connect(self):
         return pooled_connection(self.pool, self.dsn, row_factory=dict_row, connect_timeout=5)
@@ -234,28 +237,29 @@ class PostgresLiveAnalysisProfileStore(LiveAnalysisProfileStore):
         self.path = dsn
         self.dsn = dsn
         self.pool = pool
-        with self._connect_raw() as db, db.cursor() as cur:
-            _lock_schema(cur)
-            cur.execute(
-                """CREATE TABLE IF NOT EXISTS analysis_parameter_overrides(
-                    domain TEXT NOT NULL,
-                    key TEXT NOT NULL,
-                    enabled INTEGER NOT NULL,
-                    threshold TEXT NOT NULL DEFAULT '',
-                    label TEXT,
-                    source TEXT,
-                    value_type TEXT,
-                    scale TEXT,
-                    description TEXT,
-                    custom INTEGER NOT NULL DEFAULT 0,
-                    deleted INTEGER NOT NULL DEFAULT 0,
-                    updated_by TEXT,
-                    updated_at TEXT NOT NULL,
-                    PRIMARY KEY(domain,key)
-                )"""
-            )
-            cur.execute("CREATE INDEX IF NOT EXISTS ix_analysis_overrides_domain ON analysis_parameter_overrides(domain, deleted, enabled)")
-            cur.execute("CREATE INDEX IF NOT EXISTS ix_analysis_overrides_active ON analysis_parameter_overrides(domain, key) WHERE deleted=0")
+        if not preprovisioned_schema_enabled():
+            with self._connect_raw() as db, db.cursor() as cur:
+                _lock_schema(cur)
+                cur.execute(
+                    """CREATE TABLE IF NOT EXISTS analysis_parameter_overrides(
+                        domain TEXT NOT NULL,
+                        key TEXT NOT NULL,
+                        enabled INTEGER NOT NULL,
+                        threshold TEXT NOT NULL DEFAULT '',
+                        label TEXT,
+                        source TEXT,
+                        value_type TEXT,
+                        scale TEXT,
+                        description TEXT,
+                        custom INTEGER NOT NULL DEFAULT 0,
+                        deleted INTEGER NOT NULL DEFAULT 0,
+                        updated_by TEXT,
+                        updated_at TEXT NOT NULL,
+                        PRIMARY KEY(domain,key)
+                    )"""
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS ix_analysis_overrides_domain ON analysis_parameter_overrides(domain, deleted, enabled)")
+                cur.execute("CREATE INDEX IF NOT EXISTS ix_analysis_overrides_active ON analysis_parameter_overrides(domain, key) WHERE deleted=0")
 
     def _connect_raw(self):
         return pooled_connection(self.pool, self.dsn, row_factory=dict_row, connect_timeout=5)
