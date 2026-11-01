@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Synthetic, disconnected role-boundary and pg_dump/restore test.
+# Synthetic, disconnected SCRAM-authenticated role-boundary and restore test.
 # NO real cluster, service, persistent volume, password or network port is used.
 set -euo pipefail
 
@@ -21,7 +21,8 @@ start_fixture() {
   docker run -d --rm --network none --name "$name" \
     -e POSTGRES_USER=fixture_bootstrap \
     -e POSTGRES_DB=role_fixture \
-    -e POSTGRES_HOST_AUTH_METHOD=trust \
+    -e POSTGRES_PASSWORD=fixture-bootstrap-ci-only \
+    -e POSTGRES_HOST_AUTH_METHOD=scram-sha-256 \
     "postgres:${version}-alpine" >/dev/null
 }
 
@@ -31,7 +32,7 @@ wait_final_postgres() {
     # The entrypoint starts and stops a temporary Unix-socket-only server.
     # Require final init completion AND an actual TCP SQL round-trip.
     if docker logs "$name" 2>&1 | grep -Fq 'PostgreSQL init process complete; ready for start up.' &&
-       [[ "$(docker exec "$name" psql -X -h 127.0.0.1 \
+       [[ "$(docker exec -e PGPASSWORD=fixture-bootstrap-ci-only "$name" psql -X -h 127.0.0.1 \
          -U fixture_bootstrap -d role_fixture -v ON_ERROR_STOP=1 \
          -Atq -c 'SELECT 1' 2>/dev/null)" == 1 ]]; then
       ready=1
@@ -45,10 +46,21 @@ wait_final_postgres() {
   }
 }
 
+role_password() {
+  case "$1" in
+    fixture_bootstrap) printf '%s' fixture-bootstrap-ci-only ;;
+    fixture_migration) printf '%s' fixture-migration-ci-only ;;
+    fixture_runtime) printf '%s' fixture-runtime-ci-only ;;
+    fixture_backup) printf '%s' fixture-backup-ci-only ;;
+    *) echo "Unknown isolated fixture role" >&2; return 2 ;;
+  esac
+}
+
 sql() {
   local container="$1" actor="$2" statement="$3"
-  docker exec "$container" psql -h 127.0.0.1 -X \
-    -U "$actor" -d role_fixture -v ON_ERROR_STOP=1 -Atq -c "$statement"
+  docker exec -e "PGPASSWORD=$(role_password "$actor")" "$container" \
+    psql -h 127.0.0.1 -X -U "$actor" -d role_fixture \
+    -v ON_ERROR_STOP=1 -Atq -c "$statement"
 }
 
 reject_sql() {
@@ -90,14 +102,23 @@ run_case() {
     return 1
   }
 
+  # SCRAM must reject an incorrect password; no Unix-socket auth fallback.
+  if docker exec -e PGPASSWORD=wrong-fixture-password "$src" \
+    psql -X -h 127.0.0.1 -U fixture_runtime -d role_fixture \
+    -Atq -c 'SELECT 1' >/dev/null 2>&1; then
+    echo 'FAIL: fixture accepts an incorrect runtime password' >&2
+    return 1
+  fi
+
   # All privileges below are created in a disposable cluster only.
   # Runtime and backup cannot own or create objects. Migration owns app
   # objects and is the ONLY login allowed to alter them.
-  docker exec -i "$src" psql -X -h 127.0.0.1 -U fixture_bootstrap \
+  docker exec -i -e PGPASSWORD=fixture-bootstrap-ci-only "$src" \
+    psql -X -h 127.0.0.1 -U fixture_bootstrap \
     -d role_fixture -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
-CREATE ROLE fixture_migration LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-CREATE ROLE fixture_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-CREATE ROLE fixture_backup LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+CREATE ROLE fixture_migration LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD 'fixture-migration-ci-only';
+CREATE ROLE fixture_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD 'fixture-runtime-ci-only';
+CREATE ROLE fixture_backup LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD 'fixture-backup-ci-only';
 REVOKE ALL ON DATABASE role_fixture FROM PUBLIC;
 GRANT CONNECT ON DATABASE role_fixture TO fixture_migration, fixture_runtime, fixture_backup;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
@@ -191,14 +212,16 @@ SQL
 
   # Custom-format backup by a genuine non-superuser backup login.
   # A missing SELECT grant causes pg_dump to fail and therefore fails CI.
-  docker exec "$src" pg_dump -h 127.0.0.1 -U fixture_backup \
+  docker exec -e PGPASSWORD=fixture-backup-ci-only "$src" \
+    pg_dump -h 127.0.0.1 -U fixture_backup \
     -d role_fixture --format=custom --no-owner --no-acl > "$archive"
   test -s "$archive"
   docker exec -i "$src" pg_restore --list < "$archive" >/dev/null
 
   start_fixture "$dst" "$version"
   wait_final_postgres "$dst"
-  docker exec -i "$dst" pg_restore -h 127.0.0.1 -U fixture_bootstrap \
+  docker exec -i -e PGPASSWORD=fixture-bootstrap-ci-only "$dst" \
+    pg_restore -h 127.0.0.1 -U fixture_bootstrap \
     --exit-on-error --no-owner --no-acl -d role_fixture < "$archive"
 
   [[ "$(sql "$dst" fixture_bootstrap \
