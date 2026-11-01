@@ -242,7 +242,7 @@ fi
 (
   cd "$DEST"
   find . -type f ! -path './SHA256SUMS' -print0 \
-    | sort -z \
+    | LC_ALL=C sort -z \
     | xargs -0 sha256sum \
     > SHA256SUMS
   sha256sum -c SHA256SUMS >/dev/null
