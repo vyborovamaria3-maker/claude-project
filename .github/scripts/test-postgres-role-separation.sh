@@ -4,6 +4,8 @@
 set -euo pipefail
 
 command -v docker >/dev/null
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+test -s "$root/docs/operations/postgres-role-cutover-inventory.sql"
 scratch="$(mktemp -d)"
 tag="role-rehearsal-${RANDOM}-$$"
 containers=()
@@ -62,6 +64,21 @@ sql() {
   docker exec -e "PGPASSWORD=$(role_password "$actor")" "$container" \
     psql -h 127.0.0.1 -X -U "$actor" -d role_fixture \
     -v ON_ERROR_STOP=1 -Atq -c "$statement"
+}
+
+run_inventory() {
+  local container="$1" filepath="$2"
+  # Read-only catalog inventory from the deliberately unprivileged backup
+  # identity. No table rows, live hosts or elevated login are consulted.
+  docker exec -i -e PGPASSWORD=fixture-backup-ci-only "$container" \
+    psql -X -h 127.0.0.1 -U fixture_backup -d role_fixture \
+    -v ON_ERROR_STOP=1 \
+    < "$root/docs/operations/postgres-role-cutover-inventory.sql" > "$filepath"
+  grep -Fq 'ROLE CUTOVER INVENTORY COMPLETE' "$filepath"
+  grep -Fq 'fixture_bootstrap' "$filepath"
+  grep -Fq 'fixture_migration' "$filepath"
+  grep -Fq 'fixture_runtime' "$filepath"
+  grep -Fq 'fixture_backup' "$filepath"
 }
 
 reject_sql() {
@@ -199,6 +216,15 @@ SQL
   [[ "$(sql "$src" fixture_backup \
     "SELECT count(*) FROM public.legacy_records")" == 2 ]]
 
+  local forward_inventory="$scratch/${label}-forward-inventory.txt"
+  local reverse_inventory="$scratch/${label}-reverse-inventory.txt"
+  local reapplied_inventory="$scratch/${label}-reapplied-inventory.txt"
+  run_inventory "$src" "$forward_inventory"
+  for expected in legacy_records legacy_projection legacy_counter_seq \
+                  legacy_label_count alembic_version; do
+    grep -Fq "$expected" "$forward_inventory"
+  done
+
   # Explicit, allowlisted rollback: restore the ORIGINAL owners and ACLs.
   # Simulates a failed cutover on the only database this test controls.
   # Do not use REASSIGN OWNED or broad REVOKE on a shared/live database.
@@ -228,6 +254,12 @@ SQL
                         'legacy_counter_seq')
       AND pg_get_userbyid(c.relowner)='fixture_bootstrap'
   ")" == 4 ]]
+  run_inventory "$src" "$reverse_inventory"
+  # Owner and ACL state MUST differ from the transferred state.
+  if cmp -s "$forward_inventory" "$reverse_inventory"; then
+    echo 'FAIL: forward and reversed catalog inventories are identical' >&2
+    return 1
+  fi
   reject_sql "$src" fixture_migration \
     "ALTER TABLE public.legacy_records ADD COLUMN unauthorized int" \
     'migration DDL after rollback to bootstrap owner'
@@ -269,6 +301,11 @@ SQL
   reject_sql "$src" fixture_runtime \
     "UPDATE public.alembic_version SET version_num='tampered'" \
     'runtime Alembic ledger write after ownership rollback rehearsal'
+  run_inventory "$src" "$reapplied_inventory"
+  cmp "$forward_inventory" "$reapplied_inventory" >/dev/null || {
+    echo 'FAIL: catalog ownership/ACL inventory was not restored after reapply' >&2
+    return 1
+  }
   echo "ROLE_ROLLBACK_REHEARSAL_OK label=$label postgres=$version"
 
   # Default privileges must apply to tables created AFTER the initial grants.
