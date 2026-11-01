@@ -53,31 +53,30 @@ class PostgresAuditStore:
         self.dsn = dsn
         self.pool = pool
         if not preprovisioned_schema_enabled():
-            if not preprovisioned_schema_enabled():
             with self._connect() as db, db.cursor() as cur:
-                    _lock_schema(cur)
-                    cur.execute(
-                        """CREATE TABLE IF NOT EXISTS admin_audit(
-                            id BIGSERIAL PRIMARY KEY,
-                            created_at TIMESTAMPTZ NOT NULL,
-                            username TEXT,
-                            ip_address TEXT,
-                            action TEXT NOT NULL,
-                            resource TEXT,
-                            success BOOLEAN NOT NULL,
-                            details_json JSONB NOT NULL DEFAULT '{}'::jsonb
-                        )"""
-                    )
-                    cur.execute("CREATE INDEX IF NOT EXISTS ix_admin_audit_created ON admin_audit(created_at DESC)")
-                    cur.execute("CREATE INDEX IF NOT EXISTS ix_admin_audit_action_created ON admin_audit(action, created_at DESC)")
-                    cur.execute(
-                        """CREATE TABLE IF NOT EXISTS revoked_admin_sessions(
-                            nonce TEXT PRIMARY KEY,
-                            expires_at BIGINT NOT NULL,
-                            revoked_at TIMESTAMPTZ NOT NULL
-                        )"""
-                    )
-                    cur.execute("CREATE INDEX IF NOT EXISTS ix_revoked_admin_sessions_expires ON revoked_admin_sessions(expires_at)")
+                _lock_schema(cur)
+                cur.execute(
+                    """CREATE TABLE IF NOT EXISTS admin_audit(
+                        id BIGSERIAL PRIMARY KEY,
+                        created_at TIMESTAMPTZ NOT NULL,
+                        username TEXT,
+                        ip_address TEXT,
+                        action TEXT NOT NULL,
+                        resource TEXT,
+                        success BOOLEAN NOT NULL,
+                        details_json JSONB NOT NULL DEFAULT '{}'::jsonb
+                    )"""
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS ix_admin_audit_created ON admin_audit(created_at DESC)")
+                cur.execute("CREATE INDEX IF NOT EXISTS ix_admin_audit_action_created ON admin_audit(action, created_at DESC)")
+                cur.execute(
+                    """CREATE TABLE IF NOT EXISTS revoked_admin_sessions(
+                        nonce TEXT PRIMARY KEY,
+                        expires_at BIGINT NOT NULL,
+                        revoked_at TIMESTAMPTZ NOT NULL
+                    )"""
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS ix_revoked_admin_sessions_expires ON revoked_admin_sessions(expires_at)")
 
     def _connect(self):
         return pooled_connection(self.pool, self.dsn, row_factory=dict_row, connect_timeout=5)
@@ -142,32 +141,33 @@ class PostgresControlStore:
     def __init__(self, dsn: str, *, pool: ConnectionPool | None = None) -> None:
         self.dsn = dsn
         self.pool = pool
-        with self._connect() as db, db.cursor() as cur:
-            _lock_schema(cur)
-            cur.execute(
-                """CREATE TABLE IF NOT EXISTS feature_flags(
-                    name TEXT PRIMARY KEY,
-                    enabled BOOLEAN NOT NULL DEFAULT FALSE,
-                    description TEXT NOT NULL DEFAULT '',
-                    updated_by TEXT,
-                    updated_at TIMESTAMPTZ NOT NULL
-                )"""
-            )
-            cur.execute(
-                """CREATE TABLE IF NOT EXISTS alerts(
-                    id BIGSERIAL PRIMARY KEY,
-                    level TEXT NOT NULL,
-                    title TEXT NOT NULL,
-                    message TEXT NOT NULL,
-                    source TEXT NOT NULL DEFAULT 'control-center',
-                    status TEXT NOT NULL DEFAULT 'open',
-                    created_at TIMESTAMPTZ NOT NULL,
-                    acknowledged_at TIMESTAMPTZ,
-                    acknowledged_by TEXT
-                )"""
-            )
-            cur.execute("CREATE INDEX IF NOT EXISTS ix_alerts_status_created ON alerts(status, created_at DESC)")
-            cur.execute("CREATE INDEX IF NOT EXISTS ix_alerts_created ON alerts(created_at DESC)")
+        if not preprovisioned_schema_enabled():
+            with self._connect() as db, db.cursor() as cur:
+                _lock_schema(cur)
+                cur.execute(
+                    """CREATE TABLE IF NOT EXISTS feature_flags(
+                        name TEXT PRIMARY KEY,
+                        enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                        description TEXT NOT NULL DEFAULT '',
+                        updated_by TEXT,
+                        updated_at TIMESTAMPTZ NOT NULL
+                    )"""
+                )
+                cur.execute(
+                    """CREATE TABLE IF NOT EXISTS alerts(
+                        id BIGSERIAL PRIMARY KEY,
+                        level TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        message TEXT NOT NULL,
+                        source TEXT NOT NULL DEFAULT 'control-center',
+                        status TEXT NOT NULL DEFAULT 'open',
+                        created_at TIMESTAMPTZ NOT NULL,
+                        acknowledged_at TIMESTAMPTZ,
+                        acknowledged_by TEXT
+                    )"""
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS ix_alerts_status_created ON alerts(status, created_at DESC)")
+                cur.execute("CREATE INDEX IF NOT EXISTS ix_alerts_created ON alerts(created_at DESC)")
 
     def _connect(self):
         return pooled_connection(self.pool, self.dsn, row_factory=dict_row, connect_timeout=5)
