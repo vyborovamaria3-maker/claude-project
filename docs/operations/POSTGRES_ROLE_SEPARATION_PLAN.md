@@ -229,3 +229,47 @@ script and reverse map, verify all Admin routes/workers and backup on an
 isolated copy with real-like data, establish protected credentials, and
 measure restore/RPO/RTO. Any new Admin PostgreSQL store or index must be
 added to `postgres_schema_policy.TABLES/INDEXES` and the matching CI test.
+
+## Recovery-review follow-up: owner/ACL fidelity and app schema contracts
+
+The review follow-up introduces two **separate** isolated recovery assertions:
+
+1. `verify-backup-restore.sh` still performs a quick data-only
+   `--no-owner --no-acl` restore, but now requires a populated product
+   Alembic migration ledger and critical Admin tables/columns. This verifies
+   *schema viability*, not arbitrary application business-data correctness.
+2. The same verifier additionally starts disconnected PostgreSQL **16 and 17**
+   targets to restore the role-aware custom archives **without**
+   `--no-owner`/`--no-acl`. It replays the matching
+   `pg_dumpall --globals-only --no-role-passwords` SQL and compares an exact
+   catalog-only owner/ACL fingerprint captured alongside each archive.
+   The canonical query is
+   `solana-launcher/scripts/postgres-role-restoration-fingerprint.sql` and
+   is deployed next to the backup/restore commands.
+
+Each completed recovery set now includes
+`postgres-roles.sql`, `admin-postgres-roles.sql`,
+`postgres-role-fingerprint.txt`, and
+`admin-postgres-role-fingerprint.txt`, in addition to the original data
+artifacts. All are included in the strict SHA256 manifest and private backup
+directory. The role files contain **no password hashes**, so operators must
+restore/rotate protected service credentials separately; keep the whole bundle
+restricted because the other backed-up environment files contain secrets.
+Role replay is **only** allowed inside the disconnected rehearsal container,
+not on a production server. A missing role manifest, owner mismatch or missing
+critical schema fails the verify gate.
+
+For the Admin runtime, `ADMIN_PG_SCHEMA_MODE=preprovisioned` now checks
+every expected column type/nullability, primary-key columns and exact index
+table/key/predicate, plus CREATE/ownership across **all** non-system schemas.
+It rejects arbitrary existing side schemas with writable DDL, rather than
+checking only `public`. The CI fixture changes a column type, removes a PK,
+reuses an index name on the wrong table and grants CREATE on another schema;
+each must be rejected. It also performs a FastAPI TestClient app/lifespan/API
+smoke under the restricted PostgreSQL 17 DSN.
+
+**Limits:** restoring a full production backup on an isolated host still
+requires an operator-owned environment with the real backup, real-sized
+datasets, service credentials, application smoke tests, off-host storage and
+measured RPO/RTO. Synthetic fixture PASS is not authorization for a live
+role migration, merge or deploy.
