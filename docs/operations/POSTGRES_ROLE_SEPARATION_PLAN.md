@@ -190,3 +190,42 @@ identities explicitly with a signed-off object-level manifest.
 extension/FDW dependency, ungranted sequence, PUBLIC grant, lost default ACL,
 missing expected table or unknown migration owner. Do not automatically
 generate, execute or roll back `REASSIGN OWNED` from this metadata.
+
+## Admin PostgreSQL 17: schema DDL at startup (P0)
+
+The Control Center originally executes `CREATE TABLE IF NOT EXISTS` and
+`CREATE INDEX IF NOT EXISTS` inside constructors in
+`admin-site/app/postgres_admin_state.py`,
+`postgres_security_store.py`, and `postgres_task_queue.py`. Merely granting
+DML to a new runtime role would therefore risk startup failure. An Alembic
+PASS for the product's separate PostgreSQL 16 database does not cover this
+Admin-specific issue.
+
+PR #212 adds **opt-in** `ADMIN_PG_SCHEMA_MODE=preprovisioned`. In this
+mode the Admin's PostgreSQL store constructors no longer run CREATE DDL.
+Before app initialization, a read-only preflight checks that the required
+tables, indexes and sequences already exist, are owned by a *different*
+role, and have necessary DML/sequence rights; it rejects superuser and
+other elevated runtime flags, public-schema CREATE permissions and table
+RLS. Expired-session cleanup still uses runtime DML. Invalid modes fail
+closed. The existing default remains **legacy**; no live Admin is switched
+to the restricted path by this PR.
+
+`admin-site/scripts/test_postgres_preprovisioned_roles.py` is **CI-only**:
+it requires the exact disposable Admin PostgreSQL 17 workflow DSN and
+`GITHUB_ACTIONS=true`, creates an additional fixture DB owned by a
+non-superuser migration login, initializes the **existing real Admin
+schema** as that login, grants DML/sequence use to an independent
+non-superuser runtime login, then starts the five actual Admin stores in
+`preprovisioned` mode. The test rejects runtime CREATE/ALTER/CREATEROLE,
+checks that runtime startup creates no objects, proves example data writes,
+and requires missing permissions and indexes to fail preflight.
+
+This is **not a production schema migration mechanism** and it is **not**
+permission to turn on the mode in an existing live installation. Before
+deploying it, an operator must verify the actual full schema including
+all existing indexes/extensions, approve a separate migration/ownership
+script and reverse map, verify all Admin routes/workers and backup on an
+isolated copy with real-like data, establish protected credentials, and
+measure restore/RPO/RTO. Any new Admin PostgreSQL store or index must be
+added to `postgres_schema_policy.TABLES/INDEXES` and the matching CI test.
