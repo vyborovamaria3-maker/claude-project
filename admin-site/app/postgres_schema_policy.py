@@ -93,6 +93,22 @@ SCHEMA_COLUMNS = {
         ("user_agent_hash", "text", False),
     ),
 }
+# Defaults are part of the runtime contract, not optional decoration:
+# missing defaults can make INSERT paths fail even with correct column names.
+SCHEMA_DEFAULTS = {
+    ("admin_audit", "id"): "nextval('admin_audit_id_seq'::regclass)",
+    ("admin_audit", "details_json"): "'{}'::jsonb",
+    ("feature_flags", "enabled"): "false",
+    ("feature_flags", "description"): "''::text",
+    ("alerts", "id"): "nextval('alerts_id_seq'::regclass)",
+    ("alerts", "source"): "'control-center'::text",
+    ("alerts", "status"): "'open'::text",
+    ("analysis_parameter_overrides", "threshold"): "''::text",
+    ("analysis_parameter_overrides", "custom"): "0",
+    ("analysis_parameter_overrides", "deleted"): "0",
+    ("admin_background_tasks", "payload_json"): "'{}'::jsonb",
+}
+
 PRIMARY_KEYS = {
     "admin_audit": ("id",),
     "revoked_admin_sessions": ("nonce",),
@@ -296,6 +312,37 @@ def verify_preprovisioned_schema(dsn: str) -> None:
             keys = {name: tuple(cols) for name, cols in cur.fetchall()}
             if keys != PRIMARY_KEYS:
                 raise RuntimeError("Admin preprovisioned schema primary-key contract mismatch")
+            cur.execute(
+                "SELECT c.relname,a.attname,pg_get_expr(d.adbin,d.adrelid) "
+                "FROM pg_attrdef d "
+                "JOIN pg_attribute a ON a.attrelid=d.adrelid AND a.attnum=d.adnum "
+                "JOIN pg_class c ON c.oid=d.adrelid "
+                "JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE n.nspname='public' AND c.relname=ANY(%s)",
+                (list(SCHEMA_COLUMNS),),
+            )
+            actual_defaults = {
+                (table, column): _normal_sql(expr)
+                for table, column, expr in cur.fetchall()
+            }
+            expected_defaults = {
+                key: _normal_sql(expr) for key, expr in SCHEMA_DEFAULTS.items()
+            }
+            if actual_defaults != expected_defaults:
+                raise RuntimeError("Admin preprovisioned schema default contract mismatch")
+            # All legacy Admin tables have primary keys but no additional
+            # CHECK/FOREIGN KEY/UNIQUE constraints. An unreviewed constraint
+            # can reject legitimate runtime writes.
+            cur.execute(
+                "SELECT count(*) FROM pg_constraint con "
+                "JOIN pg_class c ON c.oid=con.conrelid "
+                "JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE n.nspname='public' AND c.relname=ANY(%s) "
+                "AND con.contype <> 'p'",
+                (list(SCHEMA_COLUMNS),),
+            )
+            if cur.fetchone()[0] != 0:
+                raise RuntimeError("Admin preprovisioned schema unexpected constraint")
 
             cur.execute(
                 "SELECT c.relname, c.relkind FROM pg_class c "
