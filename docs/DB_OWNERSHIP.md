@@ -9,10 +9,12 @@ document.
 | --- | --- | --- | --- |
 | X PostgreSQL | X Collector | Tweets, authors, revisions, X graph, tasks | Outbox claim/ACK; bounded read-only AI source adapter |
 | Telegram PostgreSQL | TG Collector | Messages, edits, deletions, numeric peer IDs | Outbox claim/ACK; bounded read-only AI source adapter |
-| Solana SQLite trade.db | Blockchain collector | Wallet observations and local trades | SQLite leased Outbox; no inferred PnL |
-| Python Intelligence SQLite | Python Intelligence worker | Local Python runtime state in the `intelligence-state` volume | Admin mounts read-only; central backup uses SQLite Online Backup API |
-| Node Intelligence PostgreSQL | Node cross-source Intelligence | Inbox, Timeline, links, features, AI results, signals, backtests | Writer role for ETL, SELECT-only role for API |
-| Legacy memecoin PostgreSQL | Memecoin app | Legacy analytics | Read-only compatibility, not a second cross-platform truth |
+| Solana SQLite trade.db | **Blockchain module inside Solana Launcher** (logical owner; not an independent deployable service) | Solana wallet observations, parsed swap evidence, revisions and local trade projections | SQLite leased Outbox; no inferred PnL |
+| Python Intelligence | Python Intelligence worker | Current Compose: SQLite documents/jobs in `intelligence-state`; PostgreSQL backend exists in code but is not selected by current Compose; MemoryDocumentStore is ephemeral RAM only | Admin mounts current SQLite read-only; central backup covers SQLite only; Memory is not a database |
+| Node Intelligence PostgreSQL | Node cross-source Intelligence | Inbox, Registry, Evidence, Timeline, links, features, alerts and backtests | Intended ETL writer / API read-only split; Node runtime has no current production Compose service and live DB is NOT VERIFIED |
+| Memecoin PostgreSQL 16 | Memecoin Intelligence app | Its own analytics, graph and jobs | Own Compose stack; not a second cross-platform truth |
+| SolSub PostgreSQL 16 | Solana Subscription Service | Users, plans, payments and subscription lifecycle | Own Compose stack; canonical ownership across other products is not yet migrated |
+| Telegram MiniApp SQLite | `telegram-miniapp/backend-new` demo backend | Demo users/payments; Prisma schema currently declares SQLite | Standalone/demo; live use NOT VERIFIED |
 | Admin DB | Admin site | Operator configuration and audit | Administrative observability only |
 
 ## Non-negotiable boundaries
@@ -50,7 +52,7 @@ document.
 The optional authenticated token POST reads X/TG stores through read-only sessions and SQLite token_trades through a read-only handle. It writes only derived reports and usage to the separate Intelligence DB. No raw social text is copied there. Literal address matches are labeled as such, not promoted to verified mappings, and cached legacy trade rows do not prove settlement/PnL. Background ETL/AI flags are unnecessary and remain off in request-only deployment. Source coverage remains unknown when collection completeness is unproven.
 
 
-## Physical inventory and recovery evidence (2026-10-31)
+## Physical inventory and recovery evidence (2026-10-31; clarified 2026-11-01)
 
 This document is a **logical ownership map**, not proof of the number or location
 of physical database instances. Do not infer a physical database count from the
@@ -99,10 +101,10 @@ reviewed, backed-up and reversible operator procedure.
 | --- | --- | --- | --- | --- |
 | POTAPoff product PostgreSQL | Compose sets `POSTGRES_USER=potapoff`; backend `DATABASE_URL` uses the same role; live role attributes NOT VERIFIED | Central backup script: `postgres.dump` | Disposable PG restore only; live restore NOT RUN | NOT ASSIGNED |
 | Control Center PostgreSQL | Compose sets `POSTGRES_USER=potapoff_admin`; `ADMIN_STATE_POSTGRES_DSN` uses the same role; live role attributes NOT VERIFIED | Central backup script: `admin-postgres.dump` | Disposable PG restore only; live restore NOT RUN | NOT ASSIGNED |
-| Blockchain `trade.db` | Expected Compose mount `/app/data/trade.db`; host path depends on deploy directory | Central backup script now snapshots through SQLite Online Backup API and includes `trade.db` in `SHA256SUMS` | Synthetic WAL fixture + isolated integrity/restore check; real database NOT RUN | NOT ASSIGNED |
+| Blockchain `trade.db` | Production Compose bind-mounts `./data:/app/data`; expected host file is `<deploy-dir>/data/trade.db`, container path `/app/data/trade.db`; owned by a module inside frontend/Launcher, not a separate service | Central backup script now snapshots through SQLite Online Backup API and includes `trade.db` in `SHA256SUMS` | Synthetic WAL fixture + isolated integrity/restore check; real database NOT RUN | NOT ASSIGNED |
 | X Collector PostgreSQL | Local/remote physical instance NOT IDENTIFIED | Separate Windows backup helper; not part of the POTAPoff central bundle | Actual isolated restore NOT RUN | NOT ASSIGNED |
 | TG Collector PostgreSQL | Local/remote physical instance NOT IDENTIFIED | Separate TG backup/restore scripts; not part of the POTAPoff central bundle | CI disposable restore is distinct from any live restore | NOT ASSIGNED |
-| Python Intelligence SQLite | Compose service `potapoff-intelligence`; expected named volume `intelligence-state`, file `/var/lib/potapoff-intelligence/intelligence.sqlite3`; live host NOT VERIFIED | Central bundle: `intelligence.sqlite`, created with SQLite Online Backup API and included in `SHA256SUMS` | Synthetic worker-volume fixture + isolated integrity/restore check; real database NOT RUN | NOT ASSIGNED |
+| Python Intelligence SQLite | Compose service `potapoff-intelligence`; named volume `intelligence-state`, file `/var/lib/potapoff-intelligence/intelligence.sqlite3`; this is the selected Compose backend. PostgreSQL backend is code-only in this deployment; MemoryDocumentStore is process memory, not durable | Central bundle: `intelligence.sqlite`, created with SQLite Online Backup API and included in `SHA256SUMS` | Synthetic worker-volume fixture + isolated integrity/restore check; real database NOT RUN | NOT ASSIGNED |
 | Node cross-source Intelligence PostgreSQL | `INTELLIGENCE_DATABASE_URL`; physical target NOT IDENTIFIED | No verified production backup job/schedule in this repository | Synthetic custom-format dump/restore only; production restore NOT RUN | NOT ASSIGNED |
 | Redis / RabbitMQ volumes | Expected Compose volumes; actual host not provisioned | Not included in the PostgreSQL/SQLite backup set | Recovery policy NOT VERIFIED | NOT ASSIGNED |
 
@@ -127,3 +129,13 @@ reviewed, backed-up and reversible operator procedure.
   sample/schema assertions have been recorded against the exact source SHA.
 - Keep RPO/RTO as **NOT MEASURED** until an operator times a full restore from
   an actual backup copy. CI fixture duration is not a production RTO.
+
+
+## Architecture clarification — 2026-11-01
+
+- `trade.db` is a Solana data store owned by the Blockchain module, but the module is physically packaged with Solana Launcher. The production Compose mounts the Launcher `./data` directory into the frontend container at `/app/data`; the backup script reads `/app/data/trade.db`. Do not describe this as a separate Blockchain service or an independent host/volume until an extraction is implemented.
+- Python `MemoryDocumentStore` is an in-memory adapter for tests/transient runs. It must not appear in a durable database count or backup inventory.
+- Python `PostgresDocumentStore` exists in source, but the Admin Compose selects the SQLite worker volume. Do not claim that Python Intelligence currently runs on PostgreSQL in that Compose.
+- Node Intelligence PostgreSQL and Python Intelligence SQLite/PostgreSQL are separate storage domains. The Node runtime is not the Python `intelligence-worker` container.
+- The current Compose inventory includes product PG16, Admin PG17, Memecoin PG16, SolSub PG16, and local/CI source databases as separate logical stores. This still does not establish the number of physical production databases.
+- Solana is the only target blockchain network. Legacy EVM/Bitcoin compatibility code is tracked for safe deprecation; existing historical rows are not to be deleted automatically.
