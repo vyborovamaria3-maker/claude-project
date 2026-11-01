@@ -278,7 +278,7 @@ export default function TGGraphPanel({ sources, authToken }: { sources: SourceOp
                 <div key={item.target_kind + ":" + item.target_key}
                   className="rounded-lg border border-bg-border bg-bg-soft px-3 py-2 text-xs">
                   <div className="flex justify-between gap-2">
-                    <span className="text-content">{item.target_kind === "solana_address" ? "Solana" : "EVM"}</span>
+                    <span className="text-content">{item.target_kind === "solana_address" ? "Solana" : "Legacy EVM"}</span>
                     <span className="text-content-muted">{item.observed_in_sources} источн. · {item.occurrences} упом.</span>
                   </div>
                   <div className="mt-1 break-all font-mono text-content-muted">{item.target_key}</div>
