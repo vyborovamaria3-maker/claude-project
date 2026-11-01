@@ -189,7 +189,7 @@ export ADMIN_DIR="$scratch/admin"
 # a verified backup MUST NOT erase older copies by arbitrary age.
 old_copy="$BACKUP_ROOT/20260901-000000"
 mkdir -p "$old_copy"
-printf 'operator-retained-recovery-point\\n' > "$old_copy/keep.txt"
+printf 'operator-retained-recovery-point\n' > "$old_copy/keep.txt"
 touch -d '35 days ago' "$old_copy"
 backup="$(bash "$root/solana-launcher/scripts/backup-production.sh")"
 [[ -s "$old_copy/keep.txt" ]] || {
@@ -212,11 +212,11 @@ mkdir -p "$fault_scripts"
 cp "$root/solana-launcher/scripts/backup-production.sh" "$fault_scripts/backup-production.sh"
 cat > "$fault_scripts/verify-backup-restore.sh" <<'SH'
 #!/usr/bin/env bash
-printf 'restore-attempted\\n' > "$BACKUP_VERIFY_TEST_MARKER"
+printf 'restore-attempted\n' > "$BACKUP_VERIFY_TEST_MARKER"
 exit 42
 SH
 failed_root="$scratch/failed-backups"
-if BACKUP_ROOT="$failed_root" BACKUP_VERIFY_TEST_MARKER="$scratch/failed-verify.marker" \\
+if BACKUP_ROOT="$failed_root" BACKUP_VERIFY_TEST_MARKER="$scratch/failed-verify.marker" \
     bash "$fault_scripts/backup-production.sh" >/dev/null 2>&1; then
   echo "Backup was published despite a failing restore verifier" >&2
   exit 1
