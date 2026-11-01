@@ -369,6 +369,83 @@ def assert_runtime_restricted() -> None:
     print("ADMIN_PG_PREPROVISIONED_RUNTIME_OK disposable_pg17_only")
 
 
+def assert_full_admin_app_smoke() -> None:
+    """The actual FastAPI app and its background-worker lifespan must start."""
+    import json
+    import tempfile
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory(prefix="admin-role-e2e-") as tmp:
+        base = Path(tmp)
+        (base / "sources.json").write_text("[]", encoding="utf-8")
+        (base / "logs.json").write_text("[]", encoding="utf-8")
+        env_overrides = {
+            "ADMIN_PG_SCHEMA_MODE": "preprovisioned",
+            "ADMIN_STATE_POSTGRES_DSN": RUNTIME,
+            "ADMIN_ENVIRONMENT": "test",
+            "ADMIN_SESSION_SECRET": "ci-test-session-secret-" + "x" * 40,
+            "ADMIN_USERNAME": "admin",
+            "ADMIN_PASSWORD": "ci-only-test-password",
+            "ADMIN_PASSWORD_HASH": "",
+            "ADMIN_SECURE_COOKIE": "false",
+            "ADMIN_AUDIT_DB": str(base / "audit.db"),
+            "ADMIN_SOURCES_FILE": str(base / "sources.json"),
+            "ADMIN_LOGS_FILE": str(base / "logs.json"),
+            "ADMIN_INTELLIGENCE_BACKEND": "sqlite",
+            "ADMIN_INTELLIGENCE_DB": str(base / "intelligence.db"),
+            "ADMIN_ALLOWED_NETWORKS": "",
+            "ADMIN_ALLOWED_ORIGINS": "",
+            "ADMIN_REQUIRE_NETWORK_ALLOWLIST": "false",
+        }
+        original = {key: os.environ.get(key) for key in env_overrides}
+        os.environ.update(env_overrides)
+        try:
+            # Module-level app construction is intentional: production imports
+            # app.main_admin:app, rather than instantiating stores directly.
+            from app import main_admin
+
+            app = main_admin.app
+            with TestClient(app) as client:
+                health = client.get("/api/health")
+                assert health.status_code == 200, health.text
+                ready = client.get("/api/ready")
+                assert ready.status_code == 200, ready.text
+                payload = ready.json()
+                assert payload["ready"] is True, payload
+                assert payload["task_backend"] == "postgres", payload
+                assert payload["mutable_state_backend"] == "postgres", payload
+                assert payload["security_backend"] == "postgres", payload
+                login = client.post(
+                    "/api/login",
+                    json={"username": "admin", "password": "ci-only-test-password"},
+                )
+                assert login.status_code == 200, login.text
+                flag = client.put(
+                    "/api/feature-flags/review.smoke",
+                    json={
+                        "name": "review.smoke",
+                        "enabled": True,
+                        "description": "restricted-PG17-FastAPI-fixture",
+                    },
+                )
+                assert flag.status_code == 200, flag.text
+                flags = client.get("/api/feature-flags")
+                assert flags.status_code == 200, flags.text
+                assert any(
+                    entry["name"] == "review.smoke" and entry["enabled"]
+                    for entry in flags.json()
+                ), flags.text
+                queue = app.state.task_queue
+                assert queue.metrics()["workers_alive"] == queue._workers_count
+            print("ADMIN_PG_FULL_FASTAPI_APP_OK restricted_pg17_api_ready_login_write")
+        finally:
+            for key, value in original.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+
 def main() -> None:
     require_ci_only()
     # Fail closed before creating the Admin app: requested PostgreSQL runtime
@@ -394,6 +471,7 @@ def main() -> None:
         raise AssertionError("Empty schema was not rejected")
     bootstrap_schema_under_migration_owner()
     assert_runtime_restricted()
+    assert_full_admin_app_smoke()
 
 
 if __name__ == "__main__":
