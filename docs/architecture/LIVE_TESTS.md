@@ -76,3 +76,27 @@ Never promote “not tested” based on a merge, test-name existence, synthetic 
 - After the main merge, [main Intelligence foundation](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/40081855865), [native source evidence CI](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/40081855822), [shared contracts](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/40081855740) and [hygiene](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/40081855688) had already passed at observation time. Other main workflows were still running when recorded; re-check exact SHA and workflow before claiming they passed.
 - Isolated regression asserts X/TG source PostgreSQL + blockchain SQLite → distinct destination PostgreSQL, explicit preverified mint evidence, edit tombstone, source-local transaction rollback, injected destination COMMIT failure/no source ACK, duplicate replay, source-specific active projection and occurred/known-at boundaries. This is a **synthetic saved-proof test**, not fresh RPC verification; legacy generic `queryTokenTimeline` is deliberately empty for evidence-only events and the dedicated read-only evidence endpoint returns typed separated lists.
 - **Live verification statuses remain NOT RUN BY THIS AUDIT.** Operator must first confirm production-safe backups+restores, independent migrations, explicit source flags/accounts/provider budget and sanitized logs. See [#173](https://github.com/vyborovamaria3-maker/claude-project/issues/173) and [#175](https://github.com/vyborovamaria3-maker/claude-project/issues/175).
+
+## P0 PR #212 review-recovery evidence — 2026-11-01 (CI only)
+
+Snapshot recorded against exact reviewed commit
+`54a763a04808e15def6d4a795609c3b8700f6e23`
+on Draft PR [#212](https://github.com/vyborovamaria3-maker/claude-project/pull/212).
+Source: GitHub Actions workflow conclusions on that SHA; **not** an
+observation of the user's private physical production deployments.
+
+| Gate | Result | Evidence | Remaining limitation |
+| --- | --- | --- | --- |
+| Restricted Admin PostgreSQL 17 startup/permissions | **CI SUCCESS** | [run 41309760568](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41309760568) | Disposable PG17 test, not production Admin user/password |
+| Product/Admin PG16/17 owner/ACL and SQLite WAL restore | **CI SUCCESS** | [run 41309760732](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41309760732) | Synthetic objects/rows, not a real encrypted off-host archive |
+| Backend migrations, Admin, frontend, Intelligence and production image builds | **CI SUCCESS** | [run 41309760757](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41309760757) | Predeploy validation is not a production deployment |
+| PR check completion | **18 SUCCESS, 1 SKIPPED** | Head above; Security Lock Refresh was skipped | Review-ready CI is not approval for production |
+| Effective protection of GitHub `main` | **FAILED / BLOCKED** | 2026-11-01 read-only GitHub API `/branches/main`: `protected:false`; `/rulesets`: `[]` | Requires repo admin and blocked-merge demonstration, issue #170 |
+| Real encrypted, durable off-host backup and full restore | **NOT RUN / BLOCKED** | No approved private backup/isolated host provided to this GitHub-only work | Need independent manifest digest, operator-run real-data restore, app smoke, measured RPO/RTO, issue #172 |
+
+The additional operator gate in
+[`P0_OPERATOR_RELEASE_GATES.md`](../operations/P0_OPERATOR_RELEASE_GATES.md)
+and `solana-launcher/scripts/run-offhost-recovery-evidence.sh` is **proposed
+source code**, not an executed real recovery test. Evidence from that tool
+must remain outside the repository. Existing 2026-10-22 TG/live rows above
+remain unchanged and NOT RUN where stated.
