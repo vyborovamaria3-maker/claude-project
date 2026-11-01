@@ -46,6 +46,14 @@ def preprovisioned_schema_enabled() -> bool:
     return value == "preprovisioned"
 
 
+def require_admin_postgres_dsn(dsn: str) -> None:
+    """Never silently fall back to SQLite when restricted PG mode is requested."""
+    if preprovisioned_schema_enabled() and not dsn.strip():
+        raise RuntimeError(
+            "ADMIN_STATE_POSTGRES_DSN is required when ADMIN_PG_SCHEMA_MODE=preprovisioned"
+        )
+
+
 def verify_preprovisioned_schema(dsn: str) -> None:
     """Verify restricted login and exact required schema objects before startup.
 
