@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  formatTokenId, parseTokenId, validateTokenId,
+  formatTokenId, parseTokenId, validateTokenId, isChain,
   formatWalletId, parseWalletId, normalizeAddress, normalizeMint,
   isSolanaPublicKey, isSolanaSignature, formatAuthorId, parseAuthorId,
   formatSourceId, parseSourceId,
@@ -9,9 +9,9 @@ import {
 
 const SOL = "So11111111111111111111111111111111111111112";
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
-const EVM = "0x" + "Aa".repeat(20);
 
 test("Solana canonical identity is strict, base58-aware and case-sensitive", () => {
+  assert.equal(isChain("solana"), true);
   assert.equal(formatTokenId("solana", SOL), "solana:" + SOL);
   assert.equal(normalizeMint("solana", USDC), USDC);
   assert.equal(parseTokenId("solana:" + SOL)?.mint, SOL);
@@ -25,23 +25,22 @@ test("Solana canonical identity is strict, base58-aware and case-sensitive", () 
   assert.equal(isSolanaSignature("1".repeat(63)), false);
 });
 
-test("EVM addresses require exactly 20 bytes and are normalized", () => {
-  for (const chain of ["ethereum", "base", "arbitrum"]) {
-    const canonical = chain + ":" + EVM.toLowerCase();
-    assert.equal(formatTokenId(chain, EVM), canonical);
-    assert.equal(parseTokenId(chain + ":" + EVM)?.id, canonical);
-    assert.equal(validateTokenId(canonical), true);
-    assert.equal(validateTokenId(chain + ":" + EVM), false);
-    assert.equal(formatWalletId(chain, EVM), canonical);
-    assert.equal(parseWalletId(chain + ":" + EVM)?.address, EVM.toLowerCase());
+test("only Solana is accepted as a canonical blockchain network", () => {
+  for (const chain of ["ethereum", "base", "arbitrum", "bitcoin", "polygon", "solana-mainnet"]) {
+    assert.equal(isChain(chain), false);
+    assert.equal(parseTokenId(chain + ":" + SOL), null);
+    assert.equal(parseWalletId(chain + ":" + SOL), null);
+    assert.throws(() => formatTokenId(chain, SOL), /Unsupported chain/);
+    assert.throws(() => formatWalletId(chain, SOL), /Unsupported chain/);
   }
-  assert.throws(() => normalizeAddress("ethereum", "0xAbCd"), /Invalid EVM/);
+  assert.throws(() => normalizeAddress("ethereum", "0x" + "ab".repeat(20)), /Unsupported chain/);
 });
 
 test("invalid, ambiguous and placeholder identifiers are rejected", () => {
   for (const value of [
     "garbage", "solana:", ":mint", "solana:5Xax...", "doge:" + SOL,
-    "solana:" + SOL + ":extra", "ethereum:0x123", "SOLANA:" + SOL,
+    "solana:" + SOL + ":extra", "ethereum:0x123", "ethereum:" + SOL,
+    "base:" + SOL, "arbitrum:" + SOL, "SOLANA:" + SOL,
     "solana: " + SOL, "solana:" + SOL + " ",
     null, 42, {},
   ]) {

@@ -2,11 +2,10 @@
  * Durable, wire-safe entity identity. Chain identity is explicit; ticker symbols,
  * X handles and Telegram usernames are NOT stable primary keys.
  *
- * Runtime validators deliberately reject placeholder/truncated addresses.
- * Solana public keys are Base58 and case-sensitive; EVM addresses use full
- * 20-byte hex and are normalized to lowercase.
+ * The canonical blockchain namespace is Solana only. Public keys are Base58,
+ * case-sensitive and must decode to exactly 32 bytes.
  */
-export const CHAINS = ["solana", "ethereum", "base", "arbitrum"] as const;
+export const CHAINS = ["solana"] as const;
 export type Chain = (typeof CHAINS)[number];
 export type SocialPlatform = "x" | "tg";
 
@@ -25,7 +24,6 @@ export type ParsedAuthorId = { platform: SocialPlatform; accountId: string };
 export type ParsedSourceId = { platform: SocialPlatform; accountId: string };
 
 const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const DIGITS = /^(0|[1-9][0-9]*)$/;
 const TG_DIGITS = /^-?(0|[1-9][0-9]*)$/;
 
@@ -65,12 +63,10 @@ export function isSolanaSignature(value: unknown): value is string {
 export function normalizeAddress(chain: Chain, address: unknown): string {
   if (!isChain(chain)) throw new TypeError("Unsupported chain");
   if (typeof address !== "string") throw new TypeError("Address must be a string");
-  if (chain === "solana") {
-    if (!isSolanaPublicKey(address)) throw new TypeError("Invalid Solana 32-byte Base58 public key");
-    return address;
+  if (!isSolanaPublicKey(address)) {
+    throw new TypeError("Invalid Solana 32-byte Base58 public key");
   }
-  if (!EVM_ADDRESS.test(address)) throw new TypeError("Invalid EVM 20-byte 0x address");
-  return address.toLowerCase();
+  return address;
 }
 
 export const normalizeMint = normalizeAddress;
@@ -161,20 +157,17 @@ export function parseSourceId(input: unknown): (ParsedSourceId & { id: SourceId 
   }
 }
 
-
 /**
- * Convert an explicitly chain-qualified native token key into the shared
- * wire identity. This is identity normalization ONLY: it does not attest
- * that an address is an SPL mint, that a ticker identifies a token, or that
- * any source observed the token. Verified provenance is a separate contract.
+ * Convert an explicitly identified native Solana token key into the shared
+ * wire identity. This is identity normalization ONLY: it does not attest that
+ * an address is an SPL mint or that any source observed the token.
  *
- * TG persists `(chain_id, mint)` with `solana-mainnet`; X and the chain
- * collector use Solana mint strings. Do not rewrite native database keys.
+ * TG persists (chain_id, mint) with solana-mainnet; do not rewrite native keys.
  */
 export function canonicalTokenIdFromNative(
   nativeChain: Chain | "solana-mainnet", nativeMint: unknown,
 ): TokenId {
-  const chain: Chain = nativeChain === "solana-mainnet" ? "solana" : nativeChain;
+  const chain = nativeChain === "solana-mainnet" ? "solana" : nativeChain;
   if (!isChain(chain)) throw new TypeError("Unsupported native token chain");
   if (typeof nativeMint !== "string") throw new TypeError("Native token mint must be a string");
   return formatTokenId(chain, nativeMint);

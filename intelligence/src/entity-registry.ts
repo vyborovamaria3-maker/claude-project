@@ -30,16 +30,14 @@ function validateEvidence(evidence: EvidenceRef): EvidenceRef {
   const patterns: Record<EvidenceRef["sourceKind"], RegExp> = {
     x_tweet: /^x:tweet:[1-9][0-9]*$/,
     tg_message: /^tg:message:-?(?:0|[1-9][0-9]*):[1-9][0-9]*$/,
-    chain_tx: /^chain:tx:(?:solana|ethereum|base|arbitrum):[A-Za-z0-9]+$/,
+    chain_tx: /^chain:tx:solana:[A-Za-z0-9]+$/,
   };
   if (!patterns[evidence.sourceKind].test(id)) {
     throw new TypeError("Evidence/source identity mismatch");
   }
   if (evidence.sourceKind === "chain_tx") {
-    const match = /^chain:tx:(solana|ethereum|base|arbitrum):(.+)$/.exec(id);
-    if (!match ||
-      (match[1] === "solana" && !isSolanaSignature(match[2])) ||
-      (match[1] !== "solana" && !/^0x[0-9a-f]{64}$/.test(match[2]!))) {
+    const match = /^chain:tx:solana:(.+)$/.exec(id);
+    if (!match || !isSolanaSignature(match[1])) {
       throw new TypeError("Invalid chain transaction evidence");
     }
   }

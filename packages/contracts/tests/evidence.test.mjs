@@ -4,7 +4,6 @@ import { buildEvidenceRef } from "../dist/index.js";
 
 const NOW = "2026-10-17T20:30:00Z";
 const SIG = "1".repeat(64);
-const HASH = "0x" + "A1".repeat(32);
 
 test("X tweet evidence uses stable tweet ID and retains two independent clocks", () => {
   const ref = buildEvidenceRef({
@@ -25,12 +24,11 @@ test("Telegram evidence key includes BOTH source and message", () => {
   assert.notEqual(a.sourceId, b.sourceId);
 });
 
-test("chain evidence uses chain-specific stable transaction identity", () => {
+test("chain evidence accepts only a valid Solana transaction signature", () => {
   const sol = buildEvidenceRef({sourceKind:"chain_tx",chain:"solana",transactionId:SIG,observedAt:NOW});
-  const eth = buildEvidenceRef({sourceKind:"chain_tx",chain:"ethereum",transactionId:HASH,observedAt:NOW});
   assert.equal(sol.sourceId, "chain:tx:solana:" + SIG);
-  assert.equal(eth.sourceId, "chain:tx:ethereum:" + HASH.toLowerCase());
   assert.throws(() => buildEvidenceRef({sourceKind:"chain_tx",chain:"solana",transactionId:"bad",observedAt:NOW}), /signature/);
+  assert.throws(() => buildEvidenceRef({sourceKind:"chain_tx",chain:"ethereum",transactionId:"0x"+"a".repeat(64),observedAt:NOW}), /Invalid chain/);
 });
 
 test("malformed provenance or ambiguous clocks are rejected", () => {

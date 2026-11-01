@@ -52,10 +52,15 @@ test("repeat delivery checks stable evidence and rejects identity collision",asy
   }),/identity collision/);
 });
 
-test("on-chain evidence must be a real signature/hash-shaped identifier",()=>{
+test("on-chain evidence accepts only valid Solana signatures",()=>{
   assert.throws(()=>validateRegistryEvent({
     ...event,sourceSystem:"blockchain",evidenceRef:{
       ...evidence,sourceKind:"chain_tx",sourceId:"chain:tx:solana:abc"
     }
   }),/Invalid chain transaction evidence/);
+  assert.throws(()=>validateRegistryEvent({
+    ...event,sourceSystem:"blockchain",evidenceRef:{
+      ...evidence,sourceKind:"chain_tx",sourceId:"chain:tx:ethereum:0x"+"a".repeat(64)
+    }
+  }),/Evidence\/source identity mismatch/);
 });

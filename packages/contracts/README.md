@@ -8,7 +8,7 @@ rewired**, no existing databases are migrated and no production data is touched.
 
 **Product target (2026-11-01): Solana only.** New token identities and blockchain evidence in the target architecture use `solana:<full-base58-address>`. Do not introduce Ethereum, Base, Arbitrum, Bitcoin or other chain producers.
 
-**As-Is compatibility note:** this source snapshot still contains legacy EVM chain identifiers and EVM normalizers in `canonical-ids.ts`, with corresponding tests and downstream compatibility paths. They have not yet been removed from code. They are not part of the approved target network scope and must not be used for new product features or new cross-source token evidence. Their removal is tracked as a separate compatibility cleanup; historical rows/events must not be deleted automatically.
+**Runtime enforcement:** canonical token/wallet IDs and chain transaction evidence accept Solana only. EVM, Bitcoin and other network prefixes are rejected. Historical rows in independent source databases are not deleted or rewritten by this package.
 
 - Target canonical token/wallet identity: `solana:<full-base58-address>`.
 - Solana: decoded 32-byte Base58 key, case-sensitive, including leading zeros.
@@ -68,7 +68,7 @@ a noncanonical lookup attribute until a stable ID is obtained; do not guess.
 
 ## Native TG / X / Blockchain token identity adapter (2026-10-22)
 
-Use `canonicalTokenIdFromNative(nativeChain, nativeMint)` for an **already identified** chain-qualified native token key. It validates the full address, maps TG's `solana-mainnet` to the shared `solana` label, preserves case-sensitive Solana base58 and normalizes EVM addresses to lowercase.
+Use `canonicalTokenIdFromNative(nativeChain, nativeMint)` for an **already identified Solana token key**. It accepts `solana` and TG's native `solana-mainnet` alias, validates the full 32-byte Base58 address and preserves case. All other network names are rejected.
 
 ```ts
 canonicalTokenIdFromNative("solana-mainnet", "So11111111111111111111111111111111111111112")
@@ -82,13 +82,10 @@ This **does not verify** that the address is a token mint, attribute a message t
 Test: `npm --prefix packages/contracts test` includes `tests/native-token-identity.test.mjs`. The already existing `intelligence/tests/cross-source-token-timeline.test.mjs` proves **synthetic destination ingestion**, not live verified cross-source publication. The next independent gate is producer-to-consumer integration with real-source fixtures, retractions and restart/replay cases, followed by explicitly approved live checks.
 
 
-## Solana-only target decision — 2026-11-01
+## Solana-only enforcement — 2026-11-01
 
-The target architecture supports Solana only. The EVM compatibility code visible in this revision is a legacy implementation detail, not a product promise. A follow-up cleanup must:
-- stop new non-Solana token/evidence writes first;
-- preserve existing legacy rows for audit/history;
-- update canonical validators, evidence validators, source adapters and tests together;
-- use additive migrations for existing TG graph tables; never edit already-applied migration files;
-- verify all producers/consumers before removing legacy types.
+The canonical contracts now accept only `solana:<full-base58-address>` token/wallet IDs and `chain:tx:solana:<64-byte-base58-signature>` transaction evidence. The native adapter accepts only `solana` and TG's `solana-mainnet` alias. EVM, Bitcoin and other network prefixes fail validation.
+
+Historical source rows are preserved. This change does not rewrite applied SQL migrations or delete legacy EVM/Bitcoin data. TG's historical graph schema may still contain `evm_address` rows for read-only compatibility; the current parser no longer emits new ones.
 
 See [As-Is audit](../../docs/architecture/ARCHITECTURE_AS_IS_20261101.md) and [Solana-only target](../../docs/architecture/ARCHITECTURE_TARGET_20261101.md).
