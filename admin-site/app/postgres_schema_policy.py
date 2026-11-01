@@ -9,6 +9,7 @@ No DDL or privileged configuration changes occur in this module.
 from __future__ import annotations
 
 import os
+import re
 
 import psycopg
 
@@ -138,6 +139,25 @@ def _normal_sql(value: str | None) -> str | None:
     if value is None:
         return None
     return " ".join(value.lower().replace("(", " ").replace(")", " ").split())
+
+def _index_key_signature(expr: str, sort_options: int) -> tuple[str, bool, bool]:
+    """Compare actual btree ordering bits instead of pretty-printed ASC/DESC.
+
+    pg_get_indexdef(column) can render explicit default NULLS FIRST/LAST.
+    The indoption bits are authoritative: 1=DESC and 2=NULLS_FIRST.
+    """
+    plain = re.sub(r"\\s+NULLS\\s+(?:FIRST|LAST)\\s*$", "", expr, flags=re.I)
+    plain = re.sub(r"\\s+(?:ASC|DESC)\\s*$", "", plain, flags=re.I)
+    return (_normal_sql(plain) or "", bool(sort_options & 1), bool(sort_options & 2))
+
+
+def _expected_index_key(expr: str) -> tuple[str, bool, bool]:
+    # The reviewed contract contains only simple btree columns with the
+    # PostgreSQL default NULLS order (ASC LAST, DESC FIRST).
+    normalized = _normal_sql(expr) or ""
+    desc = normalized.endswith(" desc")
+    return (normalized.removesuffix(" desc"), desc, desc)
+
 
 def preprovisioned_schema_enabled() -> bool:
     value = os.getenv("ADMIN_PG_SCHEMA_MODE", "legacy").strip().lower()
@@ -360,6 +380,8 @@ def verify_preprovisioned_schema(dsn: str) -> None:
                 "i.indisunique, i.indisvalid, i.indisready, "
                 "pg_get_expr(i.indpred,i.indrelid), "
                 "ARRAY(SELECT pg_get_indexdef(idx.oid,k,true) "
+                "FROM generate_series(1,i.indnkeyatts) k ORDER BY k), "
+                "ARRAY(SELECT i.indoption[k-1] "
                 "FROM generate_series(1,i.indnkeyatts) k ORDER BY k) "
                 "FROM pg_class idx "
                 "JOIN pg_index i ON i.indexrelid=idx.oid "
@@ -369,13 +391,15 @@ def verify_preprovisioned_schema(dsn: str) -> None:
                 "WHERE n.nspname='public' AND idx.relname=ANY(%s)",
                 (list(INDEX_CONTRACT),),
             )
-            for name, table, method, unique, valid, ready, pred, exprs in cur.fetchall():
+            for name, table, method, unique, valid, ready, pred, exprs, sort_options in cur.fetchall():
                 expected_table, expected_exprs, expected_pred = INDEX_CONTRACT[name]
                 if (
                     table != expected_table or method != "btree"
                     or unique or not valid or not ready
-                    or tuple(_normal_sql(x) for x in exprs)
-                    != tuple(_normal_sql(x) for x in expected_exprs)
+                    or tuple(
+                        _index_key_signature(x, option)
+                        for x, option in zip(exprs, sort_options, strict=True)
+                    ) != tuple(_expected_index_key(x) for x in expected_exprs)
                     or _normal_sql(pred) != _normal_sql(expected_pred)
                 ):
                     raise RuntimeError(f"Admin preprovisioned schema index definition mismatch: {name}")
