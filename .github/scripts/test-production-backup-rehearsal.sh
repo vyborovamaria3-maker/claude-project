@@ -285,6 +285,34 @@ bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" |
   grep -Fq 'BACKUP_RESTORE_REHEARSAL_OK'
 echo "SYNTHETIC_RESTORE_TEST_OK product_pg admin_pg blockchain_sqlite_wal intelligence_sqlite_wal"
 
+# A valid SHA256 manifest is NOT proof of owner/ACL fidelity. Corrupt the
+# reference catalog and re-sign every file locally; only the role-aware
+# reconstruction comparison is expected to reject this otherwise valid set.
+cp "$backup/postgres-role-fingerprint.txt" "$scratch/postgres-role-fingerprint.original"
+cp "$backup/SHA256SUMS" "$scratch/SHA256SUMS.role-original"
+printf 'relation|public|synthetic_product:r|wrong_owner|\n' \
+  >> "$backup/postgres-role-fingerprint.txt"
+(
+  cd "$backup"
+  find . -type f ! -path './SHA256SUMS' -print0 \
+    | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS
+)
+role_reject_log="$scratch/role-acl-reject.log"
+if bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" \
+     > "$role_reject_log" 2>&1; then
+  echo "Role-fingerprint mismatch was accepted despite valid SHA256SUMS" >&2
+  exit 1
+fi
+grep -Fq 'Owner/ACL mismatch after isolated role-aware restore' "$role_reject_log" || {
+  echo "Role-fingerprint corruption rejected for wrong reason" >&2
+  tail -n 20 "$role_reject_log" >&2
+  exit 1
+}
+mv "$scratch/postgres-role-fingerprint.original" "$backup/postgres-role-fingerprint.txt"
+mv "$scratch/SHA256SUMS.role-original" "$backup/SHA256SUMS"
+echo "ROLE_ACL_MISMATCH_REJECTED_OK"
+
+
 # A checksum-only verifier can be fooled by removing the manifest entry for
 # a modified configuration file. Check exact membership, including dotfiles.
 cp "$backup/SHA256SUMS" "$scratch/SHA256SUMS.original"
