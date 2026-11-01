@@ -15,7 +15,7 @@ document.
 | Memecoin PostgreSQL 16 | Memecoin Intelligence app | Its own analytics, graph and jobs | Own Compose stack; not a second cross-platform truth |
 | SolSub PostgreSQL 16 | Solana Subscription Service | Users, plans, payments and subscription lifecycle | Own Compose stack; canonical ownership across other products is not yet migrated |
 | Telegram MiniApp SQLite | `telegram-miniapp/backend-new` demo backend | Demo users/payments; Prisma schema currently declares SQLite | Standalone/demo; live use NOT VERIFIED |
-| Admin DB | Admin site | Operator configuration and audit | Administrative observability only |
+| Admin PostgreSQL 17 | Admin site | Operator configuration and audit | Administrative observability only |
 
 ## Non-negotiable boundaries
 
@@ -102,8 +102,8 @@ reviewed, backed-up and reversible operator procedure.
 | POTAPoff product PostgreSQL | Compose sets `POSTGRES_USER=potapoff`; backend `DATABASE_URL` uses the same role; live role attributes NOT VERIFIED | Central backup script: `postgres.dump` | Disposable PG restore only; live restore NOT RUN | NOT ASSIGNED |
 | Control Center PostgreSQL | Compose sets `POSTGRES_USER=potapoff_admin`; `ADMIN_STATE_POSTGRES_DSN` uses the same role; live role attributes NOT VERIFIED | Central backup script: `admin-postgres.dump` | Disposable PG restore only; live restore NOT RUN | NOT ASSIGNED |
 | Blockchain `trade.db` | Production Compose bind-mounts `./data:/app/data`; expected host file is `<deploy-dir>/data/trade.db`, container path `/app/data/trade.db`; owned by a module inside frontend/Launcher, not a separate service | Central backup script now snapshots through SQLite Online Backup API and includes `trade.db` in `SHA256SUMS` | Synthetic WAL fixture + isolated integrity/restore check; real database NOT RUN | NOT ASSIGNED |
-| X Collector PostgreSQL | Local/remote physical instance NOT IDENTIFIED | Separate Windows backup helper; not part of the POTAPoff central bundle | Actual isolated restore NOT RUN | NOT ASSIGNED |
-| TG Collector PostgreSQL | Local/remote physical instance NOT IDENTIFIED | Separate TG backup/restore scripts; not part of the POTAPoff central bundle | CI disposable restore is distinct from any live restore | NOT ASSIGNED |
+| X Collector PostgreSQL 16 | `x-collector/compose.reply.yml` defines `postgres:16-bookworm` and named volume `reply_pg`; live volume NOT VERIFIED | Separate X backup helper; not part of POTAPoff central bundle | X CI disposable restore passed; live restore NOT RUN | NOT ASSIGNED |
+| TG Collector PostgreSQL | No TG production Compose service in repo; external/local `DATABASE_URL` supplied to local worker; physical instance NOT IDENTIFIED | Separate TG backup/restore scripts; not part of POTAPoff central bundle | CI disposable PG16 restore passed; live restore NOT RUN | NOT ASSIGNED |
 | Python Intelligence SQLite | Compose service `potapoff-intelligence`; named volume `intelligence-state`, file `/var/lib/potapoff-intelligence/intelligence.sqlite3`; this is the selected Compose backend. PostgreSQL backend is code-only in this deployment; MemoryDocumentStore is process memory, not durable | Central bundle: `intelligence.sqlite`, created with SQLite Online Backup API and included in `SHA256SUMS` | Synthetic worker-volume fixture + isolated integrity/restore check; real database NOT RUN | NOT ASSIGNED |
 | Node cross-source Intelligence PostgreSQL | `INTELLIGENCE_DATABASE_URL`; physical target NOT IDENTIFIED | No verified production backup job/schedule in this repository | Synthetic custom-format dump/restore only; production restore NOT RUN | NOT ASSIGNED |
 | Redis / RabbitMQ volumes | Expected Compose volumes; actual host not provisioned | Not included in the PostgreSQL/SQLite backup set | Recovery policy NOT VERIFIED | NOT ASSIGNED |
