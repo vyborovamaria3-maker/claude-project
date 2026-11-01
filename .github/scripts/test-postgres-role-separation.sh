@@ -102,14 +102,6 @@ run_case() {
     return 1
   }
 
-  # SCRAM must reject an incorrect password; no Unix-socket auth fallback.
-  if docker exec -e PGPASSWORD=wrong-fixture-password "$src" \
-    psql -X -h 127.0.0.1 -U fixture_runtime -d role_fixture \
-    -Atq -c 'SELECT 1' >/dev/null 2>&1; then
-    echo 'FAIL: fixture accepts an incorrect runtime password' >&2
-    return 1
-  fi
-
   # All privileges below are created in a disposable cluster only.
   # Runtime and backup cannot own or create objects. Migration owns app
   # objects and is the ONLY login allowed to alter them.
@@ -133,6 +125,14 @@ ALTER DEFAULT PRIVILEGES FOR ROLE fixture_migration IN SCHEMA public
 ALTER DEFAULT PRIVILEGES FOR ROLE fixture_migration IN SCHEMA public
   GRANT SELECT ON SEQUENCES TO fixture_backup;
 SQL
+
+  # SCRAM must reject an incorrect password; no Unix-socket auth fallback.
+  if docker exec -e PGPASSWORD=wrong-fixture-password "$src" \
+    psql -X -h 127.0.0.1 -U fixture_runtime -d role_fixture \
+    -Atq -c 'SELECT 1' >/dev/null 2>&1; then
+    echo 'FAIL: fixture accepts an incorrect runtime password' >&2
+    return 1
+  fi
 
   for actor in fixture_migration fixture_runtime fixture_backup; do
     assert_restricted "$src" "$actor"
