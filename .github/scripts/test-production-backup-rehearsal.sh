@@ -148,8 +148,14 @@ done
 
 docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
   -c "CREATE TABLE synthetic_product(id integer primary key, tag text); INSERT INTO synthetic_product VALUES (1,'safe-fixture');" >/dev/null
+docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
+  -c "CREATE TABLE alembic_version(version_num varchar(32) PRIMARY KEY); INSERT INTO alembic_version VALUES ('ci_review_head');" >/dev/null
+
 docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
   -c "CREATE TABLE synthetic_admin(id integer primary key, tag text); INSERT INTO synthetic_admin VALUES (2,'safe-fixture');" >/dev/null
+docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
+  -c "CREATE TABLE admin_audit(id bigserial PRIMARY KEY, action text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()); INSERT INTO admin_audit(action) VALUES ('fixture'); CREATE TABLE feature_flags(name text PRIMARY KEY, enabled boolean NOT NULL); CREATE TABLE admin_background_tasks(id text PRIMARY KEY, state text NOT NULL); CREATE TABLE admin_security_sessions(nonce text PRIMARY KEY, username text NOT NULL);" >/dev/null
+
 
 # Exercise the read-only privilege audit as a least-privilege role on
 # both PostgreSQL majors; do not run it only as the fixture superuser.
