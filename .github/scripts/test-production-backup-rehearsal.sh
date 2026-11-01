@@ -242,7 +242,7 @@ echo "SYNTHETIC_RESTORE_TEST_OK product_pg admin_pg blockchain_sqlite_wal intell
 cp "$backup/SHA256SUMS" "$scratch/SHA256SUMS.original"
 cp "$backup/backend.env" "$scratch/backend.env.original"
 grep -vF '  ./backend.env' "$scratch/SHA256SUMS.original" > "$backup/SHA256SUMS"
-printf 'UNEXPECTED_TAMPER=1\\n' >> "$backup/backend.env"
+printf 'UNEXPECTED_TAMPER=1\n' >> "$backup/backend.env"
 if bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" >/dev/null 2>&1; then
   echo "Incomplete SHA256 manifest accepted a tampered configuration" >&2
   exit 1
@@ -252,7 +252,7 @@ cp "$scratch/SHA256SUMS.original" "$backup/SHA256SUMS"
 echo "INCOMPLETE_SHA256_MANIFEST_REJECTED_OK"
 
 # Extra files must not be silently ignored, even if all listed sums match.
-printf 'injected\\n' > "$backup/admin-site/.untracked"
+printf 'injected\n' > "$backup/admin-site/.untracked"
 if bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" >/dev/null 2>&1; then
   echo "Unlisted backup file unexpectedly passed verification" >&2
   exit 1
