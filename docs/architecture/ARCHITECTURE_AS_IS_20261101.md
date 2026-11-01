@@ -75,9 +75,9 @@ flowchart TB
 - Compose: PostgreSQL 16, Redis 7, RabbitMQ 3, backend, Celery worker/beat, Twitter discovery, optional Telegram monitor, frontend, Nginx, Prometheus.
 - Production Compose монтирует `./data:/app/data` в frontend-контейнер. Backup script ожидает `/app/data/trade.db`.
 
-**Runtime finding:** `Dockerfile.frontend.prod` использует `node:20-bookworm-slim`, тогда как Frontend Quality CI использует Node 22. Node 20 достиг EOL 2026-04-30. Это реальная задача выравнивания и обновления production build/runtime. Официальный график: https://github.com/nodejs/Release#release-schedule.
+**Runtime finding (baseline corrected by PR #212 follow-up):** current `Dockerfile.frontend.prod` uses `node:22-bookworm-slim` in both build and runner stages, aligned with Frontend Quality CI. The earlier Node 20 finding applied to the pre-follow-up snapshot and is resolved in repository source; exact-head image CI remains the verification gate.
 
-Отдельный каталог `solana-launcher/frontend/` — старый пакет `ai-reply-guy-frontend`: Next.js 14.0.4 / React 18.2, его Dockerfile использует Node 18. В текущем production Compose он не указан как build context или Dockerfile. До доказательства обратного считать его legacy/orphaned frontend, а не основным Launcher frontend.
+Отдельный каталог `solana-launcher/frontend/` — старый пакет `ai-reply-guy-frontend`: Next.js 14.0.4 / React 18.2; его Dockerfile также переведён на Node 22. В текущем production Compose он не указан как build context или Dockerfile. Считать его legacy/orphaned frontend, а не основным Launcher frontend.
 
 ### 4.2 Blockchain Collector — модуль внутри Solana Launcher
 
@@ -149,7 +149,7 @@ Node Intelligence и Python Intelligence — разные системы, нес
 
 - npm workspaces: API, web, bot, shared.
 - Root engine: Node >=22.
-- Web: Next.js 16.4.2, manifest React ^18.3.1; lockfile содержит отдельный `apps/web/node_modules/react` 18.3.1, совместимый с peer range Next.js 16.
+- Web: Next.js 16.4.2, manifest React/React DOM ^18.3.1. The lockfile currently nests React 18.3.1 under `apps/web`, but hoists React DOM 18.3.1 beside root React 19.3.0 (introduced by Solana Mobile / React Native peer requirements). Next 16 supports React 18, but this resolved React/React DOM placement is a concrete peer/runtime mismatch to verify and fix by regenerating the workspace lockfile; do not infer compatibility from Next's peer range alone.
 - Dockerfiles используют Node 22.
 - Compose: PostgreSQL 16, Redis 7, Express API, Next.js web, Telegraf bot.
 - Это самостоятельная система подписок; её нельзя автоматически считать уже единственным владельцем всех подписок в других приложениях.
@@ -186,15 +186,14 @@ Next.js 16.4.2 в проверенных lock-файлах допускает Re
 **Целевая политика проекта: единственная поддерживаемая blockchain-сеть — Solana.** Новый canonical token ID: `solana:<full-base58-mint>`. X и Telegram — социальные источники evidence, а не blockchain networks.
 
 При этом в текущем коде ещё обнаружены legacy multi-chain участки:
-- `packages/contracts/src/canonical-ids.ts`: Ethereum/Base/Arbitrum в `CHAINS`, EVM normalizer и тесты.
-- `packages/contracts/src/evidence.ts` и `intelligence/src/entity-registry.ts`: общие chain evidence validators, в том числе EVM.
-- `x-collector/lib/intelligence/chain-adapter.ts`: Ethereum/Solana/Bitcoin; `scripts/chain-ingest.ts` импортирует локальный JSON, это не доказательство live RPC collectors.
-- `solana-launcher/lib/kols/*` и backend KOL API: Ethereum wallet path.
-- `tg-collector/src/analytics/*` и SQL migrations: извлечение/хранение `evm_address` как generic message reference; это не verified token evidence.
-- TeraGram dataset/curator modules содержат EVM contract extraction.
-- `solana-wallet-warmup` содержит cross-chain bridge stubs/configuration.
+- `packages/contracts/src/canonical-ids.ts`, `packages/contracts/src/evidence.ts` and `intelligence/src/entity-registry.ts`: canonical IDs and chain transaction evidence are now Solana-only.
+- `x-collector/lib/intelligence/chain-adapter.ts` and `scripts/chain-ingest.ts`: new imports and registry adapters are Solana-only; historical database rows are not deleted.
+- `tg-collector/src/analytics/extract.ts`: analysis v5 emits Solana address links only. SQL migrations and graph API retain `evm_address` compatibility for old rows; the UI labels those rows as legacy.
+- `solana-launcher/lib/kols/*` and backend KOL API: legacy Ethereum wallet path remains.
+- TeraGram dataset/curator and TGInvite modules retain EVM contract extraction paths.
+- `solana-wallet-warmup` contains cross-chain bridge stubs/configuration.
 
-Эти участки не должны трактоваться как поддерживаемая мультичейн-архитектура. Их вывод — отдельная задача с тестами и additive migrations. Не удалять исторические EVM-строки и не переписывать applied SQL migrations автоматически. Сначала прекратить новые EVM writes, скрыть/пометить legacy данные, затем согласовать миграцию схемы и удаление compatibility code.
+The shared canonical evidence path no longer accepts new non-Solana networks. Remaining KOL/TG dataset and bridge paths are legacy feature code, not a supported multi-chain architecture; retire them in separately reviewed changes. Preserve historical EVM/Bitcoin rows and do not rewrite already-applied SQL migrations.
 
 ## 7. Владение данными и физические границы
 
@@ -281,11 +280,11 @@ GitHub API на момент аудита: `main protected=false`, required stat
 
 ## 12. Приоритетные исправления после аудита
 
-1. P0: обновить основной Launcher frontend Docker runtime с Node 20 до поддерживаемого Node LTS и повторить production image build/CI.
+1. P0: Launcher frontend Docker runtime Node 20 → Node 22 is completed in PR #212 follow-up; retain exact-head production image build as the acceptance gate.
 2. P0: включить эффективную защиту `main` через администратора; это не кодовая правка.
 3. P0: завершить физическую инвентаризацию DB, применить отдельные PG roles только после restore-tested cutover.
 4. P0: провести реальный encrypted off-host restore и измерить RPO/RTO.
-5. P1: безопасно вывести EVM/Bitcoin support из новых token/evidence paths; сохранить исторические данные, не переписывать applied migrations.
+5. P1: canonical contracts, Node Intelligence evidence, X chain import and TG graph extraction are now Solana-only; separately retire remaining KOL/TG dataset and bridge EVM paths while preserving historical data and applied migrations.
 6. P1: исправить Telegram MiniApp README и разнести реальные подпроекты/SQLite конфигурацию.
 7. P1: зафиксировать engines Node 22 для X/TG и runtime matrix.
 8. P1: документально и физически разделить Node Intelligence и Python Intelligence; не считать Python Dockerfile запуском Node runtime.
@@ -304,7 +303,7 @@ The As-Is audit above is anchored to source HEAD `6273d9fb9f2f987c4ee7932cea0e10
 - `tg-collector/package.json` and lockfile: Node engine `>=22`.
 - X Collector README now states Node 22 runtime.
 - Telegram MiniApp READMEs now reflect the actual Vite frontend, Node bot, Express/Prisma backend-new and SQLite datasource; stale Python/aiogram and PostgreSQL instructions were removed.
-- Shared contracts and data-contract docs now explicitly distinguish the Solana-only target from legacy EVM/Bitcoin code still present in the source.
+- Shared canonical contracts and Node Intelligence validators now reject non-Solana chain IDs/evidence; X chain import and TG graph extraction no longer emit non-Solana observations. Historical SQL compatibility and separate KOL/TG dataset/bridge paths remain documented as legacy.
 - Current/target architecture index docs and DB ownership inventory were corrected; X Compose PG16 and TG local DB boundaries are now explicit.
 
 Node 22 is currently a supported Maintenance LTS line through 2027-04-30. Plan a tested Node 24 upgrade before that date rather than waiting for EOL: https://github.com/nodejs/Release#release-schedule.

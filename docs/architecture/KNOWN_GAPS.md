@@ -6,7 +6,8 @@ Statuses: **IMPLEMENTED** = source code exists; **OFFLINE TESTED** = explicit is
 
 | Priority | Area | Verified implementation / observation | Missing gate / action | Status |
 | --- | --- | --- | --- | --- |
-| P0 | Canonical IDs | `packages/contracts/src/canonical-ids.ts` validates full Solana/EVM addresses and stable social IDs | Confirm adapters of each production source use canonical validation | IMPLEMENTED; rollout NOT VERIFIED |
+| P0 | Canonical IDs | Shared contracts and Node Intelligence now accept only Solana canonical IDs/signatures plus stable social IDs | Verify each source adapter uses the Solana-only contract; preserve historical non-Solana rows without new writes | IMPLEMENTED / OFFLINE-TESTED; live rollout NOT VERIFIED |
+| P1 | Legacy non-Solana paths | X chain import and TG graph extraction now reject new non-Solana observations; historical TG `evm_address` rows remain readable | Retire remaining KOL/TG dataset EVM extraction and wallet-warmup bridge prototypes under separate review; preserve historical rows | PARTIALLY RETIRED; legacy paths remain |
 | P0 | Source outboxes | X migration 050, TG migration 015, Blockchain additive local SQLite; source flags opt-in | Backup/restore, inspect deployed migration ledgers, producer/consumer smoke and coverage counters | IMPLEMENTED; live NOT VERIFIED |
 | P0 | Destination | Node `intelligence/src`: inbox, entity/evidence registry, timeline, feature schema in independent PG | Prove target schema applied safely on selected local DB and every source can ACK after commit | IMPLEMENTED; live NOT VERIFIED |
 | P0 | Source identity | X base emitter refs only `author`; TG `source`; Blockchain `wallet` | Add conservative, revisioned **verified token-link** producer/resolver; preserve unknown/ambiguous | BLOCKED for token-level cross-source timeline |

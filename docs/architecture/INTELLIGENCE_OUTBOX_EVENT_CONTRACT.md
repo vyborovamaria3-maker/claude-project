@@ -6,14 +6,15 @@ live producers are already wired.
 
 ## Canonical identity
 
-- Token: solana:<exact-32-byte-base58-mint>; EVM: chain:0x<40hex lower>.
-- Wallet: chain:<wallet public address>; never identify owner from token
-  account without validated mapping.
-- X author: x:<stable decimal ID>, not x:@handle.
-- Telegram source: tg:source:<numeric channel/group ID>.
-- Evidence: x:tweet:<tweet_id>;
-  tg:message:<source_id>:<message_id>;
-  chain:tx:<network>:<signature_or_hash>.
+- Token: `solana:<exact-32-byte-base58-mint>` only.
+- Wallet: `solana:<full-32-byte-base58-public-key>`; never identify owner from a token
+  account without a validated mapping.
+- X author: `x:<stable decimal ID>`, not `x:@handle`.
+- Telegram source: `tg:source:<numeric channel/group ID>`.
+- Evidence: `x:tweet:<tweet_id>`;
+  `tg:message:<source_id>:<message_id>`;
+  `chain:tx:solana:<64-byte-base58-signature>`.
+- Ethereum, Base, Arbitrum, Bitcoin and other network prefixes are rejected for new canonical token/evidence events.
 
 ## Envelope and revision keys
 
@@ -37,8 +38,8 @@ Payloads used by the initial Intelligence processor:
 The envelope and registry identifiers MUST match exactly. Timestamps are UTC
 ISO with explicit offsets. For Telegram, `message_id` alone is not globally
 unique; always include the source/channel ID. For X metrics, use observation
-time + a revision/version in eventKey. For blockchain, transaction identity
-includes chain; trade decomposition may have a distinct instruction index.
+time + a revision/version in eventKey. For blockchain, Solana is the only supported network; trade decomposition may
+have a distinct instruction index.
 
 ## Idempotent delivery
 

@@ -24,11 +24,10 @@ Verified against repository main at `8dc7c2943ef08978f55009b15c86cd451517b654` o
 | --- | --- | --- |
 | Solana token | `solana:<full-base58-mint>` | Address must decode to exactly 32 bytes; syntactic validity does **not** prove it is a token mint |
 | Solana wallet | `solana:<full-base58-address>` | Same address format; must not confuse a token account with a verified owner |
-| EVM token/wallet | `ethereum/base/arbitrum:0x<40-hex-lowercase>` | Explicit chain, lower-case normalized |
 | X author | `x:<stable-numeric-author-id>` | Never a mutable `@handle` |
 | X source | `x:account:<stable-numeric-id>` | Account identity, not author promotion/ownership evidence |
 | TG source | `tg:source:<stable-numeric-peer-id>` | Never `tg_sources.id` local surrogate or mutable username |
-| Evidence | `x:tweet:<tweet_id>`; `tg:message:<peer_id>:<message_id>`; `chain:tx:<chain>:<signature-or-hash>` | Provenance refers to source observation; identity and event revision are distinct |
+| Evidence | `x:tweet:<tweet_id>`; `tg:message:<peer_id>:<message_id>`; `chain:tx:solana:<64-byte-base58-signature>` | Provenance refers to source observation; identity and event revision are distinct |
 
 **Adapter discrepancy:** Telegram `tg_tokens.chain_id` / candidates may use `solana-mainnet`, while shared `Chain` uses `solana`. A versioned adapter must explicitly map *verified* mainnet Solana records to the canonical chain. Reject unsupported networks and ambiguous IDs. Preserve native source strings for audit.
 
@@ -139,12 +138,16 @@ This addendum supersedes earlier references in this historical inventory that de
 
 **Approved target scope: Solana only.** New canonical token IDs, verified token links, Blockchain evidence and cross-source token timelines must use `solana:<full-base58-mint>`. Do not add Ethereum, Base, Arbitrum, Bitcoin or other chain collectors/producers.
 
-The current source snapshot still contains legacy non-Solana compatibility paths. They are not a supported target:
-- `packages/contracts/src/canonical-ids.ts` still lists Ethereum/Base/Arbitrum in `CHAINS`;
-- `x-collector/lib/intelligence/chain-adapter.ts` and `scripts/chain-ingest.ts` still include Ethereum/Bitcoin generic import/adapter support;
-- KOL and TG dataset modules retain EVM address paths;
-- `solana-wallet-warmup` retains cross-chain bridge prototype code.
+The canonical cross-source path has now been narrowed to Solana:
+- `packages/contracts` accepts only Solana token/wallet IDs and Solana transaction signatures;
+- Node Intelligence rejects non-Solana chain transaction evidence;
+- X Collector's optional JSON importer and database adapter accept Solana only;
+- TG graph extraction v5 emits only Solana address links. The historical SQL target kind `evm_address` remains readable for existing rows; it is not emitted by the current parser.
 
-These are **legacy code paths to retire**, not evidence that the product has working multi-chain collectors. A dedicated cleanup must first stop new non-Solana writes, preserve historical rows, add safe schema/API compatibility handling, and update tests. Do not delete EVM/Bitcoin historical evidence or rewrite applied migrations as part of documentation work.
+Remaining legacy paths are outside the canonical cross-source contract:
+- KOL and Telegram dataset/curator modules still contain EVM address extraction or lookup code;
+- `solana-wallet-warmup` retains cross-chain bridge prototype configuration.
+
+These paths are **not a supported multi-chain product architecture** and require separate retirement/review. Existing EVM/Bitcoin historical rows are preserved; no applied SQL migration is rewritten by this change.
 
 The Solana-only decision does not change the independent source ownership model: X and TG remain social evidence sources; Blockchain remains a logical module inside Solana Launcher until an explicit extraction decision is implemented. See [ARCHITECTURE_AS_IS_20261101](ARCHITECTURE_AS_IS_20261101.md) and [ARCHITECTURE_TARGET_20261101](ARCHITECTURE_TARGET_20261101.md).
