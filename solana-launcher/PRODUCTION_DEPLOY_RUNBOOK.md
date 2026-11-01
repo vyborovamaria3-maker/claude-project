@@ -124,7 +124,7 @@ The backup contains:
 - Control Center `.env`, `.env.intelligence`, `sources.json` and `logs.json` when present;
 - `SHA256SUMS` covering the complete recovery set.
 
-The script immediately runs `sha256sum -c SHA256SUMS`. The backup directory is mode `0700` and backups older than 14 days are pruned.
+The script first validates the canonical SHA256 manifest and then **must successfully execute `verify-backup-restore.sh` on that exact incomplete set before its atomic publication**. The verifier restores product/Admin PostgreSQL dumps into an isolated, network-disabled Docker instance and checks both standalone SQLite snapshots. A failed/missing verifier leaves no published timestamp directory. Backup directories use mode `0700`. **There is no automatic 14-day deletion:** old backups are preserved until a named operator verifies encrypted off-host recovery copies, measured RPO/RTO and an approved retention policy; disk capacity must be monitored independently.
 
 The frontend container owns the `/app/data/trade.db` mount. The backup uses `better-sqlite3` Online Backup API inside that container, checks the source with `quick_check`, checks the snapshot with `integrity_check`, copies the completed snapshot into the same incomplete recovery directory, and includes it in `SHA256SUMS`. A plain filesystem copy of a live `trade.db` is forbidden because committed pages may still be in the WAL file. If the frontend container or database is missing, the whole backup fails closed and the incomplete directory is removed.
 
