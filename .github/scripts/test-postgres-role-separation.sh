@@ -78,7 +78,8 @@ assert_restricted() {
 }
 
 run_case() {
-  local label="$1" version="$2" src="${tag}-${label}-source" dst="${tag}-${label}-restore"
+  local label="$1" version="$2"
+  local src="${tag}-${label}-source" dst="${tag}-${label}-restore"
   local archive="$scratch/${label}.dump"
   echo "REHEARSAL_BEGIN label=$label postgres=$version"
 
