@@ -248,12 +248,34 @@ fi
   sha256sum -c SHA256SUMS >/dev/null
 )
 
+# A verified manifest and readable pg_restore TOC do not prove that data
+# can be restored. Fail closed unless THIS exact recovery set survives the
+# isolated offline PostgreSQL restore plus both SQLite integrity checks.
+# The verifier runs with --network none, without bind-mounting live databases.
+verifier="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/verify-backup-restore.sh"
+[[ -r "$verifier" ]] || {
+  echo "Missing isolated backup restore verifier" >&2
+  exit 1
+}
+verification_log="$(mktemp)"
+if ! bash "$verifier" "$DEST" > "$verification_log" 2>&1; then
+  echo "Isolated backup restore verification failed; refusing publication" >&2
+  rm -f -- "$verification_log"
+  exit 1
+fi
+if ! grep -Fxq 'BACKUP_RESTORE_REHEARSAL_OK no_live_database_access=true' "$verification_log"; then
+  echo "Restore verifier returned without the expected success evidence" >&2
+  rm -f -- "$verification_log"
+  exit 1
+fi
+rm -f -- "$verification_log"
+echo "BACKUP_RESTORE_VERIFIED isolated=true" >&2
+
 mv -T -- "$DEST" "$FINAL_DEST"
-DEST="" # disarm failed-backup cleanup after atomic promotion
-# Prune only completed, verified timestamp directories. Never delete
-# .incomplete-* while another backup could still be writing one.
-find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d \
-  -name '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]' \
-  -mtime +14 -exec rm -rf -- {} +
+DEST="" # disarm failed-backup cleanup after verified atomic promotion
+# Do NOT prune earlier backups by age. Off-host durable copy, operator-owned
+# retention criteria and independently evidenced restore/RPO/RTO are not yet
+# established; deleting an older recoverable set here could destroy the only
+# usable recovery point. Retention remains a separately reviewed operation.
 
 echo "$FINAL_DEST"
