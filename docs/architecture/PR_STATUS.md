@@ -1,6 +1,23 @@
 # PR_STATUS — GitHub PR inventory
 
-## Current snapshot — 2026-10-31 19:15 UTC
+## Current integration snapshot — 2026-11-01 (GitHub verified)
+
+The observed `main` is still `f4dc5ef3aad400f64fc300f30542085e10aae4c1`, and no production deployment, backup, restore or live collector operation is claimed. Repository governance issue #170 (unprotected `main`) remains a blocker. GitHub currently returns **10 open PRs**: #195, #202, #203, #204, #205, #206, #208, #210, #212 and #213.
+
+| PR | Repository-verified integration status | Gate |
+| --- | --- | --- |
+| [#205](https://github.com/vyborovamaria3-maker/claude-project/pull/205) | Architecture baseline synchronized by non-forced merge commit `bf11bae5680c6a5c39e24406e2cc1d9763800a6d`. Compare against `main`: **66 ahead, 0 behind**, with the same 19 documentation paths. | New-head CI is pending; review before merge. |
+| [#206](https://github.com/vyborovamaria3-maker/claude-project/pull/206) | Read-only Intelligence supervisor metrics at `a329640dd694ce2b7f6928b61d0fafd4a079b93a`; prior latest-head required CI passed and original inline review threads were resolved. | Independent human review/approval still missing. |
+| [#210](https://github.com/vyborovamaria3-maker/claude-project/pull/210) | Synthetic three-source retraction/lease/recovery tests, Draft; remains separate from production acceptance. | Review/CI and live-source gates. |
+| [#212](https://github.com/vyborovamaria3-maker/claude-project/pull/212) | **Canonical combined recovery Draft**, replacing #209 and #211. Four-artifact product/Admin PostgreSQL + Blockchain `trade.db` + Python Intelligence `intelligence.sqlite` bundle; producer→consumer mocked integration and WAL restore. Prior head `e915c2e1d575f543f42013a6252e824c2705b27d` had 16 successes, one expected skip. New head `2909ea9a0224ed48e87c960b29d89056de5cd9f8` requires fresh CI after exhaustive checksum-manifest hardening and regression additions. | Remains Draft; independent review, governance, real operator backup/restore and role audit not completed. |
+| [#213](https://github.com/vyborovamaria3-maker/claude-project/pull/213) | Optional best-effort alert webhook, Draft stacked on #206. | Do not merge before #206; endpoint/operator acceptance not completed. |
+| #195 / #202 / #203 / #204 / #208 | Existing independent UI, Admin and analytics workstreams, still open. | Do not merge overlapping changes without combined-path review and per-head CI. |
+
+**Superseded PRs:** [#209](https://github.com/vyborovamaria3-maker/claude-project/pull/209) and [#211](https://github.com/vyborovamaria3-maker/claude-project/pull/211) were **closed without merge** because their unique changes were integrated into #212. Duplicate [#214](https://github.com/vyborovamaria3-maker/claude-project/pull/214) was likewise closed unmerged. Do not reopen or merge these independent recovery implementations. Old status tables below are retained as dated historical evidence, **not current state**.
+
+**Recovery boundary:** Even if all new-head CI turns green, synthetic tests do not establish a successful production backup, offsite encrypted copy, restore/RPO/RTO, least-privilege runtime roles, authorized live X/TG/Blockchain evidence, or human approval. Issues #170, #172, #173 and #174 remain subject to their own acceptance criteria.
+
+## Archived snapshot — 2026-10-31 19:15 UTC
 
 Observed `main` SHA: `f4dc5ef3aad400f64fc300f30542085e10aae4c1`. GitHub branch metadata reports `main.protected=false`; issue #170 remains an administrator-only governance blocker. The recursive tree snapshot remains 4,791 entries / 4,065 blobs / 725 directories, 38 workflows and 43 architecture documents.
 
