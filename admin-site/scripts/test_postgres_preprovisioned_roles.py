@@ -184,7 +184,10 @@ def assert_runtime_restricted() -> None:
     try:
         verify_preprovisioned_schema(RUNTIME)
     except RuntimeError as exc:
-        assert "database-level" in str(exc).lower(), str(exc)
+        assert (
+            "database-level" in str(exc).lower()
+            or "set-reachable database ddl" in str(exc).lower()
+        ), str(exc)
     else:
         raise AssertionError("Database CREATE/TEMP rights were accepted")
     finally:
