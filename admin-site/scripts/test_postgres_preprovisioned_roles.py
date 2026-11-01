@@ -20,7 +20,7 @@ from app.postgres_admin_state import (  # noqa: E402
     PostgresAuditStore, PostgresControlStore, PostgresLiveAnalysisProfileStore,
 )
 from app.postgres_schema_policy import (  # noqa: E402
-    TABLES, INDEXES, verify_preprovisioned_schema,
+    TABLES, INDEXES, require_admin_postgres_dsn, verify_preprovisioned_schema,
 )
 from app.postgres_security_store import PostgresAdminSessionStore  # noqa: E402
 from app.postgres_task_queue import PostgresTaskQueue  # noqa: E402
@@ -239,6 +239,19 @@ def assert_runtime_restricted() -> None:
 
 def main() -> None:
     require_ci_only()
+    # Fail closed before creating the Admin app: requested PostgreSQL runtime
+    # mode must not fall back to local SQLite on an omitted/blank DSN.
+    os.environ["ADMIN_PG_SCHEMA_MODE"] = "preprovisioned"
+    for missing in ("", "   "):
+        try:
+            require_admin_postgres_dsn(missing)
+        except RuntimeError as exc:
+            assert "ADMIN_STATE_POSTGRES_DSN" in str(exc), str(exc)
+        else:
+            raise AssertionError("Preprovisioned mode accepted missing PostgreSQL DSN")
+    require_admin_postgres_dsn(RUNTIME)
+    os.environ["ADMIN_PG_SCHEMA_MODE"] = "legacy"
+    require_admin_postgres_dsn("")
     provision_test_cluster()
     os.environ["ADMIN_PG_SCHEMA_MODE"] = "preprovisioned"
     try:
