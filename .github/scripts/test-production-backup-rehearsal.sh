@@ -237,6 +237,29 @@ bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" |
   grep -Fq 'BACKUP_RESTORE_REHEARSAL_OK'
 echo "SYNTHETIC_RESTORE_TEST_OK product_pg admin_pg blockchain_sqlite_wal intelligence_sqlite_wal"
 
+# A checksum-only verifier can be fooled by removing the manifest entry for
+# a modified configuration file. Check exact membership, including dotfiles.
+cp "$backup/SHA256SUMS" "$scratch/SHA256SUMS.original"
+cp "$backup/backend.env" "$scratch/backend.env.original"
+grep -vF '  ./backend.env' "$scratch/SHA256SUMS.original" > "$backup/SHA256SUMS"
+printf 'UNEXPECTED_TAMPER=1\\n' >> "$backup/backend.env"
+if bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" >/dev/null 2>&1; then
+  echo "Incomplete SHA256 manifest accepted a tampered configuration" >&2
+  exit 1
+fi
+mv "$scratch/backend.env.original" "$backup/backend.env"
+cp "$scratch/SHA256SUMS.original" "$backup/SHA256SUMS"
+echo "INCOMPLETE_SHA256_MANIFEST_REJECTED_OK"
+
+# Extra files must not be silently ignored, even if all listed sums match.
+printf 'injected\\n' > "$backup/admin-site/.untracked"
+if bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" >/dev/null 2>&1; then
+  echo "Unlisted backup file unexpectedly passed verification" >&2
+  exit 1
+fi
+rm "$backup/admin-site/.untracked"
+echo "UNLISTED_BACKUP_FILE_REJECTED_OK"
+
 # Corruption of either database family must invalidate the whole recovery set.
 cp "$backup/postgres.dump" "$scratch/postgres.dump.original"
 printf 'corruption' >> "$backup/postgres.dump"
