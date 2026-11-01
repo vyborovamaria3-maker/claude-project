@@ -163,6 +163,12 @@ SQL
     INSERT INTO public.legacy_records VALUES (1, 'legacy-owner');
     CREATE TABLE public.alembic_version (version_num varchar(32) PRIMARY KEY);
     INSERT INTO public.alembic_version VALUES ('test_revision');
+    CREATE SEQUENCE public.legacy_counter_seq START WITH 100;
+    CREATE VIEW public.legacy_projection AS
+      SELECT id, label FROM public.legacy_records;
+    CREATE FUNCTION public.legacy_label_count() RETURNS bigint
+      LANGUAGE sql STABLE AS 'SELECT count(*) FROM public.legacy_records';
+    REVOKE ALL ON FUNCTION public.legacy_label_count() FROM PUBLIC;
   " >/dev/null
   reject_sql "$src" fixture_migration \
     "ALTER TABLE public.legacy_records ADD COLUMN note text" \
@@ -172,8 +178,15 @@ SQL
   sql "$src" fixture_bootstrap "
     ALTER TABLE public.legacy_records OWNER TO fixture_migration;
     ALTER TABLE public.alembic_version OWNER TO fixture_migration;
+    ALTER VIEW public.legacy_projection OWNER TO fixture_migration;
+    ALTER SEQUENCE public.legacy_counter_seq OWNER TO fixture_migration;
+    ALTER FUNCTION public.legacy_label_count() OWNER TO fixture_migration;
     GRANT SELECT, INSERT, UPDATE, DELETE ON public.legacy_records TO fixture_runtime;
     GRANT SELECT ON public.legacy_records, public.alembic_version TO fixture_backup;
+    GRANT SELECT ON public.legacy_projection TO fixture_runtime, fixture_backup;
+    GRANT USAGE, SELECT ON SEQUENCE public.legacy_counter_seq TO fixture_runtime;
+    GRANT SELECT ON SEQUENCE public.legacy_counter_seq TO fixture_backup;
+    GRANT EXECUTE ON FUNCTION public.legacy_label_count() TO fixture_runtime;
   " >/dev/null
   sql "$src" fixture_migration \
     "ALTER TABLE public.legacy_records ADD COLUMN note text" >/dev/null
@@ -184,6 +197,78 @@ SQL
     'runtime write to Alembic migration ledger'
   [[ "$(sql "$src" fixture_backup \
     "SELECT count(*) FROM public.legacy_records")" == 2 ]]
+
+  # Explicit, allowlisted rollback: restore the ORIGINAL owners and ACLs.
+  # Simulates a failed cutover on the only database this test controls.
+  # Do not use REASSIGN OWNED or broad REVOKE on a shared/live database.
+  [[ "$(sql "$src" fixture_runtime "SELECT nextval('public.legacy_counter_seq')")" == 100 ]]
+  [[ "$(sql "$src" fixture_runtime "SELECT public.legacy_label_count()")" == 2 ]]
+  [[ "$(sql "$src" fixture_backup "SELECT count(*) FROM public.legacy_projection")" == 2 ]]
+  reject_sql "$src" fixture_backup \
+    "SELECT public.legacy_label_count()" 'backup EXECUTE on application function'
+  sql "$src" fixture_bootstrap "
+    REVOKE SELECT, INSERT, UPDATE, DELETE ON public.legacy_records FROM fixture_runtime;
+    REVOKE SELECT ON public.legacy_records FROM fixture_backup;
+    REVOKE SELECT ON public.alembic_version FROM fixture_backup;
+    REVOKE SELECT ON public.legacy_projection FROM fixture_runtime, fixture_backup;
+    REVOKE USAGE, SELECT ON SEQUENCE public.legacy_counter_seq FROM fixture_runtime;
+    REVOKE SELECT ON SEQUENCE public.legacy_counter_seq FROM fixture_backup;
+    REVOKE EXECUTE ON FUNCTION public.legacy_label_count() FROM fixture_runtime;
+    ALTER TABLE public.legacy_records OWNER TO fixture_bootstrap;
+    ALTER TABLE public.alembic_version OWNER TO fixture_bootstrap;
+    ALTER VIEW public.legacy_projection OWNER TO fixture_bootstrap;
+    ALTER SEQUENCE public.legacy_counter_seq OWNER TO fixture_bootstrap;
+    ALTER FUNCTION public.legacy_label_count() OWNER TO fixture_bootstrap;
+  " >/dev/null
+  [[ "$(sql "$src" fixture_bootstrap "
+    SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='public'
+      AND c.relname IN ('legacy_records','alembic_version','legacy_projection',
+                        'legacy_counter_seq')
+      AND pg_get_userbyid(c.relowner)='fixture_bootstrap'
+  ")" == 4 ]]
+  reject_sql "$src" fixture_migration \
+    "ALTER TABLE public.legacy_records ADD COLUMN unauthorized int" \
+    'migration DDL after rollback to bootstrap owner'
+  reject_sql "$src" fixture_runtime \
+    "SELECT count(*) FROM public.legacy_records" 'runtime access after ACL rollback'
+  reject_sql "$src" fixture_backup \
+    "SELECT count(*) FROM public.legacy_projection" 'backup access after ACL rollback'
+  reject_sql "$src" fixture_runtime \
+    "SELECT nextval('public.legacy_counter_seq')" 'runtime sequence after ACL rollback'
+  reject_sql "$src" fixture_runtime \
+    "SELECT public.legacy_label_count()" 'runtime function after ACL rollback'
+  sql "$src" fixture_bootstrap \
+    "ALTER TABLE public.legacy_records ADD COLUMN rollback_marker integer" >/dev/null
+
+  # Reapply the same explicit forward mapping; no global ownership reassignment.
+  # Ensure the migration login can DDL again and neither data nor ACL
+  # boundaries are lost across a forward -> rollback -> forward rehearsal.
+  sql "$src" fixture_bootstrap "
+    ALTER TABLE public.legacy_records OWNER TO fixture_migration;
+    ALTER TABLE public.alembic_version OWNER TO fixture_migration;
+    ALTER VIEW public.legacy_projection OWNER TO fixture_migration;
+    ALTER SEQUENCE public.legacy_counter_seq OWNER TO fixture_migration;
+    ALTER FUNCTION public.legacy_label_count() OWNER TO fixture_migration;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON public.legacy_records TO fixture_runtime;
+    GRANT SELECT ON public.legacy_records, public.alembic_version TO fixture_backup;
+    GRANT SELECT ON public.legacy_projection TO fixture_runtime, fixture_backup;
+    GRANT USAGE, SELECT ON SEQUENCE public.legacy_counter_seq TO fixture_runtime;
+    GRANT SELECT ON SEQUENCE public.legacy_counter_seq TO fixture_backup;
+    GRANT EXECUTE ON FUNCTION public.legacy_label_count() TO fixture_runtime;
+  " >/dev/null
+  sql "$src" fixture_migration \
+    "ALTER TABLE public.legacy_records DROP COLUMN rollback_marker" >/dev/null
+  [[ "$(sql "$src" fixture_runtime \
+    "SELECT count(*) FROM public.legacy_records")" == 2 ]]
+  [[ "$(sql "$src" fixture_backup \
+    "SELECT count(*) FROM public.legacy_projection")" == 2 ]]
+  [[ "$(sql "$src" fixture_runtime \
+    "SELECT public.legacy_label_count()")" == 2 ]]
+  reject_sql "$src" fixture_runtime \
+    "UPDATE public.alembic_version SET version_num='tampered'" \
+    'runtime Alembic ledger write after ownership rollback rehearsal'
+  echo "ROLE_ROLLBACK_REHEARSAL_OK label=$label postgres=$version"
 
   # Default privileges must apply to tables created AFTER the initial grants.
   sql "$src" fixture_migration \
@@ -232,6 +317,12 @@ SQL
     "SELECT count(*) FROM public.legacy_records")" == 2 ]]
   [[ "$(sql "$dst" fixture_bootstrap \
     "SELECT version_num FROM public.alembic_version")" == test_revision ]]
+  [[ "$(sql "$dst" fixture_bootstrap \
+    "SELECT count(*) FROM public.legacy_projection")" == 2 ]]
+  [[ "$(sql "$dst" fixture_bootstrap \
+    "SELECT public.legacy_label_count()")" == 2 ]]
+  [[ "$(sql "$dst" fixture_bootstrap \
+    "SELECT nextval('public.legacy_counter_seq')")" == 101 ]]
   [[ "$(sql "$dst" fixture_bootstrap \
     "INSERT INTO public.app_records(label) VALUES ('restored') RETURNING id")" == 3 ]]
   echo "ROLE_REHEARSAL_OK label=$label postgres=$version"
