@@ -147,6 +147,25 @@ def assert_runtime_restricted() -> None:
             db.execute("REVOKE UPDATE ON TABLE public.admin_audit FROM admin_ci_runtime")
     verify_preprovisioned_schema(RUNTIME)
 
+    # Dangerous predefined memberships are not visible in the role's
+    # NOSUPERUSER flags; do not let a runtime login SET ROLE into one.
+    with psycopg.connect(FIXTURE) as bootstrap:
+        bootstrap.execute(
+            "GRANT pg_execute_server_program TO admin_ci_runtime "
+            "WITH INHERIT FALSE, SET TRUE"
+        )
+    try:
+        try:
+            verify_preprovisioned_schema(RUNTIME)
+        except RuntimeError as exc:
+            assert "predefined-role membership" in str(exc).lower(), str(exc)
+        else:
+            raise AssertionError("Dangerous PostgreSQL predefined-role membership was accepted")
+    finally:
+        with psycopg.connect(FIXTURE) as bootstrap:
+            bootstrap.execute("REVOKE pg_execute_server_program FROM admin_ci_runtime")
+    verify_preprovisioned_schema(RUNTIME)
+
     # A runtime account can be a non-INHERITING member of the schema-owner
     # role while retaining SET ROLE. Such an account can still become the
     # migration owner for DDL; startup verification must fail closed.
