@@ -6,19 +6,22 @@ rewired**, no existing databases are migrated and no production data is touched.
 
 ## Status and scope
 
-- Four explicitly supported chains: Solana, Ethereum, Base, Arbitrum.
-- Canonical token/wallet identity: <chain>:<full address>.
+**Product target (2026-11-01): Solana only.** New token identities and blockchain evidence in the target architecture use `solana:<full-base58-address>`. Do not introduce Ethereum, Base, Arbitrum, Bitcoin or other chain producers.
+
+**As-Is compatibility note:** this source snapshot still contains legacy EVM chain identifiers and EVM normalizers in `canonical-ids.ts`, with corresponding tests and downstream compatibility paths. They have not yet been removed from code. They are not part of the approved target network scope and must not be used for new product features or new cross-source token evidence. Their removal is tracked as a separate compatibility cleanup; historical rows/events must not be deleted automatically.
+
+- Target canonical token/wallet identity: `solana:<full-base58-address>`.
 - Solana: decoded 32-byte Base58 key, case-sensitive, including leading zeros.
-- EVM: 0x-prefixed 20-byte hex, canonical lowercase.
 - Stable social actor/source IDs use platform numeric IDs, never handles.
 - Evidence references identify the actual tweet, Telegram source+message, or
-  chain+transaction signature and preserve observed/occurred times separately.
+  Solana chain transaction signature and preserve observed/occurred times separately.
 - Timeline events require stable event keys, entity references and evidence.
 - Wire times are explicit UTC ISO strings, not local dates.
 
 This validates **address syntax**, not whether an address is a tradeable mint,
 a verified wallet owner, or a legitimate project. It never infers an owner or
-an X/TG identity link based on matching labels.
+an X/TG identity link based on matching labels. A Solana public key is not
+promoted to a token mint without independent SPL Token / Token-2022 account proof.
 
 ## Run tests
 
@@ -74,6 +77,18 @@ canonicalTokenIdFromNative("solana", "So1111111111111111111111111111111111111111
 // identical shared token ID
 ```
 
-This **does not verify** that the address is a token mint, attribute a message to a token, or validate a chain swap. The X and TG verified-token-link producers must independently confirm the mint via SPL/Token-2022 layout and exact literal evidence; the Blockchain swap producer must pass its own transaction/balance evidence checks. Never turn an unresolved `$TICKER`, arbitrary wallet address or substring into a verified token link. Native DB `(chain_id,mint)` keys are unchanged and no migration is needed.
+This **does not verify** that the address is a token mint, attribute a message to a token, or validate a chain swap. The X and TG verified-token-link producers must independently confirm the Solana mint via SPL/Token-2022 layout and exact literal evidence; the Blockchain swap producer must pass its own transaction/balance evidence checks. Never turn an unresolved `$TICKER`, arbitrary wallet address or substring into a verified token link. Native TG DB `(chain_id,mint)` keys are unchanged by this helper.
 
 Test: `npm --prefix packages/contracts test` includes `tests/native-token-identity.test.mjs`. The already existing `intelligence/tests/cross-source-token-timeline.test.mjs` proves **synthetic destination ingestion**, not live verified cross-source publication. The next independent gate is producer-to-consumer integration with real-source fixtures, retractions and restart/replay cases, followed by explicitly approved live checks.
+
+
+## Solana-only target decision — 2026-11-01
+
+The target architecture supports Solana only. The EVM compatibility code visible in this revision is a legacy implementation detail, not a product promise. A follow-up cleanup must:
+- stop new non-Solana token/evidence writes first;
+- preserve existing legacy rows for audit/history;
+- update canonical validators, evidence validators, source adapters and tests together;
+- use additive migrations for existing TG graph tables; never edit already-applied migration files;
+- verify all producers/consumers before removing legacy types.
+
+See [As-Is audit](../../docs/architecture/ARCHITECTURE_AS_IS_20261101.md) and [Solana-only target](../../docs/architecture/ARCHITECTURE_TARGET_20261101.md).
