@@ -146,3 +146,47 @@ isolated PostgreSQL 16 DB under a non-superuser migration role and checks
 the role and object ownership. It tests a **fresh** app database, not an
 upgrade of the real populated database. The existing bootstrap-backed
 migration regression remains in the predeploy workflow.
+
+## Catalog-only inventory before proposing a real cutover
+
+Use `docs/operations/postgres-role-cutover-inventory.sql` **on the
+isolated restored copy first**, and only on a live instance after the operator
+approves read-only metadata access. Example (no passwords on the command line):
+
+```bash
+# In an approved operator environment with a restricted audit DSN already
+# set by the operator; do NOT point this at an unapproved production host.
+: "${PGHOST:?audit PGHOST required}"
+: "${PGUSER:?restricted audit PGUSER required}"
+: "${PGDATABASE:?audit PGDATABASE required}"
+umask 077
+psql -X -v ON_ERROR_STOP=1 -f \
+  docs/operations/postgres-role-cutover-inventory.sql \
+  > role-cutover-inventory.txt
+```
+
+The script has a `REPEATABLE READ READ ONLY` transaction and queries only
+PostgreSQL catalogs: login flags/memberships, database and schema ACL,
+table/view/sequence/foreign-table owners, routine owners and SECURITY
+DEFINER, types/domains/enums, extensions, RLS presence, default privileges
+and foreign-server metadata (no connection options). It does **not** read
+application rows, print password hashes, inspect live secrets, alter grants,
+execute untrusted application functions or generate/apply DDL. The inventory
+is **not** comprehensive proof of effective permissions: operators must also
+review object dependencies, extension-managed items, actual RLS expressions,
+schema-qualified routines, large objects, event triggers and all service
+connection identities. Restrict access to inventory output; even metadata
+can expose internal system structure.
+
+Compare catalogs before transfer, after forward change, after the explicit
+reverse map and after reapplying forward. The fixture CI uses the same
+catalog-only inventory through an unprivileged backup role and requires a
+round-trip equality of catalog reports. For a real populated DB, do not
+blindly expect byte-identical reports across PostgreSQL upgrades, DDL,
+extension changes or concurrent sessions; review differences and object
+identities explicitly with a signed-off object-level manifest.
+
+**Stop conditions:** unexpected owner, RLS policy, SECURITY DEFINER routine,
+extension/FDW dependency, ungranted sequence, PUBLIC grant, lost default ACL,
+missing expected table or unknown migration owner. Do not automatically
+generate, execute or roll back `REASSIGN OWNED` from this metadata.
