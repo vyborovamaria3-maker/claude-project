@@ -167,11 +167,11 @@ Node Intelligence и Python Intelligence — разные системы, нес
 
 | Компонент | Manifest / lock | CI / Docker / Compose | Вывод |
 |---|---|---|---|
-| Solana Launcher root web | Next 16.4.2, React 18.3.1 | CI Node 22; production Docker Node 20 | React peer-compatible; Node 20 EOL, обновить Docker |
-| Solana Launcher legacy frontend | Next 14.0.4, React 18.2 | старый Docker Node 18 | Не используется текущим production Compose; legacy, Node 18 EOL |
+| Solana Launcher root web | Next 16.4.2, React 18.3.1; follow-up manifest engine >=22 | CI Node 22; follow-up production Docker Node 22 | React peer-compatible; EOL Node 20 image replaced in this PR follow-up |
+| Solana Launcher legacy frontend | Next 14.0.4, React 18.2 | follow-up legacy Docker Node 22 | Не используется текущим production Compose; legacy Next 14 package, do not treat as current frontend |
 | Solana Launcher backend | Python >=3.11 | Docker Python 3.11 | Совпадает |
-| X Collector | Node >=20 | Docker/CI Node 22 | Исполняется на 22; engine range шире фактического стандарта |
-| TG Collector | engine не задан | README/CI Node 22 | Зафиксировать `engines >=22` |
+| X Collector | follow-up engine >=22 | Docker/CI Node 22 | Manifest, lockfile, Docker and CI aligned on Node 22 |
+| TG Collector | follow-up engine >=22 | README/CI Node 22 | Manifest and lockfile now declare Node 22 baseline |
 | Node Intelligence | Node >=22 | CI Node 22; отдельного Node Compose service нет | Код/CI, live runtime не подтверждён |
 | Python Intelligence | Python 3.12 | Docker Python 3.12 | Compose использует SQLite |
 | Admin | Python 3.12 | Compose PG17 | Отдельная Admin DB |
@@ -252,10 +252,10 @@ GitHub API на момент аудита: `main protected=false`, required stat
 | 2 | Blockchain назван независимым сервисом | Подтверждено. Логический модуль внутри Solana Launcher, отдельного runtime нет. |
 | 3 | Next 16 + React 18 несовместимы | Не подтверждено. Lock peerDependencies допускает React 18.2+. |
 | 4 | CI арифметика | Подтверждено. 19 total = 18 success + 1 skipped + 0 failed. |
-| 5 | MiniApp смешивает Python/Node | Подтверждено. README устарел; реальные подпроекты — Vite frontend, Node bot, Express/Prisma backend-new; `backend/` отсутствует. |
+| 5 | MiniApp смешивает Python/Node | Подтверждено. README исправлен в follow-up: реальные подпроекты — Vite frontend, Node bot, Express/Prisma backend-new; `backend/` отсутствует. |
 | 6 | EVM IDs без collectors | Частично подтверждено. Dedicated live EVM collector не найден, но generic EVM/Bitcoin code paths реально существуют. Target — только Solana. |
 | 7 | Python Intelligence SQLite/PG | Подтверждено с уточнением: current Compose SQLite; PostgreSQL backend есть в коде, но не подключён Compose. |
-| 8 | Node 20/22 drift | Подтверждено. Launcher Docker20 vs CI22; X Docker/CI22, engines>=20; TG docs/CI22, engines отсутствует. Node20 EOL. |
+| 8 | Node 20/22 drift | Подтверждено на baseline 6273d9. В follow-up PR #212 Docker Launcher и legacy frontend переведены на Node22; Launcher/X/TG manifests и lockfiles требуют >=22. Проверить итоговый CI на новом HEAD. |
 | 9 | Next 16 vs Next 14 | Частично подтверждено. Current Launcher root Next16; legacy nested frontend Next14, не используется current production Compose. SolSub Next16. |
 | 10 | Memory backend отсутствует в DB map | Подтверждено. Это in-memory adapter, не durable DB. |
 | 11 | «Архитектура проверена» + Draft | Подтверждено. Нужно писать «source/CI audit at exact SHA; live deployment not verified». |
@@ -291,3 +291,22 @@ GitHub API на момент аудита: `main protected=false`, required stat
 8. P1: документально и физически разделить Node Intelligence и Python Intelligence; не считать Python Dockerfile запуском Node runtime.
 9. P1: привести ownership map к реальному расположению Blockchain DB внутри Solana Launcher.
 10. P2: обозначить legacy Reply Guy frontend и неиспользуемые Dockerfiles.
+
+
+## 14. Follow-up changes after the source-audit baseline
+
+The As-Is audit above is anchored to source HEAD `6273d9fb9f2f987c4ee7932cea0e10f77129f7d9`. The following corrective commits were then added to the same Draft PR #212 branch:
+
+- Launcher production frontend Docker: Node 20 → Node 22.
+- Legacy Reply Guy frontend Docker: Node 18 → Node 22; the package itself remains legacy Next.js 14 and is not used by the current production Compose.
+- `solana-launcher/package.json` and lockfile: Node engine `>=22`.
+- `x-collector/package.json` and lockfile: Node engine `>=22`.
+- `tg-collector/package.json` and lockfile: Node engine `>=22`.
+- X Collector README now states Node 22 runtime.
+- Telegram MiniApp READMEs now reflect the actual Vite frontend, Node bot, Express/Prisma backend-new and SQLite datasource; stale Python/aiogram and PostgreSQL instructions were removed.
+- Shared contracts and data-contract docs now explicitly distinguish the Solana-only target from legacy EVM/Bitcoin code still present in the source.
+- Current/target architecture index docs and DB ownership inventory were corrected; X Compose PG16 and TG local DB boundaries are now explicit.
+
+Node 22 is currently a supported Maintenance LTS line through 2027-04-30. Plan a tested Node 24 upgrade before that date rather than waiting for EOL: https://github.com/nodejs/Release#release-schedule.
+
+These are source changes, not yet production changes. Recheck CI on the latest PR HEAD before calling the runtime alignment complete. The original baseline CI count (19 total: 18 success, 1 skipped, 0 failed) remains a historical result for the baseline SHA only.
