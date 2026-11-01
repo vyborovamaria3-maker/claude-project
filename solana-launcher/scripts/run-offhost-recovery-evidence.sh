@@ -51,6 +51,39 @@ done
 [[ "$ticket_id" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{2,79}$ ]] || {
   echo "Require nonsecret operator ticket ID (3..80 safe characters)" >&2; exit 2;
 }
+# The supplied code SHA is evidence only if it matches the EXACT tracked
+# checkout that supplies this wrapper, verifier and catalog SQL. Refuse an
+# untracked or locally edited verifier: otherwise the operator could report
+# a reviewed commit while executing a different safety implementation.
+command -v git >/dev/null || { echo "Git is required to bind recovery evidence to reviewed code" >&2; exit 2; }
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+checkout_root="$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "Recovery verifier must run from a reviewed Git checkout" >&2; exit 2;
+}
+[[ "$script_dir" == "$checkout_root/solana-launcher/scripts" ]] || {
+  echo "Recovery verifier is not in the expected tracked checkout directory" >&2; exit 2;
+}
+actual_code_sha="$(git -C "$checkout_root" rev-parse --verify HEAD 2>/dev/null)" || {
+  echo "Cannot determine the checked-out recovery code SHA" >&2; exit 2;
+}
+[[ "${actual_code_sha,,}" == "${code_sha,,}" ]] || {
+  echo "Requested recovery code SHA does not match checked-out HEAD" >&2; exit 2;
+}
+reviewed_files=(
+  solana-launcher/scripts/run-offhost-recovery-evidence.sh
+  solana-launcher/scripts/verify-backup-restore.sh
+  solana-launcher/scripts/postgres-role-restoration-fingerprint.sql
+)
+for reviewed_file in "${reviewed_files[@]}"; do
+  git -C "$checkout_root" ls-files --error-unmatch -- "$reviewed_file" >/dev/null 2>&1 || {
+    echo "Recovery verifier has an untracked required source file" >&2; exit 2;
+  }
+done
+if ! git -C "$checkout_root" diff --quiet HEAD -- "${reviewed_files[@]}"; then
+  echo "Recovery verifier source differs from reviewed Git HEAD" >&2
+  exit 2
+fi
+
 [[ -d "$backup_arg" && ! -L "$backup_arg" && -f "$backup_arg/SHA256SUMS" && ! -L "$backup_arg/SHA256SUMS" ]] || {
   echo "Require existing regular backup and SHA256SUMS" >&2; exit 2;
 }
@@ -87,7 +120,6 @@ evidence_free_bytes="$(df -PB1 "$evidence_dir" | awk 'NR==2 {print $4}')"
 echo "Operator capacity check: backup bytes=$backup_bytes; evidence-volume free bytes=$evidence_free_bytes" >&2
 echo "Check Docker-root and temporary-volume free space separately before running." >&2
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 verifier="$script_dir/verify-backup-restore.sh"
 [[ -r "$verifier" ]] || { echo "No reviewed offline verifier alongside this script" >&2; exit 1; }
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
