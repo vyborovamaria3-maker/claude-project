@@ -147,6 +147,21 @@ def assert_runtime_restricted() -> None:
             db.execute("REVOKE UPDATE ON TABLE public.admin_audit FROM admin_ci_runtime")
     verify_preprovisioned_schema(RUNTIME)
 
+    # UPDATE(column) does not require table-wide UPDATE and still changes
+    # audit history. Verify the fail-closed gate detects column-level ACLs.
+    with psycopg.connect(MIGRATE) as db:
+        db.execute("GRANT UPDATE(action) ON public.admin_audit TO admin_ci_runtime")
+    try:
+        verify_preprovisioned_schema(RUNTIME)
+    except RuntimeError as exc:
+        assert "append-only" in str(exc).lower(), str(exc)
+    else:
+        raise AssertionError("Column-level audit UPDATE unexpectedly accepted")
+    finally:
+        with psycopg.connect(MIGRATE) as db:
+            db.execute("REVOKE UPDATE(action) ON public.admin_audit FROM admin_ci_runtime")
+    verify_preprovisioned_schema(RUNTIME)
+
     # UPDATE/DELETE on audit history are insufficient for immutability:
     # TRUNCATE can erase the entire audit log without either privilege.
     with psycopg.connect(MIGRATE) as db:
