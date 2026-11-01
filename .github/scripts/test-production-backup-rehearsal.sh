@@ -194,8 +194,12 @@ grep -Fq "  ./intelligence.sqlite" "$backup/SHA256SUMS"
   echo "Incomplete backup was promoted" >&2; exit 1;
 }
 
-# Verify the row that was committed only to the WAL is present in the backup.
-docker exec --user root -e "BACKUP_SQLITE_PATH=/backup/$(basename "$backup")/trade.db" \
+# Verify the committed WAL-only row using an isolated *copy* of the snapshot.
+# Even a read-only SQLite connection can create -wal/-shm sidecars or checkpoint
+# a WAL-mode file. The sealed, checksummed recovery directory must stay inert.
+probe_snapshot="/tmp/potapoff-trade-restore-probe-${BASHPID}.db"
+docker cp "$backup/trade.db" "$frontend:$probe_snapshot"
+docker exec --user root -e "BACKUP_SQLITE_PATH=$probe_snapshot" \
   "$frontend" node -e '
     const Database = require("better-sqlite3");
     const db = new Database(process.env.BACKUP_SQLITE_PATH, { readonly: true, fileMustExist: true });
@@ -207,6 +211,7 @@ docker exec --user root -e "BACKUP_SQLITE_PATH=/backup/$(basename "$backup")/tra
       db.close();
     }
   ' | grep -Fq "SQLITE_WAL_ROW_RESTORED_OK"
+docker exec --user root "$frontend" rm -f -- "$probe_snapshot" "${probe_snapshot}-wal" "${probe_snapshot}-shm"
 
 # Verify the Python Intelligence snapshot includes its synthetic committed row.
 docker run --rm --network none --read-only --pids-limit 32 \
