@@ -253,6 +253,7 @@ def assert_runtime_restricted() -> None:
                 "ownership" in str(exc).lower()
                 or "database-level" in str(exc).lower()
                 or "set-reachable database ddl" in str(exc).lower()
+                or "ddl privileges in schema: public" in str(exc).lower()
             ), str(exc)
         else:
             raise AssertionError("SET-only migration-role membership was not rejected")
