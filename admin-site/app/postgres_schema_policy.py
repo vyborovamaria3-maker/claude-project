@@ -91,6 +91,18 @@ def verify_preprovisioned_schema(dsn: str) -> None:
             rights = cur.fetchone()
             if not rights or rights != (True, False):
                 raise RuntimeError("Admin runtime must have USAGE but not CREATE on public schema")
+            cur.execute(
+                "SELECT has_database_privilege(current_user, current_database(), 'CONNECT'), "
+                "has_database_privilege(current_user, current_database(), 'CREATE'), "
+                "has_database_privilege(current_user, current_database(), 'TEMPORARY'), "
+                "pg_has_role(d.datdba, 'MEMBER') "
+                "FROM pg_database d WHERE d.datname=current_database()"
+            )
+            database_rights = cur.fetchone()
+            # A runtime role that can CREATE schemas, create temp objects or
+            # SET ROLE to the database owner is not a strict DML-only login.
+            if database_rights != (True, False, False, False):
+                raise RuntimeError("Admin runtime has unsafe database-level privileges")
 
             cur.execute(
                 "SELECT c.relname, c.relkind, "
@@ -99,7 +111,11 @@ def verify_preprovisioned_schema(dsn: str) -> None:
                 "has_table_privilege(current_user, c.oid, 'SELECT'), "
                 "has_table_privilege(current_user, c.oid, 'INSERT'), "
                 "has_table_privilege(current_user, c.oid, 'UPDATE'), "
-                "has_table_privilege(current_user, c.oid, 'DELETE') "
+                "has_table_privilege(current_user, c.oid, 'DELETE'), "
+                "has_table_privilege(current_user, c.oid, 'TRUNCATE'), "
+                "has_table_privilege(current_user, c.oid, 'REFERENCES'), "
+                "has_table_privilege(current_user, c.oid, 'TRIGGER'), "
+                "has_table_privilege(current_user, c.oid, 'MAINTAIN') "
                 "FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
                 "WHERE n.nspname='public' AND c.relname = ANY(%s)",
                 (list(TABLES),),
@@ -112,12 +128,17 @@ def verify_preprovisioned_schema(dsn: str) -> None:
                 # owner and execute DDL, despite current_user not owning it.
                 if kind not in ("r", "p") or owner == db.info.user or member_of_owner or rls or forced_rls:
                     raise RuntimeError(f"Admin schema ownership/RLS gate failed for {name}")
+                dml = privileges[:4]
+                elevated = privileges[4:]
+                if any(elevated):
+                    # TRUNCATE bypasses the intended audit-log immutability
+                    # even when UPDATE/DELETE have been explicitly revoked.
+                    raise RuntimeError(f"Admin runtime has unsafe table privileges for {name}")
                 if name == "admin_audit":
-                    # The audit log is append-only: SELECT and INSERT are
-                    # required, but UPDATE/DELETE would allow log tampering.
-                    if privileges != [True, True, False, False]:
+                    # The audit log is append-only: SELECT and INSERT only.
+                    if dml != [True, True, False, False]:
                         raise RuntimeError("Admin runtime audit log must be append-only")
-                elif not all(privileges):
+                elif not all(dml):
                     raise RuntimeError(f"Admin runtime DML privilege missing for {name}")
 
             cur.execute(
@@ -132,7 +153,9 @@ def verify_preprovisioned_schema(dsn: str) -> None:
 
             cur.execute(
                 "SELECT c.relname, pg_get_userbyid(c.relowner), "
-                "has_sequence_privilege(current_user,c.oid,'USAGE') "
+                "pg_has_role(c.relowner,'MEMBER'), "
+                "has_sequence_privilege(current_user,c.oid,'USAGE'), "
+                "has_sequence_privilege(current_user,c.oid,'UPDATE') "
                 "FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
                 "WHERE n.nspname='public' AND c.relkind='S' "
                 "AND c.relname IN ('admin_audit_id_seq','alerts_id_seq')"
@@ -140,5 +163,8 @@ def verify_preprovisioned_schema(dsn: str) -> None:
             seqs = {row[0]: row for row in cur.fetchall()}
             if set(seqs) != {"admin_audit_id_seq", "alerts_id_seq"}:
                 raise RuntimeError("Admin preprovisioned schema is missing identity sequences")
-            if any(owner == db.info.user or not can_use for _,owner,can_use in seqs.values()):
+            if any(
+                owner == db.info.user or member_of_owner or not can_use or can_update
+                for _, owner, member_of_owner, can_use, can_update in seqs.values()
+            ):
                 raise RuntimeError("Admin runtime sequence/ownership privilege gate failed")
