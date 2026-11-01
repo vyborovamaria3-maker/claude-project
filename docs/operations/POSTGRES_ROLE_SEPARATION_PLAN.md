@@ -123,10 +123,26 @@ It verifies that distinct migration/runtime/backup logins are non-superuser,
 migration owns/changes its own table, runtime can use DML and a serial
 sequence but not DDL/escalation, backup can SELECT/dump but not write,
 new tables inherit only intended default grants, and an isolated custom
-archive restore contains the committed rows.
+archive restore contains the committed rows. The fixture also creates
+previously populated **bootstrap-owned** tables, a sequence, a view, a SQL
+function and the Alembic ledger. It explicitly transfers these owners and
+the corresponding ACLs, confirms runtime/backup boundaries, rehearses
+an **allowlisted reverse ownership and ACL migration**, then reapplies the
+forward migration without losing committed rows or the sequence value.
+It does **not** issue blanket `REASSIGN OWNED` or run against a live database.
 
-For CI only, the isolated containers use the PostgreSQL image's
-`POSTGRES_HOST_AUTH_METHOD=trust`; this does **not** validate production
-authentication, TLS, secret rotation, existing-object ownership transfer,
-Alembic compatibility, RLS, actual live grants or a production restore.
+Unlike earlier trust-auth fixtures, the role-separation rehearsal now uses
+SCRAM-SHA-256 over container-local TCP with **CI-only hardcoded fixture
+passwords** and verifies an incorrect password is rejected. PostgreSQL
+containers still run with `--network none` and no published ports; their
+credentials are **not** deployable credentials. This does **not** establish
+production TLS, secret rotation, real existing-object ownership transfer,
+extension/RLS safety, complete access requirements, or a production restore.
 Do not use these synthetic credentials/fixtures on any real database.
+
+The separate `.github/scripts/test-backend-alembic-restricted.sh` test
+executes the **actual full Alembic graph** on an additional newly created
+isolated PostgreSQL 16 DB under a non-superuser migration role and checks
+the role and object ownership. It tests a **fresh** app database, not an
+upgrade of the real populated database. The existing bootstrap-backed
+migration regression remains in the predeploy workflow.
