@@ -147,6 +147,51 @@ def assert_runtime_restricted() -> None:
             db.execute("REVOKE UPDATE ON TABLE public.admin_audit FROM admin_ci_runtime")
     verify_preprovisioned_schema(RUNTIME)
 
+    # UPDATE/DELETE on audit history are insufficient for immutability:
+    # TRUNCATE can erase the entire audit log without either privilege.
+    with psycopg.connect(MIGRATE) as db:
+        db.execute("GRANT TRUNCATE ON public.admin_audit TO admin_ci_runtime")
+    try:
+        verify_preprovisioned_schema(RUNTIME)
+    except RuntimeError as exc:
+        assert "unsafe table privileges" in str(exc).lower(), str(exc)
+    else:
+        raise AssertionError("TRUNCATE on immutable audit history was accepted")
+    finally:
+        with psycopg.connect(MIGRATE) as db:
+            db.execute("REVOKE TRUNCATE ON public.admin_audit FROM admin_ci_runtime")
+    verify_preprovisioned_schema(RUNTIME)
+
+    # An application runtime must not be able to create databases/schemas
+    # or temporary objects via the database-level ACL.
+    with psycopg.connect(MIGRATE) as db:
+        db.execute("GRANT CREATE, TEMPORARY ON DATABASE admin_roles_ci TO admin_ci_runtime")
+    try:
+        verify_preprovisioned_schema(RUNTIME)
+    except RuntimeError as exc:
+        assert "database-level" in str(exc).lower(), str(exc)
+    else:
+        raise AssertionError("Database CREATE/TEMP rights were accepted")
+    finally:
+        with psycopg.connect(MIGRATE) as db:
+            db.execute("REVOKE CREATE, TEMPORARY ON DATABASE admin_roles_ci FROM admin_ci_runtime")
+    verify_preprovisioned_schema(RUNTIME)
+
+    # USAGE lets nextval() work. UPDATE would additionally let the app
+    # setval() and tamper with allocated identifiers.
+    with psycopg.connect(MIGRATE) as db:
+        db.execute("GRANT UPDATE ON SEQUENCE public.admin_audit_id_seq TO admin_ci_runtime")
+    try:
+        verify_preprovisioned_schema(RUNTIME)
+    except RuntimeError as exc:
+        assert "sequence" in str(exc).lower(), str(exc)
+    else:
+        raise AssertionError("Sequence UPDATE privilege was accepted")
+    finally:
+        with psycopg.connect(MIGRATE) as db:
+            db.execute("REVOKE UPDATE ON SEQUENCE public.admin_audit_id_seq FROM admin_ci_runtime")
+    verify_preprovisioned_schema(RUNTIME)
+
     # Dangerous predefined memberships are not visible in the role's
     # NOSUPERUSER flags; do not let a runtime login SET ROLE into one.
     with psycopg.connect(FIXTURE) as bootstrap:
