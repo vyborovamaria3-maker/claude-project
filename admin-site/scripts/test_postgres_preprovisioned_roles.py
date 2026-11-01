@@ -350,6 +350,37 @@ def assert_runtime_restricted() -> None:
             db.execute("ALTER TABLE public.feature_flags ADD PRIMARY KEY (name)")
     verify_preprovisioned_schema(RUNTIME)
 
+    # Defaults matter to inserts, even when the table/column types pass.
+    with psycopg.connect(MIGRATE) as db:
+        db.execute("ALTER TABLE public.feature_flags ALTER COLUMN enabled DROP DEFAULT")
+    try:
+        verify_preprovisioned_schema(RUNTIME)
+    except RuntimeError as exc:
+        assert "default contract" in str(exc).lower(), str(exc)
+    else:
+        raise AssertionError("Missing Admin default was accepted")
+    finally:
+        with psycopg.connect(MIGRATE) as db:
+            db.execute("ALTER TABLE public.feature_flags ALTER COLUMN enabled SET DEFAULT FALSE")
+    verify_preprovisioned_schema(RUNTIME)
+
+    # A constraint added outside the reviewed migration could reject writes.
+    with psycopg.connect(MIGRATE) as db:
+        db.execute(
+            "ALTER TABLE public.feature_flags "
+            "ADD CONSTRAINT suspicious_ci_check CHECK (char_length(name) < 5)"
+        )
+    try:
+        verify_preprovisioned_schema(RUNTIME)
+    except RuntimeError as exc:
+        assert "unexpected constraint" in str(exc).lower(), str(exc)
+    else:
+        raise AssertionError("Unreviewed Admin CHECK constraint was accepted")
+    finally:
+        with psycopg.connect(MIGRATE) as db:
+            db.execute("ALTER TABLE public.feature_flags DROP CONSTRAINT suspicious_ci_check")
+    verify_preprovisioned_schema(RUNTIME)
+
     # Role granted CREATE on an *auxiliary* schema is not DML-only, even
     # when public schema and database-level CREATE are denied.
     with psycopg.connect(MIGRATE) as db:
