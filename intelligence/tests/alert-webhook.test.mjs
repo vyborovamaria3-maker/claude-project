@@ -144,7 +144,26 @@ test("retries one transient failure but does not retry permanent client errors",
     kind: "alert_delivery",
     source: "x",
     code: "webhook_delivery_failed",
-    attempts: 2,
+    attempts: 1, // HTTP 401 is permanent: no second attempt was made.
+  }]);
+});
+
+test("exhausted transient webhook delivery reports both actual attempts", async () => {
+  let calls = 0;
+  const statuses = [];
+  const sink = createAlertWebhookSink(config(), {
+    retryDelayMs: 0,
+    onStatus: entry => statuses.push(entry),
+    fetchImpl: async () => {
+      calls++;
+      return { ok: false, status: 503 };
+    },
+  });
+  assert.equal(sink.enqueue(event()), true);
+  assert.deepEqual(await sink.flush(), { delivered: 0, failed: 1, dropped: 0 });
+  assert.equal(calls, 2);
+  assert.deepEqual(statuses, [{
+    kind: "alert_delivery", source: "x", code: "webhook_delivery_failed", attempts: 2,
   }]);
 });
 
