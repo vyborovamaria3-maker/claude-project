@@ -502,7 +502,7 @@ def assert_full_admin_app_smoke() -> None:
                 assert flags.status_code == 200, flags.text
                 assert any(
                     entry["name"] == "review.smoke" and entry["enabled"]
-                    for entry in flags.json()
+                    for entry in flags.json()["rows"]
                 ), flags.text
                 queue = app.state.task_queue
                 assert queue.metrics()["workers_alive"] == queue._workers_count
