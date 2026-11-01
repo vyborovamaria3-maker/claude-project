@@ -10,7 +10,7 @@ FROM (
       FROM pg_namespace n WHERE n.nspname <> 'information_schema'
        AND n.nspname NOT LIKE 'pg_%'
     UNION ALL
-    SELECT 'relation',n.nspname,c.relname || ':' || c.relkind,
+    SELECT 'relation',n.nspname,c.relname || ':' || c.relkind::text,
            pg_get_userbyid(c.relowner),
            COALESCE((SELECT string_agg(x::text,',' ORDER BY x::text)
                      FROM unnest(c.relacl) AS x),'')
