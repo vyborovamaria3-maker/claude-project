@@ -35,7 +35,7 @@ done
   expected_manifest="$(mktemp)"
   trap 'rm -f -- "$expected_manifest"' EXIT
   find . -type f ! -path './SHA256SUMS' -print0 \
-    | sort -z \
+    | LC_ALL=C sort -z \
     | xargs -0 sha256sum > "$expected_manifest"
   cmp -s SHA256SUMS "$expected_manifest" ||
     { echo "Backup SHA256 manifest is incomplete or mismatched" >&2; exit 1; }
