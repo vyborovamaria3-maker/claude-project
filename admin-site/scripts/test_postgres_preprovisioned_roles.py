@@ -127,6 +127,32 @@ def assert_runtime_restricted() -> None:
     os.environ["ADMIN_PG_SCHEMA_MODE"] = "preprovisioned"
     verify_preprovisioned_schema(RUNTIME)
 
+    # A runtime account can be a non-INHERITING member of the schema-owner
+    # role while retaining SET ROLE. Such an account can still become the
+    # migration owner for DDL; startup verification must fail closed.
+    with psycopg.connect(FIXTURE) as bootstrap:
+        bootstrap.execute(
+            "GRANT admin_ci_migration TO admin_ci_runtime "
+            "WITH INHERIT FALSE, SET TRUE"
+        )
+    try:
+        with psycopg.connect(RUNTIME) as db:
+            assert db.execute(
+                "SELECT has_schema_privilege(current_user, 'public', 'CREATE')"
+            ).fetchone()[0] is False
+            db.execute("SET ROLE admin_ci_migration")
+            assert db.execute("SELECT current_user").fetchone()[0] == "admin_ci_migration"
+        try:
+            verify_preprovisioned_schema(RUNTIME)
+        except RuntimeError as exc:
+            assert "ownership" in str(exc).lower(), str(exc)
+        else:
+            raise AssertionError("SET-only migration-role membership was not rejected")
+    finally:
+        with psycopg.connect(FIXTURE) as bootstrap:
+            bootstrap.execute("REVOKE admin_ci_migration FROM admin_ci_runtime")
+    verify_preprovisioned_schema(RUNTIME)
+
     before = schema_objects(MIGRATE)
     audit = PostgresAuditStore(RUNTIME)
     control = PostgresControlStore(RUNTIME)
