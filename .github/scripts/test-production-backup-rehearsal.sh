@@ -185,7 +185,17 @@ printf '[]\n' > "$scratch/admin/logs.json"
 export DEPLOY_DIR="$scratch/deploy"
 export BACKUP_ROOT="$scratch/backups"
 export ADMIN_DIR="$scratch/admin"
+# Before this new backup exists, simulate an older recovery point. Creating
+# a verified backup MUST NOT erase older copies by arbitrary age.
+old_copy="$BACKUP_ROOT/20260901-000000"
+mkdir -p "$old_copy"
+printf 'operator-retained-recovery-point\\n' > "$old_copy/keep.txt"
+touch -d '35 days ago' "$old_copy"
 backup="$(bash "$root/solana-launcher/scripts/backup-production.sh")"
+[[ -s "$old_copy/keep.txt" ]] || {
+  echo "A successful new backup erased an older recovery point" >&2
+  exit 1
+}
 [[ -s "$backup/postgres.dump" && -s "$backup/admin-postgres.dump" ]]
 [[ -s "$backup/trade.db" && -s "$backup/intelligence.sqlite" && -s "$backup/SHA256SUMS" && -r "$backup/admin-site/.env" ]]
 grep -Fq "  ./trade.db" "$backup/SHA256SUMS"
@@ -193,6 +203,33 @@ grep -Fq "  ./intelligence.sqlite" "$backup/SHA256SUMS"
 [[ ! -e "$BACKUP_ROOT/.incomplete-" ]] || {
   echo "Incomplete backup was promoted" >&2; exit 1;
 }
+
+# A failed restore verifier must prevent *publication*, not merely cause
+# a warning after the timestamp has been promoted. Replace only the sibling
+# verifier of a copied script under this isolated test directory.
+fault_scripts="$scratch/fail-restore/scripts"
+mkdir -p "$fault_scripts"
+cp "$root/solana-launcher/scripts/backup-production.sh" "$fault_scripts/backup-production.sh"
+cat > "$fault_scripts/verify-backup-restore.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'restore-attempted\\n' > "$BACKUP_VERIFY_TEST_MARKER"
+exit 42
+SH
+failed_root="$scratch/failed-backups"
+if BACKUP_ROOT="$failed_root" BACKUP_VERIFY_TEST_MARKER="$scratch/failed-verify.marker" \\
+    bash "$fault_scripts/backup-production.sh" >/dev/null 2>&1; then
+  echo "Backup was published despite a failing restore verifier" >&2
+  exit 1
+fi
+[[ -s "$scratch/failed-verify.marker" ]] || {
+  echo "Failed-restore regression did not reach the verifier" >&2
+  exit 1
+}
+if find "$failed_root" -mindepth 1 -type d -print -quit | grep -q .; then
+  echo "Failed verifier left a published or incomplete backup directory" >&2
+  exit 1
+fi
+echo "BACKUP_PUBLICATION_REQUIRES_RESTORE_OK"
 
 # Verify the committed WAL-only row using an isolated *copy* of the snapshot.
 # Even a read-only SQLite connection can create -wal/-shm sidecars or checkpoint
