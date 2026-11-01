@@ -188,6 +188,28 @@ def verify_preprovisioned_schema(dsn: str) -> None:
                 if can_create or owner_member:
                     raise RuntimeError(f"Admin runtime has DDL privileges in schema: {schema}")
 
+            # SET-able membership in an unrelated role may confer CREATE
+            # even when the login has no direct DDL right and does not own
+            # any schema/table. Check every reachable role in every user schema.
+            cur.execute(
+                "SELECT n.nspname, r.rolname FROM pg_namespace n CROSS JOIN pg_roles r "
+                "WHERE n.nspname <> 'information_schema' "
+                "AND n.nspname NOT LIKE 'pg_%' "
+                "AND pg_has_role(current_user,r.oid,'MEMBER') "
+                "AND has_schema_privilege(r.oid,n.oid,'CREATE') LIMIT 1"
+            )
+            if cur.fetchone():
+                raise RuntimeError("Admin runtime has SET-reachable schema DDL privileges")
+            cur.execute(
+                "SELECT r.rolname FROM pg_roles r JOIN pg_database d "
+                "ON d.datname=current_database() "
+                "WHERE pg_has_role(current_user,r.oid,'MEMBER') "
+                "AND (has_database_privilege(r.oid,d.oid,'CREATE') "
+                "OR has_database_privilege(r.oid,d.oid,'TEMPORARY')) LIMIT 1"
+            )
+            if cur.fetchone():
+                raise RuntimeError("Admin runtime has SET-reachable database DDL privileges")
+
             cur.execute(
                 "SELECT has_database_privilege(current_user, current_database(), 'CONNECT'), "
                 "has_database_privilege(current_user, current_database(), 'CREATE'), "
