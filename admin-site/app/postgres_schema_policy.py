@@ -115,7 +115,8 @@ def verify_preprovisioned_schema(dsn: str) -> None:
                 "has_table_privilege(current_user, c.oid, 'TRUNCATE'), "
                 "has_table_privilege(current_user, c.oid, 'REFERENCES'), "
                 "has_table_privilege(current_user, c.oid, 'TRIGGER'), "
-                "has_table_privilege(current_user, c.oid, 'MAINTAIN') "
+                "has_table_privilege(current_user, c.oid, 'MAINTAIN'), "
+                "has_any_column_privilege(current_user, c.oid, 'UPDATE') "
                 "FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
                 "WHERE n.nspname='public' AND c.relname = ANY(%s)",
                 (list(TABLES),),
@@ -129,14 +130,16 @@ def verify_preprovisioned_schema(dsn: str) -> None:
                 if kind not in ("r", "p") or owner == db.info.user or member_of_owner or rls or forced_rls:
                     raise RuntimeError(f"Admin schema ownership/RLS gate failed for {name}")
                 dml = privileges[:4]
-                elevated = privileges[4:]
+                elevated = privileges[4:8]
+                any_column_update = privileges[8]
                 if any(elevated):
                     # TRUNCATE bypasses the intended audit-log immutability
                     # even when UPDATE/DELETE have been explicitly revoked.
                     raise RuntimeError(f"Admin runtime has unsafe table privileges for {name}")
                 if name == "admin_audit":
-                    # The audit log is append-only: SELECT and INSERT only.
-                    if dml != [True, True, False, False]:
+                    # Table UPDATE may be revoked but UPDATE(column) still
+                    # permits audit tampering. Detect both kinds of grant.
+                    if dml != [True, True, False, False] or any_column_update:
                         raise RuntimeError("Admin runtime audit log must be append-only")
                 elif not all(dml):
                     raise RuntimeError(f"Admin runtime DML privilege missing for {name}")
