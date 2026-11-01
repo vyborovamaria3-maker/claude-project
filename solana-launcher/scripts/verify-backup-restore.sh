@@ -24,10 +24,20 @@ for file in SHA256SUMS postgres.dump admin-postgres.dump trade.db intelligence.s
     exit 1
   }
 done
+# A valid checksum for each listed file is insufficient: a truncated manifest
+# can simply omit a changed .env or other recovery file. Recompute the exact
+# canonical manifest from every regular file (including hidden/nested files),
+# excluding only the root SHA256SUMS. Require byte-for-byte equality so that
+# missing, extra, renamed, duplicated, altered or unlisted files fail closed.
 (
   cd "$backup"
-  sha256sum --strict --check SHA256SUMS >/dev/null ||
-    { echo "Backup SHA256 manifest mismatch" >&2; exit 1; }
+  expected_manifest="$(mktemp)"
+  trap 'rm -f -- "$expected_manifest"' EXIT
+  find . -type f ! -path './SHA256SUMS' -print0 \\
+    | sort -z \\
+    | xargs -0 sha256sum > "$expected_manifest"
+  cmp -s SHA256SUMS "$expected_manifest" ||
+    { echo "Backup SHA256 manifest is incomplete or mismatched" >&2; exit 1; }
 )
 echo "BACKUP_MANIFEST_VERIFIED"
 
