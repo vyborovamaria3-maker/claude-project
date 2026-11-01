@@ -6,6 +6,7 @@ on:
       - ".github/scripts/prepare-pinned-ssh.sh"
       - ".github/scripts/test-pinned-ssh.sh"
       - ".github/scripts/test-production-backup-rehearsal.sh"
+      - ".github/scripts/test-postgres-role-separation.sh"
       - ".github/scripts/test-intelligence-pg-backup-restore.sh"
       - ".github/workflows/source-producer-to-consumer.yml"
       - ".github/workflows/x-collector-ci.yml"
@@ -50,6 +51,7 @@ jobs:
           bash -n .github/scripts/prepare-pinned-ssh.sh
           bash -n .github/scripts/test-pinned-ssh.sh
           bash -n .github/scripts/test-production-backup-rehearsal.sh
+          bash -n .github/scripts/test-postgres-role-separation.sh
           bash -n solana-launcher/scripts/backup-production.sh
           bash -n solana-launcher/scripts/verify-backup-restore.sh
       - name: Verify pinning without real SSH keys or hosts
@@ -79,3 +81,17 @@ jobs:
             node scripts/blockchain-sqlite-health-regression.cjs
       - name: Verify complete backup, isolated restore and corruption rejection
         run: bash .github/scripts/test-production-backup-rehearsal.sh
+
+
+  postgres-role-separation:
+    name: Synthetic PG16/PG17 role isolation and backup restore
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Check role-rehearsal script syntax
+        run: bash -n .github/scripts/test-postgres-role-separation.sh
+      - name: Check least-privilege migration/runtime/backup roles in disconnected fixtures
+        run: bash .github/scripts/test-postgres-role-separation.sh
