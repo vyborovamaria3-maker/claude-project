@@ -216,6 +216,8 @@ grep -Fq "  ./intelligence.sqlite" "$backup/SHA256SUMS"
 fault_scripts="$scratch/fail-restore/scripts"
 mkdir -p "$fault_scripts"
 cp "$root/solana-launcher/scripts/backup-production.sh" "$fault_scripts/backup-production.sh"
+cp "$root/solana-launcher/scripts/postgres-role-restoration-fingerprint.sql" \
+  "$fault_scripts/postgres-role-restoration-fingerprint.sql"
 cat > "$fault_scripts/verify-backup-restore.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'restore-attempted\n' > "$BACKUP_VERIFY_TEST_MARKER"
