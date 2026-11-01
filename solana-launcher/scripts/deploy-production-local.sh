@@ -124,6 +124,7 @@ install -m 0644 "$SOURCE_ROOT/solana-launcher/docker-compose.production.yml" "$C
 install -m 0644 "$SOURCE_ROOT/solana-launcher/docker-compose.local-build.yml" "$LOCAL_BUILD_FILE"
 install -m 0644 "$SOURCE_ROOT/solana-launcher/nginx/nginx.conf" "$DEPLOY_DIR/nginx/nginx.conf"
 install -m 0644 "$SOURCE_ROOT/solana-launcher/prometheus/prometheus.yml" "$DEPLOY_DIR/prometheus/prometheus.yml"
+install -m 0644 "$SOURCE_ROOT/solana-launcher/scripts/postgres-role-restoration-fingerprint.sql" "$DEPLOY_DIR/scripts/postgres-role-restoration-fingerprint.sql"
 install -m 0700 \
   "$SOURCE_ROOT/solana-launcher/scripts/backup-production.sh" \
   "$SOURCE_ROOT/solana-launcher/scripts/healthcheck-production.sh" \
