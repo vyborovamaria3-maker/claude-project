@@ -239,6 +239,41 @@ if find "$failed_root" -mindepth 1 -type d -print -quit | grep -q .; then
 fi
 echo "BACKUP_PUBLICATION_REQUIRES_RESTORE_OK"
 
+# End-to-end positive verification of the OPERATOR WRAPPER on an exclusively
+# synthetic, disposable backup. The real off-host encrypted source/RPO/RTO
+# remains operator-only and must not be fetched by CI.
+mkdir -m 0700 "$scratch/operator-evidence"
+synthetic_manifest_sha="$(sha256sum "$backup/SHA256SUMS" | awk '{print $1}')"
+reviewed_ci_sha="$(git -C "$root" rev-parse --verify HEAD)"
+bash "$root/solana-launcher/scripts/run-offhost-recovery-evidence.sh" \
+  --backup-dir "$backup" \
+  --expected-manifest-sha256 "$synthetic_manifest_sha" \
+  --evidence-dir "$scratch/operator-evidence" \
+  --code-sha "$reviewed_ci_sha" \
+  --ticket-id ci-synthetic-fixture \
+  --confirm-isolated-offhost \
+  > "$scratch/operator-wrapper-output.log" 2>&1
+python3 - "$scratch/operator-evidence" "$reviewed_ci_sha" "$synthetic_manifest_sha" <<'PY'
+import json
+from pathlib import Path
+import sys
+files = list(Path(sys.argv[1]).glob("*.json"))
+assert len(files) == 1, files
+with files[0].open(encoding="utf-8") as fp:
+    evidence = json.load(fp)
+assert evidence["result"] == "PASS", evidence
+assert evidence["exit_code"] == 0, evidence
+assert evidence["code_sha"] == sys.argv[2], evidence
+assert evidence["independent_sha256_of_sha256sums"] == sys.argv[3], evidence
+assert evidence["rpo_status"] == "NOT_MEASURED", evidence
+assert evidence["rto_status"] == "NOT_MEASURED", evidence
+assert evidence["approval_for_role_cutover"] is False, evidence
+log = files[0].with_name(evidence["private_log_basename"])
+assert log.is_file() and log.stat().st_size > 0, evidence
+assert "BACKUP_RESTORE_REHEARSAL_OK no_live_database_access=true" in log.read_text(encoding="utf-8"), evidence
+PY
+echo "OFFHOST_OPERATOR_WRAPPER_SYNTHETIC_OK"
+
 # Verify the committed WAL-only row using an isolated *copy* of the snapshot.
 # Even a read-only SQLite connection can create -wal/-shm sidecars or checkpoint
 # a WAL-mode file. The sealed, checksummed recovery directory must stay inert.
