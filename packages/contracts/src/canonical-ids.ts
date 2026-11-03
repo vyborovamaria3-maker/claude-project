@@ -24,8 +24,8 @@ export type ParsedAuthorId = { platform: SocialPlatform; accountId: string };
 export type ParsedSourceId = { platform: SocialPlatform; accountId: string };
 
 const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-const DIGITS = /^(0|[1-9][0-9]*)$/;
-const TG_DIGITS = /^-?(0|[1-9][0-9]*)$/;
+const DIGITS = /^[1-9][0-9]*$/;
+const TG_DIGITS = /^(?:[1-9][0-9]*|-[1-9][0-9]*)$/;
 
 export function isChain(value: unknown): value is Chain {
   return typeof value === "string" && (CHAINS as readonly string[]).includes(value);
