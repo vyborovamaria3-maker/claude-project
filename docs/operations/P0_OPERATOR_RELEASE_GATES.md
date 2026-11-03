@@ -207,3 +207,27 @@ Subsequent commits on the PR #212 branch add:
 - a safe ordinary Compose down command that preserves named volumes, with volume deletion moved behind an explicit confirmation variable.
 
 CI must be rerun on the resulting exact commit before these changes are considered verified. No production database, source outbox, real backup, credentials, branch protection setting, live collector or deployment was accessed or changed.
+
+
+## Current exact-head CI evidence — 2026-11-04
+
+Code-bearing integration HEAD: `817598fc37b50bfec87abfc6ec15dda3d346aa96` (PR #212, OPEN / DRAFT / UNMERGED). GitHub Actions reports **27 workflow runs SUCCESS, 1 conditionally SKIPPED, 0 FAILURE** on this exact SHA. The skipped `Security Lock Refresh` workflow is branch-condition skipped and is not counted as a pass.
+
+| Gate | Exact-head result | Evidence | Remaining limitation |
+| --- | --- | --- | --- |
+| Intelligence foundation | **SUCCESS — 252/252 tests** | [run 41740223138](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41740223138) | Isolated PostgreSQL and fixtures; not live source deployment |
+| X/TG/Blockchain producer-to-Intelligence integration | **SUCCESS** | [run 41740223040](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41740223040) | Mocked providers/RPC and disposable destination |
+| X Collector monitoring and X Collector quality | **SUCCESS** | Exact-head checks on `817598fc37b50bfec87abfc6ec15dda3d346aa96` | CI tests only; no long-running production worker |
+| Docker volume deletion safety | **SUCCESS — 5/5 tests** | Included in POTAPoff predeploy frontend regression build | Tests the command guard; does not operate on production volumes |
+| Admin PostgreSQL 17 restricted-role rehearsal | **SUCCESS** | Exact-head Admin PG17 workflow | Disposable PG17; no production role cutover |
+| ARCH-02 SSH pins and restore rehearsal | **SUCCESS** | Exact-head ARCH-02 workflow | Synthetic fixture; no actual encrypted off-host archive fetched |
+| POTAPoff predeploy | **SUCCESS — 5/5 jobs** | Exact-head predeploy workflow | Docker builds and tests only; no production deployment |
+| Security Gates | **SUCCESS** | Exact-head Security Gates workflow | CI only |
+| Full Backtest Audit | **SUCCESS** | Exact-head Full Backtest Audit workflow | Audit fixtures/config checks, not live trading validation |
+| Main branch protection | **BLOCKED / NOT VERIFIED** | Rulesets endpoint empty; branch-protection endpoint 403 to installed integration | Repository administrator must configure and verify required enforcement, issue #170 |
+| Independent review | **NOT RECEIVED** | 7/7 inline threads resolved; review submissions are COMMENTED only | Independent human approval remains required |
+| Real encrypted off-host restore | **NOT RUN / BLOCKED** | No approved production archive or isolated operator host accessed | Physical DB inventory, encryption provenance, credential restore, actual-volume restore and measured RPO/RTO, issue #172 |
+| Live X/TG/Solana verification | **NOT RUN** | Synthetic producer integration only | Operator-approved credentials, source IDs and live provider evidence, issues #173/#175 |
+| Production role cutover / supervisor deployment | **NOT RUN** | No production server or database changed | Named owner, process manager, live grants and external alert endpoint, issue #174 |
+
+PR #210's three-source recovery acceptance test is integrated into #212 at merge commit `d9f9ed5fb12a0dfa36414e14bb26a4c17ef91499`. PR #212 remains Draft and must not be merged or deployed until independent review and the operator-owned P0 gates above are satisfied. No production database, source outbox, credentials, live collector, backup host or GitHub branch-protection setting was modified during this work.
