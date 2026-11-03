@@ -239,6 +239,17 @@ if find "$failed_root" -mindepth 1 -type d -print -quit | grep -q .; then
 fi
 echo "BACKUP_PUBLICATION_REQUIRES_RESTORE_OK"
 
+# The canonical manifest covers regular files only. A FIFO/device/socket
+# must therefore be rejected explicitly rather than silently ignored.
+mkfifo "$backup/untracked-fifo"
+if bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" \
+    > "$scratch/nonregular-entry.log" 2>&1; then
+  echo "Restore verifier accepted an unmanifested special filesystem entry" >&2
+  exit 1
+fi
+grep -Fq "unsupported non-regular entry" "$scratch/nonregular-entry.log"
+rm -f "$backup/untracked-fifo"
+
 # End-to-end positive verification of the OPERATOR WRAPPER on an exclusively
 # synthetic, disposable backup. The real off-host encrypted source/RPO/RTO
 # remains operator-only and must not be fetched by CI.
