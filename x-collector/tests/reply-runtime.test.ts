@@ -15,9 +15,10 @@ import {
   draftReplies,
   publishNext,
   reservePublication,
+  publicationEnabled,
 } from "../lib/reply/engine";
 import { closePool } from "../lib/trade/pg";
-import type { Tweet } from "../lib/reply/model";
+import { Filters, Settings, filterTweet, sleeping, type Tweet } from "../lib/reply/model";
 
 test("Reply Guy API, ownership, RAG pipeline, budgets, uncertainty and browser controls", async () => {
   const db = new PGlite();
@@ -302,15 +303,56 @@ test("Reply Guy API, ownership, RAG pipeline, budgets, uncertainty and browser c
     await db.query("UPDATE reply_campaigns SET status='running' WHERE id=$1", [
       campaignId,
     ]);
+    // Assert the complete reservation preconditions before testing an uncertain
+    // network outcome. This keeps the fixture independent of runner time and
+    // makes any future early-return reason explicit in CI.
+    assert.equal(publicationEnabled(), true);
+    const preflight = await db.query(
+      `SELECT a.status,a.proxy_status,a.cooldown_until,a.next_reply_at,a.timezone,
+              c.status AS campaign_status,c.settings_json,c.filters_json,
+              (SELECT COUNT(*)::int FROM reply_rate_limits r WHERE r.account_id=a.id) AS rate_rows,
+              (SELECT COUNT(*)::int FROM reply_drafts d WHERE d.account_id=a.id AND d.status='approved') AS approved_drafts,
+              (SELECT COUNT(*)::int FROM reply_drafts d
+                 JOIN reply_consents opt ON opt.user_id=a.user_id
+                  AND opt.author_id=d.author_id AND opt.expires_at>now()
+                WHERE d.account_id=a.id AND d.status='approved') AS eligible_drafts
+         FROM reply_accounts a
+         JOIN reply_campaigns c ON c.account_id=a.id
+        WHERE a.id=$1`,
+      [accountId],
+    );
+    assert.equal(preflight.rows.length, 1);
+    const state = preflight.rows[0];
+    assert.equal(state.status, "ready", JSON.stringify(state));
+    assert.notEqual(state.proxy_status, "dead", JSON.stringify(state));
+    assert.equal(state.campaign_status, "running", JSON.stringify(state));
+    assert.equal(state.cooldown_until, null, JSON.stringify(state));
+    assert.equal(state.next_reply_at, null, JSON.stringify(state));
+    assert.equal(Number(state.rate_rows), 0, JSON.stringify(state));
+    assert.equal(Number(state.approved_drafts), 1, JSON.stringify(state));
+    assert.equal(Number(state.eligible_drafts), 1, JSON.stringify(state));
+    const settings = Settings.parse(state.settings_json);
+    assert.equal(settings.sleep_enabled, false, JSON.stringify(settings));
+    assert.equal(sleeping(settings, state.timezone), false, JSON.stringify(settings));
+    const secondTweet = await db.query(
+      "SELECT tweet_json FROM reply_drafts WHERE tweet_id=$1",
+      ["2234567890123456789"],
+    );
+    assert.equal(secondTweet.rows.length, 1);
+    assert.equal(
+      filterTweet(secondTweet.rows[0].tweet_json, Filters.parse(state.filters_json), []),
+      null,
+      JSON.stringify(secondTweet.rows[0].tweet_json),
+    );
     publishMock.mock.mockImplementation(async () => {
       throw new PublishUncertainError();
     });
     await publishNext(account);
-    assert.equal(publishMock.mock.callCount(), 2); // The second POST was attempted.
     const unknown = (await api("/drafts")).data.find(
-      (d: { status: string }) => d.status === "uncertain",
+      (d: { tweet_id: string }) => d.tweet_id === "2234567890123456789",
     );
-    assert(unknown);
+    assert.equal(unknown?.status, "uncertain", JSON.stringify(unknown));
+    assert.equal(publishMock.mock.callCount(), 2); // The second POST was attempted.
     await publishNext(account);
     assert.equal(publishMock.mock.callCount(), 2); // uncertain POST is not repeated.
     assert.equal(
