@@ -355,7 +355,7 @@ test("Reply Guy API, ownership, RAG pipeline, budgets, uncertainty and browser c
     assert.equal(
       filterTweet(tweet.tweet_json, Filters.parse(state.filters_json), []),
       null,
-      JSON.stringify(secondTweet.rows[0].tweet_json),
+      JSON.stringify(tweet.tweet_json),
     );
     publishMock.mock.mockImplementation(async () => {
       throw new PublishUncertainError();
