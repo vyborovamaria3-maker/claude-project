@@ -1,21 +1,43 @@
 # PR_STATUS — GitHub PR inventory
 
-## Current integration snapshot — 2026-11-01 (GitHub verified)
+## Current integration snapshot — 2026-11-03 (GitHub verified)
 
-The observed `main` is still `f4dc5ef3aad400f64fc300f30542085e10aae4c1`, and no production deployment, backup, restore or live collector operation is claimed. Repository governance issue #170 (unprotected `main`) remains a blocker. GitHub currently returns **10 open PRs**: #195, #202, #203, #204, #205, #206, #208, #210, #212 and #213.
+Read-only refresh against GitHub PRs and Actions. `main` remains
+`f4dc5ef3aad400f64fc300f30542085e10aae4c1`, `protected:false`; the repository
+rulesets query returns `[]`. No production deployment, backup, restore,
+migration or live collector operation is claimed. Ten PRs are open:
+#195, #202, #203, #204, #205, #206, #208, #210, #212 and #213.
 
-| PR | Repository-verified integration status | Gate |
-| --- | --- | --- |
-| [#205](https://github.com/vyborovamaria3-maker/claude-project/pull/205) | Architecture baseline synchronized by non-forced merge commit `bf11bae5680c6a5c39e24406e2cc1d9763800a6d`. Compare against `main`: **66 ahead, 0 behind**, with the same 19 documentation paths. | New-head CI is pending; review before merge. |
-| [#206](https://github.com/vyborovamaria3-maker/claude-project/pull/206) | Read-only Intelligence supervisor metrics at `a329640dd694ce2b7f6928b61d0fafd4a079b93a`; prior latest-head required CI passed and original inline review threads were resolved. | Independent human review/approval still missing. |
-| [#210](https://github.com/vyborovamaria3-maker/claude-project/pull/210) | Synthetic three-source retraction/lease/recovery tests, Draft; remains separate from production acceptance. | Review/CI and live-source gates. |
-| [#212](https://github.com/vyborovamaria3-maker/claude-project/pull/212) | **Canonical combined recovery Draft**, replacing #209 and #211. Four-artifact product/Admin PostgreSQL + Blockchain `trade.db` + Python Intelligence `intelligence.sqlite` bundle; producer→consumer mocked integration and WAL restore. Prior head `e915c2e1d575f543f42013a6252e824c2705b27d` had 16 successes, one expected skip. New head `2909ea9a0224ed48e87c960b29d89056de5cd9f8` requires fresh CI after exhaustive checksum-manifest hardening and regression additions. | Remains Draft; independent review, governance, real operator backup/restore and role audit not completed. |
-| [#213](https://github.com/vyborovamaria3-maker/claude-project/pull/213) | Optional best-effort alert webhook, Draft stacked on #206. | Do not merge before #206; endpoint/operator acceptance not completed. |
-| #195 / #202 / #203 / #204 / #208 | Existing independent UI, Admin and analytics workstreams, still open. | Do not merge overlapping changes without combined-path review and per-head CI. |
+| PR | Current head / observed CI | State and integration note | Gate |
+| --- | --- | --- | --- |
+| [#205](https://github.com/vyborovamaria3-maker/claude-project/pull/205) | `aab27aab21a2f0c59fe69c65c5109252214e2611`; 4 SUCCESS, 1 SKIPPED; 68 ahead, 0 behind | Whole-repository 2026-10-30 baseline, dependency map and technical-debt register; 19 documentation paths. UTF-8 mojibake in one audit document fixed. | No review submission yet; reconcile 3 overlapping files with #212 and obtain independent review. |
+| [#206](https://github.com/vyborovamaria3-maker/claude-project/pull/206) | `a329640dd694ce2b7f6928b61d0fafd4a079b93a`; 18 SUCCESS, 1 SKIPPED; 27 ahead, 0 behind | Read-only supervisor health metrics; 27 changed paths. Four earlier Medium findings have code/tests addressing alert deduplication, indexed health queries, separate thresholds and advisory startup probes. | Four review threads resolved; recorded reviews are COMMENTED by PR author only. Independent review missing. #213 is stacked on this branch. |
+| [#208](https://github.com/vyborovamaria3-maker/claude-project/pull/208) | `1faa2f938683fd66f6bd5556bd07657b9f530966`; 4 SUCCESS, 1 SKIPPED | Admin editor/MiniApp changes, Draft. | Independent review and integration-order check. |
+| [#210](https://github.com/vyborovamaria3-maker/claude-project/pull/210) | `1b8827be359a516e260349de1867ba9970335dbb`; 4 SUCCESS, 1 SKIPPED | Separate three-source retraction/recovery test PR, Draft. | Review synthetic scope and overlap before integration. |
+| [#212](https://github.com/vyborovamaria3-maker/claude-project/pull/212) | Current docs-only head `508e869998b2cda725d7746ee485286d43ddb964`; at last refresh 26 SUCCESS, 1 SKIPPED, 1 IN PROGRESS. Prior implementation head `2c882f055cc2caa00bba336d4f47d4cb355bac84`: 27 SUCCESS, 1 SKIPPED. | Canonical combined recovery Draft, 90 changed files. #209/#211 are closed unmerged. The three commits after 2c882 modify only operator/release documentation and progress log; CI was rerun on the resulting head. | Keep Draft pending final current-head CI, independent review of the complete diff, main governance and actual off-host recovery. |
+| [#213](https://github.com/vyborovamaria3-maker/claude-project/pull/213) | `a88ab36701e2ab469301bab2364c4a73a085b2a0`; 4 SUCCESS | Optional bounded alert webhook, Draft, targets #206's branch. | Do not merge before #206; external receiver and operator acceptance remain separate. |
+| #195 / #202 / #203 / #204 | Existing independent analytics, UI and Admin workstreams remain open. | Do not merge overlapping changes without combined-path review and per-head CI. | Recheck current exact head/reviews/checks before any integration. |
 
-**Superseded PRs:** [#209](https://github.com/vyborovamaria3-maker/claude-project/pull/209) and [#211](https://github.com/vyborovamaria3-maker/claude-project/pull/211) were **closed without merge** because their unique changes were integrated into #212. Duplicate [#214](https://github.com/vyborovamaria3-maker/claude-project/pull/214) was likewise closed unmerged. Do not reopen or merge these independent recovery implementations. Old status tables below are retained as dated historical evidence, **not current state**.
+**Superseded PRs:** [#209](https://github.com/vyborovamaria3-maker/claude-project/pull/209),
+[#211](https://github.com/vyborovamaria3-maker/claude-project/pull/211) and
+[#214](https://github.com/vyborovamaria3-maker/claude-project/pull/214) are
+**CLOSED WITHOUT MERGE**. #212 is the active combined recovery candidate.
+Old status tables below are retained as dated historical evidence, **not
+current state**.
 
-**Recovery boundary:** Even if all new-head CI turns green, synthetic tests do not establish a successful production backup, offsite encrypted copy, restore/RPO/RTO, least-privilege runtime roles, authorized live X/TG/Blockchain evidence, or human approval. Issues #170, #172, #173 and #174 remain subject to their own acceptance criteria.
+**Path overlap:** #205 ↔ #212 share 3 paths
+(`CURRENT_ARCHITECTURE.md`, `KNOWN_GAPS.md`, `LIVE_TESTS.md`);
+#206 ↔ #212 share 3 paths (`tg-collector.yml`, `DATA_CONTRACTS.md`,
+`tg-collector/README.md)); #205 ↔ #206 share 1 path
+(`intelligence/README.md`). Reconcile both sides deliberately. In particular,
+preserve #206's PostgreSQL-client compatibility regression when combining
+the TG workflow's Node 22 / PostgreSQL 16 adjustments from #212.
+
+**Recovery boundary:** Synthetic CI does not establish a successful
+production backup, encrypted off-host copy, real restore/RPO/RTO, least-privilege
+runtime cutover, authorized live X/TG/Blockchain evidence or independent human
+approval. Issues #170 and #172 remain open. Do not merge or deploy based on
+green CI alone.
 
 ## Archived snapshot — 2026-10-31 19:15 UTC
 
