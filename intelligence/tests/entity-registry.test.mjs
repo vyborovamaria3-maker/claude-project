@@ -19,6 +19,9 @@ test("rejects noncanonical IDs and invalid provenance",()=>{
   assert.throws(()=>validateRegistryEvent({...event,entityRefs:[]}),/entityRefs/);
   assert.throws(()=>validateRegistryEvent({...event,entityRefs:[{...entity,canonicalId:"solana:bad"}]}),/Noncanonical/);
   assert.throws(()=>validateRegistryEvent({...event,evidenceRef:{...evidence,sourceId:"x:tweet:12"}}),/Evidence\/source/);
+  assert.throws(()=>validateRegistryEvent({...event,evidenceRef:{...evidence,provider:" "}}),/Invalid provider/);
+  assert.throws(()=>validateRegistryEvent({...event,evidenceRef:{...evidence,parserVersion:"v".repeat(4097)}}),/Invalid parserVersion/);
+  assert.throws(()=>validateRegistryEvent({...event,evidenceRef:{...evidence,rawPointer:" "}}),/Invalid rawPointer/);
   assert.throws(()=>validateRegistryEvent({...event,sourceSystem:"x"}),/does not belong/);
   assert.throws(()=>validateRegistryEvent({...event,evidenceRef:{...evidence,sourceId:"tg:message:-0:17"}}),/Evidence\/source/);
 });
