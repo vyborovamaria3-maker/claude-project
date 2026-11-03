@@ -165,3 +165,40 @@ migration, role change or deployment was accessed or executed.
 gate for this snapshot only. It does not supply independent review, admin
 governance, or live recovery evidence. Keep #212 Draft and do not merge or
 deploy until all three are independently satisfied.
+
+
+## Later exact-head continuation — 2026-11-03
+
+This section supersedes earlier same-day snapshots in this file for the
+code-bearing Draft PR #212 head `0fa86e850a626b91ec79bf20ee00e319b399d0b2`.
+
+- Exact-head GitHub Actions: **27 SUCCESS, 1 SKIPPED, 0 FAILURE, 0 QUEUED,
+  0 IN PROGRESS**. `Security Lock Refresh` is the one skipped workflow.
+- [ARCH-02](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41664963069):
+  3/3 jobs passed. Full synthetic PostgreSQL 16/17 and SQLite WAL restore,
+  role-aware owner/ACL restore, stale-sequence rejection, port-aware SSH pin
+  regressions, and synthetic operator-wrapper evidence all passed.
+- [Admin PG17](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41664963144):
+  restricted-role preprovisioned startup and actual FastAPI app/lifespan,
+  readiness, login, API write/read and worker smoke passed.
+- [Source producer integration](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41664963149):
+  X/TG/Blockchain producer integration with mocked RPC and isolated
+  Intelligence PostgreSQL archive/restore passed (1 test, 0 failures/skips).
+- [Security Gates](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41664963079),
+  [Full Backtest Audit](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41664962949),
+  [POTAPoff predeploy](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41664962920),
+  [Repository hygiene](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41664962957)
+  and [Solana Subscription Web Quality](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41664962964)
+  all passed.
+- All 7 inline review threads are resolved by the PR author with replies
+  referencing the implementing tests. Recorded reviews remain COMMENTED; no
+  independent APPROVED review exists.
+- `main` remains `f4dc5ef3aad400f64fc300f30542085e10aae4c1`,
+  `protected:false`, with no rulesets. Issues #170 and #172 remain OPEN.
+- PR #212 remains OPEN/DRAFT/UNMERGED, 91 files, 239 commits ahead and 0
+  behind. #205/#206 remain open with 3 overlapping paths each; #209/#211/#214
+  remain closed unmerged.
+
+This is CI and repository evidence only. No real production database,
+credentials, encrypted off-host archive, live restore, migration, role cutover
+or deployment was accessed or performed. **Decision remains HOLD.**

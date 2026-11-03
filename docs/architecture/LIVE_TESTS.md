@@ -100,3 +100,26 @@ and `solana-launcher/scripts/run-offhost-recovery-evidence.sh` is **proposed
 source code**, not an executed real recovery test. Evidence from that tool
 must remain outside the repository. Existing 2026-10-22 TG/live rows above
 remain unchanged and NOT RUN where stated.
+
+
+## P0 PR #212 latest CI-only recovery evidence — 2026-11-03
+
+Snapshot against code-bearing Draft PR #212 HEAD
+`0fa86e850a626b91ec79bf20ee00e319b399d0b2`. This is synthetic CI evidence,
+not a live production test.
+
+| Gate | Result | Evidence | Remaining limitation |
+| --- | --- | --- | --- |
+| PostgreSQL 16/17 + SQLite WAL full backup/restore | **CI SUCCESS, 3/3 jobs** | [ARCH-02 run 41664963069](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41664963069) | Disposable fixture data, not production volumes |
+| Role-aware PostgreSQL restore and owner/ACL fingerprint | **CI SUCCESS** | [ARCH-02 run 41664963069](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41664963069) | No real production role inventory or credential cutover |
+| Product/Admin semantic restore and sequence checks | **CI SUCCESS** | [ARCH-02 run 41664963069](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41664963069) | CI sentinel rows and schema/sequence invariants only |
+| Restricted Admin PG17 app smoke | **CI SUCCESS** | [run 41664963144](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41664963144) | Disposable PG17, not production Admin DSN |
+| X/TG/Blockchain producer → Intelligence integration | **CI SUCCESS** | [run 41664963149](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41664963149) | Mocked RPC and isolated destination DB |
+| Exact-head PR checks | **27 SUCCESS, 1 SKIPPED** | HEAD above; Security Lock Refresh skipped | CI success does not prove live deployment or off-host recovery |
+| Effective protection of GitHub `main` | **BLOCKED** | Read-only API: `protected:false`, `/rulesets=[]` | Repository administrator action, issue #170 |
+| Real encrypted off-host backup and restore | **NOT RUN / BLOCKED** | No approved private archive or isolated operator host accessed | Actual-volume restore, application smoke, measured RPO/RTO and operator sign-off, issue #172 |
+
+All 7 inline PR #212 review threads were resolved by the PR author; recorded
+review submissions remain COMMENTED and independent approval is absent. PR
+#212 remains Draft and unmerged. No production database, credentials, live
+backup, migration, role cutover or deployment was accessed or executed.
