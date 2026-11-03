@@ -254,12 +254,13 @@ for source in postgres admin-postgres; do
   acl_containers+=("$acl_container")
   docker run -d --rm --network none --pids-limit 256 \
     --name "$acl_container" \
+    -e "POSTGRES_USER=$restored_name" -e POSTGRES_DB=postgres \
     -e POSTGRES_HOST_AUTH_METHOD=trust \
     "postgres:${major}-alpine" >/dev/null
   ready=0
   for i in $(seq 1 60); do
     if docker logs "$acl_container" 2>&1 | grep -Fq 'PostgreSQL init process complete; ready for start up.' &&
-       [[ "$(docker exec "$acl_container" psql -X -U postgres -d postgres -Atq \
+       [[ "$(docker exec "$acl_container" psql -X -U "$restored_name" -d postgres -Atq \
          -v ON_ERROR_STOP=1 -c 'SELECT 1' 2>/dev/null)" == 1 ]]; then
       ready=1
       break
@@ -269,14 +270,19 @@ for source in postgres admin-postgres; do
   [[ "$ready" == 1 ]] || {
     echo "Failed isolated role recovery target for $source" >&2; exit 1;
   }
-  docker exec -i "$acl_container" psql -X -U postgres -d postgres \
-    -v ON_ERROR_STOP=1 < "$backup/$source-roles.sql" >/dev/null
-  docker exec -i "$acl_container" pg_restore -U postgres -d postgres \
+  # Match the source bootstrap identity instead of inventing a postgres role:
+  # every non-system role is part of the exact source fingerprint. initdb has
+  # already created this one role; skip only its duplicate CREATE declaration.
+  # Replay its ALTER attributes and all other roles/memberships unchanged.
+  sed "/^CREATE ROLE ${restored_name};$/d" "$backup/$source-roles.sql" |
+    docker exec -i "$acl_container" psql -X -U "$restored_name" -d postgres \
+      -v ON_ERROR_STOP=1 >/dev/null
+  docker exec -i "$acl_container" pg_restore -U "$restored_name" -d postgres \
     --create --exit-on-error \
     < "$backup/$source.dump" >/dev/null
   actual_catalog="$(mktemp)"
   acl_temp_files+=("$actual_catalog")
-  docker exec -i "$acl_container" psql -X -A -t -U postgres \
+  docker exec -i "$acl_container" psql -X -A -t -U "$restored_name" \
     -d "$restored_name" -v ON_ERROR_STOP=1 \
     < "$ROLE_FINGERPRINT_SQL" > "$actual_catalog"
   cmp -s "$actual_catalog" "$backup/$source-role-fingerprint.txt" || {

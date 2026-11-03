@@ -284,6 +284,10 @@ verifier="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/verify-backup-r
 verification_log="$(mktemp)"
 if ! bash "$verifier" "$DEST" > "$verification_log" 2>&1; then
   echo "Isolated backup restore verification failed; refusing publication" >&2
+  # Report only fixed stage markers; raw PostgreSQL diagnostics/catalogs may
+  # contain private deployment metadata and must never reach shared CI logs.
+  grep -E '^(BACKUP_MANIFEST_VERIFIED|DISPOSABLE_SQLITE_RESTORE_OK tables=[0-9]+|DISPOSABLE_INTELLIGENCE_SQLITE_RESTORE_OK tables=[0-9]+|DISPOSABLE_PG_RESTORE_OK source=(postgres|admin-postgres) tables=[0-9]+|DISPOSABLE_PG_ROLE_ACL_RESTORE_OK source=(postgres|admin-postgres) version=(16|17)|Owner/ACL mismatch after isolated role-aware restore: (postgres|admin-postgres))$' \
+    "$verification_log" >&2 || true
   rm -f -- "$verification_log"
   exit 1
 fi
