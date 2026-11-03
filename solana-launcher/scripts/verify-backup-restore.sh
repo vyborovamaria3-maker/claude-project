@@ -185,11 +185,21 @@ for source in postgres admin-postgres; do
   else
     db="isolated_admin"
   fi
-  if ! docker exec -i "$container" pg_restore --list \
-    < "$backup/$source.dump" >/dev/null 2>&1; then
+  toc="$(docker exec -i "$container" pg_restore --list < "$backup/$source.dump" 2>/dev/null)" || {
     echo "Invalid custom-format PostgreSQL dump: $source" >&2
     exit 1
+  }
+  if [[ "$source" == postgres ]]; then
+    required_data_tables=(alembic_version users tokens wallets)
+  else
+    required_data_tables=(admin_audit feature_flags admin_background_tasks admin_security_sessions)
   fi
+  for table in "${required_data_tables[@]}"; do
+    if ! grep -Fq "TABLE DATA public $table " <<< "$toc"; then
+      echo "PostgreSQL archive is missing required table-data entry: $source/$table" >&2
+      exit 1
+    fi
+  done
   docker exec "$container" createdb -h 127.0.0.1 -U postgres "$db" >/dev/null
   if ! docker exec -i "$container" pg_restore \
       --exit-on-error --single-transaction --no-owner --no-acl \
@@ -216,6 +226,18 @@ for source in postgres admin-postgres; do
     [[ "$ledger" =~ ^[1-9][0-9]*$ ]] || {
       echo "Restored product Alembic ledger is empty" >&2; exit 1;
     }
+    schema_contract="$(docker exec "$container" psql -h 127.0.0.1 -U postgres \
+      -d "$db" -X -Atq -v ON_ERROR_STOP=1 -c "
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND (
+        (table_name='users' AND column_name IN ('id','email','created_at')) OR
+        (table_name='tokens' AND column_name IN ('id','mint_address','status')) OR
+        (table_name='wallets' AND column_name IN ('id','wallet_address'))
+       )")"
+    [[ "$schema_contract" == 8 ]] || {
+      echo "Restored product database lacks critical application schema" >&2
+      exit 1
+    }
   else
     schema_contract="$(docker exec "$container" psql -h 127.0.0.1 -U postgres \
       -d "$db" -X -Atq -v ON_ERROR_STOP=1 -c "
@@ -231,6 +253,86 @@ for source in postgres admin-postgres; do
       exit 1
     }
   fi
+
+  # CI-only sentinels prove that representative PostgreSQL rows survive the
+  # actual dump/restore path. These deliberately named tables do not exist in
+  # production; production still gets the schema, ledger and sequence checks.
+  if [[ "$source" == postgres ]]; then
+    fixture_table=potapoff_backup_ci_product_fixture
+  else
+    fixture_table=potapoff_backup_ci_admin_fixture
+  fi
+  fixture_present="$(docker exec "$container" psql -h 127.0.0.1 -U postgres \
+    -d "$db" -X -Atq -v ON_ERROR_STOP=1 \
+    -c "SELECT (to_regclass('public.$fixture_table') IS NOT NULL)::text")"
+  if [[ "$fixture_present" == "true" || "$fixture_present" == "t" ]]; then
+    fixture_rows="$(docker exec "$container" psql -h 127.0.0.1 -U postgres \
+      -d "$db" -X -Atq -v ON_ERROR_STOP=1 \
+      -c "SELECT count(*) FROM public.$fixture_table WHERE id=1 AND tag='safe-fixture'")"
+    [[ "$fixture_rows" == 1 ]] || {
+      echo "Representative PostgreSQL data row was not restored: $source" >&2
+      exit 1
+    }
+    echo "DISPOSABLE_PG_FIXTURE_ROW_OK source=$source"
+  fi
+
+  # Verify that every owned ascending ID sequence will generate a value above
+  # the restored table's maximum. This catches omitted/stale setval state.
+  docker exec -i "$container" psql -h 127.0.0.1 -U postgres -d "$db" -X \
+    -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+DO $sequence_restore$
+DECLARE
+  item record;
+  max_id numeric;
+  sequence_value bigint;
+  sequence_called boolean;
+  next_value numeric;
+BEGIN
+  FOR item IN
+    SELECT sequence_ns.nspname AS sequence_schema,
+           sequence_class.relname AS sequence_name,
+           table_ns.nspname AS table_schema,
+           table_class.relname AS table_name,
+           attribute.attname AS column_name,
+           sequence_definition.seqincrement AS increment_by
+      FROM pg_class sequence_class
+      JOIN pg_namespace sequence_ns ON sequence_ns.oid=sequence_class.relnamespace
+      JOIN pg_sequence sequence_definition ON sequence_definition.seqrelid=sequence_class.oid
+      JOIN pg_depend dependency
+        ON dependency.classid='pg_class'::regclass
+       AND dependency.objid=sequence_class.oid
+       AND dependency.refclassid='pg_class'::regclass
+       AND dependency.deptype IN ('a','i')
+      JOIN pg_class table_class ON table_class.oid=dependency.refobjid
+      JOIN pg_namespace table_ns ON table_ns.oid=table_class.relnamespace
+      JOIN pg_attribute attribute
+        ON attribute.attrelid=table_class.oid
+       AND attribute.attnum=dependency.refobjsubid
+     WHERE sequence_class.relkind='S'
+       AND sequence_ns.nspname='public'
+       AND table_ns.nspname='public'
+       AND table_class.relkind IN ('r','p')
+       AND sequence_definition.seqincrement > 0
+  LOOP
+    EXECUTE format('SELECT COALESCE(MAX(%I), 0)::numeric FROM %I.%I',
+      item.column_name, item.table_schema, item.table_name)
+      INTO max_id;
+    EXECUTE format('SELECT last_value, is_called FROM %I.%I',
+      item.sequence_schema, item.sequence_name)
+      INTO sequence_value, sequence_called;
+    next_value := CASE WHEN sequence_called
+      THEN sequence_value + item.increment_by
+      ELSE sequence_value
+    END;
+    IF next_value <= max_id THEN
+      RAISE EXCEPTION 'Restored sequence % is behind data in %.%',
+        item.sequence_name, item.table_name, item.column_name;
+    END IF;
+  END LOOP;
+END
+$sequence_restore$;
+SQL
+  echo "DISPOSABLE_PG_SEQUENCE_RESTORE_OK source=$source"
   echo "DISPOSABLE_PG_RESTORE_OK source=$source tables=$tables"
 done
 # Owner/ACL fidelity is a DIFFERENT gate from the data-only restore above.

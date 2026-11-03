@@ -147,14 +147,12 @@ done
 [[ "$ready" = 1 ]] || { echo "Synthetic DBs failed to initialize" >&2; exit 1; }
 
 docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
-  -c "CREATE TABLE synthetic_product(id integer primary key, tag text); INSERT INTO synthetic_product VALUES (1,'safe-fixture');" >/dev/null
+  -c "CREATE TABLE potapoff_backup_ci_product_fixture(id bigserial PRIMARY KEY, tag text NOT NULL); INSERT INTO potapoff_backup_ci_product_fixture(tag) VALUES ('safe-fixture'); CREATE TABLE users(id uuid PRIMARY KEY, email text, created_at timestamptz NOT NULL); INSERT INTO users VALUES ('00000000-0000-0000-0000-000000000001','ci@example.invalid',now()); CREATE TABLE tokens(id bigserial PRIMARY KEY, mint_address varchar(64) NOT NULL, status varchar(16) NOT NULL); INSERT INTO tokens(mint_address,status) VALUES ('fixture-mint','active'); CREATE TABLE wallets(id bigserial PRIMARY KEY, wallet_address varchar(64) NOT NULL); INSERT INTO wallets(wallet_address) VALUES ('fixture-wallet'); CREATE TABLE alembic_version(version_num varchar(32) PRIMARY KEY); INSERT INTO alembic_version VALUES ('ci_review_head');" >/dev/null
 docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
   -c "CREATE TABLE alembic_version(version_num varchar(32) PRIMARY KEY); INSERT INTO alembic_version VALUES ('ci_review_head');" >/dev/null
 
 docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
-  -c "CREATE TABLE synthetic_admin(id integer primary key, tag text); INSERT INTO synthetic_admin VALUES (2,'safe-fixture');" >/dev/null
-docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
-  -c "CREATE TABLE admin_audit(id bigserial PRIMARY KEY, action text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()); INSERT INTO admin_audit(action) VALUES ('fixture'); CREATE TABLE feature_flags(name text PRIMARY KEY, enabled boolean NOT NULL); CREATE TABLE admin_background_tasks(id text PRIMARY KEY, state text NOT NULL); CREATE TABLE admin_security_sessions(nonce text PRIMARY KEY, username text NOT NULL);" >/dev/null
+  -c "CREATE TABLE potapoff_backup_ci_admin_fixture(id bigserial PRIMARY KEY, tag text NOT NULL); INSERT INTO potapoff_backup_ci_admin_fixture(tag) VALUES ('safe-fixture'); CREATE TABLE admin_audit(id bigserial PRIMARY KEY, action text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()); INSERT INTO admin_audit(action) VALUES ('fixture'); CREATE TABLE feature_flags(name text PRIMARY KEY, enabled boolean NOT NULL); INSERT INTO feature_flags VALUES ('ci.fixture',true); CREATE TABLE admin_background_tasks(id text PRIMARY KEY, state text NOT NULL); INSERT INTO admin_background_tasks VALUES ('ci-fixture','queued'); CREATE TABLE admin_security_sessions(nonce text PRIMARY KEY, username text NOT NULL); INSERT INTO admin_security_sessions VALUES ('ci-session','ci');" >/dev/null
 
 
 # Exercise the read-only privilege audit as a least-privilege role on
@@ -238,6 +236,34 @@ if find "$failed_root" -mindepth 1 -type d -print -quit | grep -q .; then
   exit 1
 fi
 echo "BACKUP_PUBLICATION_REQUIRES_RESTORE_OK"
+
+# A PostgreSQL dump with sequence state behind restored IDs must not pass the
+# recovery verifier, even when its archive and complete SHA256 manifest parse.
+sequence_bad_backup="$scratch/sequence-behind"
+cp -a "$backup" "$sequence_bad_backup"
+docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
+  -c "SELECT setval('public.tokens_id_seq', 1, false)" >/dev/null
+docker exec -i "$product" pg_dump -U potapoff -d potapoff -Fc \
+  > "$sequence_bad_backup/postgres.dump"
+docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
+  -c "SELECT setval('public.tokens_id_seq', 1, true)" >/dev/null
+(
+  cd "$sequence_bad_backup"
+  find . -type f ! -path './SHA256SUMS' -print0 \
+    | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS
+)
+if bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$sequence_bad_backup" \
+    > "$scratch/sequence-behind.log" 2>&1; then
+  echo "Restore verifier accepted a sequence that would collide with restored IDs" >&2
+  exit 1
+fi
+grep -Fq "Restored sequence tokens_id_seq is behind data in tokens.id" \
+  "$scratch/sequence-behind.log" || {
+    echo "Sequence regression was rejected for an unexpected reason" >&2
+    tail -n 20 "$scratch/sequence-behind.log" >&2
+    exit 1
+  }
+echo "STALE_POSTGRES_SEQUENCE_REJECTED_OK"
 
 # The canonical manifest covers regular files only. A FIFO/device/socket
 # must therefore be rejected explicitly rather than silently ignored.
