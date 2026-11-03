@@ -14,8 +14,8 @@ BEGIN
       ADD CONSTRAINT intelligence_inbox_payload_sha256_check
       CHECK (payload_sha256 IS NULL OR payload_sha256 ~ '^[0-9a-f]{64}$') NOT VALID;
   END IF;
-END
-$$;
+END;
+$;
 
 ALTER TABLE intelligence_inbox VALIDATE CONSTRAINT intelligence_inbox_payload_sha256_check;
 
