@@ -276,7 +276,11 @@ test("Reply Guy API, ownership, RAG pipeline, budgets, uncertainty and browser c
       [
         campaignId,
         accountId,
-        JSON.stringify({ ...sample, id: "2234567890123456789" }),
+        JSON.stringify({
+          ...sample,
+          id: "2234567890123456789",
+          created_at: new Date(Date.now() - 30_000).toISOString(),
+        }),
       ],
     );
     await db.query("UPDATE reply_accounts SET next_reply_at=NULL WHERE id=$1", [
@@ -286,10 +290,21 @@ test("Reply Guy API, ownership, RAG pipeline, budgets, uncertainty and browser c
     await api("/campaigns/" + campaignId, "PATCH", {
       settings: { hourly_limit: 2 },
     });
+    // Isolate the uncertain-publication scenario from the preceding quota test.
+    // The hourly-cap assertion above remains the coverage for persisted limits.
+    await db.query("DELETE FROM reply_rate_limits WHERE account_id=$1", [accountId]);
+    await db.query(
+      "UPDATE reply_accounts SET next_reply_at=NULL,cooldown_until=NULL,status='ready' WHERE id=$1",
+      [accountId],
+    );
+    await db.query("UPDATE reply_campaigns SET status='running' WHERE id=$1", [
+      campaignId,
+    ]);
     publishMock.mock.mockImplementation(async () => {
       throw new PublishUncertainError();
     });
     await publishNext(account);
+    assert.equal(publishMock.mock.callCount(), 2); // The second POST was attempted.
     const unknown = (await api("/drafts")).data.find(
       (d: { status: string }) => d.status === "uncertain",
     );
