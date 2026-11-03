@@ -162,7 +162,7 @@ docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1
 for database in "$product potapoff potapoff synthetic_product" "$admin potapoff_admin potapoff_admin synthetic_admin"; do
   read -r container db_user db_name table_name <<< "$database"
   docker exec "$container" psql -X -U "$db_user" -d "$db_name" -v ON_ERROR_STOP=1 \
-    -c "CREATE ROLE backup_audit_probe NOLOGIN; GRANT CONNECT ON DATABASE $db_name TO backup_audit_probe; GRANT USAGE ON SCHEMA public TO backup_audit_probe; GRANT SELECT ON TABLE public.$table_name TO backup_audit_probe" >/dev/null
+    -c "CREATE ROLE backup_audit_probe NOLOGIN; CREATE ROLE backup_column_probe NOLOGIN; CREATE ROLE backup_audit_group NOLOGIN; CREATE ROLE backup_audit_member NOLOGIN; GRANT backup_audit_group TO backup_audit_member WITH INHERIT TRUE, SET TRUE; GRANT CONNECT ON DATABASE $db_name TO backup_audit_probe, backup_column_probe; GRANT USAGE ON SCHEMA public TO backup_audit_probe, backup_column_probe; GRANT SELECT ON TABLE public.$table_name TO backup_audit_probe; GRANT SELECT (tag) ON TABLE public.$table_name TO backup_column_probe" >/dev/null
 
   audit_output="$(
     { printf '%s\n' 'SET ROLE backup_audit_probe;'; cat "$root/docs/operations/postgres-effective-privileges.sql"; } |
