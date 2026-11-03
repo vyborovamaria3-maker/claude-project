@@ -33,7 +33,7 @@ docker run -d --rm --network none --user node --name "$frontend" \
   -v "$scratch/frontend-data:/app/data" \
   -v "$scratch/backups:/backup" \
   -v "$root/solana-launcher/node_modules:/app/node_modules:ro" \
-  -w /app node:20-bookworm-slim sleep infinity >/dev/null
+  -w /app node:22-bookworm-slim sleep infinity >/dev/null
 
 # Keep a writer open with committed rows still in WAL. The production backup
 # must capture these rows through SQLite Online Backup, not by copying trade.db.
