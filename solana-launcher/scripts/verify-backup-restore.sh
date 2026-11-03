@@ -234,19 +234,19 @@ for source in postgres admin-postgres; do
 done
 # Owner/ACL fidelity is a DIFFERENT gate from the data-only restore above.
 # Replay password-free pg_dumpall globals in new disposable clusters matching
-# each source major, then restore the original archives WITHOUT --no-owner or
-# --no-acl. Compare every scoped catalog owner and normalized ACL to the
-# recorded read-only source fingerprint. These containers have no network,
-# published ports, host mounts or persisted volumes.
+# each source major, then restore the original archives WITH database creation,
+# owner and ACLs. --create is essential: pg_restore otherwise does not restore
+# database-level CONNECT/CREATE/TEMPORARY ACLs or database owner/settings.
+# Compare database ACL, role attributes/memberships, column/default ACLs and
+# every scoped object owner/ACL to the read-only source fingerprint. These
+# containers have no network, published ports, host mounts or persisted volumes.
 for source in postgres admin-postgres; do
   if [[ "$source" == postgres ]]; then
     major=16
-    original_owner=potapoff
-    restored_name=isolated_product_acl
+    restored_name=potapoff
   else
     major=17
-    original_owner=potapoff_admin
-    restored_name=isolated_admin_acl
+    restored_name=potapoff_admin
   fi
   acl_container="potapoff-acl-restore-${major}-$-$RANDOM"
   # Register immediately: trap cleans up even on partial startup or restore.
@@ -270,10 +270,8 @@ for source in postgres admin-postgres; do
   }
   docker exec -i "$acl_container" psql -X -U postgres -d postgres \
     -v ON_ERROR_STOP=1 < "$backup/$source-roles.sql" >/dev/null
-  docker exec "$acl_container" createdb -U postgres \
-    -O "$original_owner" "$restored_name" >/dev/null
-  docker exec -i "$acl_container" pg_restore -U postgres -d "$restored_name" \
-    --exit-on-error --single-transaction \
+  docker exec -i "$acl_container" pg_restore -U postgres -d postgres \
+    --create --exit-on-error \
     < "$backup/$source.dump" >/dev/null
   actual_catalog="$(mktemp)"
   acl_temp_files+=("$actual_catalog")
