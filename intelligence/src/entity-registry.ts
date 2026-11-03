@@ -29,7 +29,7 @@ function validateEvidence(evidence: EvidenceRef): EvidenceRef {
   const id = limited(evidence.sourceId, "evidence source ID");
   const patterns: Record<EvidenceRef["sourceKind"], RegExp> = {
     x_tweet: /^x:tweet:[1-9][0-9]*$/,
-    tg_message: /^tg:message:-?(?:0|[1-9][0-9]*):[1-9][0-9]*$/,
+    tg_message: /^tg:message:(?:[1-9][0-9]*|-[1-9][0-9]*):[1-9][0-9]*$/,
     chain_tx: /^chain:tx:solana:[A-Za-z0-9]+$/,
   };
   if (!patterns[evidence.sourceKind].test(id)) {
