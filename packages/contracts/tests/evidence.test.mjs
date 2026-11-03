@@ -33,6 +33,7 @@ test("chain evidence accepts only a valid Solana transaction signature", () => {
 
 test("malformed provenance or ambiguous clocks are rejected", () => {
   assert.throws(() => buildEvidenceRef({sourceKind:"tg_message",sourceAccountId:"@durov",messageId:"1",observedAt:NOW}), /Stable numeric/);
+  assert.throws(() => buildEvidenceRef({sourceKind:"tg_message",sourceAccountId:"-0",messageId:"1",observedAt:NOW}), /Stable numeric/);
   assert.throws(() => buildEvidenceRef({sourceKind:"x_tweet",tweetId:"abc",observedAt:NOW}), /Tweet ID/);
   assert.throws(() => buildEvidenceRef({sourceKind:"x_tweet",tweetId:"12",observedAt:"2026-10-17T20:00:00"}), /timezone/);
   assert.throws(() => buildEvidenceRef({sourceKind:"x_tweet",tweetId:"12",observedAt:NOW,provider:" "}), /Invalid provider/);
