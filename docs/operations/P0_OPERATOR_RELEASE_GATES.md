@@ -1,12 +1,12 @@
 # P0 operator gates — protected main and off-host recovery
 
-Status as checked **2026-11-01** on Draft PR #212. This is an
+Status refreshed **2026-11-03** against Draft PR #212 HEAD `2c882f055cc2caa00bba336d4f47d4cb355bac84`. This is an
 operator runbook, **not** evidence of real production validation or
 authorization to deploy/change credentials. Tracking: #170 and #172.
 
 ## Gate A — protect main (#170; repository administrator only)
 
-Observed via GitHub read-only API on 2026-11-01:
+Observed via GitHub read-only API on 2026-11-03:
 
 - `GET /branches/main`: `protected: false` at commit
   `f4dc5ef3aad400f64fc300f30542085e10aae4c1`.
@@ -105,9 +105,12 @@ independent backup manifest digest *before* invoking the existing
 `verify-backup-restore.sh`, which checks the complete set, SQLite integrity,
 PG16/17 schema/owner/ACL restore and negative safety invariants using
 disposable resources. Detailed logs and JSON evidence remain in the private
-directory. The JSON deliberately exposes only a nonsecret ticket, reviewed
-SHA, aggregate size, manifest hash and exit code — **not** database rows,
-connection strings, hostnames or backup file paths. Do not upload raw logs.
+directory. The JSON exposes only a nonsecret ticket, reviewed SHA, aggregate size,
+manifest hash, verification timestamps/duration, local Docker endpoint kind,
+private-log basename, explicit `RPO/RTO=NOT_MEASURED`, encryption provenance
+status, source-write flag, production-isolation attestation status and
+`approval_for_role_cutover=false` — **not** database rows, connection strings,
+hostnames or backup file paths. Do not upload raw logs.
 
 **This verifies restore integrity, not total recoverability.**
 A completed tool run reports `verification_elapsed_seconds`, **not RTO**;
@@ -155,14 +158,33 @@ application instances. No definitive live database count can be inferred from
 source files. See `docs/architecture/DATA_CONTRACTS.md` for each source's
 distinct identity and schema constraints.
 
-## CI evidence versus outstanding P0
+## Current exact-head CI evidence versus outstanding P0 — 2026-11-03
 
-At reviewed PR #212 head
-`54a763a04808e15def6d4a795609c3b8700f6e23`, **18 workflows
-SUCCESS, 1 SKIPPED**:
-- [PG17 Admin role separation](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41309760568) — synthetic and isolated.
-- [ARCH-02 PG16/17/SQLite restore](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41309760732) — synthetic and isolated.
-- [POTAPoff predeploy](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41309760757) — CI only.
+Current Draft PR #212 HEAD:
+`2c882f055cc2caa00bba336d4f47d4cb355bac84`. GitHub Actions reports
+**27 SUCCESS, 1 SKIPPED, 0 FAILURE, 0 QUEUED, 0 IN PROGRESS** on this exact
+SHA. The skipped workflow is `Security Lock Refresh`; it is not counted as a
+successful check.
 
-The **real off-host restore and branch protection are still NOT VERIFIED**.
-This document and wrapper do not waive P0 requirements or authorize a merge.
+| Gate | Exact-head result | Evidence | Remaining limitation |
+| --- | --- | --- | --- |
+| Restricted Admin PostgreSQL 17 startup/permissions | **SUCCESS** | [run 41639700283](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41639700283) | Disposable PG17, not production Admin credentials/volume |
+| Product/Admin PG16/17 owner/ACL and SQLite WAL restore | **SUCCESS — 3/3 jobs** | [run 41639700254](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41639700254) | Synthetic data and disposable clusters; not a real off-host archive |
+| Operator evidence wrapper positive/negative paths | **SUCCESS** | [ARCH-02 run 41639700254](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41639700254) and [Repository hygiene run 41639700345](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41639700345) | Synthetic fixture only; no actual encrypted backup fetched |
+| Admin Control Center CI & Security | **SUCCESS** | [run 41639700428](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41639700428) | CI only |
+| Security Gates | **SUCCESS** | [run 41639700218](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41639700218) | CI only |
+| Full Backtest Audit | **SUCCESS** | [run 41639700296](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41639700296) | Audit fixtures/config checks, not production trading validation |
+| POTAPoff predeploy | **SUCCESS — 5/5 jobs** | [run 41639700102](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41639700102) | Predeploy CI/build, not a production deployment |
+| Effective protection of GitHub `main` | **BLOCKED** | 2026-11-03 read-only API: `protected:false`; `/rulesets=[]` | Repository administrator must configure and prove enforcement, issue #170 |
+| Independent PR approval | **NOT RECEIVED** | PR #212 has 7 resolved inline threads; recorded reviews are COMMENTED by PR author only | Eligible independent human review of the complete 90-file diff remains required |
+| Real encrypted off-host backup and full restore | **NOT RUN / BLOCKED** | No approved private backup or isolated operator host was provided/accessed | Independent manifest digest, actual-volume restore, application smoke, measured RPO/RTO and operator sign-off, issue #172 |
+
+PR #212 remains **OPEN / DRAFT / UNMERGED**. PRs #209 and #211 are now
+**CLOSED, UNMERGED**; #212 is the active combined recovery candidate. PR #205
+and #206 remain separate open PRs with limited overlapping paths that must be
+reconciled deliberately before any merge.
+
+The **real off-host restore, branch protection and independent approval remain
+NOT VERIFIED**. Passing synthetic CI does not waive these P0 gates or authorize
+a merge, credential/role cutover or deployment.
+
