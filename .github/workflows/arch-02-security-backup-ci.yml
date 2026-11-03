@@ -17,6 +17,7 @@ on:
       - ".github/workflows/landing-release.yml"
       - "solana-launcher/scripts/backup-production.sh"
       - "solana-launcher/scripts/verify-backup-restore.sh"
+      - "solana-launcher/scripts/run-offhost-recovery-evidence.sh"
       - "solana-launcher/scripts/postgres-role-restoration-fingerprint.sql"
       - "solana-launcher/scripts/blockchain-sqlite-health.cjs"
       - "solana-launcher/scripts/blockchain-sqlite-health-regression.cjs"
