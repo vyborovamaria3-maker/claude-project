@@ -149,7 +149,7 @@ Node Intelligence и Python Intelligence — разные системы, нес
 
 - npm workspaces: API, web, bot, shared.
 - Root engine: Node >=22.
-- Web: Next.js 16.4.2, manifest React/React DOM ^18.3.1. The lockfile currently nests React 18.3.1 under `apps/web`, but hoists React DOM 18.3.1 beside root React 19.3.0 (introduced by Solana Mobile / React Native peer requirements). Next 16 supports React 18, but this resolved React/React DOM placement is a concrete peer/runtime mismatch to verify and fix by regenerating the workspace lockfile; do not infer compatibility from Next's peer range alone.
+- Web: Next.js 16.4.2; `apps/web/package.json` declares React and React DOM `^19.2.8`. The workspace lockfile resolves both to `19.2.8` at the root. `.github/workflows/solsub-web-quality.yml` verifies that the web workspace resolves the same React module path and identical React/React DOM versions before typecheck/build. This check and build passed at run [41345889844](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41345889844). The earlier statement about React 18.3.1 being nested beside React DOM 19.3.0 is stale and incorrect for that audited HEAD.
 - Dockerfiles используют Node 22.
 - Compose: PostgreSQL 16, Redis 7, Express API, Next.js web, Telegraf bot.
 - Это самостоятельная система подписок; её нельзя автоматически считать уже единственным владельцем всех подписок в других приложениях.
@@ -168,6 +168,7 @@ Node Intelligence и Python Intelligence — разные системы, нес
 | Компонент | Manifest / lock | CI / Docker / Compose | Вывод |
 |---|---|---|---|
 | Solana Launcher root web | Next 16.4.2, React 18.3.1; follow-up manifest engine >=22 | CI Node 22; follow-up production Docker Node 22 | React peer-compatible; EOL Node 20 image replaced in this PR follow-up |
+| Solana Launcher Telegram bot | Root engine >=22 | Production Dockerfile Node 22; predeploy builds and verifies final image runtime | Aligned with manifest engine after this follow-up |
 | Solana Launcher legacy frontend | Next 14.0.4, React 18.2 | follow-up legacy Docker Node 22 | Не используется текущим production Compose; legacy Next 14 package, do not treat as current frontend |
 | Solana Launcher backend | Python >=3.11 | Docker Python 3.11 | Совпадает |
 | X Collector | follow-up engine >=22 | Docker/CI Node 22 | Manifest, lockfile, Docker and CI aligned on Node 22 |
@@ -176,7 +177,7 @@ Node Intelligence и Python Intelligence — разные системы, нес
 | Python Intelligence | Python 3.12 | Docker Python 3.12 | Compose использует SQLite |
 | Admin | Python 3.12 | Compose PG17 | Отдельная Admin DB |
 | Memecoin Intelligence | Node runtime | Compose PG16 + Redis 7 | Отдельный stack |
-| SolSub | Node >=22; Next 16.4.2 | Docker Node 22; PG16 + Redis 7 | Отдельный stack |
+| SolSub | Node >=22; Next 16.4.2; React/React DOM 19.2.8 | Docker Node 22; PG16 + Redis 7; CI checks a single compatible React runtime | Отдельный stack; web typecheck/build passed on audited HEAD |
 | TG MiniApp frontend | React 18 / Vite 5 | Отдельного production Compose нет | Demo/standalone subproject |
 
 Next.js 16.4.2 в проверенных lock-файлах допускает React `^18.2.0` или React 19. Поэтому утверждение «Next.js 16 + React 18 несовместимы» для этой зафиксированной зависимости неверно. Проверять следует конкретные resolved versions и peerDependencies, а не общее правило «Next 15+ требует React 19».
@@ -254,7 +255,7 @@ GitHub API на момент аудита: `main protected=false`, required stat
 | 5 | MiniApp смешивает Python/Node | Подтверждено. README исправлен в follow-up: реальные подпроекты — Vite frontend, Node bot, Express/Prisma backend-new; `backend/` отсутствует. |
 | 6 | EVM IDs без collectors | Частично подтверждено. Dedicated live EVM collector не найден, но generic EVM/Bitcoin code paths реально существуют. Target — только Solana. |
 | 7 | Python Intelligence SQLite/PG | Подтверждено с уточнением: current Compose SQLite; PostgreSQL backend есть в коде, но не подключён Compose. |
-| 8 | Node 20/22 drift | Подтверждено на baseline 6273d9. В follow-up PR #212 Docker Launcher и legacy frontend переведены на Node22; Launcher/X/TG manifests и lockfiles требуют >=22. Проверить итоговый CI на новом HEAD. |
+| 8 | Node 20/22 drift | Frontend/legacy Dockerfiles уже переведены на Node22. На PR head `da353e9` оставался production Telegram bot Dockerfile Node20 при root engine >=22; этот follow-up переводит его на Node22 и проверяет итоговый image runtime в predeploy. |
 | 9 | Next 16 vs Next 14 | Частично подтверждено. Current Launcher root Next16; legacy nested frontend Next14, не используется current production Compose. SolSub Next16. |
 | 10 | Memory backend отсутствует в DB map | Подтверждено. Это in-memory adapter, не durable DB. |
 | 11 | «Архитектура проверена» + Draft | Подтверждено. Нужно писать «source/CI audit at exact SHA; live deployment not verified». |
@@ -280,7 +281,7 @@ GitHub API на момент аудита: `main protected=false`, required stat
 
 ## 12. Приоритетные исправления после аудита
 
-1. P0: Launcher frontend Docker runtime Node 20 → Node 22 is completed in PR #212 follow-up; retain exact-head production image build as the acceptance gate.
+1. P0: Launcher frontend and Telegram bot production Docker images must match root `engines.node >=22`; frontend was already moved to Node 22, and the Telegram bot image is moved from Node 20 to Node 22 in this follow-up, with a final-image runtime assertion in predeploy.
 2. P0: включить эффективную защиту `main` через администратора; это не кодовая правка.
 3. P0: завершить физическую инвентаризацию DB, применить отдельные PG roles только после restore-tested cutover.
 4. P0: провести реальный encrypted off-host restore и измерить RPO/RTO.
@@ -297,6 +298,7 @@ GitHub API на момент аудита: `main protected=false`, required stat
 The As-Is audit above is anchored to source HEAD `6273d9fb9f2f987c4ee7932cea0e10f77129f7d9`. The following corrective commits were then added to the same Draft PR #212 branch:
 
 - Launcher production frontend Docker: Node 20 → Node 22.
+- Launcher Telegram bot production image: `Dockerfile.telegram-bot` Node 20 → Node 22 to match root `engines.node >=22`; predeploy checks the final image's Node major version.
 - Legacy Reply Guy frontend Docker: Node 18 → Node 22; the package itself remains legacy Next.js 14 and is not used by the current production Compose.
 - `solana-launcher/package.json` and lockfile: Node engine `>=22`.
 - `x-collector/package.json` and lockfile: Node engine `>=22`.

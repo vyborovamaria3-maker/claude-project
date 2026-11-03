@@ -248,3 +248,8 @@ jobs:
             -f solana-launcher/Dockerfile.telegram-bot \
             -t potapoff-telegram-bot-predeploy:${{ github.sha }} \
             solana-launcher
+      - name: Verify Telegram bot final image Node runtime
+        run: |
+          runtime_major="$(docker run --rm --entrypoint node potapoff-telegram-bot-predeploy:${{ github.sha }} -p 'Number(process.versions.node.split(".")[0])')"
+          echo "Telegram bot image Node.js major: ${runtime_major}"
+          test "${runtime_major}" -ge 22
