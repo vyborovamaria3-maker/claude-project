@@ -306,7 +306,7 @@ SH
 cat > "$scratch/failing-tool-bin/bash" <<'SH'
 #!/bin/bash
 if [[ "${1:-}" == "$OFFHOST_VERIFIER_PATH" ]]; then
-  printf '%s\\n' 'BACKUP_RESTORE_REHEARSAL_OK no_live_database_access=true'
+  printf '%s\n' 'BACKUP_RESTORE_REHEARSAL_OK no_live_database_access=true'
   exit 0
 fi
 exec "$REAL_BASH_FOR_TEST" "$@"
