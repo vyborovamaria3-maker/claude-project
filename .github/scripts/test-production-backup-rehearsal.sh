@@ -289,20 +289,32 @@ PY
 echo "OFFHOST_OPERATOR_WRAPPER_SYNTHETIC_OK"
 
 # A successful restore is not a successful operator rehearsal unless its
-# evidence JSON is persisted. Inject failure only into the wrapper's final
-# JSON writer; the verifier's Python calls still use the real interpreter.
+# evidence JSON is persisted. Stub only the verifier's success marker so this
+# regression isolates the EXIT-trap/evidence-writer failure without performing
+# a second full PostgreSQL+SQLite restore.
 real_python="$(command -v python3)"
-mkdir -m 0700 "$scratch/failing-python-bin" "$scratch/operator-evidence-write-failure"
-cat > "$scratch/failing-python-bin/python3" <<'SH'
-#!/usr/bin/env bash
+real_bash="$(command -v bash)"
+mkdir -m 0700 "$scratch/failing-tool-bin" "$scratch/operator-evidence-write-failure"
+cat > "$scratch/failing-tool-bin/python3" <<'SH'
+#!/bin/bash
 if [[ "${2:-}" == *.json.tmp ]]; then
   echo "synthetic_evidence_writer_failure" >&2
   exit 73
 fi
 exec "$REAL_PYTHON_FOR_TEST" "$@"
 SH
-chmod 0700 "$scratch/failing-python-bin/python3"
-if REAL_PYTHON_FOR_TEST="$real_python" PATH="$scratch/failing-python-bin:$PATH" \
+cat > "$scratch/failing-tool-bin/bash" <<'SH'
+#!/bin/bash
+if [[ "${1:-}" == "$OFFHOST_VERIFIER_PATH" ]]; then
+  printf '%s\\n' 'BACKUP_RESTORE_REHEARSAL_OK no_live_database_access=true'
+  exit 0
+fi
+exec "$REAL_BASH_FOR_TEST" "$@"
+SH
+chmod 0700 "$scratch/failing-tool-bin/python3" "$scratch/failing-tool-bin/bash"
+if REAL_PYTHON_FOR_TEST="$real_python" REAL_BASH_FOR_TEST="$real_bash" \
+    OFFHOST_VERIFIER_PATH="$root/solana-launcher/scripts/verify-backup-restore.sh" \
+    PATH="$scratch/failing-tool-bin:$PATH" \
     bash "$root/solana-launcher/scripts/run-offhost-recovery-evidence.sh" \
       --backup-dir "$backup" \
       --expected-manifest-sha256 "$synthetic_manifest_sha" \
@@ -318,7 +330,7 @@ grep -Fq "Failed to persist offline recovery evidence; refusing success" \
   "$scratch/operator-wrapper-write-failure.log"
 shopt -s nullglob
 failed_evidence_json=("$scratch/operator-evidence-write-failure"/*.json)
-if ((${#failed_evidence_json[@]} != 0)); then
+if (("${#failed_evidence_json[@]}" != 0)); then
   echo "Offline recovery wrapper left a misleading PASS evidence JSON after writer failure" >&2
   exit 1
 fi
