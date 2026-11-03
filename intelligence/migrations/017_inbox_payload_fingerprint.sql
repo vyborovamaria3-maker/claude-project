@@ -3,7 +3,7 @@
 -- backfill proves the original normalized event payload.
 ALTER TABLE intelligence_inbox ADD COLUMN IF NOT EXISTS payload_sha256 TEXT;
 
-DO $$
+DO $fingerprint$
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
@@ -15,7 +15,7 @@ BEGIN
       CHECK (payload_sha256 IS NULL OR payload_sha256 ~ '^[0-9a-f]{64}$') NOT VALID;
   END IF;
 END;
-$;
+$fingerprint$;
 
 ALTER TABLE intelligence_inbox VALIDATE CONSTRAINT intelligence_inbox_payload_sha256_check;
 
