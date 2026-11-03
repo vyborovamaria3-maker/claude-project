@@ -157,7 +157,7 @@ docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1
 
 # Exercise the read-only privilege audit as a least-privilege role on
 # both PostgreSQL majors; do not run it only as the fixture superuser.
-for database in "$product potapoff potapoff synthetic_product" "$admin potapoff_admin potapoff_admin synthetic_admin"; do
+for database in "$product potapoff potapoff potapoff_backup_ci_product_fixture" "$admin potapoff_admin potapoff_admin potapoff_backup_ci_admin_fixture"; do
   read -r container db_user db_name table_name <<< "$database"
   docker exec "$container" psql -X -U "$db_user" -d "$db_name" -v ON_ERROR_STOP=1 \
     -c "CREATE ROLE backup_audit_probe NOLOGIN; CREATE ROLE backup_column_probe NOLOGIN; CREATE ROLE backup_audit_group NOLOGIN; CREATE ROLE backup_audit_member NOLOGIN; GRANT backup_audit_group TO backup_audit_member WITH INHERIT TRUE, SET TRUE; GRANT CONNECT ON DATABASE $db_name TO backup_audit_probe, backup_column_probe; GRANT USAGE ON SCHEMA public TO backup_audit_probe, backup_column_probe; GRANT SELECT ON TABLE public.$table_name TO backup_audit_probe; GRANT SELECT (tag) ON TABLE public.$table_name TO backup_column_probe" >/dev/null
@@ -415,7 +415,7 @@ echo "SYNTHETIC_RESTORE_TEST_OK product_pg admin_pg blockchain_sqlite_wal intell
 # reconstruction comparison is expected to reject this otherwise valid set.
 cp "$backup/postgres-role-fingerprint.txt" "$scratch/postgres-role-fingerprint.original"
 cp "$backup/SHA256SUMS" "$scratch/SHA256SUMS.role-original"
-printf 'relation|public|synthetic_product:r|wrong_owner|\n' \
+printf 'relation|public|tokens:r|wrong_owner|\n' \
   >> "$backup/postgres-role-fingerprint.txt"
 (
   cd "$backup"
