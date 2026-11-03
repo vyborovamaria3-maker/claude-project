@@ -69,7 +69,7 @@ test("legacy inbox rows without a fingerprint fail closed",async()=>{
 });
 
 test("fingerprint is deterministic across entity order and sensitive to evidence revisions",()=>{
-  const second=buildEntityRef({kind:"wallet",canonicalId:"solana:"+"1".repeat(32),firstSeenAt:T,lastSeenAt:T});
+  const second=buildEntityRef({kind:"token",canonicalId:formatTokenId("solana","EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),firstSeenAt:T,lastSeenAt:T});
   const multi={...event,entityRefs:[entity,second]};
   assert.equal(registryEventFingerprint(multi),registryEventFingerprint({...multi,entityRefs:[second,entity]}));
   assert.notEqual(registryEventFingerprint(event),registryEventFingerprint({

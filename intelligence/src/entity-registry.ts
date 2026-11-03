@@ -120,7 +120,8 @@ export async function ingestRegistryEvent(tx: PgTransaction, incoming: RegistryE
     RETURNING event_key`, [
     event.sourceSystem, event.eventKind, event.eventKey,
     event.schemaVersion, event.evidenceRef.sourceId, payloadSha256,
-  ]);  if (result.rows.length === 0) {
+  ]);
+  if (result.rows.length === 0) {
     const previous = await tx.query(`SELECT schema_version,evidence_source_id,payload_sha256 FROM intelligence_inbox
       WHERE source_system=$1 AND event_kind=$2 AND event_key=$3`,[
       event.sourceSystem,event.eventKind,event.eventKey,

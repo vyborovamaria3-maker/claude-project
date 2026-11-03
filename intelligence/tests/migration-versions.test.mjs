@@ -11,7 +11,7 @@ test("SQL migrations have unique sequential version numbers",async()=>{
       "duplicate migration version "+prefix+" in "+byVersion.get(prefix)+" and "+name);
     byVersion.set(prefix,name);
   }
-  for(let n=1;n<=17assert.ok(byVersion.has(n),
+  for(let n=1;n<=17;n++)assert.ok(byVersion.has(n),
     "missing migration "+String(n).padStart(3,"0"));
   const privacy=await readFile(new URL("014_privacy_evidence_indexes.sql",root),"utf8");
   assert.match(privacy,/idx_intelligence_inbox_evidence_source/);
