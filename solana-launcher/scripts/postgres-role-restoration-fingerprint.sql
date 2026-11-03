@@ -11,8 +11,10 @@ FROM (
            concat_ws(',',
              'allowconn=' || d.datallowconn::text,
              'connlimit=' || d.datconnlimit::text,
-             'acl=' || COALESCE((SELECT string_agg(x::text,',' ORDER BY x::text)
-                                 FROM unnest(d.datacl) AS x),'')
+             'acl=' || CASE WHEN d.datacl IS NULL THEN '<default>'
+                WHEN cardinality(d.datacl)=0 THEN '<empty>'
+                ELSE (SELECT string_agg(x::text,',' ORDER BY x::text)
+                      FROM unnest(d.datacl) AS x) END
            ) AS acl
       FROM pg_database d WHERE d.datname = current_database()
     UNION ALL
@@ -45,23 +47,28 @@ FROM (
     UNION ALL
     SELECT 'schema',n.nspname,''::text,
            pg_get_userbyid(n.nspowner),
-           COALESCE((SELECT string_agg(x::text,',' ORDER BY x::text)
-                     FROM unnest(n.nspacl) AS x),'')
+           CASE WHEN n.nspacl IS NULL THEN '<default>'
+                WHEN cardinality(n.nspacl)=0 THEN '<empty>'
+                ELSE (SELECT string_agg(x::text,',' ORDER BY x::text)
+                      FROM unnest(n.nspacl) AS x) END
       FROM pg_namespace n WHERE n.nspname <> 'information_schema'
        AND n.nspname NOT LIKE 'pg_%'
     UNION ALL
     SELECT 'relation',n.nspname,c.relname || ':' || c.relkind::text,
            pg_get_userbyid(c.relowner),
-           COALESCE((SELECT string_agg(x::text,',' ORDER BY x::text)
-                     FROM unnest(c.relacl) AS x),'')
+           CASE WHEN c.relacl IS NULL THEN '<default>'
+                WHEN cardinality(c.relacl)=0 THEN '<empty>'
+                ELSE (SELECT string_agg(x::text,',' ORDER BY x::text)
+                      FROM unnest(c.relacl) AS x) END
       FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
      WHERE n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg_%'
        AND c.relkind IN ('r','p','S','v','m','f')
     UNION ALL
     SELECT 'column',n.nspname,c.relname || '.' || a.attname,
            pg_get_userbyid(c.relowner),
-           COALESCE((SELECT string_agg(x::text,',' ORDER BY x::text)
-                     FROM unnest(a.attacl) AS x),'')
+           CASE WHEN cardinality(a.attacl)=0 THEN '<empty>'
+                ELSE (SELECT string_agg(x::text,',' ORDER BY x::text)
+                      FROM unnest(a.attacl) AS x) END
       FROM pg_attribute a
       JOIN pg_class c ON c.oid=a.attrelid
       JOIN pg_namespace n ON n.oid=c.relnamespace
@@ -71,15 +78,19 @@ FROM (
     SELECT 'routine',n.nspname,
            p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')',
            pg_get_userbyid(p.proowner),
-           COALESCE((SELECT string_agg(x::text,',' ORDER BY x::text)
-                     FROM unnest(p.proacl) AS x),'')
+           CASE WHEN p.proacl IS NULL THEN '<default>'
+                WHEN cardinality(p.proacl)=0 THEN '<empty>'
+                ELSE (SELECT string_agg(x::text,',' ORDER BY x::text)
+                      FROM unnest(p.proacl) AS x) END
       FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
      WHERE n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg_%'
     UNION ALL
     SELECT 'default-acl',COALESCE(n.nspname,'<all>'),d.defaclobjtype::text,
            pg_get_userbyid(d.defaclrole),
-           COALESCE((SELECT string_agg(x::text,',' ORDER BY x::text)
-                     FROM unnest(d.defaclacl) AS x),'')
+           CASE WHEN d.defaclacl IS NULL THEN '<default>'
+                WHEN cardinality(d.defaclacl)=0 THEN '<empty>'
+                ELSE (SELECT string_agg(x::text,',' ORDER BY x::text)
+                      FROM unnest(d.defaclacl) AS x) END
       FROM pg_default_acl d LEFT JOIN pg_namespace n ON n.oid=d.defaclnamespace
 ) inventory
 ORDER BY kind,schema_name,object_name,owner_name,acl;
