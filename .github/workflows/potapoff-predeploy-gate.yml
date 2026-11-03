@@ -205,6 +205,12 @@ jobs:
             echo "BASH_N $file"
             bash -n "$file"
           done < <(find solana-launcher/scripts -type f -name '*.sh' -print0)
+      - name: Set up Node for Compose command safety regression
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+      - name: Verify Compose down preserves named volumes by default
+        run: node --test solana-launcher/scripts/compose-command-safety.test.mjs
       - name: Prepare non-secret Compose validation environment
         run: |
           cat > solana-launcher/.env.server <<'EOF'

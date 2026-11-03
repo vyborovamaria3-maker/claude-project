@@ -17,7 +17,7 @@
     "backend:dev": "python -m uvicorn app.main:app --reload --app-dir backend --port 8000",
     "backend:test": "cd backend && pytest",
     "compose:up": "docker compose up --build",
-    "compose:down": "docker compose down -v",
+    "compose:down": "docker compose down",
     "cache:cleanup": "node scripts/cleanup-cache.cjs",
     "x:login": "node scripts/x-login.mjs",
     "x:analyze": "node scripts/analyze-twitter-manipulation.mjs",
@@ -60,7 +60,8 @@
     "blockchain:finality-witness-test": "node scripts/blockchain-finality-witness-test.cjs",
     "blockchain:finality-witness": "node scripts/blockchain-finality-witness.cjs",
     "dataset:memecoin-import": "python3 scripts/import_solana_memecoin_dataset.py",
-    "dataset:memecoin-test": "python3 -m unittest scripts/test_import_solana_memecoin_dataset.py"
+    "dataset:memecoin-test": "python3 -m unittest scripts/test_import_solana_memecoin_dataset.py",
+    "compose:down:volumes": "node scripts/compose-down-volumes.mjs"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
