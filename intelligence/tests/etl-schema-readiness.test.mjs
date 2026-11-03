@@ -9,17 +9,20 @@ test("delivery readiness fails closed when token-link migration 004 is missing",
   const calls=[];
   const query=async sql=>{
     calls.push(sql);
-    return {rows:[{inbox:true,registry:true,evidence:true,timeline:true,token_links:false}]};
+    return {rows:[{inbox:true,registry:true,evidence:true,timeline:true,token_links:false,inbox_fingerprint:true}]};
   };
   await assert.rejects(checkDestination({query}),/001\+002\+004/);
   assert.match(calls[0],/token_link_observations/);
   await assert.doesNotReject(checkDestination({query:async()=>({rows:[{
-    inbox:true,registry:true,evidence:true,timeline:true,token_links:true,
+    inbox:true,registry:true,evidence:true,timeline:true,token_links:true,inbox_fingerprint:true,
   }]})}));
   await assert.rejects(checkDestination({query:async()=>({rows:[{
-    inbox:true,registry:true,evidence:true,timeline:true,token_links:true,
+    inbox:true,registry:true,evidence:true,timeline:true,token_links:true,inbox_fingerprint:true,
     blockchain_revisions:false,
   }]})},{requireBlockchainRevisions:true}),/migration 005/);
+  await assert.rejects(checkDestination({query:async()=>({rows:[{
+    inbox:true,registry:true,evidence:true,timeline:true,token_links:true,inbox_fingerprint:false,
+  }]})}),/migration 017/);
 });
 test("temporary PostgreSQL target refuses only-001/002 then accepts 004",{
   skip:!process.env.INTELLIGENCE_TEST_DB_URL,
