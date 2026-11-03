@@ -222,7 +222,7 @@ payload = {
 }
 with open(sys.argv[1], "x", encoding="utf-8") as output:
     json.dump(payload, output, indent=2, sort_keys=True)
-    output.write("\\n")
+    output.write("\n")
 PY
   evidence_status=$?
   if ((evidence_status == 0)); then
