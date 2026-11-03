@@ -322,7 +322,19 @@ test("Reply Guy API, ownership, RAG pipeline, budgets, uncertainty and browser c
       [accountId],
     );
     assert.equal(preflight.rows.length, 1);
-    const state = preflight.rows[0];
+    const state = preflight.rows[0] as {
+      status: string;
+      proxy_status: string;
+      cooldown_until: string | null;
+      next_reply_at: string | null;
+      timezone: string;
+      campaign_status: string;
+      settings_json: unknown;
+      filters_json: unknown;
+      rate_rows: number;
+      approved_drafts: number;
+      eligible_drafts: number;
+    };
     assert.equal(state.status, "ready", JSON.stringify(state));
     assert.notEqual(state.proxy_status, "dead", JSON.stringify(state));
     assert.equal(state.campaign_status, "running", JSON.stringify(state));
@@ -339,8 +351,9 @@ test("Reply Guy API, ownership, RAG pipeline, budgets, uncertainty and browser c
       ["2234567890123456789"],
     );
     assert.equal(secondTweet.rows.length, 1);
+    const tweet = secondTweet.rows[0] as { tweet_json: Tweet };
     assert.equal(
-      filterTweet(secondTweet.rows[0].tweet_json, Filters.parse(state.filters_json), []),
+      filterTweet(tweet.tweet_json, Filters.parse(state.filters_json), []),
       null,
       JSON.stringify(secondTweet.rows[0].tweet_json),
     );
