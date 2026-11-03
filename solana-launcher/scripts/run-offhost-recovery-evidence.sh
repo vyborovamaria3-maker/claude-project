@@ -93,8 +93,60 @@ fi
 command -v sha256sum >/dev/null
 command -v python3 >/dev/null
 command -v docker >/dev/null
+command -v stat >/dev/null
+command -v id >/dev/null
 backup="$(cd -- "$backup_arg" && pwd -P)"
 evidence_dir="$(cd -- "$evidence_arg" && pwd -P)"
+
+# Decrypted database archives and verifier logs contain sensitive schema and
+# deployment metadata. Refuse group/world-accessible directories rather than
+# relying on umask (which does not change permissions on existing directories).
+require_private_owned_directory() {
+  local directory="$1" label="$2" metadata owner mode
+  metadata="$(stat -c '%u %a' -- "$directory")" || {
+    echo "Cannot inspect $label directory ownership/permissions" >&2; exit 2;
+  }
+  read -r owner mode <<< "$metadata"
+  [[ "$owner" == "$(id -u)" ]] || {
+    echo "$label directory must be owned by the current operator" >&2; exit 2;
+  }
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || {
+    echo "Cannot parse $label directory permissions" >&2; exit 2;
+  }
+  if (( (8#$mode & 077) != 0 )); then
+    echo "$label directory must not grant group/world access (use mode 0700)" >&2
+    exit 2
+  fi
+}
+require_private_owned_directory "$backup" "Backup"
+require_private_owned_directory "$evidence_dir" "Evidence"
+
+# Never run disposable restore containers through a remote Docker context:
+# --network none prevents container egress, but does not make a remote daemon
+# local or isolated. Honor Docker's context precedence over DOCKER_HOST.
+if [[ -n "${DOCKER_CONTEXT:-}" ]]; then
+  docker_context="$DOCKER_CONTEXT"
+  docker_endpoint="$(docker context inspect "$docker_context" --format '{{(index .Endpoints "docker").Host}}' 2>/dev/null)" || {
+    echo "Cannot inspect selected Docker context" >&2; exit 2;
+  }
+elif [[ -n "${DOCKER_HOST:-}" ]]; then
+  docker_endpoint="$DOCKER_HOST"
+else
+  docker_context="$(docker context show 2>/dev/null)" || {
+    echo "Cannot determine selected Docker context" >&2; exit 2;
+  }
+  docker_endpoint="$(docker context inspect "$docker_context" --format '{{(index .Endpoints "docker").Host}}' 2>/dev/null)" || {
+    echo "Cannot inspect selected Docker context" >&2; exit 2;
+  }
+fi
+case "$docker_endpoint" in
+  unix://*) docker_endpoint_kind="unix" ;;
+  npipe://*) docker_endpoint_kind="npipe" ;;
+  *)
+    echo "Offline recovery requires a local Docker endpoint (unix:// or npipe://); refusing remote daemon" >&2
+    exit 2
+    ;;
+esac
 [[ "$backup" != "$evidence_dir" && "$evidence_dir/" != "$backup/"* && "$backup/" != "$evidence_dir/"* ]] || {
   echo "Evidence and backup must use distinct non-nested directories" >&2; exit 2;
 }
