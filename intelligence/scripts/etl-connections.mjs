@@ -64,11 +64,16 @@ export async function checkDestination(pool,options={}){
     to_regclass('entity_evidence') IS NOT NULL AS evidence,
     to_regclass('timeline_events') IS NOT NULL AS timeline,
     to_regclass('token_link_observations') IS NOT NULL AS token_links,
-    to_regclass('blockchain_swap_evidence_revisions') IS NOT NULL AS blockchain_revisions`);
+    to_regclass('blockchain_swap_evidence_revisions') IS NOT NULL AS blockchain_revisions,
+    EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('intelligence_inbox')
+      AND attname='payload_sha256' AND NOT attisdropped) AS inbox_fingerprint`);
   const row=result.rows[0];
   // Every consumer may encounter token-link events, so reject missing 004 before claiming.
   if(!row?.inbox||!row.registry||!row.evidence||!row.timeline||!row.token_links){
     throw new Error("destination Intelligence migrations 001+002+004 required");
+  }
+  if(!row.inbox_fingerprint){
+    throw new Error("destination Intelligence migration 017 required before source claims");
   }
   if(options.requireBlockchainRevisions===true && !row.blockchain_revisions){
     throw new Error("destination Intelligence migration 005 required before Blockchain claim");
