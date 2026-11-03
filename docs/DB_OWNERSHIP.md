@@ -139,3 +139,10 @@ reviewed, backed-up and reversible operator procedure.
 - Node Intelligence PostgreSQL and Python Intelligence SQLite/PostgreSQL are separate storage domains. The Node runtime is not the Python `intelligence-worker` container.
 - The current Compose inventory includes product PG16, Admin PG17, Memecoin PG16, SolSub PG16, and local/CI source databases as separate logical stores. This still does not establish the number of physical production databases.
 - Solana is the only target blockchain network. Legacy EVM/Bitcoin compatibility code is tracked for safe deprecation; existing historical rows are not to be deleted automatically.
+
+
+### Inbox event identity fingerprint — migration 017
+
+The Node Intelligence database owns intelligence_inbox.payload_sha256. It is a SHA-256 fingerprint of the normalized RegistryEvent payload, not a hash of the entire source outbox envelope. New ingestion requires the column and treats an event as a duplicate only when the complete fingerprint matches. A NULL value marks a legacy row whose original payload has not yet been proven; it is not a duplicate-acceptance wildcard.
+
+For an existing destination, migration 017 is additive. Backfill is source-read-only and destination-write-only via intelligence/scripts/backfill-inbox-fingerprints.mjs. Start with dry-run, then use the explicit INTELLIGENCE_FINGERPRINT_BACKFILL_ENABLED=true opt-in with --execute on one bounded source (x, tg or blockchain). The source outbox row must match source system, event kind/key, schema version and evidence source ID. Missing/ambiguous source events are left unverified. Never fabricate a fingerprint from aggregate entity tables or migrate a source database as part of this operation.

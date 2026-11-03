@@ -151,3 +151,16 @@ Remaining legacy paths are outside the canonical cross-source contract:
 These paths are **not a supported multi-chain product architecture** and require separate retirement/review. Existing EVM/Bitcoin historical rows are preserved; no applied SQL migration is rewritten by this change.
 
 The Solana-only decision does not change the independent source ownership model: X and TG remain social evidence sources; Blockchain remains a logical module inside Solana Launcher until an explicit extraction decision is implemented. See [ARCHITECTURE_AS_IS_20261101](ARCHITECTURE_AS_IS_20261101.md) and [ARCHITECTURE_TARGET_20261101](ARCHITECTURE_TARGET_20261101.md).
+
+
+## 2026-11-04 follow-up — inbox identity and source delivery
+
+The current PR #212 integration candidate contains X/TG/Blockchain producer adapters and a synthetic producer-to-consumer test. This is offline/CI evidence, not live provider validation.
+
+The candidate adds an additive Intelligence schema revision 017 for inbox payload fingerprints. New intelligence_inbox rows store SHA-256 of the complete normalized RegistryEvent, including sorted entity references and evidence provenance. A repeated source_system/event_kind/event_key is a duplicate only when schema version, evidence source ID and payload fingerprint all match. A changed entity set or evidence revision is rejected as an identity collision before source ACK. Legacy rows with payload_sha256 NULL are not silently accepted as duplicates.
+
+For an existing destination, apply migration 017_inbox_payload_fingerprint.sql to the isolated/approved Intelligence database before enabling source claims. The bounded backfill utility reads retained source outbox rows in read-only transactions and, only when explicitly opted in, writes the fingerprint column in the destination. It does not claim, ACK, migrate or mutate source databases. Rows whose original source event is missing or ambiguous remain unverified and must not be guessed.
+
+checkDestination now fails closed when the inbox fingerprint column is absent. New installations receive the column in migration 001; existing installations require additive migration 017. Migration 007 remains optional where pgvector is not installed.
+
+The foreground Intelligence supervisor remains opt-in. Its existence does not prove a persistent production service, live source access or automatic restart after host reboot.

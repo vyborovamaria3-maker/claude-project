@@ -192,3 +192,18 @@ The **real off-host restore, branch protection and independent approval remain
 NOT VERIFIED**. Passing synthetic CI does not waive these P0 gates or authorize
 a merge, credential/role cutover or deployment.
 
+
+
+## 2026-11-04 follow-up — current PR #212 candidate
+
+At the start of this follow-up, PR #212 was at 2b09d722fd4b7c7fb25a104dffb5fb850af79d30. Its exact-head GitHub check-runs were 45 SUCCESS, 1 SKIPPED, 0 FAILURE. The skipped refresh-lockfiles job was branch-condition skipped, not a pass. All 7 inline review threads were RESOLVED; recorded reviewer submissions remained COMMENTED and no independent APPROVED review was present.
+
+The repository rulesets endpoint returned an empty list. The branch-protection endpoint returned 403 Resource not accessible by integration, so no branch-protection setting was changed and this document does not claim that main is protected or unprotected. Issue #170 remains an administrator-owned gate.
+
+Subsequent commits on the PR #212 branch add:
+- complete normalized inbox payload fingerprints and an additive migration 017;
+- fail-closed readiness checks when the fingerprint column is missing;
+- a bounded legacy fingerprint backfill with source read-only transactions, dry-run default, explicit execute opt-in and destination compare-and-set;
+- a safe ordinary Compose down command that preserves named volumes, with volume deletion moved behind an explicit confirmation variable.
+
+CI must be rerun on the resulting exact commit before these changes are considered verified. No production database, source outbox, real backup, credentials, branch protection setting, live collector or deployment was accessed or changed.
