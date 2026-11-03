@@ -20,8 +20,8 @@ ROLE_FINGERPRINT_SQL="$SCRIPT_DIR/postgres-role-restoration-fingerprint.sql"
   echo "Missing canonical role/ACL fingerprint query" >&2; exit 1;
 }
 backup="$(cd -- "$1" && pwd -P)"
-if find "$backup" -type l -print -quit | grep -q .; then
-  echo "Backup contains a symlink; refusing restore verification" >&2
+if find "$backup" ! -type f ! -type d -print -quit | grep -q .; then
+  echo "Backup contains a symlink or unsupported non-regular entry; refusing restore verification" >&2
   exit 1
 fi
 for file in SHA256SUMS postgres.dump admin-postgres.dump trade.db intelligence.sqlite \
