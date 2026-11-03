@@ -59,9 +59,11 @@ test("stable social identities never use username, and huge IDs remain text", ()
   assert.equal(formatSourceId("tg", "-1001234567890"), "tg:source:-1001234567890");
   assert.equal(parseAuthorId("tg:10000")?.platform, "tg");
   assert.equal(parseSourceId("tg:source:-1001234567890")?.platform, "tg");
-  for (const invalid of ["x:@alice", "x:alice", "x:001", "tg:source:@channel", "x:account:-10"]) {
+  for (const invalid of ["x:@alice", "x:alice", "x:001", "x:0", "tg:0", "tg:-0", "tg:source:0", "tg:source:-0", "tg:source:@channel", "x:account:-10"]) {
     assert.equal(parseAuthorId(invalid), null);
     assert.equal(parseSourceId(invalid), null);
   }
   assert.throws(() => formatAuthorId("x", "alice"), /Stable numeric/);
+  assert.throws(() => formatAuthorId("tg", "0"), /Stable numeric/);
+  assert.throws(() => formatAuthorId("tg", "-0"), /Stable numeric/);
 });
