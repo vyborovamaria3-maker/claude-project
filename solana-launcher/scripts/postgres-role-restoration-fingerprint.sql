@@ -31,7 +31,7 @@ FROM (
     UNION ALL
     SELECT 'membership','',
            member.rolname || '->' || granted.rolname,
-           ''::text,
+           grantor.rolname,
            concat_ws(',',
              'admin=' || m.admin_option::text,
              'inherit=' || m.inherit_option::text,
@@ -40,6 +40,7 @@ FROM (
       FROM pg_auth_members m
       JOIN pg_roles granted ON granted.oid = m.roleid
       JOIN pg_roles member ON member.oid = m.member
+      JOIN pg_roles grantor ON grantor.oid = m.grantor
      WHERE member.rolname NOT LIKE 'pg_%'
     UNION ALL
     SELECT 'schema',n.nspname,''::text,
