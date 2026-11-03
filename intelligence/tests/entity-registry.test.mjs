@@ -20,6 +20,7 @@ test("rejects noncanonical IDs and invalid provenance",()=>{
   assert.throws(()=>validateRegistryEvent({...event,entityRefs:[{...entity,canonicalId:"solana:bad"}]}),/Noncanonical/);
   assert.throws(()=>validateRegistryEvent({...event,evidenceRef:{...evidence,sourceId:"x:tweet:12"}}),/Evidence\/source/);
   assert.throws(()=>validateRegistryEvent({...event,sourceSystem:"x"}),/does not belong/);
+  assert.throws(()=>validateRegistryEvent({...event,evidenceRef:{...evidence,sourceId:"tg:message:-0:17"}}),/Evidence\/source/);
 });
 
 test("inbox is written before entity and source evidence",async()=>{
