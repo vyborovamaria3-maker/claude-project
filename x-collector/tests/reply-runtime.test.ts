@@ -289,7 +289,8 @@ test("Reply Guy API, ownership, RAG pipeline, budgets, uncertainty and browser c
     ]);
     assert.equal(await reservePublication(accountId), null); // hourly cap is persisted.
     await api("/campaigns/" + campaignId, "PATCH", {
-      settings: { hourly_limit: 2 },
+      // Keep the fixture independent of the runner's local sleep window.
+      settings: { hourly_limit: 2, sleep_enabled: false },
     });
     // Isolate the uncertain-publication scenario from the preceding quota test.
     // The hourly-cap assertion above remains the coverage for persisted limits.
