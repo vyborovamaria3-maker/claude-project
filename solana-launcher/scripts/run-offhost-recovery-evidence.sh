@@ -179,11 +179,14 @@ started_epoch="$(date -u +%s)"
 base="offline-recovery-${ticket_id}-${started_epoch}-$$"
 log_path="$evidence_dir/$base.private.log"
 json_path="$evidence_dir/$base.json"
-# Exit status and evidence are always preserved, even for a failed restore.
-status=1
+# Persist the evidence record atomically and fail the command if a PASS
+# cannot be durably represented. A successful restore without its evidence
+# artifact must never be reported as a successful operator rehearsal.
 finish() {
-  result="$?"
+  local result="$?" evidence_status=0
+  trap - EXIT
   set +e
+  local ended_at elapsed result_name
   ended_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   elapsed="$(( $(date -u +%s) - started_epoch ))"
   if ((result == 0)); then result_name="PASS"; else result_name="FAIL"; fi
@@ -219,12 +222,23 @@ payload = {
 }
 with open(sys.argv[1], "x", encoding="utf-8") as output:
     json.dump(payload, output, indent=2, sort_keys=True)
-    output.write("\n")
+    output.write("\\n")
 PY
-  if [[ -f "$json_path.tmp" ]]; then mv -T -- "$json_path.tmp" "$json_path"; fi
-  echo "Offline restoration verification: $result_name; private evidence: $json_path" >&2
+  evidence_status=$?
+  if ((evidence_status == 0)); then
+    mv -T -- "$json_path.tmp" "$json_path"
+    evidence_status=$?
+  fi
+  if ((evidence_status != 0)); then
+    rm -f -- "$json_path.tmp"
+    echo "Failed to persist offline recovery evidence; refusing success" >&2
+    if ((result == 0)); then result=1; fi
+  else
+    echo "Offline restoration verification: $result_name; private evidence: $json_path" >&2
+  fi
+  exit "$result"
 }
-trap finish EXIT
+
 
 # The verifier launches only --network none disposable PG16/PG17 containers,
 # verifies the canonical file manifest, owners, ACLs and SQLite snapshots.
