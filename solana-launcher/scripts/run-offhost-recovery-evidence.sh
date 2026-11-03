@@ -191,6 +191,7 @@ finish() {
   EVIDENCE_START="$started_at" EVIDENCE_END="$ended_at" EVIDENCE_ELAPSED="$elapsed" \
   EVIDENCE_SHA="$code_sha" EVIDENCE_MANIFEST_SHA="$observed_sha" \
   EVIDENCE_TICKET="$ticket_id" EVIDENCE_BYTES="$backup_bytes" \
+  EVIDENCE_DOCKER_ENDPOINT_KIND="$docker_endpoint_kind" \
   EVIDENCE_LOG_NAME="$(basename "$log_path")" \
   python3 - "$json_path.tmp" <<'PY'
 import json
@@ -207,11 +208,13 @@ payload = {
     "independent_sha256_of_sha256sums": os.environ["EVIDENCE_MANIFEST_SHA"],
     "operator_ticket_id": os.environ["EVIDENCE_TICKET"],
     "backup_bytes_aggregate": int(os.environ["EVIDENCE_BYTES"]),
+    "docker_endpoint_kind": os.environ["EVIDENCE_DOCKER_ENDPOINT_KIND"],
     "private_log_basename": os.environ["EVIDENCE_LOG_NAME"],
     "rpo_status": "NOT_MEASURED",
     "rto_status": "NOT_MEASURED",
     "encryption_at_rest_status": "OPERATOR_EVIDENCE_REQUIRED",
-    "production_writes": False,
+    "source_database_writes": False,
+    "production_host_isolation": "OPERATOR_ATTESTATION_REQUIRED",
     "approval_for_role_cutover": False
 }
 with open(sys.argv[1], "x", encoding="utf-8") as output:
