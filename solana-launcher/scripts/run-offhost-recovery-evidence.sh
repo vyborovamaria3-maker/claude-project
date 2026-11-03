@@ -113,8 +113,8 @@ require_private_owned_directory() {
   [[ "$mode" =~ ^[0-7]{3,4}$ ]] || {
     echo "Cannot parse $label directory permissions" >&2; exit 2;
   }
-  if (( (8#$mode & 077) != 0 )); then
-    echo "$label directory must not grant group/world access (use mode 0700)" >&2
+  if [[ "$mode" != "700" ]]; then
+    echo "$label directory must have exact private mode 0700" >&2
     exit 2
   fi
 }
