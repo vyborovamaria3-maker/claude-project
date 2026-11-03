@@ -288,6 +288,42 @@ assert "BACKUP_RESTORE_REHEARSAL_OK no_live_database_access=true" in log.read_te
 PY
 echo "OFFHOST_OPERATOR_WRAPPER_SYNTHETIC_OK"
 
+# A successful restore is not a successful operator rehearsal unless its
+# evidence JSON is persisted. Inject failure only into the wrapper's final
+# JSON writer; the verifier's Python calls still use the real interpreter.
+real_python="$(command -v python3)"
+mkdir -m 0700 "$scratch/failing-python-bin" "$scratch/operator-evidence-write-failure"
+cat > "$scratch/failing-python-bin/python3" <<'SH'
+#!/usr/bin/env bash
+if [[ "${2:-}" == *.json.tmp ]]; then
+  echo "synthetic_evidence_writer_failure" >&2
+  exit 73
+fi
+exec "$REAL_PYTHON_FOR_TEST" "$@"
+SH
+chmod 0700 "$scratch/failing-python-bin/python3"
+if REAL_PYTHON_FOR_TEST="$real_python" PATH="$scratch/failing-python-bin:$PATH" \
+    bash "$root/solana-launcher/scripts/run-offhost-recovery-evidence.sh" \
+      --backup-dir "$backup" \
+      --expected-manifest-sha256 "$synthetic_manifest_sha" \
+      --evidence-dir "$scratch/operator-evidence-write-failure" \
+      --code-sha "$reviewed_ci_sha" \
+      --ticket-id ci-evidence-write-failure \
+      --confirm-isolated-offhost \
+      > "$scratch/operator-wrapper-write-failure.log" 2>&1; then
+  echo "Offline recovery wrapper returned success without persisting its evidence JSON" >&2
+  exit 1
+fi
+grep -Fq "Failed to persist offline recovery evidence; refusing success" \
+  "$scratch/operator-wrapper-write-failure.log"
+shopt -s nullglob
+failed_evidence_json=("$scratch/operator-evidence-write-failure"/*.json)
+if (("${#failed_evidence_json[@]}" != 0)); then
+  echo "Offline recovery wrapper left a misleading PASS evidence JSON after writer failure" >&2
+  exit 1
+fi
+echo "OFFHOST_OPERATOR_EVIDENCE_PERSISTENCE_FAILURE_REJECTED"
+
 # Verify the committed WAL-only row using an isolated *copy* of the snapshot.
 # Even a read-only SQLite connection can create -wal/-shm sidecars or checkpoint
 # a WAL-mode file. The sealed, checksummed recovery directory must stay inert.
