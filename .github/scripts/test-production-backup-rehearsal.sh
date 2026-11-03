@@ -268,6 +268,9 @@ assert evidence["independent_sha256_of_sha256sums"] == sys.argv[3], evidence
 assert evidence["rpo_status"] == "NOT_MEASURED", evidence
 assert evidence["rto_status"] == "NOT_MEASURED", evidence
 assert evidence["approval_for_role_cutover"] is False, evidence
+assert evidence["source_database_writes"] is False, evidence
+assert evidence["production_host_isolation"] == "OPERATOR_ATTESTATION_REQUIRED", evidence
+assert evidence["docker_endpoint_kind"] in ("unix", "npipe"), evidence
 log = files[0].with_name(evidence["private_log_basename"])
 assert log.is_file() and log.stat().st_size > 0, evidence
 assert "BACKUP_RESTORE_REHEARSAL_OK no_live_database_access=true" in log.read_text(encoding="utf-8"), evidence
