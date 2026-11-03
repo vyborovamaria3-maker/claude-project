@@ -318,7 +318,7 @@ grep -Fq "Failed to persist offline recovery evidence; refusing success" \
   "$scratch/operator-wrapper-write-failure.log"
 shopt -s nullglob
 failed_evidence_json=("$scratch/operator-evidence-write-failure"/*.json)
-if (("${#failed_evidence_json[@]}" != 0)); then
+if ((${#failed_evidence_json[@]} != 0)); then
   echo "Offline recovery wrapper left a misleading PASS evidence JSON after writer failure" >&2
   exit 1
 fi
