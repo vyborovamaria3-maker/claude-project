@@ -48,7 +48,7 @@ jobs:
           set -Eeuo pipefail
           scratch="$(mktemp -d)"
           trap 'rm -rf -- "$scratch"' EXIT
-          mkdir -p "$scratch/backup" "$scratch/evidence"
+          mkdir -m 0700 -p "$scratch/backup" "$scratch/evidence"
           printf 'fixture-manifest\\n' > "$scratch/backup/SHA256SUMS"
           digest="$(sha256sum "$scratch/backup/SHA256SUMS" | cut -d ' ' -f1)"
           if bash solana-launcher/scripts/run-offhost-recovery-evidence.sh \
@@ -62,3 +62,44 @@ jobs:
             exit 1
           fi
           grep -Fq 'Requested recovery code SHA does not match checked-out HEAD' "$scratch/denied.log"
+
+          reviewed_sha="$(git rev-parse --verify HEAD)"
+          digest="$(sha256sum "$scratch/backup/SHA256SUMS" | cut -d ' ' -f1)"
+          chmod 0755 "$scratch/evidence"
+          if bash solana-launcher/scripts/run-offhost-recovery-evidence.sh \
+              --backup-dir "$scratch/backup" \
+              --evidence-dir "$scratch/evidence" \
+              --code-sha "$reviewed_sha" \
+              --expected-manifest-sha256 "$digest" \
+              --ticket-id ci-insecure-evidence-dir \
+              --confirm-isolated-offhost > "$scratch/permissions.log" 2>&1; then
+            echo 'Recovery evidence accepted a group/world-accessible evidence directory' >&2
+            exit 1
+          fi
+          grep -Fq 'Evidence directory must not grant group/world access' "$scratch/permissions.log"
+          chmod 0700 "$scratch/evidence"
+          chmod 0755 "$scratch/backup"
+          if bash solana-launcher/scripts/run-offhost-recovery-evidence.sh \
+              --backup-dir "$scratch/backup" \
+              --evidence-dir "$scratch/evidence" \
+              --code-sha "$reviewed_sha" \
+              --expected-manifest-sha256 "$digest" \
+              --ticket-id ci-insecure-backup-dir \
+              --confirm-isolated-offhost > "$scratch/backup-permissions.log" 2>&1; then
+            echo 'Recovery evidence accepted a group/world-accessible backup directory' >&2
+            exit 1
+          fi
+          grep -Fq 'Backup directory must not grant group/world access' "$scratch/backup-permissions.log"
+          chmod 0700 "$scratch/backup"
+          if env -u DOCKER_CONTEXT DOCKER_HOST=tcp://127.0.0.1:2375 \
+              bash solana-launcher/scripts/run-offhost-recovery-evidence.sh \
+              --backup-dir "$scratch/backup" \
+              --evidence-dir "$scratch/evidence" \
+              --code-sha "$reviewed_sha" \
+              --expected-manifest-sha256 "$digest" \
+              --ticket-id ci-remote-docker \
+              --confirm-isolated-offhost > "$scratch/remote-docker.log" 2>&1; then
+            echo 'Recovery evidence accepted a remote Docker daemon' >&2
+            exit 1
+          fi
+          grep -Fq 'Offline recovery requires a local Docker endpoint' "$scratch/remote-docker.log"
