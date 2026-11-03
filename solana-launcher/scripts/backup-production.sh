@@ -254,7 +254,8 @@ test -s "$DEST/intelligence.sqlite"
 
 # Do not publish symlinks: they can point outside the recovery set and would
 # not be covered by the regular-file SHA256 manifest.
-if find "$DEST" ! -type f ! -type d -print -quit | grep -q .; then
+unsupported_entry="$(find "$DEST" ! -type f ! -type d -print -quit)"
+if [[ -n "$unsupported_entry" ]]; then
   echo "Backup contains a symlink or unsupported non-regular entry; refusing publication" >&2
   exit 1
 fi
