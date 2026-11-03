@@ -1,6 +1,6 @@
-# ARCH-06 integrity audit â€” remediation and explicit boundaries
+# ARCH-06 integrity audit — remediation and explicit boundaries
 
-Implementation integrated into `main` through PR #133 (original PR #150) â†’ #148 â†’ #147. No production rollout, RPC requests, credential use or migrations were performed.
+Implementation integrated into `main` through PR #133 (original PR #150) → #148 → #147. No production rollout, RPC requests, credential use or migrations were performed.
 
 ## Findings and remediations
 
@@ -15,7 +15,7 @@ Implementation integrated into `main` through PR #133 (original PR #150) â†�
 ## Acceptance and rollout gates
 
 - Offline SQLite source regression: archive every changed RAW revision, force rollback, reject duplicate conflicts, default feature OFF.
-- Temporary PostgreSQL isolated schemas: out-of-order revisions, verifiedâ†’unsupported corrections, conflicting wallets, source observation vs destination receipt time, token links and timeline late delivery, migration 005 readiness.
+- Temporary PostgreSQL isolated schemas: out-of-order revisions, verified→unsupported corrections, conflicting wallets, source observation vs destination receipt time, token links and timeline late delivery, migration 005 readiness.
 - Offline RPC fixtures: initialized SPL Token classic/Token-2022 layouts, exact request matching, slot/finality consistency, corrupted/conflicting statuses.
 - Read-only HTTP: auth, strict query bounds, no payload, no API claims of full history or finalized PnL, migration 005 preflight.
 - Latest-head CI plus independent review **before** merge. Worktree changes alone do not validate real PostgreSQL/SQLite backups.
