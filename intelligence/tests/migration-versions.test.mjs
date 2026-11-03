@@ -11,10 +11,13 @@ test("SQL migrations have unique sequential version numbers",async()=>{
       "duplicate migration version "+prefix+" in "+byVersion.get(prefix)+" and "+name);
     byVersion.set(prefix,name);
   }
-  for(let n=1;n<=14;n++)assert.ok(byVersion.has(n),
+  for(let n=1;n<=17assert.ok(byVersion.has(n),
     "missing migration "+String(n).padStart(3,"0"));
   const privacy=await readFile(new URL("014_privacy_evidence_indexes.sql",root),"utf8");
   assert.match(privacy,/idx_intelligence_inbox_evidence_source/);
   const retries=await readFile(new URL("013_invalidation_retry_schedule.sql",root),"utf8");
   assert.match(retries,/next_attempt_at/);
+  const fingerprint=await readFile(new URL("017_inbox_payload_fingerprint.sql",root),"utf8");
+  assert.match(fingerprint,/payload_sha256/);
+  assert.match(fingerprint,/64/);
 });
