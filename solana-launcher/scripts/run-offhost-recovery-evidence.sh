@@ -238,7 +238,7 @@ PY
   fi
   exit "$result"
 }
-
+trap finish EXIT
 
 # The verifier launches only --network none disposable PG16/PG17 containers,
 # verifies the canonical file manifest, owners, ACLs and SQLite snapshots.
