@@ -15,8 +15,8 @@ export type PgTransaction = {
   query(sql: string, values?: readonly unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
 };
 
-function limited(value: unknown, name: string): string {
-  if (typeof value !== "string" || !value.trim() || value.length > 512) {
+function limited(value: unknown, name: string, maxLength = 512): string {
+  if (typeof value !== "string" || !value.trim() || value.length > maxLength) {
     throw new TypeError("Invalid " + name);
   }
   return value;
@@ -41,8 +41,14 @@ function validateEvidence(evidence: EvidenceRef): EvidenceRef {
       throw new TypeError("Invalid chain transaction evidence");
     }
   }
+  const provider = evidence.provider === undefined ? undefined : limited(evidence.provider, "provider", 4096);
+  const parserVersion = evidence.parserVersion === undefined ? undefined : limited(evidence.parserVersion, "parserVersion", 4096);
+  const rawPointer = evidence.rawPointer === undefined ? undefined : limited(evidence.rawPointer, "rawPointer", 4096);
   return {
     ...evidence,
+    ...(provider === undefined ? {} : {provider}),
+    ...(parserVersion === undefined ? {} : {parserVersion}),
+    ...(rawPointer === undefined ? {} : {rawPointer}),
     observedAt: toUtcIso(evidence.observedAt),
     ...(evidence.occurredAt === undefined ? {} : {occurredAt: toUtcIso(evidence.occurredAt)}),
   };
