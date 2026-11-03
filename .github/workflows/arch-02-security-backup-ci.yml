@@ -56,6 +56,7 @@ jobs:
           bash -n .github/scripts/test-postgres-role-separation.sh
           bash -n solana-launcher/scripts/backup-production.sh
           bash -n solana-launcher/scripts/verify-backup-restore.sh
+          bash -n solana-launcher/scripts/run-offhost-recovery-evidence.sh
       - name: Verify pinning without real SSH keys or hosts
         run: bash .github/scripts/test-pinned-ssh.sh
 
