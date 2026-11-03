@@ -47,6 +47,9 @@ test("temporary PostgreSQL target refuses only-001/002 then accepts 004",{
     await admin.query(await readFile(new URL(
       "../migrations/005_blockchain_swap_evidence_revisions.sql",import.meta.url),"utf8"));
     await assert.doesNotReject(checkDestination(pool,{requireBlockchainRevisions:true}));
+    await admin.query(await readFile(new URL(
+      "../migrations/017_inbox_payload_fingerprint.sql",import.meta.url),"utf8"));
+    await assert.doesNotReject(checkDestination(pool,{requireBlockchainRevisions:true}));
   }finally{
     if(pool)await pool.end();
     await admin.query("SET search_path TO public");
