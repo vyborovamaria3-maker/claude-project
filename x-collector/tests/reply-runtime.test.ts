@@ -279,7 +279,8 @@ test("Reply Guy API, ownership, RAG pipeline, budgets, uncertainty and browser c
         JSON.stringify({
           ...sample,
           id: "2234567890123456789",
-          created_at: new Date(Date.now() - 30_000).toISOString(),
+          // Keep the fixture inside min_age=1m and max_age=10m.
+          created_at: new Date(Date.now() - 120_000).toISOString(),
         }),
       ],
     );
