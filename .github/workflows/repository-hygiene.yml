@@ -76,7 +76,7 @@ jobs:
             echo 'Recovery evidence accepted a group/world-accessible evidence directory' >&2
             exit 1
           fi
-          grep -Fq 'Evidence directory must not grant group/world access' "$scratch/permissions.log"
+          grep -Fq 'Evidence directory must have exact private mode 0700' "$scratch/permissions.log"
           chmod 0700 "$scratch/evidence"
           chmod 0755 "$scratch/backup"
           if bash solana-launcher/scripts/run-offhost-recovery-evidence.sh \
@@ -89,7 +89,7 @@ jobs:
             echo 'Recovery evidence accepted a group/world-accessible backup directory' >&2
             exit 1
           fi
-          grep -Fq 'Backup directory must not grant group/world access' "$scratch/backup-permissions.log"
+          grep -Fq 'Backup directory must have exact private mode 0700' "$scratch/backup-permissions.log"
           chmod 0700 "$scratch/backup"
           if env -u DOCKER_CONTEXT DOCKER_HOST=tcp://127.0.0.1:2375 \
               bash solana-launcher/scripts/run-offhost-recovery-evidence.sh \
