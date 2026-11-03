@@ -73,9 +73,14 @@ fetch a private real backup or certify encryption.
    Docker socket/containers can be affected. The underlying verifier uses
    `docker run --network none`, no published ports and temporary containers;
    this does not in itself guarantee spare host resources.
-5. Make the offline restore copy accessible by an operator-only login;
-   `umask 077` and restricted private output directory. Treat a decrypted
-   backup as secret material and securely dispose of it following policy.
+5. Make the offline restore copy accessible by an operator-only login; both
+   the decrypted backup directory and evidence directory must be owned by the
+   current operator and have no group/world permission bits (mode `0700`).
+   The wrapper rejects weaker permissions. The selected Docker endpoint must
+   be local (`unix://` or `npipe://`); remote TCP/SSH contexts are rejected.
+   `umask 077` protects newly created files but does not repair permissions on
+   existing directories. Treat a decrypted backup as secret material and
+   securely dispose of it following policy.
 
 ### Command: local-only verification (operator runs; not run by CI)
 
