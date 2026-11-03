@@ -16,7 +16,7 @@ test("ordinary compose:down keeps named volumes", async () => {
 
 test("volume deletion requires the exact explicit confirmation", () => {
   for (const confirmation of [undefined, "true", "I_UNDERSTAND "]) {
-    const errors: string[] = [];
+    const errors = [];
     let calls = 0;
     const env =
       confirmation === undefined
@@ -37,10 +37,10 @@ test("volume deletion requires the exact explicit confirmation", () => {
 });
 
 test("exact opt-in runs only docker compose down --volumes", () => {
-  const calls: unknown[][] = [];
+  const calls = [];
   const status = runComposeDownVolumes({
     env: { CONFIRM_DOCKER_VOLUME_DELETION: "I_UNDERSTAND" },
-    spawn: (...args: unknown[]) => {
+    spawn: (...args) => {
       calls.push(args);
       return { status: 0 };
     },
@@ -53,7 +53,7 @@ test("exact opt-in runs only docker compose down --volumes", () => {
 });
 
 test("spawn failures return a nonzero status without printing raw error details", () => {
-  const errors: string[] = [];
+  const errors = [];
   const status = runComposeDownVolumes({
     env: { CONFIRM_DOCKER_VOLUME_DELETION: "I_UNDERSTAND" },
     spawn: () => ({ status: null, error: new Error("private process details") }),
