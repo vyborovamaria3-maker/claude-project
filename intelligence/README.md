@@ -54,7 +54,7 @@ Other sources: `--source x`, `--source blockchain`. Environment variables:
 `X_SOURCE_DATABASE_URL`, `TG_SOURCE_DATABASE_URL`,
 `SOLANA_TRADE_DB_PATH`, and `INTELLIGENCE_DATABASE_URL`.
 
-The status command only reads source outbox counts. The once command is
+The status command only reads source outbox metadata and reports pending/ready/leased/retry/DLQ counts, oldest-pending age, last progress and retry attempts; it never reads event payloads. The once command is
 explicitly gated and handles one finite claim batch with destination transaction
 commit before source ACK; no Telegram login, browser, provider request, replay
 loop, background scheduling, or trading instruction is performed. Keep all
@@ -119,12 +119,16 @@ Runtime safeguards:
   finish before closing connection pools.
 - Bounded JSON lines include counters and error **codes**, never event payloads,
   passwords or original exception strings.
-- Operator can inspect per-source backlog and dead letters using the existing
-  read-only `run.mjs --source <source> --status`.
+- Operator can inspect per-source backlog, oldest-pending age, last progress,
+  retries and dead letters using the read-only `run.mjs --source <source> --status`.
+- The supervisor emits one structured health snapshot at startup and then every
+  30 seconds per source. It emits local `health_alert` records for any DLQ item,
+  pending age >=15 minutes, or >=5 retrying events. These are stdout records,
+  not a Prometheus endpoint or external notification sink.
 
 Caveats: this implementation does not persist a machine-level process manager,
-does not create a health HTTP service, does not apply migrations, and does not
-validate a live X/TG/Blockchain producer or the real token-link resolver.
+does not create a health HTTP service or external alert delivery, does not apply
+migrations, and does not validate a live X/TG/Blockchain producer or the real token-link resolver.
 Startup after Windows restart requires explicit process launch. The current
 one-shot CLI can claim more than one event, so its unstarted batch members are
 not heartbeat-protected; keep its batch size small on slow destinations.
