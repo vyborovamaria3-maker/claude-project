@@ -2,6 +2,16 @@
 
 Repository baseline: main `8dc7c2943ef08978f55009b15c86cd451517b654`. Evidence: inspected code/SQL, PR metadata, GitHub Actions run/jobs/logs. **Do not mark live use as PASSED based on offline CI.** The checklist below is deliberately fail-closed.
 
+## Current status pointer — 2026-10-30
+
+The matrix below preserves the 2026-10-20 baseline and 2026-10-24 historical delta. It is not a current status snapshot. Use [TECHNICAL_DEBT_REGISTER_20261030.md](TECHNICAL_DEBT_REGISTER_20261030.md) for the current P0/P1 register and [REPOSITORY_BASELINE_20261030.md](REPOSITORY_BASELINE_20261030.md) for the current architecture inventory.
+
+Important corrections since the historical matrix:
+- GitHub currently reports `main.protected=false`; [issue #170](https://github.com/vyborovamaria3-maker/claude-project/issues/170) remains admin-blocked.
+- A foreground, opt-in Node Intelligence supervisor exists (`intelligence/scripts/supervise.mjs`); this does not mean it is running or monitored in production.
+- Blockchain has opt-in provider-parsed swap evidence and revision events, offline receipt validation and a two-witness signed-report acceptance store; these do not establish authenticated RPC service provenance or Solana consensus finality.
+- PR #203's latest CI is green on its current head, but it remains open and live X/TG/RPC, backup/restore and production data status remain separate gates.
+
 Statuses: **IMPLEMENTED** = source code exists; **OFFLINE TESTED** = explicit isolated fixture/CI evidence; **NOT VERIFIED** = live deployment has not been demonstrated; **BLOCKED** = must be remedied before a dependent rollout.
 
 | Priority | Area | Verified implementation / observation | Missing gate / action | Status |

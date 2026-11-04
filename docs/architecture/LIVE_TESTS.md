@@ -1,10 +1,27 @@
 # LIVE_TESTS — TG Collector / Cross-source Intelligence
 
-Audit register started **2026-10-22** on `audit/tg-collector-sprint0-20261022`. This file distinguishes **source inspection**, **offline tests** and **actual live validation**. No tests were executed as part of this documentation-only sprint-0 audit: all execution statuses below are `NOT RUN`. Historical README/CI claims are references to existing test infrastructure, not evidence that the *current head* is green.
+Audit register started **2026-10-22** on `audit/tg-collector-sprint0-20261022`. The initial sprint-0 audit did not execute tests; the matrix below preserves its 2026-10-22 baseline, where initial execution statuses were `NOT RUN`. Current CI-only evidence and author-reported limited live smoke are recorded above with explicit provenance. This file distinguishes **source inspection**, **offline tests** and **actual live validation**; a green CI run is not a live-source pass.
+
+## CI-only evidence — 2026-10-30
+
+PR [#203](https://github.com/vyborovamaria3-maker/claude-project/pull/203), head `03aca7e25f3d66f0d39f6f8b279483eb8eb101cf`:
+
+- 17 GitHub Actions workflows completed successfully; one conditional Security Lock Refresh workflow was skipped.
+- [Frontend Quality CI](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41107335183) passed. Its Playwright log contains one `ANALYSIS_OVERVIEW_OK` run covering source values, missing/empty/error states, stale-mint protection, the 141-field report, mobile layout and explicit AI request only.
+- [Social Analysis UI CI](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41107335055), [Security Gates](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41107335173) and [POTAPoff predeploy gate](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41107335084) passed.
+- The on-demand regression suite reports 21 tests passed, 0 failed; it includes a source-level assertion that unified Analysis embeds `BlockchainAiReportPanel` in request-only mode.
+
+**Classification:** OFFLINE / SYNTHETIC CI ONLY. No real X account, Telegram MTProto session, paid RPC, production database, production migration, live witness service or backup/restore operation was accessed. All external live-validation rows below remain `NOT RUN` until a separately approved run records the evidence required by this register.
+
+### Author-reported limited live smoke — not independently reproduced
+
+The description of [PR #203](https://github.com/vyborovamaria3-maker/claude-project/pull/203) reports a local/source API3182 smoke: cached report HTTP 200; a separate uncached AI generation HTTP 200 with one completed AI ledger record; one X message and one Telegram message returned; zero saved trades; coverage explicitly unknown. It also reports a service restart and backup.
+
+This audit did not connect to API3182, inspect the backup, retrieve sanitized source logs, verify the account/operator approval, confirm the database identity or reproduce those calls. Treat this as **author-reported, limited evidence**, not independently verified live validation. It does not satisfy [issue #175](https://github.com/vyborovamaria3-maker/claude-project/issues/175): the controlled X/TG smoke, bounded chain RPC/finality evidence, authorization and reproducible sanitized record are still incomplete. Autopost remains `NOT RUN` unless separately approved.
 
 ## Verification matrix
 
-| Component | Test method / entrypoint | Required environment | Status 2026-10-22 | Evidence / follow-up |
+| Component | Test method / entrypoint | Required environment | Initial status 2026-10-22 | Evidence / follow-up |
 | --- | --- | --- | --- | --- |
 | TG TypeScript | `cd tg-collector && npm ci && npm run typecheck` | Node 22; dependency install | NOT RUN | Capture stdout, Node version and exact SHA. |
 | TG unit/integration | `cd tg-collector && npm test` | Disposable PostgreSQL; no real Telegram account | NOT RUN | Test suite includes `tests/*.test.ts` and `tests/integration/*.test.ts`. |
@@ -76,3 +93,18 @@ Never promote “not tested” based on a merge, test-name existence, synthetic 
 - After the main merge, [main Intelligence foundation](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/40081855865), [native source evidence CI](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/40081855822), [shared contracts](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/40081855740) and [hygiene](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/40081855688) had already passed at observation time. Other main workflows were still running when recorded; re-check exact SHA and workflow before claiming they passed.
 - Isolated regression asserts X/TG source PostgreSQL + blockchain SQLite → distinct destination PostgreSQL, explicit preverified mint evidence, edit tombstone, source-local transaction rollback, injected destination COMMIT failure/no source ACK, duplicate replay, source-specific active projection and occurred/known-at boundaries. This is a **synthetic saved-proof test**, not fresh RPC verification; legacy generic `queryTokenTimeline` is deliberately empty for evidence-only events and the dedicated read-only evidence endpoint returns typed separated lists.
 - **Live verification statuses remain NOT RUN BY THIS AUDIT.** Operator must first confirm production-safe backups+restores, independent migrations, explicit source flags/accounts/provider budget and sanitized logs. See [#173](https://github.com/vyborovamaria3-maker/claude-project/issues/173) and [#175](https://github.com/vyborovamaria3-maker/claude-project/issues/175).
+
+
+## Cross-source and recovery CI evidence — 2026-10-31 (offline only)
+
+This update records CI results separately from the live-test rows above. It does **not** change any external/live status from `NOT RUN`.
+
+| Area | Exact evidence observed | What this proves | What remains NOT RUN |
+| --- | --- | --- | --- |
+| Supervisor/outbox health | PR #206 head `a329640dd694ce2b7f6928b61d0fafd4a079b93a`; required observed CI workflows passed | Read-only health metrics, DB-clock query regression, alert transition deduplication/recovery and adapter tests | Continuous production worker, external alert sink, operator DLQ/restart process |
+| Three-source producers | PR #209 head `aa0cb5006314e9eac48d3e65463d5e70da7e3c8c`; Verified source producer integration passed | Actual X/TG verifier/emitter code with mocked HTTPS RPC plus Blockchain revision emitter deliver from isolated X/TG PostgreSQL and in-memory SQLite into isolated Intelligence PostgreSQL | Live X account, Telegram MTProto, live Alchemy/Solana RPC, real source coverage |
+| Three-source recovery | PR #210 head `1b8827be359a516e260349de1867ba9970335dbb`; Intelligence CI, foundation, native token-link CI and hygiene passed | Synthetic PostgreSQL/SQLite tests for atomicity, failed destination commit/no ACK, lease fencing, replay, independent retractions, unsupported chain revision and DLQ | Real process restarts, live source/destination outage, production supervisor |
+| Database recovery bundle | PR #211 head `915f9092aaf72a2734943f693b9dd72103544700`; all 12 observed workflows passed | Disposable PG16/PG17 restore plus checksummed WAL-safe `trade.db` and Python Intelligence `intelligence.sqlite` snapshots, integrity/restore/corruption/missing-source tests | Actual deployed DB inventory, off-host retention, measured RPO/RTO, approved production restore |
+| Producer PR full audit | PR #209 Full Backtest Audit latest-head run had frontend-audit cancelled at the last check; backend audit was still running | No final full-audit conclusion is claimed | A non-cancelled latest-head Full Backtest Audit pass |
+
+The synthetic producer integration deliberately uses a mocked RPC response and fixture evidence. It does not certify live source data or provider provenance. The recovery rehearsal uses disposable containers and fixtures; it does not access production volumes or credentials. Preserve the original `NOT RUN` statuses for all external account, MTProto, RPC, autopost, live DB, and pilot activities until individually authorized and evidenced.

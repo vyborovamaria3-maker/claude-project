@@ -1,11 +1,7 @@
-# Baseline: supplied ZIP, 2026-10-12
+# Current architecture
 
-Repository inventory: x-collector (Node/TypeScript), solana-launcher (Next.js plus Python backend/frontend), intelligence (Python ingestion/scoring), admin-site, memecoin-intelligence, cockpit-tools, subscription service, Telegram miniapp and supporting scripts. This audit follows the collector execution paths; other products are inventoried, not exhaustively reviewed.
+Current whole-repository architecture is documented in [Repository architecture baseline — 2026-10-30](REPOSITORY_BASELINE_20261030.md). That snapshot is based on `main` at `9f4a7e88afa80774633ee4a43221a621fe5f1922`, distinguishes the independent application/data domains, and explicitly separates code-level capability from live deployment evidence.
 
-Collector: scripts/scheduler.ts schedules analytics and enqueueTasks under PostgreSQL advisory locks. lib/trade/tasks.ts owns durable x_tasks, retry and x_tasks_dlq; claim uses FOR UPDATE SKIP LOCKED. scripts/worker.ts claims one task, validates schemas, reserves x_accounts, decrypts sessions, calls searchTweets/fetchUserTimeline/fetchAccountProfile and saves through collector-store.ts. These are real Playwright operations, including list/history modes and incremental batches. An opt-in X_COLLECTOR=src search path uses src/x/task-handler.ts/searchX.
+Use the [system dependency map](DEPENDENCY_MAP.md) for source-to-Intelligence and product/runtime dependencies, and the [technical debt register](TECHNICAL_DEBT_REGISTER_20261030.md) for current P0/P1 blockers.
 
-Storage: lib/trade/pg.ts is the shared pool; migrations.ts lists required SQL migrations (including repeated numeric prefixes). Tweets, observations, task links, profiles, archives and raw intelligence events are persisted. src/intelligence/entities/processor.ts extracts deterministic entities; scripts/intelligence-worker.ts normalizes raw events with savepoints and bounded failures. Reply publication has a separate existing runtime and official API adapter.
-
-Operations: WorkerRegistry persists heartbeat/counters in x_workers. Dashboard exposes existing analytics and collector control with Basic Auth/origin guards. Launcher lib/xcollector.ts starts processes using spawn and tracks handles in memory; it is a local controller, not a durable distributed supervisor. Dockerfile/compose.reply.yml target the reply module. No Redis/BullMQ dependency in collector package.
-
-Baseline verification: npm ci succeeded; strict TypeScript passed. Existing tests include PGlite SQL, browser fixtures and optional real PostgreSQL integration. Live X credentials were not provided.
+The former collector-only baseline from 2026-10-12 is preserved in [ARCHITECTURE_BASELINE_20261012.md](ARCHITECTURE_BASELINE_20261012.md); it is historical and should not be used as a whole-monorepo inventory.

@@ -1,6 +1,6 @@
 # ARCH-06b2a — offline check for Solana finalized-status and SPL Mint account receipts
 
-**Status:** Draft, stacked on PR #148 (which stacks on #147). This step is **not** an operational mint-verification rollout. It adds an isolated, pure offline validator and synthetic tests only.
+**Status:** Offline validator integrated into `main` through PR #133 (original PR #149). This is **not** an operational mint-verification rollout: it validates supplied receipts and synthetic tests only; it does not fetch RPC or prove historical mint state at the transaction slot.
 
 ## Threat model and evidence boundary
 
