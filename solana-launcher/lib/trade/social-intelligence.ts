@@ -59,6 +59,8 @@ export type TwitterRiskUniverse = {
 };
 
 export type TwitterStats = {
+  // Local corpus adapters cannot infer bot labels from missing classification data.
+  riskClassificationAvailable?: boolean;
   symbol: string;
   totalTweets: number;
   totalViews: number;
@@ -918,9 +920,10 @@ export function deriveSocialMetrics(
   ]).score;
   const hasSocialEvidence = (xAvailable && xMentions > 0)
     || (tgAvailable && tgMentions > 0);
+  const qualityRiskKnown = x?.riskClassificationAvailable !== false;
   const fomoQuality = weightedScore([
-    { value: hasSocialEvidence ? organic : null, weight: 0.45 },
-    { value: hasSocialEvidence ? 100 - manipulation : null, weight: 0.25 },
+    { value: hasSocialEvidence && qualityRiskKnown ? organic : null, weight: 0.45 },
+    { value: hasSocialEvidence && qualityRiskKnown ? 100 - manipulation : null, weight: 0.25 },
     { value: both ? cross : null, weight: 0.15 },
     { value: xAvailable && xMentions > 0 ? authorRatio : null, weight: 0.075 },
     { value: tgAvailable && tgMentions > 0 ? tgDiffusion : null, weight: 0.075 },

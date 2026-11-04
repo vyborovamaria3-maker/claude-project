@@ -65,6 +65,17 @@ function makeTg(timestamp = SIGNAL_AT - 40_000): SocialTimeline {
 }
 
 describe("FOMO point-in-time snapshot capture", () => {
+  it("keeps local corpus captures in a separate series and omits unknown risk features", () => {
+    const x = { ...makeX(), botRiskScore: 50, riskClassificationAvailable: false };
+    const record = buildFomoSnapshotRecord({
+      mint: "So11111111111111111111111111111111111111112", x, tg: makeTg(),
+      signalAt: SIGNAL_AT, source: "local_collector_db", provenance: { source: "local_postgresql_exact_mint_v1" },
+    });
+    expect(record.scoreVersion).toBe("fomo-pressure-quality-local-pg-v1");
+    expect(record.qualityCoverage).toBeCloseTo(0.3, 10);
+    expect(JSON.parse(record.captureConfigJson).source).toBe("local_collector_db");
+    expect(JSON.parse(record.sourceMetaJson).riskClassificationAvailable).toBe(false);
+  });
   it("recomputes scores at a fixed as-of time and labels bounded source samples partial", () => {
     const record = buildFomoSnapshotRecord({
       mint: "So11111111111111111111111111111111111111112",

@@ -59,7 +59,8 @@ export function outcomeStatus(db,{horizonHours=24,timeframe='5m',now=Date.now()}
  return {snapshots:total,immature,labelled,unlabelled:total-labelled,dueNow,attempts:Object.fromEntries(attempts.map(r=>[r.status,r.n]))};
 }
 
-export async function runOutcomeBatch(db,{baseUrl='http://127.0.0.1:3000',horizonHours=24,timeframe='5m',limit=25,clock=Date.now,fetchHistory=fetchPriceHistory}={}){
+export async function runOutcomeBatch(db,{baseUrl='http://127.0.0.1:3000',horizonHours=24,timeframe='5m',limit=25,clock=Date.now,fetchHistory=fetchPriceHistory,maxSourceAgeHours=timeframe==='1m'?72:360}={}){
+ if(!Number.isFinite(maxSourceAgeHours)||maxSourceAgeHours<horizonHours)throw Error('invalid_source_window');
  optionsValid({horizonHours,timeframe,limit});ensureOutcomeSchema(db);
  const started=clock(),owner=randomUUID();
  const acquired=db.prepare(`INSERT INTO fomo_price_worker_lease VALUES(1,?,?) ON CONFLICT(id) DO UPDATE
@@ -93,7 +94,7 @@ export async function runOutcomeBatch(db,{baseUrl='http://127.0.0.1:3000',horizo
     }
     if(!result){
      // The bounded endpoint cannot reconstruct signals outside its historical window.
-     if(started-saved.signal_at>(timeframe==='1m'?72:360)*3600000)result={status:'excluded',reason:'historical_source_window_expired'};
+     if(started-saved.signal_at>maxSourceAgeHours*3600000)result={status:'excluded',reason:'historical_source_window_expired'};
      else{
       if(!histories.has(row.mint)){
        report.requests++;

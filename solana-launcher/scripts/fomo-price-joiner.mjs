@@ -237,7 +237,15 @@ export function calculateOutcomeLabel(raw, history, options) {
   }
   if (!history) return { status: "excluded", reason: "price_source_unavailable" };
   if (history.mock) return { status: "excluded", reason: "mock_price_source_rejected" };
-  if (!ACCEPTED_SOURCES.has(history.source)) {
+  if (history.source === "geckoterminal") {
+    try {
+      // Only the explicit USD adapter carries pool/token proof in hashed evidence.
+      history = restorePriceHistory(history.evidenceRecord);
+      if (history.mint !== snapshot.mint) throw new Error("price_evidence_token_mismatch");
+    } catch {
+      return { status: "excluded", reason: "unsupported_price_source" };
+    }
+  } else if (!ACCEPTED_SOURCES.has(history.source)) {
     return { status: "excluded", reason: "unsupported_price_source" };
   }
   if (history.priceUnit !== "USD") return { status: "excluded", reason: "unverified_price_unit" };
@@ -394,8 +402,41 @@ export function restorePriceHistory(record) {
     throw new TypeError("invalid_saved_evidence");
   }
   const fetchedAtMs = timestampMs(base.fetchedAt, "saved_evidence_fetched_at");
+  if (base.source === "geckoterminal") validateGeckoProvenance(base, fetchedAtMs);
   return { ...base, evidenceSha256, fetchedAtMs, candles: normalizeCandles(base.candles, intervalSeconds, fetchedAtMs),
     evidenceRef: "fomo-price-evidence:sha256:" + evidenceSha256, evidenceRecord: record };
+}
+
+function validateGeckoProvenance(base, fetchedAtMs) {
+  const proof = base.priceProvenance;
+  const pool = proof?.pool;
+  const side = proof?.tokenSide;
+  if (proof?.schemaVersion !== 1 || proof?.network !== "solana" || proof?.currency !== "usd"
+    || proof?.includeEmptyIntervals !== false || !["base", "quote"].includes(side)
+    || base.priceUnit !== "USD" || base.mock !== false || !BASE58_MINT.test(base.poolAddress)
+    || pool?.id !== "solana_" + base.poolAddress || pool?.type !== "pool"
+    || pool?.attributes?.address !== base.poolAddress) throw new TypeError("invalid_gecko_price_provenance");
+  for (const tokenSide of ["base", "quote"]) {
+    const address = proof.ohlcvMeta?.[tokenSide]?.address;
+    const relationship = pool.relationships?.[tokenSide + "_token"]?.data;
+    if (typeof address !== "string" || !BASE58_MINT.test(address)
+      || relationship?.id !== "solana_" + address || relationship?.type !== "token") {
+      throw new TypeError("invalid_gecko_price_provenance");
+    }
+  }
+  if (proof.ohlcvMeta[side].address !== base.mint
+    || timestampMs(proof.poolObservedAt, "gecko_pool_observed_at") > fetchedAtMs) {
+    throw new TypeError("invalid_gecko_price_provenance");
+  }
+  const expectedLookup = new URL("https://api.geckoterminal.com/api/v2/networks/solana/tokens/" + base.mint + "/pools?page=1");
+  const expectedCandles = new URL("https://api.geckoterminal.com/api/v2/networks/solana/pools/" + base.poolAddress + "/ohlcv/minute");
+  expectedCandles.searchParams.set("aggregate", String(base.intervalSeconds / 60));
+  expectedCandles.searchParams.set("limit", "1000");
+  expectedCandles.searchParams.set("currency", "usd");
+  expectedCandles.searchParams.set("token", side);
+  expectedCandles.searchParams.set("include_empty_intervals", "false");
+  if (proof.poolLookupUrl !== expectedLookup.toString() || base.requestUrl !== expectedCandles.toString()
+    || base.candleCount !== base.candles?.length) throw new TypeError("invalid_gecko_price_provenance");
 }
 
 function safeFailureCode(error) {

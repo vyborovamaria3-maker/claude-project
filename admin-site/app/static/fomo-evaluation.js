@@ -1,0 +1,65 @@
+(()=>{
+ const content=document.querySelector('#content'),parent=document.querySelector('#fomoNav')||document.querySelector('#xCollectorNav');if(!content||!parent)return;
+ const nav=document.createElement('button');nav.id='fomoEvaluationNav';nav.className='nav-item';nav.textContent='FOMO: снимки и цены';parent.after(nav);
+ const el=(tag,text)=>{const n=document.createElement(tag);if(text!=null)n.textContent=text;return n;};
+ const date=v=>v?new Date(v).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'})+' МСК':'—';
+ const num=v=>typeof v==='number'&&Number.isFinite(v)?v.toFixed(2):'—';
+ let active=false,ticket=0;
+ document.addEventListener('click',e=>{const target=e.target.closest('.nav-item');if(target&&target!==nav){active=false;ticket++;}});
+ const table=(headers,rows)=>{const wrap=el('div');wrap.style.overflowX='auto';const t=el('table');t.className='table';const head=el('tr');headers.forEach(s=>head.append(el('th',s)));const thead=el('thead');thead.append(head);t.append(thead);const body=el('tbody');for(const row of rows){const tr=el('tr');for(const value of row){const td=el('td');td.style.padding='8px';if(value instanceof Node)td.append(value);else td.textContent=String(value??'—');tr.append(td);}body.append(tr);}t.append(body);wrap.append(t);return wrap;};
+
+ const proofButton=o=>{const detail=el('button','Свечи и источник');detail.onclick=async()=>{detail.disabled=true;try{const r=await fetch('/api/fomo-evaluation/'+encodeURIComponent(o.snapshot_id)+'/evidence?horizon='+(o.horizon_hours||1));const proof=await r.json();if(!r.ok)throw Error(proof.detail||'Доказательство недоступно');const box=el('details');box.open=true;box.append(el('summary',o.mint+' · '+(o.horizon_hours||1)+' ч'),el('pre',JSON.stringify(proof,null,2)));box.querySelector('pre').style.whiteSpace='pre-wrap';detail.replaceWith(box);}catch(e){detail.textContent=e.message;detail.disabled=false;}};return detail;};
+ async function render(){
+  const current=++ticket;active=true;document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n===nav));document.querySelector('#viewTitle').textContent='FOMO: снимки и цены';
+  try{
+   const r=await fetch('/api/fomo-evaluation',{cache:'no-store'});const d=await r.json();if(!r.ok)throw Error(d.detail||'Данные недоступны');if(!active||current!==ticket)return;
+   const section=el('section');section.id='fomoEvaluation';const update=el('button','Обновить');update.onclick=render;
+   section.append(el('h2','Накопление FOMO и будущие цены'),update,el('p','Обновлено: '+date(d.checked_at)+'. Автообновление раз в минуту.'));
+   if(d.token_check){const t=d.token_check,card=el('section');card.id='tokenMultisourceCheck';card.append(el('h3','Проверка токена: X + Telegram + блокчейн + Fomo'),el('p',t.mint),el('p','Сохранённый тест от '+date(t.checkedAt)+'; не непрерывный мониторинг этого CA.'),el('p',t.conclusion));
+    card.append(table(['Источник','В базе','В анализе'],[['X',t.sourceCounts.x.n,'Шаблонов исключено: '+t.selectedFacts['x.filteredTemplates']],['Telegram',t.sourceCounts.tg.n,'Шаблонов исключено: '+t.selectedFacts['tg.filteredTemplates']],['Fomo',t.sourceCounts.fomo.n??'недоступно','Только точный CA и сеть Solana'],['Блокчейн',t.sourceCounts.storedTrades.n+' записей / '+t.sourceCounts.storedTrades.wallets+' кошельков',t.chainAssessment?('Полная сводка '+t.chainAssessment.records+' записей / '+t.chainAssessment.wallets+' кошельков; '+t.chainAssessment.modelExampleCount+' примеров'):t.selectedFacts['chain.sampledStoredTradeRows']+' записей / '+t.selectedFacts['chain.sampledWallets']+' кошелька; полнота неизвестна']]));
+    card.append(el('p','Прокси '+t.collector.proxyHost+' · аккаунт '+t.collector.account+' · задача '+t.collector.taskId+': '+t.collector.status+'. API: HTTP '+t.httpStatus+'. Итог ИИ: '+(t.interpretation?.stance||'не установлен')));
+    card.append(table(['Сторона','Записей','Кошельков','Сумма SOL в сохранённых записях'],t.sides.map(r=>[r.type,r.n,r.wallets,num(r.stored_amount_sol)])),el('p','Суммы сделок не являются PNL. В отдельном журнале chain_wallet_trades записей по CA нет; полнота не подтверждена.'));
+    if(t.chainAssessment){const a=t.chainAssessment;card.append(el('h4','Общий ИИ: все сохранённые сделки'),el('p','Полная сводка: '+a.records+' сделок / '+a.wallets+' кошельков; модели передано '+a.modelExampleCount+' отдельных примеров. Анализ от '+date(t.fullChainAnalysisAt)),el('p','BUY '+a.buys+' / SELL '+a.sells+'; записанные суммы BUY '+num(a.buySol)+' SOL / SELL '+num(a.sellSol)+' SOL. Разница '+num(a.netRecordedBuySol)+' SOL — не PNL.'),el('p','Топ-5 кошельков: '+num(a.top5TurnoverPct)+'% записанного оборота. Общий владелец и накрутка из этого не следуют.'),...a.findingIds.map(id=>el('p',({stored_activity:'ИИ: сводка рассчитана по всему сохранённому набору, а не по последним 100 сделкам.',coverage_unknown:'ИИ: полнота истории за пределами сохранённого набора не подтверждена.',recorded_buy_excess:'ИИ: сумма записанных BUY превышает SELL на '+num(a.netRecordedBuySol)+' SOL; это не прогноз цены.',recorded_sell_excess:'ИИ: сумма записанных SELL превышает BUY на '+num(-a.netRecordedBuySol)+' SOL; это не прогноз цены.',short_observed_window:'ИИ: сохранённое окно составляет '+num((a.lastAt-a.firstAt)/3600)+' ч и ограничивает выводы.',turnover_concentration:'ИИ: на пять кошельков приходится не менее половины записанного оборота; связь владельцев не доказана.'})[id]||'Наблюдение недоступно')));const download=el('a','Скачать все '+a.records+' записи с проверкой SHA-256');download.href='/api/fomo-evaluation/token-chain-evidence';card.append(download,el('p','SHA-256: '+a.datasetHash));const wallets=el('details');wallets.append(el('summary','Пять кошельков с наибольшим записанным оборотом'),table(['Кошелёк','Сделок','BUY SOL','SELL SOL','Сигнатуры примеров'],a.topWallets.map(w=>[w.wallet,w.records,num(w.buySol),num(w.sellSol),w.signatures.join(' · ')])));card.append(wallets);}
+    if(t.walletRelations&&window.buildWalletRelationsPanel){const panel=await window.buildWalletRelationsPanel();if(!active||current!==ticket)return;card.append(panel);}
+    if(t.blockchainHeuristics&&!t.walletRelations){const h=t.blockchainHeuristics;card.append(el('h4','Проверка блокчейн-эвристик по всем сохранённым сделкам'),el('p',h.inputRows+' сделок · '+h.wallets+' кошельков · '+h.similarBuyGroups+' групп похожих покупок · '+h.rapidRoundTripWallets+' кошельков с быстрыми циклами · '+h.temporalEdges+' совпадений времени между парами кошельков'),el('p',h.caveat));const hproof=el('details');hproof.append(el('summary','Примеры групп, циклов и исходные сигнатуры'),el('pre',JSON.stringify({groups:h.groupExamples,cycles:h.rapidExamples},null,2)));card.append(hproof);}
+    const proof=el('details');proof.append(el('summary','Исключённые сообщения и примеры транзакций'));for(const e of t.excludedEvidence)proof.append(el('p',e.source+' · '+e.id),el('pre',e.text));for(const tx of t.transactionExamples){const link=el('a',tx.signature);link.href='https://solscan.io/tx/'+encodeURIComponent(tx.signature);link.target='_blank';link.rel='noopener noreferrer';proof.append(link,el('p',tx.type+' · '+date(tx.timestamp*1000)+' · '+num(tx.amount_sol)+' SOL'));}card.append(proof);section.append(card);}
+   const s=d.summary;section.append(el('p',`Снимков: ${s.snapshots} · токенов: ${s.tokens} · за час: +${s.added_hour} · за 15 минут: +${s.added_15m}`));
+   section.append(el('p','Последний снимок: '+date(s.latest_at)+'. Сборщик: '+(d.worker_stale?'нет свежего подтверждения работы':'работает')+'. Следующий цикл: '+date(d.worker?.next_capture_at)));
+   section.append(el('p','Это оценка внимания по доступной выборке, не прогноз цены. Повторные снимки одного токена зависимы. Доходность без комиссий и проскальзывания; пропуски свечей не заменяются нулём.'));
+   section.append(el('p','Свежих X-постов за сутки: '+(d.sources.xPosts24h??'неизвестно')+'. Telegram в выборке за сутки: '+(d.sources.tgPosts24hSampled??'неизвестно')+'. Покрытие компонентов Quality в таблицах нужно учитывать отдельно от самого балла.'));
+   section.append(table(['Горизонт','Сопоставлено','Токенов','Ещё не созрело'],d.horizons.map(h=>[h.horizon_hours+' ч',h.labelled,h.tokens,h.immature])));
+   if(d.analysis){
+    const a=d.analysis,box=el('section');box.id='fomoScoreAnalysis';box.append(el('h3','Есть ли связь FOMO с ростом цены?'),el('p','Положительная предсказательная связь пока не установлена. Первые '+a.all.n+' результатов: '+a.all.tokens+' токенов; всего уже доступно '+a.available+'. Горизонт — 1 час, одна версия баллов и источник USD.'));
+    for(const text of a.conclusions)box.append(el('p',text));
+    box.append(table(['Выборка','Наблюдений','Токенов','ρ Pressure','ρ Quality','Средняя доходность','Медианная','Рост, %'],[
+     ['Первые 40, все снимки',a.all],['Первые 40, ранний доступный снимок каждого токена',a.one_per_token],['Расширение: все доступные (до 5000)',a.current.all],['Расширение: по одному на токен',a.current.one_per_token]
+    ].map(([name,r])=>[name,r.n,r.tokens,num(r.pressure_rho),num(r.quality_rho),num(r.mean_return)+'%',num(r.median_return)+'%',num(r.positive_pct)+'%'])));
+    box.append(el('p','ρ — ранговая корреляция Спирмена с усреднением совпадающих рангов. Прочерк означает недостаточно данных или постоянный балл. Ни одна строка не является оценкой вероятности будущей сделки.'));
+    if(a.pressure_range)box.append(el('p','Pressure в первых 40: '+num(a.pressure_range[0])+'–'+num(a.pressure_range[1])+'. '+(a.pressure_range[1]<70?'Высокие значения ≥70 здесь вообще не проверены.':'')));
+    if(a.coverage_range)box.append(el('p','Покрытие Quality: '+num(a.coverage_range[0]*100)+'–'+num(a.coverage_range[1]*100)+'%. Уровни балла: '+a.quality_levels.map(num).join(', ')+'. Снимков без X-постов: '+a.zero_x_rows+'/'+a.all.n+'.'));
+    box.append(el('h4','Если исключать по одному токену'),table(['Баллы','Минимальная ρ','Максимальная ρ'],['pressure','quality'].map(k=>[k,num(a.leave_one_token_out[k].min),num(a.leave_one_token_out[k].max)])));
+    box.append(el('h4','Описательные группы первых 40'),table(['Группа','Снимков','Токенов','Средняя доходность','Медиана','Рост, %'],a.bins.map(b=>[b.name,b.n,b.tokens,num(b.mean_return)+'%',num(b.median_return)+'%',num(b.positive_pct)+'%'])));
+    box.append(el('h4','Одинаковые баллы одного токена — разные ценовые результаты'));
+    for(const example of a.examples){const card=el('article');card.append(el('p',example.mint+' · Pressure '+num(example.negative.pressure)+' · Quality '+num(example.negative.quality)),table(['Время снимка','Доходность за час','Просадка OHLC','Доказательство'],[example.negative,example.positive].map(r=>[date(r.signal_at),num(r.return_pct)+'%',num(r.drawdown_pct)+'%',proofButton(r)])));box.append(card);}
+    const representative=el('details');representative.append(el('summary','Какие ранние снимки выбраны по одному на токен'),table(['Токен','Время','Pressure','Quality','Доходность','Доказательство'],a.token_representatives.map(r=>[r.mint,date(r.signal_at),num(r.pressure),num(r.quality),num(r.return_pct)+'%',proofButton(r)])));box.append(representative);
+    if(a.truncated||a.invalid_rows)box.append(el('p','Ограничение анализа: обрезана выборка='+a.truncated+'; строк с некорректными числами исключено: '+a.invalid_rows));
+    section.append(box);
+   }
+   section.append(el('h3','Первые результаты: последние 50'),table(['Токен','Снимок','Горизонт','Pressure','Quality / покрытие','Доходность','Просадка OHLC','Доказательства'],d.outcomes.map(o=>{
+    const detail=proofButton(o);
+    return [o.mint,date(o.signal_at),o.horizon_hours+' ч',num(o.fomo_pressure),num(o.fomo_quality)+' / '+num(o.quality_coverage*100)+'%',num(o.forwardReturnPct)+'%',num(o.maxDrawdownPct)+'%',detail];
+   })));
+   if(!d.outcomes.length)section.append(el('p','Готовых результатов пока нет. Требуются созревший горизонт и непрерывные реальные USD-свечи.'));
+   section.append(el('h3','Ожидание и причины пропусков'),table(['Горизонт','Статус','Причина','Количество'],d.reasons.map(r=>[r.horizon_hours+' ч',r.status,r.reason,r.n])));
+   section.append(el('h3','Последние 50 снимков'),table(['Токен','Время','Pressure','Quality','Покрытие Quality','X','Telegram'],d.snapshots.map(s=>[s.mint,date(s.signal_at),num(s.fomo_pressure),num(s.fomo_quality),num(s.quality_coverage*100)+'%',s.x_sample_count,s.tg_sample_count])));
+   content.replaceChildren(section);
+  }catch(e){if(active&&current===ticket)content.replaceChildren(el('p',e.message));}
+ }
+ nav.onclick=()=>{history.replaceState(null,'','#fomo-evaluation');render();};
+ setInterval(()=>{if(active&&!document.hidden&&!content.querySelector('details[open]')){const y=window.scrollY;render().then(()=>window.scrollTo(0,y));}},60000);
+ if(location.hash==='#fomo-evaluation'){
+  // Wait for the initial overview to finish so its response cannot replace us.
+  const open=()=>{if(!content.querySelector('.cards'))return false;setTimeout(()=>nav.click(),0);return true;};
+  if(!open()){const observer=new MutationObserver(()=>{if(open())observer.disconnect();});observer.observe(content,{childList:true,subtree:true});}
+ }
+})();

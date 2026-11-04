@@ -10,6 +10,7 @@ import {
 import type { FomoSnapshotRecord } from "./fomo-snapshot-store";
 
 export const FOMO_SCORE_VERSION = "fomo-pressure-quality-v1";
+export const FOMO_LOCAL_SCORE_VERSION = "fomo-pressure-quality-local-pg-v1";
 export const FOMO_CAPTURE_BUCKET_MS = 15 * 60_000;
 
 // Capture uses a fixed configuration so scores remain comparable across UI sessions.
@@ -81,8 +82,13 @@ export function buildFomoSnapshotRecord(args: {
   x: unknown;
   tg: unknown;
   signalAt: number;
+  source?: "local_collector_db";
+  provenance?: Record<string, unknown>;
 }): FomoSnapshotRecord {
   const { mint, signalAt } = args;
+  const local = args.source === "local_collector_db";
+  const scoreVersion = local ? FOMO_LOCAL_SCORE_VERSION : FOMO_SCORE_VERSION;
+  const options = local ? { ...FOMO_CAPTURE_OPTIONS, xExcludeSuspicious: false } : FOMO_CAPTURE_OPTIONS;
   if (typeof mint !== "string" || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)) {
     throw new TypeError("invalid_mint");
   }
@@ -92,6 +98,7 @@ export function buildFomoSnapshotRecord(args: {
 
   const x = args.x as TwitterCapturePayload;
   const tg = args.tg as TelegramCapturePayload;
+  if (local && x?.riskClassificationAvailable !== false) throw new TypeError("local_risk_coverage_required");
   if (
     !x || typeof x !== "object" || !Array.isArray(x.topTweets)
     || !x.aggregated || typeof x.aggregated !== "object"
@@ -120,7 +127,7 @@ export function buildFomoSnapshotRecord(args: {
     null,
     null,
     [],
-    FOMO_CAPTURE_OPTIONS,
+    options,
     signalAt,
   );
   if (
@@ -158,9 +165,14 @@ export function buildFomoSnapshotRecord(args: {
   const xInputSha256 = sha256(stableStringify(x));
   const tgInputSha256 = sha256(stableStringify(tg));
   const captureConfig = {
-    scoreVersion: FOMO_SCORE_VERSION,
-    options: FOMO_CAPTURE_OPTIONS,
+    scoreVersion,
+    options,
     sourceCoveragePolicy: "bounded_sample_is_partial",
+    ...(local ? {
+      source: "local_collector_db",
+      matchPolicy: "exact_mint_24h",
+      riskPolicy: "unclassified_bot_risk_neutral_50_quality_risk_components_omitted",
+    } : {}),
   };
   const inputSha256 = sha256(stableStringify({
     mint,
@@ -169,6 +181,7 @@ export function buildFomoSnapshotRecord(args: {
     tgInputSha256,
   }));
   const sourceMeta = {
+    ...(local ? { provenance: args.provenance ?? {}, riskClassificationAvailable: false } : {}),
     xLastUpdatedAt,
     xResponseCached: Boolean(x.performance?.cached),
     xSampleCount,
@@ -190,7 +203,7 @@ export function buildFomoSnapshotRecord(args: {
     signalAt,
     maxInputObservedAt: Math.max(xObservedAt, tgObservedAt),
     bucketStartAt: fomoCaptureBucketStart(signalAt),
-    scoreVersion: FOMO_SCORE_VERSION,
+    scoreVersion,
     fomoPressure: derived.fomoPressure,
     fomoQuality: derived.fomoQuality,
     qualityCoverage: derived.fomoQualityCoverage,

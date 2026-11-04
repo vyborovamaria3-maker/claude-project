@@ -134,7 +134,7 @@ export function detectBundles(
   const amountTolerance = opts.amountTolerance ?? 0.05; // ±5%
   const minWallets = opts.minWallets ?? 2;
 
-  const buys = trades.filter((t) => t.type === "buy").sort((a, b) => a.timestamp - b.timestamp);
+  const buys = trades.filter((t) => t.type === "buy" && Number.isFinite(t.amountSol) && t.amountSol > 0).sort((a, b) => a.timestamp - b.timestamp);
   const assigned = new Set<string>(); // signatures already in a bundle
   const bundles: BundleAssignment[] = [];
   const walletBundleId = new Map<string, string>();
