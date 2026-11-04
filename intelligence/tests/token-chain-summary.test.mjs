@@ -12,3 +12,11 @@ test('provider receives all-row summary, not the archive; persistence retains ar
 
 import{projectChainAssessment}from'../../solana-launcher/lib/token-intelligence/chain-summary-contract.mjs';
 test('client rejects fabricated totals, false coverage and unsupported findings',()=>{const{db,now}=fixture();try{const s={...collectStoredChain(db,mint,now).summary,modelExampleCount:20,findingIds:['stored_activity','coverage_unknown']};assert.equal(projectChainAssessment(s,'solana:'+mint).records,1002);assert.throws(()=>projectChainAssessment({...s,records:1003},s.tokenId));assert.throws(()=>projectChainAssessment({...s,coverage:'complete'},s.tokenId));assert.throws(()=>projectChainAssessment({...s,findingIds:[...s.findingIds,'guaranteed_profit']},s.tokenId));assert.equal(projectChainAssessment({...s,chainEvidenceArchive:['private']},s.tokenId).chainEvidenceArchive,undefined);}finally{db.close()}});
+
+ test('legacy stored trade schema preserves missing optional price and slot as null',()=>{
+ const db=new Database(':memory:');try{
+ db.exec('CREATE TABLE token_trades(mint TEXT,signature TEXT,timestamp INTEGER,trader TEXT,type TEXT,amount_sol REAL,amount_tokens REAL,inserted_at INTEGER)');
+ db.prepare('INSERT INTO token_trades VALUES(?,?,?,?,?,?,?,?)').run(mint,'legacy',10,wallet,'buy',2,100,10000);
+ const result=collectStoredChain(db,mint,20000);assert.equal(result.summary.records,1);assert.equal(result.summary.buySol,2);assert.deepEqual(result.archive[0].slice(6,8),[null,null]);assert.equal(result.summary.datasetHash,chainArchiveHash(mint,result.archive));
+ }finally{db.close()}
+ });

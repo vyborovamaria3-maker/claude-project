@@ -2,7 +2,11 @@ import {createHash} from 'node:crypto';
 export const CHAIN_AGGREGATE_VERSION='stored-chain-v1';
 export function collectStoredChain(chain,mint,ms){
  const read=()=>{
-  const statement=chain.prepare(`SELECT signature,timestamp,trader,type,amount_sol,amount_tokens,price_sol,slot,inserted_at
+  // Earlier collectors did not store optional price/slot fields. Preserve their
+  // original stored input as null rather than requiring a write migration.
+  const columns=new Set(chain.prepare('PRAGMA table_info(token_trades)').all().map(c=>c.name));
+  const optional=name=>columns.has(name)?name:`NULL AS ${name}`;
+  const statement=chain.prepare(`SELECT signature,timestamp,trader,type,amount_sol,amount_tokens,${optional('price_sol')},${optional('slot')},inserted_at
    FROM token_trades WHERE mint=? AND timestamp<=? AND inserted_at<=? ORDER BY timestamp DESC,signature`);
   const records=statement.iterate?statement.iterate(mint,Math.floor(ms/1000),ms):statement.all(mint,Math.floor(ms/1000),ms);
   const archive=[],sample=[],wallets=new Map(),digest=createHash('sha256');
