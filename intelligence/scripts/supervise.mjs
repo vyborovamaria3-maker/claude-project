@@ -8,6 +8,9 @@ import {
 } from "./etl-connections.mjs";
 import { runSourceLoop } from "./supervisor-core.mjs";
 import { createAiRuntime } from "./ai-runtime.mjs";
+import { readOutboxHealth, healthAlerts } from "./outbox-health.mjs";
+
+const HEALTH_INTERVAL_MS = 30_000;
 
 /**
  * Foreground-only, laptop-local ETL process. Nothing runs unless explicitly
@@ -108,6 +111,7 @@ async function main(){
     report({kind:"startup",sources:options.sources,mode:"foreground",
       perSourceClaimLimit:1,leaseMs:options.leaseMs});
     const executions=sources.map(async({name,connection,workerId})=>{
+      let lastHealthAt=0;
       try{
         return await runSourceLoop({
           source:name,signal:stop.signal,pollMs:options.pollMs,
@@ -115,6 +119,17 @@ async function main(){
           maxBatches:options.maxBatches,onReport:report,
           runBatch:async()=>{
             const stats=await runDeliveryBatch(connection.port,destination,{workerId,batchSize:1,leaseMs:options.leaseMs});
+            const healthNow=Date.now();
+            if(healthNow-lastHealthAt>=HEALTH_INTERVAL_MS||stats.failed>0||stats.lostLeases>0){
+              lastHealthAt=healthNow;
+              try{
+                const health=await readOutboxHealth(connection);
+                report({kind:"health",source:name,...health});
+                for(const alert of healthAlerts(health))report({kind:"health_alert",source:name,...alert});
+              }catch{
+                report({kind:"health",source:name,code:"health_snapshot_failed"});
+              }
+            }
             if(ai&&name!=='blockchain'&&!stop.signal.aborted)try{report({kind:"ai",source:name,...(await ai.run(name,stop.signal))});}
             catch{report({kind:"ai",source:name,code:"ai_batch_failed"});}
             return stats;
