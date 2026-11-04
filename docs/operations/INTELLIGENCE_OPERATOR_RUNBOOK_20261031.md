@@ -27,18 +27,17 @@ fixtures or a runbook as evidence of a live service.
   browser or MTProto sessions, call Solana RPC, or publish to external accounts.
 - The bounded CLI modes remain available: `run.mjs --status` is read-only;
   `run.mjs --once` performs a finite explicitly gated batch.
-- PR [#206](https://github.com/vyborovamaria3-maker/claude-project/pull/206)
-  adds read-only queue health snapshots and structured stdout alert records,
-  but remains open and unmerged in this snapshot. Do not assume those metrics
-  exist on `main` until the PR is reviewed and merged.
+- Draft PR [#215](https://github.com/vyborovamaria3-maker/claude-project/pull/215)
+  adds read-only source outbox health snapshots and conservative stdout warning
+  records. It is not merged; these changes do not yet exist on `main`.
 - PR [#213](https://github.com/vyborovamaria3-maker/claude-project/pull/213)
   is a Draft stacked on #206. It adds an optional bounded HTTPS webhook adapter
   for allowlisted alert transitions, but no endpoint/token is configured, the
   adapter is not in `main`, and its in-memory queue is not durable.
-- Draft PR [#212](https://github.com/vyborovamaria3-maker/claude-project/pull/212)
-  consolidates the four-artifact recovery bundle and mocked source-producer →
-  Intelligence consumer tests. Its CI is synthetic evidence only; no live
-  backup, source connection, RPC or production delivery has been performed.
+- Draft PR [#215](https://github.com/vyborovamaria3-maker/claude-project/pull/215)
+  integrates the recovery bundle, role-aware restore and mocked source-producer →
+  Intelligence consumer tests on current `main`. Its CI is synthetic evidence
+  only; no live backup, source connection, RPC or production delivery has been performed.
 - The current Prometheus configuration scrapes the main backend at
   `backend:8000/metrics`. It does not scrape the Intelligence supervisor and
   no Alertmanager or external Intelligence alert sink is configured.
@@ -176,12 +175,13 @@ have been approved.
 ## 5. Monitoring, alert delivery and DLQ
 
 The current main Prometheus scrape target is the application backend only.
-PR #206 proposes structured stdout health/alert records; Draft #213 adds an
-optional HTTPS webhook adapter on top of that work. Neither PR is merged, and
-no endpoint, token, receiver or delivery history is configured. The webhook
-adapter's queue is bounded but in-memory; it does not provide durable alert
-history across process restarts. Therefore no external Intelligence alert
-delivery is currently verified.
+Draft PR #215 adds read-only source outbox health snapshots every 30 seconds and
+structured stdout warning records for any dead-letter item, oldest pending age
+of at least 15 minutes, or at least five retrying events. The snapshots include
+pending/ready/leased counts, retry attempts, oldest pending age and last progress.
+They are local logs, not Prometheus metrics or external notifications. No
+Alertmanager, webhook receiver, endpoint, token or durable alert history is
+configured; external Intelligence alert delivery is NOT VERIFIED.
 
 Before a production process can be enabled, an operator must:
 
@@ -240,10 +240,10 @@ time and data coverage.
 | Gate | Current status |
 | --- | --- |
 | Main source/destination supervisor | Foreground local code exists; production operation NOT RUN |
-| PR #206 queue health metrics | Open / unmerged |
-| PR #212 combined recovery / producer integration | Draft; disposable CI only |
+| PR #215 source outbox health snapshots / stdout alerts | Draft; fresh CI in progress; not on main |
+| PR #215 combined recovery / producer integration | Draft; disposable CI only |
 | PR #213 optional alert webhook adapter | Draft / unmerged; endpoint not configured |
-| Main branch protection | NOT CONFIGURED; issue #170 open |
+| Main branch protection | NOT VERIFIED by connected integration (403); administrator must confirm; issue #170 open |
 | PostgreSQL runtime least-privilege roles | NOT VERIFIED; Compose POSTGRES_USER matches application DSNs |
 | Separate PostgreSQL backup role | NOT CONFIGURED |
 | External Intelligence alert sink | NOT CONFIGURED |
