@@ -15,6 +15,17 @@ export function requiredEnv(name,env=process.env) {
   return value;
 }
 
+export function postgresSourcePoolOptions(source,write,env=process.env){
+  if(!["x","tg"].includes(source)||typeof write!=="boolean")throw new Error("invalid PostgreSQL source connection mode");
+  return {
+    connectionString:requiredEnv(source==="x"?"X_SOURCE_DATABASE_URL":"TG_SOURCE_DATABASE_URL",env),
+    max:2,connectionTimeoutMillis:5000,
+    query_timeout:30_000,statement_timeout:30_000,
+    application_name:write?"potapoff-intelligence-source-writer":"potapoff-intelligence-source-reader",
+    ...(write?{}:{options:"-c default_transaction_read_only=on"}),
+  };
+}
+
 export function sourceConnection(source,write) {
   if(source==="blockchain"){
     const filename=requiredEnv("SOLANA_TRADE_DB_PATH");
@@ -35,11 +46,7 @@ export function sourceConnection(source,write) {
     }catch(error){db.close();throw error;}
   }
   if(!["x","tg"].includes(source))throw new Error("unknown source");
-  const url=requiredEnv(source==="x"?"X_SOURCE_DATABASE_URL":"TG_SOURCE_DATABASE_URL");
-  const pool=new pg.Pool({
-    connectionString:url,max:2,connectionTimeoutMillis:5000,
-    query_timeout:30_000,statement_timeout:30_000,
-  });
+  const pool=new pg.Pool(postgresSourcePoolOptions(source,write));
   return {
     kind:"pg",connection:pool,
     close:async()=>pool.end(),
