@@ -49,7 +49,7 @@ test('explicit token POST joins independent source stores, grounds/persists, cac
  await x.query('INSERT INTO twitter_tweets VALUES($1,$2,$3,$3)',['9','I would not buy '+mint,ms]);
  await tg.query("INSERT INTO tg_sources VALUES(1,'123')");
  await tg.query('INSERT INTO tg_messages VALUES(1,1,$1,$3,$3,NULL,NULL),(1,2,$2,$4,$4,NULL,NULL),(1,3,$5,$4,$4,NULL,NULL)', ['Still holding well','I feared a rug, but it held '+mint,new Date(ms-1000),new Date(ms),'Gamble Found! MC: 15K '+mint]);
- chain.prepare('INSERT INTO token_trades VALUES(?,?,?,?,?,?,?,?)').run(mint,'sample-signature',Math.floor(ms/1000),'sample-wallet','buy',2,100,ms);
+ chain.prepare('INSERT INTO token_trades VALUES(?,?,?,?,?,?,?,?)').run(mint,'1'.repeat(88),Math.floor(ms/1000),mint,'buy',2,100,ms);
  const sources={x,tg,chain};let calls=0;
  const gateway=createAiGateway({defaultProviderId:'test',providers:[{id:'test',baseUrl:'https://token.example.test/v1',apiKey:'test-only',chatModel:'test'}],maxAttempts:1,fetchImpl:async(_url,init)=>{
   calls++;const request=JSON.parse(init.body),supplied=JSON.parse(request.messages[1].content);
@@ -64,7 +64,7 @@ test('explicit token POST joins independent source stores, grounds/persists, cac
  assert.equal(calls,0);assert.equal((await fetch(base,{method:'POST'})).status,401);assert.equal(calls,0);
  assert.equal((await fetch(base,{headers:{Authorization:'Bearer '+auth}})).status,404);assert.equal(calls,0);
  assert.equal((await fetch(base,{method:'POST',body:'{}',headers:{Authorization:'Bearer '+auth}})).status,400);
- const headers={Authorization:'Bearer '+auth};const first=await(await fetch(base,{method:'POST',headers})).json();assert.equal(first.status,'analyzed');assert.equal(first.cached,false);assert.equal(calls,1);
+ const headers={Authorization:'Bearer '+auth};const first=await(await fetch(base,{method:'POST',headers})).json();assert.equal(first.status,'analyzed');assert.equal(first.cached,false);assert.equal(calls,1);assert.equal(first.chainAssessment.records,1);assert.equal(Object.hasOwn(first,'chainEvidenceArchive'),false);
  const second=await(await fetch(base,{method:'POST',headers})).json();assert.equal(second.cached,true);assert.equal(calls,1);
  assert.equal(JSON.stringify(first).includes('I feared'),false);assert.equal(first.grounding.selectedFactsVerified,true);
  const saved=(await destination.query('SELECT report FROM token_ai_requests')).rows;assert.equal(saved.length,1);assert.equal(saved[0].report.provider.inputTokens,100);
