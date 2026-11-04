@@ -231,3 +231,34 @@ Code-bearing integration HEAD: `817598fc37b50bfec87abfc6ec15dda3d346aa96` (PR #2
 | Production role cutover / supervisor deployment | **NOT RUN** | No production server or database changed | Named owner, process manager, live grants and external alert endpoint, issue #174 |
 
 PR #210's three-source recovery acceptance test is integrated into #212 at merge commit `d9f9ed5fb12a0dfa36414e14bb26a4c17ef91499`. PR #212 remains Draft and must not be merged or deployed until independent review and the operator-owned P0 gates above are satisfied. No production database, source outbox, credentials, live collector, backup host or GitHub branch-protection setting was modified during this work.
+
+## Current gate status — 2026-11-05
+
+This section supersedes the older PR #212 status below for current repository state. Historical evidence above is retained.
+
+- Current `main` at integration start: `d7fc77235fa3134e764349c77010fad336b73c5b`.
+- PR #212 is CLOSED / UNMERGED / SUPERSEDED. Its selected code and documentation were reapplied onto current main in [PR #215](https://github.com/vyborovamaria3-maker/claude-project/pull/215), branch `codex/architecture-hardening-20261105`.
+- PR #215 is OPEN / DRAFT. At the pre-documentation head `f4d436fd3d7427a0cd2fec65bd402cda6d7f6f59`, it was 10 commits ahead, 0 behind, with 112 changed paths. The status-documentation update itself creates a new head; refresh checks before release.
+- Exact-head CI at that snapshot had 45 check runs: 42 QUEUED, 2 IN_PROGRESS, 1 SKIPPED, 0 FAILURE. CI was incomplete; no green release verdict is claimed.
+- PR #215 adds a local source outbox health snapshot and stdout warning records. It does not add Prometheus scraping, Alertmanager, an external alert receiver, durable notification history or a process manager.
+- The central recovery code in PR #215 covers Product PostgreSQL, Admin PostgreSQL, Launcher `trade.db` and Python Intelligence SQLite. X PostgreSQL, TG PostgreSQL, Node Intelligence PostgreSQL, Memecoin, SolSub, MiniApp, Redis and RabbitMQ remain outside that central bundle and require separately owned backup/restore procedures.
+- The Admin preprovisioned schema gate is opt-in. Compose still uses the bootstrap `POSTGRES_USER` identity for the application DSN; no production least-privilege role cutover has been performed.
+- The off-host wrapper requires an operator-provided independently verified encrypted source and explicitly does not verify encryption provenance. No actual off-host copy, production restore, credential recovery or RPO/RTO measurement was performed.
+
+### Gate A — current administrator action
+
+The last successful branch-protection read (2026-11-03) reported `protected:false` and an empty ruleset list. The latest connected-integration request to `/branches/main/protection` returned 403, so the current live state cannot be reverified. No settings were changed.
+
+A repository administrator must create/verify an active ruleset targeting exactly `main`, require PRs, at least one independent approval, dismissal of stale approvals, resolved conversations, prohibit force-push/deletion, and select only checks that reliably run for the applicable path scopes. The existing `Repository hygiene / hygiene` check is an always-triggered candidate; path-filtered predeploy/PG17 checks must not be made universal required checks unless a fail-closed aggregator or path-aware policy guarantees they run for every relevant PR. Evidence must include the active ruleset ID, target, bypass actors, exact contexts, a failing disposable PR blocked from merging, a green PR flow, and a fresh effective-protection read.
+
+### Gate B — current operator action
+
+The source-level restore rehearsal is synthetic. Before closing #172, an operator must identify every physical DB/volume and its owner, backup identity, encrypted off-host location, retention, independent manifest digest and key custodian; stage a private copy on an isolated host; run the exact reviewed wrapper; restore all stores and app state; test runtime credentials; and record measured end-to-end RPO/RTO with independent reviewer sign-off.
+
+### Other open operator gates
+
+- #173: synthetic X/TG/Blockchain producer-to-Intelligence tests are present; live verified mint, retraction, ACK/replay and complete coverage are not established.
+- #174: foreground supervisor and local health warnings exist in PR #215; process manager, external alert sink, durable alert history and reviewed DLQ requeue remain unconfigured.
+- #175: no live X account, Telegram session, Solana RPC or publishing action was used. Dedicated test identities, permitted source scope, capped provider budget and explicit approval remain required.
+
+**Decision: HOLD.** Do not merge, deploy, migrate production databases, rotate credentials, demote bootstrap roles, or claim live recovery until the required CI, independent review and operator gates above are complete.
