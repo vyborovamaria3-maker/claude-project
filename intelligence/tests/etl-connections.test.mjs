@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { postgresSourcePoolOptions } from "../scripts/etl-connections.mjs";
 
-test("status and fingerprint-backfill source sessions are database-enforced read-only",()=>{
+test("status and fingerprint-backfill source sessions default to PostgreSQL read-only transaction mode",()=>{
   const options=postgresSourcePoolOptions("x",false,{X_SOURCE_DATABASE_URL:"postgres://example/source"});
   assert.equal(options.connectionString,"postgres://example/source");
   assert.equal(options.application_name,"potapoff-intelligence-source-reader");
