@@ -7,6 +7,7 @@ import type { WalletTokenHistory } from "./chain/types";
 import type { ChainQualityHistoryPoint } from "./chain/quality";
 import type { PersistedClusterHistory, TemporalSignalSnapshot, WalletClusterPersistence } from "./chain/quality-v3";
 import type { RecurringDevWalletInput } from "./dev-history";
+import { ensureFomoSnapshotSchema } from "./fomo-snapshot-schema";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -553,6 +554,7 @@ function init(db: Database.Database) {
       );
     }
   }
+  ensureFomoSnapshotSchema(db);
 }
 
 export function getDb(): Database.Database {

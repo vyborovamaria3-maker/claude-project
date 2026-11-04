@@ -21,6 +21,8 @@ from .postgres_pool import build_postgres_pool
 from .postgres_security_store import PostgresAdminSessionStore
 from .postgres_task_queue import PostgresTaskQueue
 from .x_collector_admin import build_x_collector_router
+from .fomo_evaluation import build_fomo_evaluation_router
+from .author_outcomes import build_author_outcomes_router
 from .subscription_admin import build_subscription_admin_router
 from . import security_v2
 from .services import TELEGRAM_TABLES
@@ -187,6 +189,8 @@ def create_app() -> FastAPI:
     app.include_router(build_intelligence_router())
     app.include_router(build_subscription_admin_router())
     app.include_router(build_x_collector_router())
+    app.include_router(build_fomo_evaluation_router())
+    app.include_router(build_author_outcomes_router())
     app.include_router(build_integration_router())
     app.include_router(build_twitter_monitoring_router())
     if shared_security is None:

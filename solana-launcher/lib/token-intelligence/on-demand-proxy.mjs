@@ -1,3 +1,5 @@
+import {readTokenCampaigns} from '../trade/token-campaigns.mjs';
+import {projectChainAssessment,chainSummaryLines} from './chain-summary-contract.mjs';
 import {assertMintShape,validateProxyConfiguration,SafeProxyError} from './proxy-core.mjs';
 const VERSION='token-request-v1';
 const COUNT_LIMITS={'x.sampledMessages':4,'tg.sampledMessages':4,'tg.filteredTemplates':96,
@@ -24,6 +26,8 @@ export function projectTokenAnalysis(report,tokenId){
  for(const [key,max] of Object.entries(COUNT_LIMITS)){
   const value=input[key];if(!Number.isSafeInteger(value)||value<0||value>max)invalid();facts[key]=value;
  }
+ for(const key of ['chain.totalStoredTradeRows','chain.totalStoredWallets']){if(input[key]!==undefined){if(!Number.isSafeInteger(input[key])||input[key]<0||input[key]>100000)invalid();facts[key]=input[key];}}
+ for(const key of ['campaign.groups','campaign.recurringPairs','campaign.afterPriorJump','campaign.thinQuotes']){if(input[key]!==undefined){if(!Number.isSafeInteger(input[key])||input[key]<0||input[key]>100000)invalid();facts[key]=input[key];}}
  for(const key of ['x.filteredTemplates','x.duplicateMessages']){
   const value=input[key]===undefined?0:input[key];
   if(!Number.isSafeInteger(value)||value<0||value>96)invalid();facts[key]=value;
@@ -121,7 +125,9 @@ export function projectTokenAnalysis(report,tokenId){
  const grounding=object(report.grounding);
  if(grounding.version!==VERSION||grounding.selectedFactsVerified!==true||
   grounding.stance!=='model-classification-not-fact'||grounding.coverage!=='unknown')invalid();
- return {version:VERSION,tokenId,asOf,status:report.status,cached:report.cached===true,facts,summary,
+ let chainAssessment;try{if(report.chainAssessment!==undefined)chainAssessment=projectChainAssessment(report.chainAssessment,tokenId);}catch{invalid();}
+ if(facts['chain.totalStoredTradeRows']!==undefined&&(!chainAssessment||facts['chain.totalStoredTradeRows']!==chainAssessment.records||facts['chain.totalStoredWallets']!==chainAssessment.wallets))invalid();
+ return {version:VERSION,tokenId,asOf,status:report.status,cached:report.cached===true,facts,summary,...(chainAssessment?{chainAssessment}:{}),
   interpretation,sourceStatus,evidence,grounding:{version:VERSION,selectedFactsVerified:true,
    stance:'model-classification-not-fact',coverage:'unknown'}};
 }
@@ -153,7 +159,7 @@ export function tokenSummary(report){
  const unseenMedia=(report.evidence??[]).filter(row=>row.hasUnseenMedia===true).map(row=>`${row.evidenceRef}: содержимое медиа не передано текстовой модели.`);
  const contextUse={used:'модель заявила использование контекста',not_needed:'по оценке модели контекст не нужен',insufficient:'контекста недостаточно',unavailable:'нужный контекст недоступен'};
  const viewTone={bullish:'позитивный',bearish:'негативный',neutral:'без направления',unknown:'направление не установлено'},viewReading={literal:'буквально',ironic:'ирония / сарказм',negated:'с учётом отрицания',conditional:'условный сценарий',unclear:'смысл неясен'},viewTarget={token:'о запрошенном токене',other:'о другом объекте',unclear:'цель неясна'};
- return [stance,`Выборка: Telegram — ${report.facts['tg.sampledMessages']??0}, Twitter — ${report.facts['x.sampledMessages']??0}; сохранённых записей сделок — ${report.facts['chain.sampledStoredTradeRows']??0}.`,
+ return [stance,`Выборка: Telegram — ${report.facts['tg.sampledMessages']??0}, Twitter — ${report.facts['x.sampledMessages']??0}; сохранённых записей сделок — ${report.chainAssessment?.records??report.facts['chain.sampledStoredTradeRows']??0}.`,
   ...(report.interpretation?.directionGuardApplied?['Позитивная оценка модели снята консервативной проверкой: в исходном тексте есть прямое предупреждение о serial rugger. Это не подтверждение обвинения.']:[]),
   ...(report.interpretation?.messageViews?['Разбор каждого сообщения ИИ (интерпретация):',...report.interpretation.messageViews.map(view=>`${view.evidenceRef}: ${viewTarget[view.target]}; ${viewReading[view.reading]}; ${viewTone[view.stance]}${view.contextUse?'; '+contextUse[view.contextUse]:''}${view.contextRefs.length?'; учтён контекст '+view.contextRefs.join(', '):''}.`),'Общий итог учитывает противоречия между этими оценками, а не число позитивных постов.']:[]),
   ...twitterContext,
@@ -163,8 +169,9 @@ export function tokenSummary(report){
   ...((report.facts['tg.filteredTemplates']??0)+(report.facts['x.filteredTemplates']??0)+(report.facts['x.duplicateMessages']??0)>0?
    [`Исключено: рекламных и шаблонных сообщений Telegram — ${report.facts['tg.filteredTemplates']??0}, Twitter — ${report.facts['x.filteredTemplates']??0}; повторов Twitter — ${report.facts['x.duplicateMessages']??0}.`]:[]),
   ...(report.status==='no_evidence'?['После фильтрации данных для анализа не осталось. ИИ не вызывался.']:[]),
+  ...(report.chainAssessment?chainSummaryLines(report.chainAssessment):[]),
   'Оценка относится к тону сообщений; это не торговый сигнал.',
-  'В ограниченной выборке сохраняются предупреждения; соотношение мнений по всем сообщениям не оценивалось.',
+  ...(report.evidence?.length?['Соотношение мнений по всем сообщениям не оценивалось.']:['Текстовых доказательств после фильтрации нет; настроение рынка не оценивалось.']),
   'Покрытие источников неполное; записи сделок сами по себе не подтверждают прибыльность.'].join('\n');
 }
 /** Server-side only. User auth/rate limiting is required before this call. */
@@ -177,10 +184,11 @@ export async function requestTokenAnalysis(mint,{env=process.env,fetchImpl=fetch
   let report;
   try{report=projectTokenAnalysis(await readJson(response.body,65536),'solana:'+mint);}
   catch{throw new SafeProxyError('token_analysis_invalid',502);}
+  const campaignAssessment=await readTokenCampaigns(mint,{directory:env.AUTHOR_OUTCOMES_DIRECTORY});
   // Explicit projection: no upstream keys, trace IDs or arbitrary provider prose.
   return {agent:'api',available:report.status==='analyzed',analysisMode:'token_on_demand',
-   result:{summary:tokenSummary(report),overallConfidence:report.interpretation?.confidence??0},
-   tokenAnalysis:{version:report.version,tokenId:report.tokenId,asOf:report.asOf,status:report.status,cached:report.cached===true,
-    facts:report.facts,summary:report.summary,interpretation:report.interpretation,sourceStatus:report.sourceStatus,grounding:report.grounding,evidence:report.evidence}};
+   result:{summary:tokenSummary(report)+(campaignAssessment.available?`\nПо этому CA: ${campaignAssessment.counts.groups} групп, ${campaignAssessment.counts.recurringPairs} повторяющихся пар. После наблюдавшегося скачка: ${campaignAssessment.counts.afterPriorJump} публикаций; тонких ценовых отметок: ${campaignAssessment.counts.thinQuotes}. Это не подтверждение манипуляции или прибыльности.`:''),overallConfidence:report.interpretation?.confidence??0},
+   tokenAnalysis:{...(campaignAssessment.available?{campaignAssessment}:{}),version:report.version,tokenId:report.tokenId,asOf:report.asOf,status:report.status,cached:report.cached===true,
+    facts:report.facts,summary:report.summary,...(report.chainAssessment?{chainAssessment:report.chainAssessment}:{}),interpretation:report.interpretation,sourceStatus:report.sourceStatus,grounding:report.grounding,evidence:report.evidence}};
  }catch(error){if(error instanceof SafeProxyError)throw error;throw new SafeProxyError('token_analysis_unavailable',503);}
 }

@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, AlertTriangle, TrendingUp, Download, ArrowUp, ArrowDown, RefreshCw } from "lucide-react";
 import SearchBar from "@/components/trade/SearchBar";
 import TokenInfo from "@/components/trade/TokenInfo";
+import type {CampaignAssessment} from "@/lib/trade/token-campaigns.mjs";
 import { DEFAULT_FILTERS, type TradeFilters } from "@/components/trade/FiltersPanel";
 import type { WalletRowData } from "@/components/trade/WalletRow";
 import type { CompactTrade } from "@/components/trade/WalletTradeDetail";
@@ -45,6 +46,7 @@ interface AnalysisData {
   timeline: { ts: number; buyVolSol: number; sellVolSol: number; price: number }[];
   trades: CompactTrade[];
   fetchedAt: number;
+  campaignAssessment?: CampaignAssessment;
 }
 
 const ANALYSIS_PAGE_STATE_KEY = "trade.analysis.page.v1";

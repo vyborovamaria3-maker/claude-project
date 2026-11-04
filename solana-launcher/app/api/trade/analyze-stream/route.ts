@@ -4,6 +4,8 @@
 //   {type:"final", ...payload}
 //   {type:"error", message}
 import { NextRequest } from "next/server";
+import {readTokenCampaigns} from "@/lib/trade/token-campaigns.mjs";
+import {requireProdAuth} from "@/lib/routeAuth";
 import { fetchSolBalances, getWalletFirstSeen } from "@/lib/trade/helius";
 import { loadTokenTrades } from "@/lib/trade/trade-cache";
 import {
@@ -50,11 +52,14 @@ export async function GET(req: NextRequest) {
     return new Response(JSON.stringify({ error: "invalid mint" }), { status: 400 });
   }
 
+  const campaignDenied=await requireProdAuth(req);
+  const campaignAssessment=campaignDenied?{version:"token-campaign-v1",mint,status:"authentication_required",available:false}:await readTokenCampaigns(mint);
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
       const send = (obj: unknown) => {
-        controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
+        const event=obj&&typeof obj==="object"&&"type" in obj&&obj.type==="final"?{...obj,campaignAssessment}:obj;
+        controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
       };
 
       try {

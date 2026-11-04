@@ -6,6 +6,9 @@ export function isLowValueTelegramPost(text:string):boolean {
   // because the quote contains scanner fields or begins with a bot heading.
   if(/^(?:I (?:do not|don't|would not|wouldn't|will not|won't|am not) (?:buy|trust)|I lost money|Never again\b|Do not (?:buy|trust)|Don't (?:buy|trust)|This (?:card|scanner|claim) is (?:false|misleading)|Yeah right[,!]|Sure buddy[,!]|(?:Я )?(?:не покупаю|не верю|потерял|потеряла)|Не (?:покупайте|доверяйте)|Ага[,!]).+$/imu.test(text))return false;
   const plain=text.replace(/\p{Extended_Pictographic}|\uFE0F|\u200E/gu,'').split(/\r?\n/).map(line=>line.trim()).join('\n').trim();
+  // Complete compact launch / premium affiliate cards, not surrounding human commentary.
+  if(/^[^\n]{1,100}[｜|]\s*\$[A-Za-z0-9_]+\s*\n+CA:\s*[1-9A-HJ-NP-Za-km-z]{32,44}\s*\n+MC:\s*\$[\d.,]+[KMB]?\s*\|\s*\d+(?:\.\d+)?[mhd]\s*$/iu.test(plain))return true;
+  if(/^ALPHA\s*·\s*verified caller signal\s*\n+\$[A-Za-z0-9_-]+\s*\n+MCap\s*·\s*(?:\?|\$?[\d.,]+[KMB]?)\s*\nChain\s*·\s*SOL\s*\n+[1-9A-HJ-NP-Za-km-z]{32,44}\s*\n+Buy on Axiom\s*·\s*\d+(?:\.\d+)?% off fees\s*\nFOMO Mobile\s*·\s*one-tap buys\s*\n+━+\s*\n+Get calls INSTANTLY\s*—\s*no 60s delay\s*\nJoin Premium\s*$/iu.test(plain))return true;
   if(/^[^\n]+\n[1-9A-HJ-NP-Za-km-z]{32,44}\n+Holders:/.test(plain)&&/\nMC:/.test(plain)&&/\nDev:/.test(plain)&&
     /The full version of the whale indicator is available in the alpha chat\.\n+Alpha chat price: [^\n]+\nDM me to join @\w+\n+Indicator free • Alpha • Twitter • Bubble • Main Channel\s*$/.test(plain))return true;
   if(/^[1-9A-HJ-NP-Za-km-z]{32,44}\n├ Token:/.test(plain)&&

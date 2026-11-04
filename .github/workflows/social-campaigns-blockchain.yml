@@ -1,0 +1,67 @@
+name: Social campaigns and blockchain evidence
+on:
+  push:
+    branches: [main]
+    paths:
+      - "x-collector/scripts/author-outcomes/**"
+      - "solana-launcher/lib/trade/token-campaigns*"
+      - "solana-launcher/scripts/token-campaigns*"
+      - "solana-launcher/scripts/fomo-*"
+      - "solana-launcher/lib/trade/fomo-*"
+      - "solana-launcher/components/trade/TokenCampaignPanel.tsx"
+      - "solana-launcher/app/api/trade/token-campaigns/**"
+      - ".github/workflows/social-campaigns-blockchain.yml"
+  pull_request:
+    paths:
+      - "x-collector/scripts/author-outcomes/**"
+      - "solana-launcher/**"
+      - ".github/workflows/social-campaigns-blockchain.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: social-campaigns-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: campaign_test
+          POSTGRES_PASSWORD: ci-campaign-test-only
+          POSTGRES_DB: campaign_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U campaign_test -d campaign_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      AUTHOR_OUTCOMES_TEST_DSN: postgresql://campaign_test:ci-campaign-test-only@127.0.0.1:5432/campaign_test
+      PYTHONPATH: admin-site
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r admin-site/requirements.txt
+      - run: python -m unittest discover -s x-collector/scripts/author-outcomes -p 'test_*.py' -v
+      - run: python -m unittest discover -s admin-site/tests -p 'test_author_outcomes.py' -v
+      - run: python -m unittest discover -s admin-site/tests -p 'test_token_wallet_relations.py' -v
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: solana-launcher
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: solana-launcher/package-lock.json
+      - run: npm ci --legacy-peer-deps
+      - run: npm run analysis:test
+      - run: npx tsc --noEmit --incremental false

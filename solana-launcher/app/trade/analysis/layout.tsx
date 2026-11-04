@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import TokenCampaignPanel from "@/components/trade/TokenCampaignPanel";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Activity, Network } from "lucide-react";
 import clsx from "clsx";
@@ -55,6 +56,7 @@ export default function TradeAnalysisLayout({ children }: { children: React.Reac
           );
         })}
       </div>
+      {mint && (pathname === "/trade/analysis" || pathname.startsWith("/trade/analysis/blockchain")) && <TokenCampaignPanel mint={mint} />}
       {children}
     </div>
   );

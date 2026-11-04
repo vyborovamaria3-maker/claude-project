@@ -119,10 +119,20 @@ def runtime_metrics(started_at: float) -> dict[str, Any]:
 def inventory(root: Path) -> dict[str, Any]:
     services: list[dict[str, Any]] = []
     manifests = {"package.json", "pyproject.toml", "requirements.txt", "docker-compose.yml", "docker-compose.prod.yml"}
-    for path in root.rglob("*"):
-        if not path.is_file() or path.name not in manifests:
-            continue
-        rel = path.parent.relative_to(root)
-        services.append({"path": str(rel), "manifest": path.name, "size": path.stat().st_size})
+    ignored = {"node_modules", ".git", ".venv", "venv", "__pycache__", ".next"}
+    for directory, dirs, files in os.walk(root, followlinks=False):
+        # Prune before traversal: Windows junctions can otherwise recurse through
+        # workspace dependencies and escape the intended project inventory.
+        dirs[:] = [name for name in dirs if name not in ignored
+                   and not (Path(directory) / name).is_symlink()
+                   and not (getattr((Path(directory) / name).lstat(), "st_file_attributes", 0) & 0x400)]
+        for name in files:
+            if name not in manifests:
+                continue
+            path = Path(directory) / name
+            if path.is_symlink():
+                continue
+            rel = path.parent.relative_to(root)
+            services.append({"path": str(rel), "manifest": path.name, "size": path.stat().st_size})
     services.sort(key=lambda item: (item["path"], item["manifest"]))
     return {"root": str(root), "service_manifests": services, "count": len(services)}

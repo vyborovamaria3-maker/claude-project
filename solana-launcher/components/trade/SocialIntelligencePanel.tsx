@@ -200,6 +200,27 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
       });
       setSnapshot(nextSnapshot);
 
+      // Capture is server-computed from canonical X/Telegram responses; the browser never submits scores.
+      if (nextX && nextTg) {
+        void fetch("/api/trade/fomo-snapshot", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ mint: contract }),
+        })
+          .then(async (response) => {
+            const payload = await response.json().catch(() => ({})) as { error?: unknown; status?: unknown };
+            if (!response.ok) {
+              throw new Error(typeof payload.error === "string" ? payload.error : "capture_unavailable");
+            }
+            return payload;
+          })
+          .catch((captureError: unknown) => {
+            if (abortRef.current !== controller) return;
+            const message = captureError instanceof Error ? captureError.message : "capture_unavailable";
+            setWarnings((value) => upsertWarning(value, "FOMO capture: " + message));
+          });
+      }
+
       if (nextSnapshot.evidence.length) {
         try {
           const qwen = await fetchJson<AiEnvelope>("/api/trade/social-ai", controller.signal, {
@@ -289,11 +310,13 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
       {requestOnly && <TokenRequestPanel ai={ai} loading={loading} error={error} />}
       {!requestOnly && (x || tg) && <>
         <MainFindings derived={derived} x={x} tg={tg} chain={chain} market={market} snapshot={snapshot} />
-        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 xl:grid-cols-9">
+        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 xl:grid-cols-11">
           <Kpi label="Social score" value={score(derived.socialScore)} icon={<Gauge />} />
           <Kpi label="X score" value={score(derived.xScore)} icon={<Twitter />} />
           <Kpi label="TG score" value={score(derived.tgScore)} icon={<Send />} />
           <Kpi label="Organic" value={score(derived.organic)} icon={<Sparkles />} />
+          <Kpi label="FOMO pressure" value={score(derived.fomoPressure)} icon={<Zap />} />
+          <Kpi label="FOMO quality" value={score(derived.fomoQuality)} icon={<Sparkles />} />
           <Kpi label="Manipulation" value={score(derived.manipulation)} icon={<ShieldAlert />} />
           <Kpi label="Social risk" value={score(derived.socialRisk)} icon={<ShieldAlert />} />
           <Kpi label="Early" value={score(derived.early)} icon={<Zap />} />
