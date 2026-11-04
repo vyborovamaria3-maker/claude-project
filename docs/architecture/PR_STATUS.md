@@ -1,18 +1,18 @@
 # PR_STATUS — GitHub PR inventory
 
-## Current snapshot — 2026-11-04
+## Current snapshot — 2026-11-05
 
-This section supersedes the point-in-time PR table below. The older inventory is retained as historical context; GitHub is authoritative for the current state.
+This section supersedes the historical PR inventory below. GitHub is authoritative for current PR state, checks, review and merge base.
 
-- `main` HEAD: `f4dc5ef3aad400f64fc300f30542085e10aae4c1`.
-- 10 open PRs at snapshot time: #213, #212, #210, #208, #206, #205, #204, #203, #202 and #195.
-- [#212](https://github.com/vyborovamaria3-maker/claude-project/pull/212) is the active recovery/integration candidate: OPEN / DRAFT, base `main`, head `817598fc37b50bfec87abfc6ec15dda3d346aa96`, 271 commits, 109 changed files (+7,458 / −873), GitHub reports mergeable. Exact-head Actions summary: 27 workflow runs SUCCESS, 1 conditionally SKIPPED, 0 FAILURE.
-- All 7 inline review threads on #212 are resolved. The recorded review submissions are COMMENTED by the repository owner; no independent APPROVED review is present. Keep #212 Draft until independent review and operator gates are complete.
-- [#210](https://github.com/vyborovamaria3-maker/claude-project/pull/210) is integrated into #212 as a second parent at `d9f9ed5fb12a0dfa36414e14bb26a4c17ef91499`; its three-source recovery test plan and PostgreSQL/SQLite acceptance test are now in the #212 tree. #210 remains open until #212 lands; do not merge #210 independently.
-- [#205](https://github.com/vyborovamaria3-maker/claude-project/pull/205) has 4 changed paths overlapping #212; [#206](https://github.com/vyborovamaria3-maker/claude-project/pull/206) has 7. Reconcile these after #212, not concurrently. [#213](https://github.com/vyborovamaria3-maker/claude-project/pull/213) is correctly stacked on #206; intended sequence is #212 → #206 → #213.
-- #209, #211 and #214 are closed unmerged; #212 contains the selected recovery integration. Other open PRs remain separate product work.
-- Repository rulesets read returned an empty list. Branch-protection read returned 403 `Resource not accessible by integration`; no branch-protection setting was changed. Main protection remains an administrator-owned gate (#170).
-- Remaining operator gates: physical production DB/volume inventory; actual encrypted off-host backup and credential restore; measured RPO/RTO; production least-privilege role cutover; live X/TG/Solana verification; named supervisor owner/process manager; independent PR approval.
+- Current `main` HEAD at integration start: `d7fc77235fa3134e764349c77010fad336b73c5b`.
+- [#212](https://github.com/vyborovamaria3-maker/claude-project/pull/212) is **CLOSED / UNMERGED / SUPERSEDED** by [#215](https://github.com/vyborovamaria3-maker/claude-project/pull/215). Its seven inline review threads were already resolved; the historical review discussion remains available.
+- [#215](https://github.com/vyborovamaria3-maker/claude-project/pull/215) is the active integration candidate: OPEN / DRAFT, base `main`, branch `codex/architecture-hardening-20261105`. Before this status-documentation commit its exact head was `b8c8b31342cf58350ec3cbbc04924a3f44fb5fa8`, 9 commits ahead, 0 behind, 112 changed paths. This commit updates status documentation; check the PR page for the new exact head.
+- At the pre-documentation head, GitHub exposed 48 check runs: 1 SUCCESS, 1 IN_PROGRESS, 45 QUEUED and 1 SKIPPED; no failures were observed. CI was not complete. The skipped `Security Lock Refresh` job is conditional and is not counted as a pass. All results must be refreshed against the latest PR head.
+- PR #215 has no review threads at this snapshot. Independent review and approval are still required; do not mark it ready/merge solely from the source PR's old CI.
+- [#213](https://github.com/vyborovamaria3-maker/claude-project/pull/213) remains a separate Draft optional alert-webhook proposal stacked on #206; it is not included in #215 and no webhook endpoint/secret is configured.
+- #209, #211 and #214 remain closed unmerged. Do not reopen or independently merge their historical branches.
+- Branch-protection read returned 403 `Resource not accessible by integration`; no protection or ruleset was changed. The last successful read in the 2026-11-03 snapshot reported `protected:false`; current state must be confirmed by a repository administrator under issue #170.
+- Remaining operator gates: physical production DB/volume inventory; complete encrypted off-host backups for every stateful store; real isolated restore and credential recovery; measured RPO/RTO; production least-privilege role cutover; live X/TG/Solana verification; named supervisor owner/process manager; independent PR approval.
 
 ---
 

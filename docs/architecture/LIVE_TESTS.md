@@ -123,3 +123,21 @@ All 7 inline PR #212 review threads were resolved by the PR author; recorded
 review submissions remain COMMENTED and independent approval is absent. PR
 #212 remains Draft and unmerged. No production database, credentials, live
 backup, migration, role cutover or deployment was accessed or executed.
+
+## Current integration PR #215 — 2026-11-05 (synthetic CI snapshot)
+
+Current integration branch: `codex/architecture-hardening-20261105`. The source PR #212 is CLOSED UNMERGED and superseded by [PR #215](https://github.com/vyborovamaria3-maker/claude-project/pull/215), which is OPEN / DRAFT against current `main`.
+
+At the exact head `b8c8b31342cf58350ec3cbbc04924a3f44fb5fa8` before this documentation update, GitHub reported 48 check runs: **1 SUCCESS, 1 IN_PROGRESS, 45 QUEUED, 1 SKIPPED, 0 FAILURE**. This was an incomplete snapshot; it is not a final CI result. The documentation commit changes the PR head, so all required checks must complete again on the new exact SHA.
+
+New or integrated offline coverage in PR #215 includes:
+- Intelligence inbox payload fingerprint collision/replay handling, migration 017 and bounded legacy fingerprint backfill.
+- Source producer → consumer synthetic integration for X, TG and Blockchain using isolated databases and mocked RPC.
+- PostgreSQL 16/17 role/ACL restore rehearsal and SQLite WAL restore checks.
+- Admin preprovisioned PostgreSQL startup and restricted-role app smoke.
+- Compose shutdown safety tests: ordinary shutdown preserves volumes; destructive volume removal requires exact explicit confirmation.
+- New `intelligence/tests/outbox-health.test.mjs` tests for read-only SQLite/PostgreSQL outbox health snapshots, pending age, last progress, retries, dead letters and conservative alert thresholds. The Intelligence workflow must pass on the latest PR head before this test suite is claimed as CI-passed.
+
+The supervisor health records are local stdout only. They do not prove a Prometheus exporter, Alertmanager, webhook delivery, durable alert history or a Windows/systemd process manager.
+
+**Live verification remains NOT RUN:** no real X account, Telegram MTProto session, Solana RPC, production source database, production server, encrypted off-host archive, live restore, credential cutover or deployment was used. CI fixtures and mocked RPC do not change those statuses. Issues #170–#175 remain open.
