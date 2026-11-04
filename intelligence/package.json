@@ -41,7 +41,8 @@
     "analyze-ai": "node scripts/analyze-ai.mjs",
     "dispatch-telegram-alerts": "node scripts/dispatch-telegram-alerts.mjs",
     "token:report": "npm run build && node scripts/local-token-report.mjs",
-    "ai:gateway": "node ai-gateway/start.mjs"
+    "ai:gateway": "node ai-gateway/start.mjs",
+    "etl:fingerprint-backfill": "node scripts/backfill-inbox-fingerprints.mjs"
   },
   "exports": {
     ".": {

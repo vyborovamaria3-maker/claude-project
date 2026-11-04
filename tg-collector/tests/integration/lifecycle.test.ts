@@ -24,7 +24,7 @@ test("PostgreSQL: evidence versioning and soft-delete preserve canonical links",
     const postedAt = new Date("2026-10-15T12:00:00Z");
     await persistMessage(client, sourceId, {
       id: 501,
-      message: "@alice 0x1111111111111111111111111111111111111111",
+      message: "@alice So11111111111111111111111111111111111111112",
       date: Math.floor(postedAt.getTime() / 1000),
     });
     const links = await client.query<{ analysis_version: number; target_key: string }>(

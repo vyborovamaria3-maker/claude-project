@@ -1,12 +1,19 @@
 # Architecture gaps and release gates — baseline 2026-10-20; status delta 2026-10-24
 
+> **Historical snapshot — not the current release status (reviewed 2026-11-03).** The baseline table below records the 2026-10-20 audit and 2026-10-24 delta. Preserve it as historical evidence; do not use its old PR numbers, workflow conclusions or branch SHA as today's state.
+>
+> Current source-verified architecture is in [As-Is](ARCHITECTURE_AS_IS_20261101.md) and [Solana-only Target](ARCHITECTURE_TARGET_20261101.md). Current exact-head and release observations are in [LIVE_TESTS.md](LIVE_TESTS.md) and [RELEASE_GATE_REVIEW_20261103.md](RELEASE_GATE_REVIEW_20261103.md). The operator-owned acceptance procedure is [P0_OPERATOR_RELEASE_GATES.md](../operations/P0_OPERATOR_RELEASE_GATES.md).
+>
+> At the 2026-11-03 review, GitHub reported `main` at `f4dc5ef3aad400f64fc300f30542085e10aae4c1` with `protected=false`; P0 issues [#170](https://github.com/vyborovamaria3-maker/claude-project/issues/170) and [#172](https://github.com/vyborovamaria3-maker/claude-project/issues/172) remained open. PR #212 was still Draft and its exact-head CI was incomplete. Effective branch protection, real encrypted off-host recovery, physical database/role inventory and measured RPO/RTO therefore remain **NOT VERIFIED**.
+
 Repository baseline: main `8dc7c2943ef08978f55009b15c86cd451517b654`. Evidence: inspected code/SQL, PR metadata, GitHub Actions run/jobs/logs. **Do not mark live use as PASSED based on offline CI.** The checklist below is deliberately fail-closed.
 
 Statuses: **IMPLEMENTED** = source code exists; **OFFLINE TESTED** = explicit isolated fixture/CI evidence; **NOT VERIFIED** = live deployment has not been demonstrated; **BLOCKED** = must be remedied before a dependent rollout.
 
 | Priority | Area | Verified implementation / observation | Missing gate / action | Status |
 | --- | --- | --- | --- | --- |
-| P0 | Canonical IDs | `packages/contracts/src/canonical-ids.ts` validates full Solana/EVM addresses and stable social IDs | Confirm adapters of each production source use canonical validation | IMPLEMENTED; rollout NOT VERIFIED |
+| P0 | Canonical IDs | Shared contracts and Node Intelligence now accept only Solana canonical IDs/signatures plus stable social IDs | Verify each source adapter uses the Solana-only contract; preserve historical non-Solana rows without new writes | IMPLEMENTED / OFFLINE-TESTED; live rollout NOT VERIFIED |
+| P1 | Legacy non-Solana paths | X chain import and TG graph extraction now reject new non-Solana observations; historical TG `evm_address` rows remain readable | Retire remaining KOL/TG dataset EVM extraction and wallet-warmup bridge prototypes under separate review; preserve historical rows | PARTIALLY RETIRED; legacy paths remain |
 | P0 | Source outboxes | X migration 050, TG migration 015, Blockchain additive local SQLite; source flags opt-in | Backup/restore, inspect deployed migration ledgers, producer/consumer smoke and coverage counters | IMPLEMENTED; live NOT VERIFIED |
 | P0 | Destination | Node `intelligence/src`: inbox, entity/evidence registry, timeline, feature schema in independent PG | Prove target schema applied safely on selected local DB and every source can ACK after commit | IMPLEMENTED; live NOT VERIFIED |
 | P0 | Source identity | X base emitter refs only `author`; TG `source`; Blockchain `wallet` | Add conservative, revisioned **verified token-link** producer/resolver; preserve unknown/ambiguous | BLOCKED for token-level cross-source timeline |

@@ -30,7 +30,6 @@ export type EvidenceInput = EvidenceMetadata & (
 );
 
 const POSITIVE_ID = /^[1-9][0-9]*$/;
-const EVM_TX_HASH = /^0x[0-9a-fA-F]{64}$/;
 
 function optionalMetadata(value: string | undefined, label: string): string | undefined {
   if (value === undefined) return undefined;
@@ -53,13 +52,10 @@ export function buildEvidenceRef(input: EvidenceInput): EvidenceRef {
     }
     case "chain_tx":
       if (!isChain(input.chain)) throw new TypeError("Invalid chain");
-      if (input.chain === "solana") {
-        if (!isSolanaSignature(input.transactionId)) throw new TypeError("Invalid Solana transaction signature");
-        sourceId = "chain:tx:solana:" + input.transactionId;
-      } else {
-        if (!EVM_TX_HASH.test(input.transactionId)) throw new TypeError("Invalid EVM transaction hash");
-        sourceId = "chain:tx:" + input.chain + ":" + input.transactionId.toLowerCase();
+      if (!isSolanaSignature(input.transactionId)) {
+        throw new TypeError("Invalid Solana transaction signature");
       }
+      sourceId = "chain:tx:solana:" + input.transactionId;
       break;
     default:
       throw new TypeError("Invalid evidence source");

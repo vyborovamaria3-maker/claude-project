@@ -76,3 +76,50 @@ Never promote “not tested” based on a merge, test-name existence, synthetic 
 - After the main merge, [main Intelligence foundation](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/40081855865), [native source evidence CI](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/40081855822), [shared contracts](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/40081855740) and [hygiene](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/40081855688) had already passed at observation time. Other main workflows were still running when recorded; re-check exact SHA and workflow before claiming they passed.
 - Isolated regression asserts X/TG source PostgreSQL + blockchain SQLite → distinct destination PostgreSQL, explicit preverified mint evidence, edit tombstone, source-local transaction rollback, injected destination COMMIT failure/no source ACK, duplicate replay, source-specific active projection and occurred/known-at boundaries. This is a **synthetic saved-proof test**, not fresh RPC verification; legacy generic `queryTokenTimeline` is deliberately empty for evidence-only events and the dedicated read-only evidence endpoint returns typed separated lists.
 - **Live verification statuses remain NOT RUN BY THIS AUDIT.** Operator must first confirm production-safe backups+restores, independent migrations, explicit source flags/accounts/provider budget and sanitized logs. See [#173](https://github.com/vyborovamaria3-maker/claude-project/issues/173) and [#175](https://github.com/vyborovamaria3-maker/claude-project/issues/175).
+
+## P0 PR #212 review-recovery evidence — 2026-11-01 (CI only)
+
+Snapshot recorded against exact reviewed commit
+`54a763a04808e15def6d4a795609c3b8700f6e23`
+on Draft PR [#212](https://github.com/vyborovamaria3-maker/claude-project/pull/212).
+Source: GitHub Actions workflow conclusions on that SHA; **not** an
+observation of the user's private physical production deployments.
+
+| Gate | Result | Evidence | Remaining limitation |
+| --- | --- | --- | --- |
+| Restricted Admin PostgreSQL 17 startup/permissions | **CI SUCCESS** | [run 41309760568](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41309760568) | Disposable PG17 test, not production Admin user/password |
+| Product/Admin PG16/17 owner/ACL and SQLite WAL restore | **CI SUCCESS** | [run 41309760732](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41309760732) | Synthetic objects/rows, not a real encrypted off-host archive |
+| Backend migrations, Admin, frontend, Intelligence and production image builds | **CI SUCCESS** | [run 41309760757](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41309760757) | Predeploy validation is not a production deployment |
+| PR check completion | **18 SUCCESS, 1 SKIPPED** | Head above; Security Lock Refresh was skipped | Review-ready CI is not approval for production |
+| Effective protection of GitHub `main` | **FAILED / BLOCKED** | 2026-11-01 read-only GitHub API `/branches/main`: `protected:false`; `/rulesets`: `[]` | Requires repo admin and blocked-merge demonstration, issue #170 |
+| Real encrypted, durable off-host backup and full restore | **NOT RUN / BLOCKED** | No approved private backup/isolated host provided to this GitHub-only work | Need independent manifest digest, operator-run real-data restore, app smoke, measured RPO/RTO, issue #172 |
+
+The additional operator gate in
+[`P0_OPERATOR_RELEASE_GATES.md`](../operations/P0_OPERATOR_RELEASE_GATES.md)
+and `solana-launcher/scripts/run-offhost-recovery-evidence.sh` is **proposed
+source code**, not an executed real recovery test. Evidence from that tool
+must remain outside the repository. Existing 2026-10-22 TG/live rows above
+remain unchanged and NOT RUN where stated.
+
+
+## P0 PR #212 latest CI-only recovery evidence — 2026-11-03
+
+Snapshot against code-bearing Draft PR #212 HEAD
+`0fa86e850a626b91ec79bf20ee00e319b399d0b2`. This is synthetic CI evidence,
+not a live production test.
+
+| Gate | Result | Evidence | Remaining limitation |
+| --- | --- | --- | --- |
+| PostgreSQL 16/17 + SQLite WAL full backup/restore | **CI SUCCESS, 3/3 jobs** | [ARCH-02 run 41664963069](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41664963069) | Disposable fixture data, not production volumes |
+| Role-aware PostgreSQL restore and owner/ACL fingerprint | **CI SUCCESS** | [ARCH-02 run 41664963069](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41664963069) | No real production role inventory or credential cutover |
+| Product/Admin semantic restore and sequence checks | **CI SUCCESS** | [ARCH-02 run 41664963069](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41664963069) | CI sentinel rows and schema/sequence invariants only |
+| Restricted Admin PG17 app smoke | **CI SUCCESS** | [run 41664963144](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41664963144) | Disposable PG17, not production Admin DSN |
+| X/TG/Blockchain producer → Intelligence integration | **CI SUCCESS** | [run 41664963149](https://github.com/vyborovamaria3-maker/claude-project/actions/runs/41664963149) | Mocked RPC and isolated destination DB |
+| Exact-head PR checks | **27 SUCCESS, 1 SKIPPED** | HEAD above; Security Lock Refresh skipped | CI success does not prove live deployment or off-host recovery |
+| Effective protection of GitHub `main` | **BLOCKED** | Read-only API: `protected:false`, `/rulesets=[]` | Repository administrator action, issue #170 |
+| Real encrypted off-host backup and restore | **NOT RUN / BLOCKED** | No approved private archive or isolated operator host accessed | Actual-volume restore, application smoke, measured RPO/RTO and operator sign-off, issue #172 |
+
+All 7 inline PR #212 review threads were resolved by the PR author; recorded
+review submissions remain COMMENTED and independent approval is absent. PR
+#212 remains Draft and unmerged. No production database, credentials, live
+backup, migration, role cutover or deployment was accessed or executed.

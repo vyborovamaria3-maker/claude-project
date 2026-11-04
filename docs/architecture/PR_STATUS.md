@@ -1,4 +1,20 @@
-# PR_STATUS — GitHub PR inventory (2026-10-24, after #165 merge)
+# PR_STATUS — GitHub PR inventory
+
+## Current snapshot — 2026-11-04
+
+This section supersedes the point-in-time PR table below. The older inventory is retained as historical context; GitHub is authoritative for the current state.
+
+- `main` HEAD: `f4dc5ef3aad400f64fc300f30542085e10aae4c1`.
+- 10 open PRs at snapshot time: #213, #212, #210, #208, #206, #205, #204, #203, #202 and #195.
+- [#212](https://github.com/vyborovamaria3-maker/claude-project/pull/212) is the active recovery/integration candidate: OPEN / DRAFT, base `main`, head `817598fc37b50bfec87abfc6ec15dda3d346aa96`, 271 commits, 109 changed files (+7,458 / −873), GitHub reports mergeable. Exact-head Actions summary: 27 workflow runs SUCCESS, 1 conditionally SKIPPED, 0 FAILURE.
+- All 7 inline review threads on #212 are resolved. The recorded review submissions are COMMENTED by the repository owner; no independent APPROVED review is present. Keep #212 Draft until independent review and operator gates are complete.
+- [#210](https://github.com/vyborovamaria3-maker/claude-project/pull/210) is integrated into #212 as a second parent at `d9f9ed5fb12a0dfa36414e14bb26a4c17ef91499`; its three-source recovery test plan and PostgreSQL/SQLite acceptance test are now in the #212 tree. #210 remains open until #212 lands; do not merge #210 independently.
+- [#205](https://github.com/vyborovamaria3-maker/claude-project/pull/205) has 4 changed paths overlapping #212; [#206](https://github.com/vyborovamaria3-maker/claude-project/pull/206) has 7. Reconcile these after #212, not concurrently. [#213](https://github.com/vyborovamaria3-maker/claude-project/pull/213) is correctly stacked on #206; intended sequence is #212 → #206 → #213.
+- #209, #211 and #214 are closed unmerged; #212 contains the selected recovery integration. Other open PRs remain separate product work.
+- Repository rulesets read returned an empty list. Branch-protection read returned 403 `Resource not accessible by integration`; no branch-protection setting was changed. Main protection remains an administrator-owned gate (#170).
+- Remaining operator gates: physical production DB/volume inventory; actual encrypted off-host backup and credential restore; measured RPO/RTO; production least-privilege role cutover; live X/TG/Solana verification; named supervisor owner/process manager; independent PR approval.
+
+---
 
 Point-in-time snapshot of the public [GitHub PR listing](https://github.com/vyborovamaria3-maker/claude-project/pulls). **GitHub is authoritative** for current status, CI, review and merge base; this file can become stale after every update.
 

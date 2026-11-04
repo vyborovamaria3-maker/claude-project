@@ -24,3 +24,82 @@ jobs:
         run: npm run hygiene:check
       - name: Verify release image trigger safety
         run: node --test scripts/release-trigger-policy.test.mjs scripts/release-sha-policy.test.mjs
+      - name: Validate operator-only offline recovery gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash -n solana-launcher/scripts/run-offhost-recovery-evidence.sh
+          bash solana-launcher/scripts/run-offhost-recovery-evidence.sh --help \
+            | grep -Fq 'NOT RPO/RTO'
+          if bash solana-launcher/scripts/run-offhost-recovery-evidence.sh \
+              --backup-dir /nonexistent-operator-backup \
+              --evidence-dir /nonexistent-private-evidence \
+              --code-sha 0000000000000000000000000000000000000000 \
+              --expected-manifest-sha256 0000000000000000000000000000000000000000000000000000000000000000 \
+              --ticket-id ci-negative \
+              > /dev/null 2>&1; then
+            echo 'Offline recovery wrapper unexpectedly accepted missing operator approval' >&2
+            exit 1
+          fi
+
+      - name: Reject mismatched offline recovery code SHA before touching backup data
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          scratch="$(mktemp -d)"
+          trap 'rm -rf -- "$scratch"' EXIT
+          mkdir -m 0700 -p "$scratch/backup" "$scratch/evidence"
+          printf 'fixture-manifest\\n' > "$scratch/backup/SHA256SUMS"
+          digest="$(sha256sum "$scratch/backup/SHA256SUMS" | cut -d ' ' -f1)"
+          if bash solana-launcher/scripts/run-offhost-recovery-evidence.sh \
+              --backup-dir "$scratch/backup" \
+              --evidence-dir "$scratch/evidence" \
+              --code-sha 0000000000000000000000000000000000000000 \
+              --expected-manifest-sha256 "$digest" \
+              --ticket-id ci-code-mismatch \
+              --confirm-isolated-offhost > "$scratch/denied.log" 2>&1; then
+            echo 'Recovery evidence accepted a mismatched reviewed code SHA' >&2
+            exit 1
+          fi
+          grep -Fq 'Requested recovery code SHA does not match checked-out HEAD' "$scratch/denied.log"
+
+          reviewed_sha="$(git rev-parse --verify HEAD)"
+          digest="$(sha256sum "$scratch/backup/SHA256SUMS" | cut -d ' ' -f1)"
+          chmod 0755 "$scratch/evidence"
+          if bash solana-launcher/scripts/run-offhost-recovery-evidence.sh \
+              --backup-dir "$scratch/backup" \
+              --evidence-dir "$scratch/evidence" \
+              --code-sha "$reviewed_sha" \
+              --expected-manifest-sha256 "$digest" \
+              --ticket-id ci-insecure-evidence-dir \
+              --confirm-isolated-offhost > "$scratch/permissions.log" 2>&1; then
+            echo 'Recovery evidence accepted a group/world-accessible evidence directory' >&2
+            exit 1
+          fi
+          grep -Fq 'Evidence directory must have exact private mode 0700' "$scratch/permissions.log"
+          chmod 0700 "$scratch/evidence"
+          chmod 0755 "$scratch/backup"
+          if bash solana-launcher/scripts/run-offhost-recovery-evidence.sh \
+              --backup-dir "$scratch/backup" \
+              --evidence-dir "$scratch/evidence" \
+              --code-sha "$reviewed_sha" \
+              --expected-manifest-sha256 "$digest" \
+              --ticket-id ci-insecure-backup-dir \
+              --confirm-isolated-offhost > "$scratch/backup-permissions.log" 2>&1; then
+            echo 'Recovery evidence accepted a group/world-accessible backup directory' >&2
+            exit 1
+          fi
+          grep -Fq 'Backup directory must have exact private mode 0700' "$scratch/backup-permissions.log"
+          chmod 0700 "$scratch/backup"
+          if env -u DOCKER_CONTEXT DOCKER_HOST=tcp://127.0.0.1:2375 \
+              bash solana-launcher/scripts/run-offhost-recovery-evidence.sh \
+              --backup-dir "$scratch/backup" \
+              --evidence-dir "$scratch/evidence" \
+              --code-sha "$reviewed_sha" \
+              --expected-manifest-sha256 "$digest" \
+              --ticket-id ci-remote-docker \
+              --confirm-isolated-offhost > "$scratch/remote-docker.log" 2>&1; then
+            echo 'Recovery evidence accepted a remote Docker daemon' >&2
+            exit 1
+          fi
+          grep -Fq 'Offline recovery requires a local Docker endpoint' "$scratch/remote-docker.log"

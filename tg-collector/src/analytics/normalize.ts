@@ -36,10 +36,6 @@ export function normalizeTarget(kind: TargetKind, input: string): string | null 
     if (!/^[1-9]\d{0,19}$/.test(digits)) return null;
     return digits;
   }
-  if (kind === "evm_address") {
-    // Do not infer missing prefixes or try to complete visually truncated addresses.
-    return /^0x[\da-fA-F]{40}$/.test(value) ? value.toLowerCase() : null;
-  }
   if (kind === "solana_address") return isSolanaAddress(value) ? value : null;
   return null;
 }

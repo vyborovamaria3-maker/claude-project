@@ -71,6 +71,12 @@ jobs:
           current_head="$(alembic current | awk '/^[0-9][0-9]/ {print $1}')"
           test -n "$expected_head"
           test "$current_head" = "$expected_head"
+      - name: Execute actual Alembic graph as isolated non-superuser migration role
+        working-directory: solana-launcher/backend
+        run: |
+          set -Eeuo pipefail
+          bash -n ../../.github/scripts/test-backend-alembic-restricted.sh
+          bash ../../.github/scripts/test-backend-alembic-restricted.sh
       - name: Run Twitter, KOL and migration regression tests
         working-directory: solana-launcher/backend
         run: pytest -q tests/test_twitter*.py tests/test_kol*.py tests/test_alembic_revision_ids.py
@@ -141,6 +147,10 @@ jobs:
           pip install -r admin-site/requirements.txt
       - name: Run deep Control Center regression suite
         run: bash admin-site/scripts/test-deep.sh
+      - name: Prove Admin PostgreSQL 17 preprovisioned schema supports DML-only runtime
+        env:
+          ADMIN_PG_SCHEMA_MODE: legacy
+        run: python admin-site/scripts/test_postgres_preprovisioned_roles.py
       - name: Validate Control Center Compose
         run: |
           set -Eeuo pipefail
@@ -195,6 +205,12 @@ jobs:
             echo "BASH_N $file"
             bash -n "$file"
           done < <(find solana-launcher/scripts -type f -name '*.sh' -print0)
+      - name: Set up Node for Compose command safety regression
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+      - name: Verify Compose down preserves named volumes by default
+        run: node --test solana-launcher/scripts/compose-command-safety.test.mjs
       - name: Prepare non-secret Compose validation environment
         run: |
           cat > solana-launcher/.env.server <<'EOF'
@@ -238,3 +254,8 @@ jobs:
             -f solana-launcher/Dockerfile.telegram-bot \
             -t potapoff-telegram-bot-predeploy:${{ github.sha }} \
             solana-launcher
+      - name: Verify Telegram bot final image Node runtime
+        run: |
+          runtime_major="$(docker run --rm --entrypoint node potapoff-telegram-bot-predeploy:${{ github.sha }} -p 'Number(process.versions.node.split(".")[0])')"
+          echo "Telegram bot image Node.js major: ${runtime_major}"
+          test "${runtime_major}" -ge 22

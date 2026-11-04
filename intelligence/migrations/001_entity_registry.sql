@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS intelligence_inbox (
   event_key TEXT NOT NULL,
   schema_version TEXT NOT NULL,
   evidence_source_id TEXT NOT NULL,
+  payload_sha256 TEXT,
   ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (source_system, event_kind, event_key)
 );

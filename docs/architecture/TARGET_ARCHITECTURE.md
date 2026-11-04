@@ -1,11 +1,18 @@
-# Implemented runtime shape
+# Target architecture — current decision
 
-PostgreSQL remains the only durable queue/account authority. No Redis/BullMQ or new service.
+The previous document described an implemented X Collector runtime shape and is not the target architecture for the whole monorepo. It is superseded as a system-wide target by:
 
-Scheduler -> enqueueTask(s) with atomic backlog cap -> existing x_tasks -> scripts/worker.ts -> WorkerRuntime -> reusable src/runtime/collector-task.ts -> existing real collectors -> fenced collector-store transaction -> tweet/profile/archive/raw intelligence tables -> existing normalization workers and Dashboard.
+- [ARCHITECTURE_TARGET_20261101.md](ARCHITECTURE_TARGET_20261101.md) — approved target boundaries and Solana-only network policy.
+- [ARCHITECTURE_AS_IS_20261101.md](ARCHITECTURE_AS_IS_20261101.md) — source-verified current state and legacy gaps.
 
-The entrypoint retains auth, metrics, heartbeat and process shutdown. Runtime exposes lifecycle/current attempt/counters; concurrency is one per worker, with separate processes for scaling. WorkerRegistry remains the existing durable heartbeat implementation. Alternative search uses the same account reservation and shared logger. The unused synthetic router and non-atomic account manager/repository scaffold were removed after confirming no callers.
+Core decisions:
+1. Solana is the only supported blockchain network in the target.
+2. X and TG remain independent social source applications.
+3. Blockchain Collector is currently a logical module inside Solana Launcher, not an independent deployable service.
+4. Node Intelligence is the cross-source evidence/analytics core.
+5. Python Intelligence is a separate document/provider processing runtime.
+6. Source data ownership and migration histories remain independent.
+7. Outbox delivery is at-least-once; destination commit precedes source ACK.
+8. No live deployment or production readiness is inferred from this target document.
 
-Critical persistence checks task owner, attempt and live account lease while holding task/account rows. Entity writes share the result transaction. Task acknowledgement follows successful persistence; crashes between result commit and acknowledgement retry idempotent writes. PostgreSQL timestamps plus host clock synchronization are operational assumptions for epoch-based leases.
-
-Local launcher process control is unchanged. The existing Compose gains a collector profile, disables Dashboard autostart there and uses Docker restart policies. Local Dashboard autostart is serialized by a PostgreSQL advisory lock. It does not expose a Docker socket.
+Do not implement the old X-only target text as a new service topology. Use the two 2026-11-01 architecture documents above.
