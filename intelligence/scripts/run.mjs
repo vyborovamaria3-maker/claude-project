@@ -45,6 +45,7 @@ function usage() {
   ].join("\n");
 }
 async function status(source){
+  if(source.kind==="pg")await checkPgOutbox(source.connection);
   const health=await readOutboxHealth(source);
   return {...health,alerts:healthAlerts(health)};
 }
