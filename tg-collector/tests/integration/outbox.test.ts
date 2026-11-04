@@ -9,6 +9,12 @@ test("TG PostgreSQL: page transaction commits message, revision and delete outbo
 },async()=>{
   const {pool,migrate}=await import("../../src/db.js");
   await migrate();
+  const indexRows=await pool.query<{indexname:string}>(`SELECT indexname FROM pg_indexes
+    WHERE schemaname=current_schema() AND tablename='outbox_events'`);
+  const indexNames=new Set(indexRows.rows.map(row=>row.indexname));
+  for(const name of ["outbox_pending_health_idx","outbox_dead_lettered_at_idx","outbox_processed_at_desc_idx"]){
+    assert(indexNames.has(name),`missing TG outbox health index: ${name}`);
+  }
   const client=await pool.connect();
   const old=process.env.TG_INTELLIGENCE_OUTBOX_ENABLED;
   const oldMintLinks=process.env.TG_INTELLIGENCE_TOKEN_LINKS_ENABLED;

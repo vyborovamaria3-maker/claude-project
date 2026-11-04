@@ -3,8 +3,11 @@
 This is **source-side** transactional emission, NOT a running ETL consumer.
 
 - Migration `015_intelligence_outbox.sql` adds PG `outbox_events` with lease and
-  dead-letter fields. Apply using the existing TG `npm run migrate` (which
-  computes SQL checksums). Never edit previously applied SQL migrations.
+  dead-letter fields. Migration `037_intelligence_outbox_health_indexes.sql`
+  adds covering/partial indexes for the recurring read-only health snapshot.
+  Apply using the existing TG `npm run migrate` (which computes SQL checksums).
+  The ordinary `CREATE INDEX` operations block writes while building: back up
+  first and choose a low-activity maintenance window. Never edit applied SQL migrations.
 - Producer is off by default. Enable only with
   `TG_INTELLIGENCE_OUTBOX_ENABLED=true` AFTER verifying the local source DB
   migration, backups, and installation of an Intelligence destination/consumer.

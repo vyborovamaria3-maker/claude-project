@@ -15,6 +15,13 @@ test('active migration chain executes on disposable PostgreSQL engine', async ()
       try { await db.exec(await fs.readFile('migrations/' + file, 'utf8')); }
       catch (error) { throw new Error(file + ': ' + String(error), { cause: error }); }
     }
+    const healthIndexes=await db.query<{name:string}>(
+      `SELECT indexname AS name FROM pg_indexes
+       WHERE schemaname=current_schema() AND tablename='outbox_events'`);
+    const healthIndexNames=new Set(healthIndexes.rows.map(row=>row.name));
+    for(const name of ["outbox_pending_health_idx","outbox_dead_lettered_at_idx","outbox_processed_at_desc_idx"]){
+      assert(healthIndexNames.has(name),`missing outbox health index: ${name}`);
+    }
     await assert.rejects(
       db.query("INSERT INTO ip_wallet_profiles(entity_id) VALUES ('00000000-0000-0000-0000-000000000001')"),
       /violates foreign key constraint/,
