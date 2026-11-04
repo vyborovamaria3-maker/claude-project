@@ -25,7 +25,7 @@ The PR's deletion of `x-collector/lib/intelligence/cross-chain-correlator.ts` is
 
 ## Additional supervisor health work
 
-PR #215 adds `intelligence/scripts/outbox-health.mjs` and tests. Read-only source outbox snapshots report:
+PR #215 adds `intelligence/scripts/outbox-health.mjs`, tests and a PostgreSQL source-connection guard. Status/backfill PostgreSQL pools start with `default_transaction_read_only=on` and a reader application name; SQLite status/backfill connections use `readonly: true`. This session mode is not a security boundary: the underlying source login must still be a dedicated least-privilege reader. Read-only source outbox snapshots report:
 
 - pending, ready, leased, retry-delayed and dead-letter counts;
 - retry event count, retry attempt total and maximum attempts;

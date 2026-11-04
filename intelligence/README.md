@@ -54,7 +54,7 @@ Other sources: `--source x`, `--source blockchain`. Environment variables:
 `X_SOURCE_DATABASE_URL`, `TG_SOURCE_DATABASE_URL`,
 `SOLANA_TRADE_DB_PATH`, and `INTELLIGENCE_DATABASE_URL`.
 
-The status command only reads source outbox metadata and reports pending/ready/leased/retry/DLQ counts, oldest-pending age, last progress and retry attempts; it never reads event payloads. The once command is
+The status command only reads source outbox metadata and reports pending/ready/leased/retry/DLQ counts, oldest-pending age, last progress and retry attempts; it never reads event payloads. PostgreSQL status and fingerprint-backfill source pools start with `default_transaction_read_only=on` and a reader application name; this is a guardrail, not a substitute for a dedicated least-privilege read-only database role, because a privileged login can override session defaults. The once command is
 explicitly gated and handles one finite claim batch with destination transaction
 commit before source ACK; no Telegram login, browser, provider request, replay
 loop, background scheduling, or trading instruction is performed. Keep all
