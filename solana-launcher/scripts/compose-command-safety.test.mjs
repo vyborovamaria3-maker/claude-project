@@ -16,6 +16,9 @@ const localDeploy = await readFile(resolve(root, "scripts/deploy-production-loca
 const adminDeploy = await readFile(resolve(adminRoot, "deploy/production-deploy.sh"), "utf8");
 const adminRollback = await readFile(resolve(adminRoot, "deploy/production-rollback.sh"), "utf8");
 const productionWorkflow = await readFile(resolve(root, "../.github/workflows/potapoff-production.yml"), "utf8");
+const fullBacktestWorkflow = await readFile(resolve(root, "../.github/workflows/full-backtest-audit.yml"), "utf8");
+const telegramWorkflow = await readFile(resolve(root, "../.github/workflows/telegram-intelligence-v19-ci.yml"), "utf8");
+const predeployWorkflow = await readFile(resolve(root, "../.github/workflows/potapoff-predeploy-gate.yml"), "utf8");
 
 test("ordinary Compose down never removes named volumes", () => {
   assert.equal(pkg.scripts["compose:down"], "docker compose down");
@@ -89,4 +92,10 @@ test("deployment staging archives only tracked admin source", () => {
   assert.match(productionWorkflow, /git archive --format=tar "\$RELEASE_SHA" admin-site/);
   assert.doesNotMatch(localDeploy, /--exclude='admin-site\/\.env/);
   assert.doesNotMatch(productionWorkflow, /--exclude='admin-site\/\.env/);
+});
+
+test("production Compose CI fixtures always create the runtime env file", () => {
+  assert.match(fullBacktestWorkflow, /: > \.env\.runtime/);
+  assert.match(telegramWorkflow, /: > \.env\.runtime/);
+  assert.match(predeployWorkflow, /: > solana-launcher\/\.env\.runtime/);
 });

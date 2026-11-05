@@ -347,6 +347,7 @@ jobs:
         run: |
           : > backend.env
           : > .env.server
+          : > .env.runtime
       - id: shell
         name: Shell syntax for deployment scripts
         continue-on-error: true
