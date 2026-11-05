@@ -20,20 +20,52 @@ services:
       retries: 10
       start_period: 10s
 
+  admin-db-provisioner:
+    build: .
+    image: "admin-site-admin:${ADMIN_IMAGE_TAG:-latest}"
+    container_name: potapoff-admin-db-provisioner
+    restart: "no"
+    environment:
+      ADMIN_STATE_BOOTSTRAP_DSN: postgresql://potapoff_admin:${ADMIN_STATE_DB_PASSWORD:?Set ADMIN_STATE_DB_PASSWORD in admin-site/.env}@admin-postgres:5432/potapoff_admin
+      ADMIN_STATE_MIGRATOR_DSN: postgresql://${ADMIN_STATE_MIGRATOR_USER:-potapoff_admin_migrator}:${ADMIN_STATE_MIGRATOR_PASSWORD:?Set ADMIN_STATE_MIGRATOR_PASSWORD in admin-site/.env}@admin-postgres:5432/potapoff_admin
+      ADMIN_STATE_RUNTIME_DSN: postgresql://${ADMIN_STATE_APP_USER:-potapoff_admin_app}:${ADMIN_STATE_APP_PASSWORD:?Set ADMIN_STATE_APP_PASSWORD in admin-site/.env}@admin-postgres:5432/potapoff_admin
+      ADMIN_STATE_APP_USER: ${ADMIN_STATE_APP_USER:-potapoff_admin_app}
+      ADMIN_STATE_APP_PASSWORD: ${ADMIN_STATE_APP_PASSWORD:?Set ADMIN_STATE_APP_PASSWORD in admin-site/.env}
+      ADMIN_STATE_MIGRATOR_USER: ${ADMIN_STATE_MIGRATOR_USER:-potapoff_admin_migrator}
+      ADMIN_STATE_MIGRATOR_PASSWORD: ${ADMIN_STATE_MIGRATOR_PASSWORD:?Set ADMIN_STATE_MIGRATOR_PASSWORD in admin-site/.env}
+      ADMIN_STATE_BACKUP_USER: ${ADMIN_STATE_BACKUP_USER:-potapoff_admin_backup}
+      ADMIN_STATE_BACKUP_PASSWORD: ${ADMIN_STATE_BACKUP_PASSWORD:?Set ADMIN_STATE_BACKUP_PASSWORD in admin-site/.env}
+    command: ["python", "scripts/provision_admin_postgres.py"]
+    depends_on:
+      admin-postgres:
+        condition: service_healthy
+    networks:
+      - admin-internal
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
   admin:
     build: .
     image: "admin-site-admin:${ADMIN_IMAGE_TAG:-latest}"
     container_name: potapoff-admin
     restart: unless-stopped
-    env_file: .env
+    env_file: .env.runtime
     environment:
       ADMIN_INTELLIGENCE_DB: /data/intelligence/intelligence.sqlite3
-      ADMIN_STATE_POSTGRES_DSN: postgresql://potapoff_admin:${ADMIN_STATE_DB_PASSWORD:?Set ADMIN_STATE_DB_PASSWORD in admin-site/.env}@admin-postgres:5432/potapoff_admin
+      ADMIN_STATE_POSTGRES_DSN: postgresql://${ADMIN_STATE_RUNTIME_USER:-potapoff_admin_app}:${ADMIN_STATE_RUNTIME_PASSWORD:?Set ADMIN_STATE_RUNTIME_PASSWORD in admin-site/.env}@admin-postgres:5432/potapoff_admin
+      ADMIN_PG_SCHEMA_MODE: ${ADMIN_PG_SCHEMA_MODE:-preprovisioned}
       POTAPOFF_BACKEND_URL: http://backend:8000
       POTAPOFF_SUBSCRIPTION_ADMIN_KEY: ${SUBSCRIPTION_ADMIN_KEY:?Set SUBSCRIPTION_ADMIN_KEY for subscription admin}
     depends_on:
       admin-postgres:
         condition: service_healthy
+      admin-db-provisioner:
+        condition: service_completed_successfully
     ports:
       - "127.0.0.1:18080:8080"
     volumes:
