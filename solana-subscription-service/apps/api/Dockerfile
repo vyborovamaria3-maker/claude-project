@@ -33,6 +33,9 @@ COPY apps/bot/package.json apps/bot/package.json
 # and all workspace-only development/test packages out of the production image.
 RUN npm prune --omit=dev \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+# Prisma Client is generated in the build stage and is not an npm-managed
+# package; restore its generated runtime artifacts after pruning extraneous deps.
+COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 USER node
 EXPOSE 4000
 CMD ["node", "apps/api/dist/apps/api/src/server.js"]
