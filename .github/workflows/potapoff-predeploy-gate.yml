@@ -275,3 +275,9 @@ jobs:
           runtime_major="$(docker run --rm --entrypoint node "$image" -p 'Number(process.versions.node.split(".")[0])')"
           echo "Telegram bot image Node.js major: ${runtime_major}"
           test "${runtime_major}" -ge 22
+          for build_tool in python3 make g++; do
+            if docker run --rm --entrypoint sh "$image" -c "command -v $build_tool >/dev/null 2>&1"; then
+              echo "Unexpected build tool in Telegram bot runtime image: $build_tool" >&2
+              exit 1
+            fi
+          done
