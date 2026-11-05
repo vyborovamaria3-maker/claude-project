@@ -91,6 +91,7 @@ jobs:
         run: |
           : > backend.env
           : > .env.server
+          : > .env.runtime
       - name: Validate production Compose
         env:
           IMAGE_TAG: test
