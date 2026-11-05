@@ -24,6 +24,6 @@ BEGIN
 END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_analytics_invalidation_coalesced
-  ON analytics_invalidation_queue(canonical_token_id,source_system,coalesce_key,reason);
+  ON analytics_invalidation_queue(canonical_token_id,source_system,event_kind,coalesce_key,reason);
 CREATE INDEX IF NOT EXISTS idx_invalidation_cursor
   ON analytics_invalidation_queue(status,next_day,next_attempt_at,invalidation_id);

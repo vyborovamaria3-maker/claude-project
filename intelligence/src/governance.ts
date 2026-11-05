@@ -99,7 +99,7 @@ export async function queueAnalyticsInvalidation(tx:PgTransaction,input:Readonly
   const result=await tx.query(`INSERT INTO analytics_invalidation_queue
     (canonical_token_id,source_system,event_kind,event_key,coalesce_key,reason)
     VALUES ($1,$2,$3,$4,$5,$6)
-    ON CONFLICT(canonical_token_id,source_system,coalesce_key,reason)
+    ON CONFLICT(canonical_token_id,source_system,event_kind,coalesce_key,reason)
       DO UPDATE SET event_kind=EXCLUDED.event_kind,event_key=EXCLUDED.event_key,
         status='queued',attempts=0,queued_at=clock_timestamp(),processed_at=NULL,
         next_attempt_at=clock_timestamp(),next_day=NULL
