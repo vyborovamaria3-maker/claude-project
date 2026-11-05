@@ -45,7 +45,16 @@ class _PgCompatConnection:
         if self._closed:
             return
         self._closed = True
-        self._context.__exit__(None, None, None)
+        try:
+            # contextlib.closing() does not forward the active exception to
+            # this adapter. Roll back explicitly so the pooled connection's
+            # successful __exit__ cannot commit a partially executed write.
+            self._db.rollback()
+        except BaseException as error:
+            self._context.__exit__(type(error), error, error.__traceback__)
+            raise
+        else:
+            self._context.__exit__(None, None, None)
 
 
 class PostgresAuditStore:
