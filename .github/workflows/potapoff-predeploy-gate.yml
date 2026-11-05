@@ -248,6 +248,15 @@ jobs:
         run: docker compose --env-file .env.server -f docker-compose.production.yml config --quiet
       - name: Build backend production image
         run: docker build --pull -t potapoff-backend-predeploy:${{ github.sha }} solana-launcher/backend
+      - name: Scan backend image for HIGH/CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: potapoff-backend-predeploy:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "HIGH,CRITICAL"
       - name: Build frontend production image
         run: |
           docker build --pull \
@@ -259,12 +268,30 @@ jobs:
             --build-arg NEXT_PUBLIC_BUILD_SHA=predeploy-${{ github.sha }} \
             -t potapoff-frontend-predeploy:${{ github.sha }} \
             solana-launcher
+      - name: Scan frontend image for HIGH/CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: potapoff-frontend-predeploy:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "HIGH,CRITICAL"
       - name: Build Telegram bot production image
         run: |
           docker build --pull \
             -f solana-launcher/Dockerfile.telegram-bot \
             -t potapoff-telegram-bot-predeploy:${{ github.sha }} \
             solana-launcher
+      - name: Scan Telegram bot image for HIGH/CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: potapoff-telegram-bot-predeploy:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "HIGH,CRITICAL"
       - name: Verify Telegram bot final image runtime and non-root identity
         run: |
           image="potapoff-telegram-bot-predeploy:${{ github.sha }}"
