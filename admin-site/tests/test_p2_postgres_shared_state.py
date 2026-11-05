@@ -22,35 +22,37 @@ from app.postgres_security_store import PostgresAdminSessionStore
 from app.postgres_task_queue import PostgresTaskQueue, TaskState
 
 
-def test_pg_compat_connection_rolls_back_before_pool_context_exit(monkeypatch) -> None:
-    from app import postgres_admin_state
+class PgCompatConnectionTests(unittest.TestCase):
+    def test_close_rolls_back_before_pool_context_exit(self) -> None:
+        from unittest.mock import patch
+        from app import postgres_admin_state
 
-    events: list[str] = []
+        events: list[str] = []
 
-    class FakeDatabase:
-        def rollback(self) -> None:
-            events.append("rollback")
+        class FakeDatabase:
+            def rollback(self) -> None:
+                events.append("rollback")
 
-    class FakeContext:
-        def __init__(self) -> None:
-            self.database = FakeDatabase()
+        class FakeContext:
+            def __init__(self) -> None:
+                self.database = FakeDatabase()
 
-        def __enter__(self):
-            return self.database
+            def __enter__(self):
+                return self.database
 
-        def __exit__(self, exc_type, exc, traceback) -> None:
-            events.append("context_exit")
-            if exc_type is None:
-                events.append("context_success_exit")
+            def __exit__(self, exc_type, exc, traceback) -> None:
+                events.append("context_exit")
+                if exc_type is None:
+                    events.append("context_success_exit")
 
-    context = FakeContext()
-    monkeypatch.setattr(postgres_admin_state, "pooled_connection", lambda *_args, **_kwargs: context)
-    connection = postgres_admin_state._PgCompatConnection("postgresql://unused")
+        context = FakeContext()
+        with patch.object(postgres_admin_state, "pooled_connection", return_value=context):
+            connection = postgres_admin_state._PgCompatConnection("postgresql://unused")
 
-    connection.close()
-    connection.close()
+        connection.close()
+        connection.close()
 
-    assert events == ["rollback", "context_exit", "context_success_exit"]
+        self.assertEqual(events, ["rollback", "context_exit", "context_success_exit"])
 
 
 
