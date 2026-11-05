@@ -106,6 +106,7 @@ test("deployment staging archives only tracked admin source", () => {
 test("Subscription API production image prunes development packages and the npm CLI", () => {
   assert.match(subscriptionApiDockerfile, /npm prune --omit=dev/);
   assert.match(subscriptionApiDockerfile, /rm -rf \/usr\/local\/lib\/node_modules\/npm \/usr\/local\/bin\/npm \/usr\/local\/bin\/npx/);
+  assert.match(subscriptionApiDockerfile, /COPY --from=build \/app\/node_modules\/\.prisma \.\/node_modules\/\.prisma/);
 });
 
 test("Backend production image removes vulnerable Python packaging tools", () => {
