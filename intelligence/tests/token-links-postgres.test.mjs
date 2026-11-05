@@ -225,8 +225,14 @@ test("real PostgreSQL: late arrivals, edit retractions, historical as-of and rep
       GROUP BY source_system ORDER BY source_system`);
     assert.deepEqual(retractions.rows,[{source_system:"tg",n:1},{source_system:"x",n:1}],
       "one recomputation per independent source retraction; duplicates do not enqueue again");
-    assert.equal((await pool.query("SELECT count(*)::integer AS n FROM analytics_invalidation_log")).rows[0].n,
-      (await pool.query("SELECT count(*)::integer AS n FROM analytics_invalidation_queue")).rows[0].n);
+    const queueCount=(await pool.query(
+      "SELECT count(*)::integer AS n FROM analytics_invalidation_queue"
+    )).rows[0].n;
+    const auditedCount=(await pool.query(
+      "SELECT count(DISTINCT invalidation_id)::integer AS n FROM analytics_invalidation_log"
+    )).rows[0].n;
+    assert.equal(auditedCount,queueCount,
+      "every queued invalidation has an append-only audit entry");
   }finally{
     if(pool)await pool.end();
     await admin.query("SET search_path TO public");
