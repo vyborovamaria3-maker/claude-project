@@ -137,16 +137,19 @@ ensure_runtime_database_credentials() {
   set_env_value "$ADMIN_ENV_FILE" ADMIN_STATE_RUNTIME_USER "$(env_value_from_file "$ADMIN_ENV_FILE" ADMIN_STATE_APP_USER)"
   set_env_value "$ADMIN_ENV_FILE" ADMIN_STATE_RUNTIME_PASSWORD "$(env_value_from_file "$ADMIN_ENV_FILE" ADMIN_STATE_APP_PASSWORD)"
   set_env_value "$ADMIN_ENV_FILE" ADMIN_PG_SCHEMA_MODE preprovisioned
-  refresh_admin_runtime_env
-  chmod 600 .env.server .env.runtime "$ADMIN_ENV_FILE" 2>/dev/null || true
+  chmod 600 .env.server "$ADMIN_ENV_FILE" 2>/dev/null || true
 }
 
 refresh_admin_runtime_env() {
-  local tmp
-  tmp="$(mktemp)"
-  awk -F= '$1 !~ /^ADMIN_STATE_(DB|APP|MIGRATOR|BACKUP)_PASSWORD$/ && $1 != "ADMIN_STATE_RUNTIME_PASSWORD" { print }' "$ADMIN_ENV_FILE" > "$tmp"
-  chmod 600 "$tmp"
-  mv "$tmp" "$(dirname "$ADMIN_ENV_FILE")/.env.runtime"
+  local helper="$ADMIN_DIR/deploy/refresh-runtime-env.sh"
+  if [[ -r "$helper" ]]; then
+    ADMIN_DIR="$ADMIN_DIR" bash "$helper"
+  elif [[ -f "$ADMIN_DIR/.env.runtime" ]]; then
+    echo "Legacy rollback source has no allowlist helper; retaining its existing .env.runtime"
+  elif grep -Eq '^[[:space:]]*env_file:[[:space:]]*\.env\.runtime' "$ADMIN_DIR/docker-compose.yml"; then
+    echo "Admin runtime env helper and .env.runtime are missing" >&2
+    return 1
+  fi
 }
 
 ensure_twitter_crawler_admin_secret() {
@@ -542,6 +545,7 @@ trap rollback ERR
 verify_release_images "$NEW_TAG"
 activate_admin_source
 ensure_twitter_crawler_admin_secret
+refresh_admin_runtime_env
 resolve_backend_api_key
 resolve_kol_runtime
 resolve_subscription_admin_key

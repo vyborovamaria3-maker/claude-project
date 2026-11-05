@@ -162,6 +162,7 @@ jobs:
           sed -i 's/^ADMIN_STATE_RUNTIME_PASSWORD=.*/ADMIN_STATE_RUNTIME_PASSWORD=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/' admin-site/.env
           sed -i 's/^SUBSCRIPTION_ADMIN_KEY=.*/SUBSCRIPTION_ADMIN_KEY=ci-subscription-admin-key/' admin-site/.env
           cp admin-site/.env.intelligence.example admin-site/.env.intelligence
+          bash admin-site/deploy/refresh-runtime-env.sh
           cp admin-site/sources.example.json admin-site/sources.json
           cp admin-site/logs.example.json admin-site/logs.json
           docker compose -f admin-site/docker-compose.yml config --quiet
@@ -241,6 +242,7 @@ jobs:
           SUBSCRIPTION_PASSWORD_ENCRYPTION_KEY=ci-encryption-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm
           TWITTER_CRAWLER_ADMIN_KEY=ci-twitter-admin-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm
           EOF
+          : > solana-launcher/.env.runtime
       - name: Validate production Compose
         working-directory: solana-launcher
         run: docker compose --env-file .env.server -f docker-compose.production.yml config --quiet

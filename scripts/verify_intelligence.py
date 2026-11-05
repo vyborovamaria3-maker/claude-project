@@ -158,7 +158,6 @@ def _verify_postgres() -> None:
 def _compose_fixture_files() -> Iterator[None]:
     mappings = (
         (ADMIN / ".env.example", ADMIN / ".env"),
-        (ADMIN / ".env.runtime.example", ADMIN / ".env.runtime"),
         (ADMIN / ".env.intelligence.example", ADMIN / ".env.intelligence"),
         (ADMIN / "sources.example.json", ADMIN / "sources.json"),
         (ADMIN / "logs.example.json", ADMIN / "logs.json"),
@@ -170,6 +169,10 @@ def _compose_fixture_files() -> Iterator[None]:
                 continue
             shutil.copyfile(source, destination)
             created.append(destination)
+        runtime_env = ADMIN / ".env.runtime"
+        if not runtime_env.exists():
+            _run(("bash", str(ADMIN / "deploy" / "refresh-runtime-env.sh")))
+            created.append(runtime_env)
         yield
     finally:
         for path in reversed(created):

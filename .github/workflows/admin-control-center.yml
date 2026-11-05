@@ -154,7 +154,7 @@ jobs:
           sed -i 's/^ADMIN_STATE_BACKUP_PASSWORD=.*/ADMIN_STATE_BACKUP_PASSWORD=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/' admin-site/.env
           sed -i 's/^ADMIN_STATE_RUNTIME_PASSWORD=.*/ADMIN_STATE_RUNTIME_PASSWORD=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/' admin-site/.env
           sed -i 's/^SUBSCRIPTION_ADMIN_KEY=.*/SUBSCRIPTION_ADMIN_KEY=ci-subscription-admin-key/' admin-site/.env
-          cp admin-site/.env.runtime.example admin-site/.env.runtime
+          bash admin-site/deploy/refresh-runtime-env.sh
           cp admin-site/.env.intelligence.example admin-site/.env.intelligence
           cp admin-site/sources.example.json admin-site/sources.json
           cp admin-site/logs.example.json admin-site/logs.json

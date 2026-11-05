@@ -11,6 +11,7 @@ Create an A/AAAA record for `admin.potapoff.fun` pointing to the production serv
 ```bash
 cd /opt/claude-project/admin-site
 cp .env.example .env
+bash deploy/refresh-runtime-env.sh
 cp .env.intelligence.example .env.intelligence
 cp sources.example.json sources.json
 cp logs.example.json logs.json
@@ -28,7 +29,7 @@ docker compose run --rm admin python scripts/hash_password.py
 
 Never commit `.env`, `.env.intelligence`, `sources.json` containing credentials, or generated state DBs.
 
-**Secret boundary:** `.env` belongs to the admin container. `.env.intelligence` belongs only to `intelligence-worker`. Never copy the worker PostgreSQL DSN into `.env`, and never pass the complete admin `.env` to the worker.
+**Secret boundary:** `.env` is used for Compose substitution and provisioning. `deploy/refresh-runtime-env.sh` creates `.env.runtime` for the admin container using the explicit allowlist in `.env.runtime.example`; PostgreSQL bootstrap, migrator, backup and subscription-admin credentials are excluded. `.env.intelligence` belongs only to `intelligence-worker`. Never copy the worker PostgreSQL DSN into the admin runtime environment or pass the complete admin `.env` to the worker.
 
 ## 3. Database access
 

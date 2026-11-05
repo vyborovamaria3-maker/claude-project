@@ -194,7 +194,9 @@ trap 'rm -rf "$ADMIN_STAGE_DIR"' ERR
 log "Staging Control Center source"
 tar \
   --exclude='admin-site/.env' \
-  --exclude='admin-site/.env.*' \
+  --exclude='admin-site/.env.runtime' \
+  --exclude='admin-site/.env.intelligence' \
+  --exclude='admin-site/.env.*.local' \
   --exclude='admin-site/sources.json' \
   --exclude='admin-site/logs.json' \
   --exclude='admin-site/__pycache__' \

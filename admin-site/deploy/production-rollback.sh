@@ -31,12 +31,18 @@ git -C "$REPO_DIR" checkout --detach "$PREVIOUS_SHA"
 # Normally .env/sources/logs were not modified by production-deploy.sh, so leaving
 # them untouched is safer. Set RESTORE_CONFIG=1 only if the operator changed them.
 if [[ "${RESTORE_CONFIG:-0}" == "1" ]]; then
-  for file in .env .env.intelligence sources.json logs.json; do
+  for file in .env .env.runtime .env.intelligence sources.json logs.json; do
     if [[ -f "$BACKUP_DIR/$file" ]]; then
       cp -a "$BACKUP_DIR/$file" "$ADMIN_DIR/$file"
       chmod 0600 "$ADMIN_DIR/$file" 2>/dev/null || true
     fi
   done
+fi
+
+if [[ -r "$SCRIPT_DIR/refresh-runtime-env.sh" ]]; then
+  bash "$SCRIPT_DIR/refresh-runtime-env.sh"
+elif grep -Eq '^[[:space:]]*env_file:[[:space:]]*\.env\.runtime' "$ADMIN_DIR/docker-compose.yml" && [[ ! -f "$ADMIN_DIR/.env.runtime" ]]; then
+  die "rollback target requires .env.runtime but neither an allowlist helper nor a saved runtime env is available"
 fi
 
 "${COMPOSE[@]}" config --quiet

@@ -34,7 +34,7 @@
 ```bash
 cd admin-site
 cp .env.example .env
-cp .env.runtime.example .env.runtime
+bash deploy/refresh-runtime-env.sh
 cp .env.intelligence.example .env.intelligence
 cp sources.example.json sources.json
 cp logs.example.json logs.json
@@ -50,7 +50,7 @@ docker network create potapoff-shared || true
 docker compose up -d
 ```
 
-`.env` используется Compose для подстановки и provisioner; `.env.runtime` передаётся только контейнеру админки; `.env.intelligence` — только worker. Заполните runtime-файл собственными значениями. Не переносите в него bootstrap-, migrator- и backup-пароли PostgreSQL.
+`.env` используется Compose и provisioner. `deploy/refresh-runtime-env.sh` формирует `.env.runtime` из `.env` только по allowlist `.env.runtime.example`; bootstrap-, migrator-, backup- и subscription-admin секреты в контейнер админки не передаются. `.env.intelligence` предназначен только для worker. Повторно запускайте helper после изменения `.env`.
 
 Обновите DSN в `sources.json` под реальные read-only credentials и сетевые имена контейнеров.
 
