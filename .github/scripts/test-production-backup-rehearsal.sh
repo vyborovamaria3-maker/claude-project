@@ -21,7 +21,8 @@ trap cleanup EXIT
   echo "Install solana-launcher dependencies before this rehearsal" >&2
   exit 1
 }
-mkdir -p "$scratch/deploy" "$scratch/admin" "$scratch/frontend-data" "$scratch/backups"
+mkdir -p "$scratch/deploy/scripts" "$scratch/admin" "$scratch/frontend-data" "$scratch/backups"
+cp "$root/solana-launcher/scripts/provision-postgres-roles.sql" "$scratch/deploy/scripts/"
 chmod 0777 "$scratch/frontend-data"
 
 # This test-only frontend container mirrors the production /app/data mount and
