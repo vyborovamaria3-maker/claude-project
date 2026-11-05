@@ -68,12 +68,16 @@ export async function confirmPayment(userId: string, paymentId: string, signatur
   );
 
   if (payment.status === PaymentStatus.CONFIRMED) {
-    return payment;
+    if (payment.signature === signature) return payment;
+    throw new AppError(409, "Payment was already confirmed with another signature", "PAYMENT_ALREADY_PROCESSED");
   }
-  if (payment.status !== PaymentStatus.PENDING || payment.expiresAt < new Date()) {
+  if (payment.status !== PaymentStatus.PENDING || payment.expiresAt <= new Date()) {
     throw new AppError(400, "Payment is not payable anymore", "PAYMENT_NOT_PAYABLE");
   }
 
+  // Verify the chain before taking the per-user database lock. State is re-read
+  // under the lock below, so two different payments cannot extend from the same
+  // stale subscription end timestamp.
   await verifySolanaPayment({
     signature,
     nonce: payment.nonce,
@@ -81,11 +85,38 @@ export async function confirmPayment(userId: string, paymentId: string, signatur
     currency: payment.currency
   });
 
-  const now = new Date();
-  const updated = await prisma.$transaction(async (tx) => {
+  const outcome = await prisma.$transaction(async (tx) => {
+    const lockedUsers = await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
+    if (!lockedUsers.length) {
+      throw new AppError(404, "User not found", "USER_NOT_FOUND");
+    }
+
+    const currentPayment = assertFound(
+      await tx.paymentTransaction.findFirst({
+        where: { id: payment.id, userId },
+        include: { user: true, plan: true }
+      }),
+      "Payment not found"
+    );
+
+    // Another request may have confirmed this exact payment while RPC
+    // verification was in flight. Return it idempotently, without extending
+    // the subscription or sending a second notification.
+    if (currentPayment.status === PaymentStatus.CONFIRMED) {
+      if (currentPayment.signature === signature) {
+        return { payment: currentPayment, newlyConfirmed: false };
+      }
+      throw new AppError(409, "Payment was already confirmed with another signature", "PAYMENT_ALREADY_PROCESSED");
+    }
+
+    const now = new Date();
+    if (currentPayment.status !== PaymentStatus.PENDING || currentPayment.expiresAt <= now) {
+      throw new AppError(400, "Payment is not payable anymore", "PAYMENT_NOT_PAYABLE");
+    }
+
     const claim = await tx.paymentTransaction.updateMany({
       where: {
-        id: payment.id,
+        id: currentPayment.id,
         userId,
         status: PaymentStatus.PENDING,
         expiresAt: { gt: now }
@@ -101,6 +132,17 @@ export async function confirmPayment(userId: string, paymentId: string, signatur
       throw new AppError(409, "Payment was already processed", "PAYMENT_ALREADY_PROCESSED");
     }
 
+    // Expired ACTIVE rows are not live entitlements. Retire them before
+    // applying the partial unique index on one ACTIVE row per user.
+    await tx.subscription.updateMany({
+      where: {
+        userId,
+        status: SubscriptionStatus.ACTIVE,
+        OR: [{ endsAt: null }, { endsAt: { lte: now } }]
+      },
+      data: { status: SubscriptionStatus.EXPIRED }
+    });
+
     const activeSubscription = await tx.subscription.findFirst({
       where: {
         userId,
@@ -113,14 +155,14 @@ export async function confirmPayment(userId: string, paymentId: string, signatur
     const baseDate = activeSubscription?.endsAt && activeSubscription.endsAt > now
       ? activeSubscription.endsAt
       : now;
-    const endsAt = addBillingPeriod(baseDate, payment.period);
+    const endsAt = addBillingPeriod(baseDate, currentPayment.period);
 
     const subscription = activeSubscription
       ? await tx.subscription.update({
           where: { id: activeSubscription.id },
           data: {
-            planId: payment.planId,
-            period: payment.period,
+            planId: currentPayment.planId,
+            period: currentPayment.period,
             status: SubscriptionStatus.ACTIVE,
             endsAt,
             reminderSentAt: null
@@ -129,29 +171,32 @@ export async function confirmPayment(userId: string, paymentId: string, signatur
       : await tx.subscription.create({
           data: {
             userId,
-            planId: payment.planId,
-            period: payment.period,
+            planId: currentPayment.planId,
+            period: currentPayment.period,
             status: SubscriptionStatus.ACTIVE,
             startsAt: now,
             endsAt
           }
         });
 
-    return tx.paymentTransaction.update({
-      where: { id: payment.id },
+    const updatedPayment = await tx.paymentTransaction.update({
+      where: { id: currentPayment.id },
       data: { subscriptionId: subscription.id },
       include: { plan: true, user: true, subscription: true }
     });
+    return { payment: updatedPayment, newlyConfirmed: true };
   });
 
-  const endsAt = updated.subscription?.endsAt;
-  await sendTelegramMessage(
-    updated.user,
-    `Payment confirmed. Your ${updated.plan.name} subscription is active until ${endsAt?.toISOString().slice(0, 10) ?? "n/a"}.`,
-    NotificationType.PAYMENT_CONFIRMED
-  );
+  if (outcome.newlyConfirmed) {
+    const endsAt = outcome.payment.subscription?.endsAt;
+    await sendTelegramMessage(
+      outcome.payment.user,
+      `Payment confirmed. Your ${outcome.payment.plan.name} subscription is active until ${endsAt?.toISOString().slice(0, 10) ?? "n/a"}.`,
+      NotificationType.PAYMENT_CONFIRMED
+    );
+  }
 
-  return updated;
+  return outcome.payment;
 }
 
 export async function getSubscriptionStatus(userId: string) {

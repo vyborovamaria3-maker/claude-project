@@ -51,3 +51,28 @@ export async function isRefreshTokenActive(jti: string, userId: string) {
   const stored = await redis.get(`refresh:${jti}`);
   return stored === userId;
 }
+
+/**
+ * Atomically consume the current refresh token and install its successor.
+ * Concurrent refresh requests cannot both pass a separate GET/DEL sequence.
+ */
+export async function rotateRefreshToken(jti: string, userId: string, telegramId: string): Promise<string | null> {
+  const nextJti = randomId(24);
+  const payload: JwtPayload = { sub: userId, telegramId, jti: nextJti };
+  const token = jwt.sign(payload, env.JWT_REFRESH_SECRET, {
+    algorithm: JWT_ALGORITHM,
+    expiresIn: env.REFRESH_TOKEN_TTL_SECONDS
+  });
+  const script = [
+    "local current = redis.call('GET', KEYS[1])",
+    "if current ~= ARGV[1] then return 0 end",
+    "redis.call('DEL', KEYS[1])",
+    "redis.call('SET', KEYS[2], ARGV[1], 'EX', ARGV[2])",
+    "return 1"
+  ].join("\\n");
+  const rotated = await redis.eval(
+    script, 2, `refresh:${jti}`, `refresh:${nextJti}`,
+    userId, String(env.REFRESH_TOKEN_TTL_SECONDS)
+  );
+  return Number(rotated) === 1 ? token : null;
+}

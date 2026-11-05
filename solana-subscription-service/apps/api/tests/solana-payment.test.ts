@@ -15,6 +15,7 @@ vi.stubEnv("RPC_ENDPOINT", "https://api.devnet.solana.com");
 vi.stubEnv("TREASURY_WALLET", "11111111111111111111111111111111");
 vi.stubEnv("TREASURY_USDC_TOKEN_ACCOUNT", "11111111111111111111111111111111");
 vi.stubEnv("USDC_MINT", "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
+vi.stubEnv("PAYMENT_CONFIRMATION_COMMITMENT", "finalized");
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -44,6 +45,30 @@ describe("verifySolanaPayment", () => {
         currency: PaymentCurrency.SOL
       })
     ).rejects.toMatchObject({ code: "PAYMENT_TX_FAILED" });
+    expect(parsedSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not accept a merely confirmed signature when finalization is required", async () => {
+    const { PaymentCurrency } = await import("@prisma/client");
+    const { solanaConnection, verifySolanaPayment } = await import("../src/services/solana.service");
+
+    vi.spyOn(solanaConnection, "getSignatureStatus").mockResolvedValue({
+      context: { slot: 1 },
+      value: {
+        slot: 1,
+        confirmations: 1,
+        err: null,
+        confirmationStatus: "confirmed"
+      }
+    } as never);
+    const parsedSpy = vi.spyOn(solanaConnection, "getParsedTransaction");
+
+    await expect(verifySolanaPayment({
+      signature: "7".repeat(88),
+      nonce: "solsub-finality",
+      expectedAmount: 1,
+      currency: PaymentCurrency.SOL
+    })).rejects.toMatchObject({ code: "PAYMENT_NOT_FINALIZED" });
     expect(parsedSpy).not.toHaveBeenCalled();
   });
 

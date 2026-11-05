@@ -39,8 +39,14 @@ export async function verifySolanaPayment(check: SolanaPaymentCheck) {
   }
 
   const confirmation = status.value?.confirmationStatus;
-  if (!confirmation || !["confirmed", "finalized"].includes(confirmation)) {
-    throw new AppError(409, "Transaction is not confirmed yet", "PAYMENT_NOT_CONFIRMED");
+  const confirmationRank = confirmation === "finalized" ? 2 : confirmation === "confirmed" ? 1 : 0;
+  const requiredRank = env.PAYMENT_CONFIRMATION_COMMITMENT === "finalized" ? 2 : 1;
+  if (confirmationRank < requiredRank) {
+    throw new AppError(
+      409,
+      requiredRank === 2 ? "Transaction is not finalized yet" : "Transaction is not confirmed yet",
+      requiredRank === 2 ? "PAYMENT_NOT_FINALIZED" : "PAYMENT_NOT_CONFIRMED"
+    );
   }
 
   const tx = await solanaConnection.getParsedTransaction(check.signature, {
