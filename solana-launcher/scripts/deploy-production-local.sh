@@ -64,6 +64,8 @@ require_cmd curl
 require_cmd install
 require_cmd flock
 require_cmd tar
+require_cmd awk
+require_cmd mktemp
 
 docker compose version >/dev/null 2>&1 || fail 'docker compose plugin is required'
 
@@ -147,6 +149,18 @@ export ADMIN_IMAGE_TAG="$DEPLOY_SHA"
 export DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}"
 export COMPOSE_DOCKER_CLI_BUILD="${COMPOSE_DOCKER_CLI_BUILD:-1}"
 
+# The first production Compose validation runs before deploy-production.sh.
+# Materialize its runtime env file here as well, using the same allowlist.
+runtime_tmp="$(mktemp "$DEPLOY_DIR/.env.runtime.XXXXXX")"
+if ! awk -F= '$1 !~ /^POSTGRES_/ && $1 != "REDIS_PASSWORD" { print }' "$DEPLOY_DIR/.env.server" > "$runtime_tmp"; then
+  rm -f "$runtime_tmp"
+  fail "unable to generate production runtime environment from .env.server"
+fi
+if ! chmod 600 "$runtime_tmp" || ! mv -f "$runtime_tmp" "$DEPLOY_DIR/.env.runtime"; then
+  rm -f "$runtime_tmp"
+  fail "unable to install production runtime environment"
+fi
+
 BUILD_COMPOSE=(
   docker compose
   --env-file "$DEPLOY_DIR/.env.server"
@@ -161,6 +175,7 @@ log "Validating production Compose"
 [[ -f "$ADMIN_DIR/.env.intelligence" ]] || fail "$ADMIN_DIR/.env.intelligence must be a regular file"
 [[ -f "$ADMIN_DIR/sources.json" ]] || fail "$ADMIN_DIR/sources.json must be a regular file"
 [[ -f "$ADMIN_DIR/logs.json" ]] || fail "$ADMIN_DIR/logs.json must be a regular file"
+bash "$ADMIN_DIR/deploy/refresh-runtime-env.sh"
 
 log "Validating Control Center Compose"
 docker compose --project-directory "$ADMIN_DIR" -f "$ADMIN_COMPOSE_FILE" config --quiet

@@ -73,6 +73,9 @@ test("forward deploy and rollback regenerate the runtime environment safely", ()
   assert.match(mainDeploy, /RUNTIME_ENV_TEMPLATE="\$ADMIN_STAGE_DIR\/admin-site\/\.env\.runtime\.example"/);
   assert.match(adminDeploy, /bash "\$SCRIPT_DIR\/refresh-runtime-env\.sh"/);
   assert.match(adminRollback, /refresh-runtime-env\.sh/);
+  assert.ok(localDeploy.includes("POSTGRES_") && localDeploy.includes("REDIS_PASSWORD"));
+  assert.ok(localDeploy.indexOf("awk -F= ") < localDeploy.indexOf("config --quiet"));
+  assert.ok(localDeploy.indexOf('bash "$ADMIN_DIR/deploy/refresh-runtime-env.sh"') < localDeploy.indexOf('docker compose --project-directory "$ADMIN_DIR" -f "$ADMIN_COMPOSE_FILE" config --quiet'));
 });
 
 test("deployment staging archives only tracked admin source", () => {
