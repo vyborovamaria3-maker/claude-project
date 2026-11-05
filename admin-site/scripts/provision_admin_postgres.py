@@ -38,6 +38,42 @@ def _ensure_login_role(db: psycopg.Connection[Any], name: str, password: str, *,
     db.execute(statement)
 
 
+def _transfer_public_relations(
+    db: psycopg.Connection[Any], source_role: str, target_role: str
+) -> None:
+    """Transfer only application relations in public, never cluster/system objects."""
+    rows = db.execute(
+        """
+        SELECT c.relkind, c.relname
+        FROM pg_class AS c
+        JOIN pg_namespace AS n ON n.oid = c.relnamespace
+        JOIN pg_roles AS owner_role ON owner_role.oid = c.relowner
+        WHERE n.nspname = 'public'
+          AND owner_role.rolname = %s
+          AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
+        ORDER BY c.relkind, c.relname
+        """,
+        (source_role,),
+    ).fetchall()
+    relation_types = {
+        "r": "TABLE",
+        "p": "TABLE",
+        "v": "VIEW",
+        "m": "MATERIALIZED VIEW",
+        "S": "SEQUENCE",
+        "f": "FOREIGN TABLE",
+    }
+    for relkind, relname in rows:
+        db.execute(
+            sql.SQL("ALTER {} {}.{} OWNER TO {}").format(
+                sql.SQL(relation_types[relkind]),
+                sql.Identifier("public"),
+                sql.Identifier(relname),
+                sql.Identifier(target_role),
+            )
+        )
+
+
 def provision_roles(
     *, bootstrap_dsn: str, app_user: str, app_password: str,
     migrator_user: str, migrator_password: str, backup_user: str, backup_password: str,
@@ -56,12 +92,9 @@ def provision_roles(
         _ensure_login_role(db, migrator_user, migrator_password)
         _ensure_login_role(db, backup_user, backup_password, bypass_rls=True)
 
-        # Transfer existing application objects and database ownership to the
-        # non-superuser migrator. The bootstrap account remains available only
-        # to this provisioner and emergency/global-catalog operations.
-        db.execute(sql.SQL("REASSIGN OWNED BY {} TO {}").format(
-            sql.Identifier(bootstrap_user), sql.Identifier(migrator_user)
-        ))
+        # REASSIGN OWNED is too broad for a cluster bootstrap login: it can
+        # include shared/system-owned objects and fails on stock PostgreSQL 17.
+        # Transfer the database, schema and only application relations instead.
         db.execute(sql.SQL("ALTER DATABASE {} OWNER TO {}").format(
             sql.Identifier(database), sql.Identifier(migrator_user)
         ))
@@ -70,6 +103,7 @@ def provision_roles(
         ))
         db.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
         db.execute(sql.SQL("ALTER SCHEMA public OWNER TO {}").format(sql.Identifier(migrator_user)))
+        _transfer_public_relations(db, bootstrap_user, migrator_user)
         db.execute(sql.SQL("GRANT USAGE, CREATE ON SCHEMA public TO {}").format(sql.Identifier(migrator_user)))
         db.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}, {}, {}").format(
             sql.Identifier(database), sql.Identifier(app_user),
