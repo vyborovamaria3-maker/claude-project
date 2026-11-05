@@ -29,5 +29,6 @@ COPY package*.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY apps/bot/package.json apps/bot/package.json
+USER node
 EXPOSE 4000
 CMD ["node", "apps/api/dist/apps/api/src/server.js"]
