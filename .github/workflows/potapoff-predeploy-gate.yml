@@ -265,8 +265,13 @@ jobs:
             -f solana-launcher/Dockerfile.telegram-bot \
             -t potapoff-telegram-bot-predeploy:${{ github.sha }} \
             solana-launcher
-      - name: Verify Telegram bot final image Node runtime
+      - name: Verify Telegram bot final image runtime and non-root identity
         run: |
-          runtime_major="$(docker run --rm --entrypoint node potapoff-telegram-bot-predeploy:${{ github.sha }} -p 'Number(process.versions.node.split(".")[0])')"
+          image="potapoff-telegram-bot-predeploy:${{ github.sha }}"
+          runtime_user="$(docker image inspect "$image" --format '{{.Config.User}}')"
+          test "$runtime_user" = "node"
+          runtime_uid="$(docker run --rm --entrypoint id "$image" -u)"
+          test "$runtime_uid" != "0"
+          runtime_major="$(docker run --rm --entrypoint node "$image" -p 'Number(process.versions.node.split(".")[0])')"
           echo "Telegram bot image Node.js major: ${runtime_major}"
           test "${runtime_major}" -ge 22
