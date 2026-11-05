@@ -52,7 +52,7 @@ docker network create potapoff-shared || true
 docker compose up -d
 ```
 
-`.env` используется Compose и provisioner. `deploy/refresh-runtime-env.sh` формирует `.env.runtime` из `.env` только по allowlist `.env.runtime.example`; bootstrap-, migrator-, backup- и subscription-admin секреты в контейнер админки не передаются. `.env.intelligence` предназначен только для worker. Повторно запускайте helper после изменения `.env`.
+`.env` используется Compose и provisioner. `deploy/refresh-runtime-env.sh` формирует `.env.runtime` из `.env` только по allowlist `.env.runtime.example`; bootstrap-, migrator-, backup- и subscription-admin секреты в контейнер админки не передаются. Файл `.env.runtime` создаётся с правами `0600` и игнорируется Git. `.env.intelligence` предназначен только для worker. Повторно запускайте helper после изменения `.env`.
 
 Обновите DSN в `sources.json` под реальные read-only credentials и сетевые имена контейнеров.
 

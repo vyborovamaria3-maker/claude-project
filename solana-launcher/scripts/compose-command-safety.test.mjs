@@ -74,11 +74,9 @@ test("forward deploy and rollback regenerate the runtime environment safely", ()
   assert.match(adminRollback, /refresh-runtime-env\.sh/);
 });
 
-test("deployment staging keeps safe templates but excludes local runtime secrets", () => {
-  for (const script of [localDeploy, productionWorkflow]) {
-    assert.doesNotMatch(script, /--exclude='admin-site\/\.env\.\*'/);
-    assert.match(script, /--exclude='admin-site\/\.env\.runtime'/);
-    assert.match(script, /--exclude='admin-site\/\.env\.intelligence'/);
-    assert.doesNotMatch(script, /--exclude='admin-site\/\.env\.runtime\.example'/);
-  }
+test("deployment staging archives only tracked admin source", () => {
+  assert.match(localDeploy, /git -C "\$SOURCE_ROOT" archive --format=tar "\$DEPLOY_SHA" admin-site/);
+  assert.match(productionWorkflow, /git archive --format=tar "\$RELEASE_SHA" admin-site/);
+  assert.doesNotMatch(localDeploy, /--exclude='admin-site\/\.env/);
+  assert.doesNotMatch(productionWorkflow, /--exclude='admin-site\/\.env/);
 });

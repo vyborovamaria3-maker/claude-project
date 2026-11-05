@@ -192,16 +192,7 @@ mkdir -p "$ADMIN_STAGE_DIR"
 trap 'rm -rf "$ADMIN_STAGE_DIR"' ERR
 
 log "Staging Control Center source"
-tar \
-  --exclude='admin-site/.env' \
-  --exclude='admin-site/.env.runtime' \
-  --exclude='admin-site/.env.intelligence' \
-  --exclude='admin-site/.env.*.local' \
-  --exclude='admin-site/sources.json' \
-  --exclude='admin-site/logs.json' \
-  --exclude='admin-site/__pycache__' \
-  --exclude='admin-site/**/__pycache__' \
-  -C "$SOURCE_ROOT" -cf - admin-site \
+git -C "$SOURCE_ROOT" archive --format=tar "$DEPLOY_SHA" admin-site \
   | tar -C "$ADMIN_STAGE_DIR" -xf -
 
 test -r "$ADMIN_STAGE_DIR/admin-site/docker-compose.yml"

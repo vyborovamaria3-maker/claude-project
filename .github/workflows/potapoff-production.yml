@@ -203,16 +203,7 @@ jobs:
           local_archive="potapoff-admin-${RELEASE_SHA}.tar.gz"
           remote_archive="/tmp/potapoff-admin-${RELEASE_SHA}.tar.gz"
 
-          tar \
-            --exclude='admin-site/.env' \
-            --exclude='admin-site/.env.runtime' \
-            --exclude='admin-site/.env.intelligence' \
-            --exclude='admin-site/.env.*.local' \
-            --exclude='admin-site/sources.json' \
-            --exclude='admin-site/logs.json' \
-            --exclude='admin-site/__pycache__' \
-            --exclude='admin-site/**/__pycache__' \
-            -czf "$local_archive" admin-site
+          git archive --format=tar "$RELEASE_SHA" admin-site | gzip -c > "$local_archive"
 
           "${SSH[@]}" 'mkdir -p /opt/claude-project'
           "${SSH[@]}" "rm -f '$remote_archive'"
