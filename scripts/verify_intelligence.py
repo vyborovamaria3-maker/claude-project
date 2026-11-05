@@ -162,10 +162,26 @@ def _compose_fixture_files() -> Iterator[None]:
 def _verify_compose_boundary() -> None:
     _require_executable("docker")
     compose = ("docker", "compose", "-f", "admin-site/docker-compose.yml")
-    _run((*compose, "config", "--quiet"))
+    # This check only renders Compose; it never starts services. Supply synthetic
+    # credentials when the caller has not provided them so the example template
+    # can be validated without requiring real secrets.
+    compose_env = os.environ.copy()
+    synthetic_credentials = {
+        "ADMIN_STATE_DB_PASSWORD": "ci-bootstrap-password",
+        "ADMIN_STATE_APP_PASSWORD": "a" * 64,
+        "ADMIN_STATE_MIGRATOR_PASSWORD": "b" * 64,
+        "ADMIN_STATE_BACKUP_PASSWORD": "c" * 64,
+        "ADMIN_STATE_RUNTIME_PASSWORD": "a" * 64,
+        "SUBSCRIPTION_ADMIN_KEY": "ci-subscription-admin-key",
+    }
+    for key, value in synthetic_credentials.items():
+        if not compose_env.get(key, "").strip():
+            compose_env[key] = value
+    _run((*compose, "config", "--quiet"), env=compose_env)
     result = subprocess.run(
         [*compose, "config", "--format", "json"],
         cwd=ROOT,
+        env=compose_env,
         capture_output=True,
         text=True,
         check=False,
