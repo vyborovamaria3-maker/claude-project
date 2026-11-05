@@ -363,6 +363,11 @@ jobs:
         env:
           IMAGE_TAG: audit
           POSTGRES_PASSWORD: test-postgres
+          POSTGRES_APP_PASSWORD: ci-postgres-app
+          POSTGRES_MIGRATOR_PASSWORD: ci-postgres-migrator
+          POSTGRES_BACKUP_PASSWORD: ci-postgres-backup
+          POSTGRES_READONLY_PASSWORD: ci-postgres-readonly
+          REDIS_PASSWORD: ci-redis
           RABBITMQ_PASSWORD: test-rabbit
           SECRET_KEY: a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9
           KOL_INTERNAL_KEY: ci-kol-internal-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm
