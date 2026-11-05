@@ -13,7 +13,7 @@ FROM node:22-alpine AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run build -w @solsub/api
+RUN npm run build -w @solsub/shared && npm run build -w @solsub/api
 
 FROM node:22-alpine AS runner
 WORKDIR /app
