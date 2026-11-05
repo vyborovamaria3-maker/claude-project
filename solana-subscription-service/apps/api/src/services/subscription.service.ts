@@ -62,7 +62,7 @@ export async function confirmPayment(userId: string, paymentId: string, signatur
   const payment = assertFound(
     await prisma.paymentTransaction.findFirst({
       where: { id: paymentId, userId },
-      include: { user: true, plan: true }
+      include: { user: true, plan: true, subscription: true }
     }),
     "Payment not found"
   );
@@ -94,7 +94,7 @@ export async function confirmPayment(userId: string, paymentId: string, signatur
     const currentPayment = assertFound(
       await tx.paymentTransaction.findFirst({
         where: { id: payment.id, userId },
-        include: { user: true, plan: true }
+        include: { user: true, plan: true, subscription: true }
       }),
       "Payment not found"
     );

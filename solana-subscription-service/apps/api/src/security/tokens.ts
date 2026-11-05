@@ -69,7 +69,7 @@ export async function rotateRefreshToken(jti: string, userId: string, telegramId
     "redis.call('DEL', KEYS[1])",
     "redis.call('SET', KEYS[2], ARGV[1], 'EX', ARGV[2])",
     "return 1"
-  ].join("\\n");
+  ].join("\n");
   const rotated = await redis.eval(
     script, 2, `refresh:${jti}`, `refresh:${nextJti}`,
     userId, String(env.REFRESH_TOKEN_TTL_SECONDS)
