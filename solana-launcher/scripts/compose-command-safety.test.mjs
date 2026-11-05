@@ -23,6 +23,8 @@ const productionCompose = await readFile(resolve(root, "docker-compose.productio
 const backupScript = await readFile(resolve(root, "scripts/backup-production.sh"), "utf8");
 const dockerignore = await readFile(resolve(root, ".dockerignore"), "utf8");
 const telegramDockerfile = await readFile(resolve(root, "Dockerfile.telegram-bot"), "utf8");
+const subscriptionApiDockerfile = await readFile(resolve(root, "../solana-subscription-service/apps/api/Dockerfile"), "utf8");
+const backendDockerfile = await readFile(resolve(root, "backend/Dockerfile"), "utf8");
 const fullBacktestWorkflow = await readFile(resolve(root, "../.github/workflows/full-backtest-audit.yml"), "utf8");
 const telegramWorkflow = await readFile(resolve(root, "../.github/workflows/telegram-intelligence-v19-ci.yml"), "utf8");
 const predeployWorkflow = await readFile(resolve(root, "../.github/workflows/potapoff-predeploy-gate.yml"), "utf8");
@@ -99,6 +101,16 @@ test("deployment staging archives only tracked admin source", () => {
   assert.match(productionWorkflow, /git archive --format=tar "\$RELEASE_SHA" admin-site/);
   assert.doesNotMatch(localDeploy, /--exclude='admin-site\/\.env/);
   assert.doesNotMatch(productionWorkflow, /--exclude='admin-site\/\.env/);
+});
+
+test("Subscription API production image prunes development packages and the npm CLI", () => {
+  assert.match(subscriptionApiDockerfile, /npm prune --omit=dev/);
+  assert.match(subscriptionApiDockerfile, /rm -rf \/usr\/local\/lib\/node_modules\/npm \/usr\/local\/bin\/npm \/usr\/local\/bin\/npx/);
+});
+
+test("Backend production image removes vulnerable Python packaging tools", () => {
+  assert.match(backendDockerfile, /pip uninstall -y setuptools wheel jaraco\.context/);
+  assert.match(backendDockerfile, /importlib\.metadata/);
 });
 
 test("Admin source DSN variables are included in the runtime environment allowlist", () => {
