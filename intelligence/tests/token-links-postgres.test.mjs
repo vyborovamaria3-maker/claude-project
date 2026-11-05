@@ -73,7 +73,8 @@ test("real PostgreSQL: late arrivals, edit retractions, historical as-of and rep
     for(const filename of ["001_entity_registry.sql","002_timeline.sql","003_feature_store.sql",
       "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql",
       "006_cross_platform_analytics.sql","008_alert_status_history.sql","009_ai_analysis.sql",
-      "010_intelligence_governance.sql"]){
+      "010_intelligence_governance.sql","013_invalidation_retry_schedule.sql",
+      "018_event_revision_invalidation.sql"]){
       await admin.query(await readFile(new URL("../migrations/"+filename,import.meta.url),"utf8"));
     }
     pool=new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:3});
