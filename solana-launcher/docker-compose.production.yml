@@ -10,8 +10,6 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
-    env_file:
-      - .env.server
     environment:
       POSTGRES_DB: potapoff
       POSTGRES_USER: potapoff
@@ -50,15 +48,15 @@ services:
     entrypoint: ["/bin/sh", "-ec"]
     command: >-
       psql -X -v ON_ERROR_STOP=1
-      -v bootstrap_user="${PGUSER}"
-      -v app_user="${POSTGRES_APP_USER}"
-      -v app_password="${POSTGRES_APP_PASSWORD}"
-      -v migrator_user="${POSTGRES_MIGRATOR_USER}"
-      -v migrator_password="${POSTGRES_MIGRATOR_PASSWORD}"
-      -v backup_user="${POSTGRES_BACKUP_USER}"
-      -v backup_password="${POSTGRES_BACKUP_PASSWORD}"
-      -v readonly_user="${POSTGRES_READONLY_USER}"
-      -v readonly_password="${POSTGRES_READONLY_PASSWORD}"
+      -v bootstrap_user="$${PGUSER}"
+      -v app_user="$${POSTGRES_APP_USER}"
+      -v app_password="$${POSTGRES_APP_PASSWORD}"
+      -v migrator_user="$${POSTGRES_MIGRATOR_USER}"
+      -v migrator_password="$${POSTGRES_MIGRATOR_PASSWORD}"
+      -v backup_user="$${POSTGRES_BACKUP_USER}"
+      -v backup_password="$${POSTGRES_BACKUP_PASSWORD}"
+      -v readonly_user="$${POSTGRES_READONLY_USER}"
+      -v readonly_password="$${POSTGRES_READONLY_PASSWORD}"
       -f /provision/roles.sql
     depends_on:
       postgres:
@@ -70,8 +68,6 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    env_file:
-      - .env.server
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
@@ -89,8 +85,6 @@ services:
   rabbitmq:
     image: rabbitmq:3-management-alpine
     restart: unless-stopped
-    env_file:
-      - .env.server
     environment:
       RABBITMQ_DEFAULT_USER: potapoff
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
@@ -111,7 +105,7 @@ services:
     restart: unless-stopped
     env_file:
       - backend.env
-      - .env.server
+      - .env.runtime
     environment:
       ENVIRONMENT: production
       DEBUG: "false"
@@ -169,7 +163,7 @@ services:
     restart: unless-stopped
     env_file:
       - backend.env
-      - .env.server
+      - .env.runtime
     environment:
       ENVIRONMENT: production
       DEBUG: "false"
@@ -196,7 +190,7 @@ services:
     restart: unless-stopped
     env_file:
       - backend.env
-      - .env.server
+      - .env.runtime
     environment:
       ENVIRONMENT: production
       DEBUG: "false"
@@ -225,7 +219,7 @@ services:
     restart: unless-stopped
     env_file:
       - backend.env
-      - .env.server
+      - .env.runtime
     environment:
       ENVIRONMENT: production
       DEBUG: "false"
@@ -249,7 +243,7 @@ services:
     restart: unless-stopped
     env_file:
       - backend.env
-      - .env.server
+      - .env.runtime
     environment:
       ENVIRONMENT: production
       DEBUG: "false"
