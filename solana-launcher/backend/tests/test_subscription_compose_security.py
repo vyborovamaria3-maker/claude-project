@@ -94,3 +94,15 @@ def test_backup_uses_separate_database_backup_login():
     assert "POSTGRES_BACKUP_USER" in backup
     assert "POSTGRES_BACKUP_PASSWORD" in backup
     assert 'pg_dump -h 127.0.0.1 -U "$POSTGRES_BACKUP_USER"' in backup
+
+
+def test_runtime_env_filter_removes_bootstrap_and_migration_secrets():
+    deploy = (LAUNCHER_ROOT / "scripts" / "deploy-production.sh").read_text(encoding="utf-8")
+    assert "awk -F= '$1 !~ /^POSTGRES_/ && $1 != \"REDIS_PASSWORD\" { print }' .env.server" in deploy
+    assert 'set_env_value "$ADMIN_ENV_FILE" POTAPOFF_DB_READONLY_PASSWORD "$POSTGRES_READONLY_PASSWORD"' in deploy
+
+
+def test_admin_postgres_source_uses_read_only_role():
+    sources = (LAUNCHER_ROOT.parent / "admin-site" / "sources.json").read_text(encoding="utf-8")
+    assert "potapoff_readonly:${POTAPOFF_DB_READONLY_PASSWORD}" in sources
+    assert "potapoff:${POTAPOFF_DB_PASSWORD}" not in sources
