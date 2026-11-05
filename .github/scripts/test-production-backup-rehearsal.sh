@@ -124,7 +124,7 @@ docker run -d --rm --network none --name "$product" \
   --label com.docker.compose.project=potapoff \
   --label com.docker.compose.service=postgres \
   -e POSTGRES_USER=potapoff -e POSTGRES_DB=potapoff \
-  -e POSTGRES_HOST_AUTH_METHOD=trust postgres:16-alpine >/dev/null
+  -e POSTGRES_PASSWORD=ci-product-bootstrap-password postgres:16-alpine >/dev/null
 docker run -d --rm --network none --name "$admin" \
   -e POSTGRES_USER=potapoff_admin -e POSTGRES_DB=potapoff_admin \
   -e POSTGRES_PASSWORD=ci-admin-bootstrap-password postgres:17-alpine >/dev/null
@@ -136,8 +136,8 @@ for i in $(seq 1 45); do
      docker logs "$admin" 2>&1 | grep -Fq 'PostgreSQL init process complete; ready for start up.' &&
      # The bootstrap server is Unix-socket-only; TCP plus SELECT 1 proves
      # that each final postmaster is ready after initdb has completed.
-     docker exec "$product" pg_isready -h 127.0.0.1 -U potapoff -d potapoff >/dev/null 2>&1 &&
-     docker exec "$product" psql -h 127.0.0.1 -U potapoff -d potapoff -X -Atq -v ON_ERROR_STOP=1 -c "SELECT 1" 2>/dev/null | grep -qx "1" &&
+     docker exec -e PGPASSWORD=ci-product-bootstrap-password "$product" pg_isready -h 127.0.0.1 -U potapoff -d potapoff >/dev/null 2>&1 &&
+     docker exec -e PGPASSWORD=ci-product-bootstrap-password "$product" psql -h 127.0.0.1 -U potapoff -d potapoff -X -Atq -v ON_ERROR_STOP=1 -c "SELECT 1" 2>/dev/null | grep -qx "1" &&
      docker exec -e PGPASSWORD=ci-admin-bootstrap-password "$admin" pg_isready -h 127.0.0.1 -U potapoff_admin -d potapoff_admin >/dev/null 2>&1 &&
      docker exec -e PGPASSWORD=ci-admin-bootstrap-password "$admin" psql -h 127.0.0.1 -U potapoff_admin -d potapoff_admin -X -Atq -v ON_ERROR_STOP=1 -c "SELECT 1" 2>/dev/null | grep -qx "1"; then
     ready=1
@@ -151,6 +151,10 @@ docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
   -c "CREATE TABLE potapoff_backup_ci_product_fixture(id bigserial PRIMARY KEY, tag text NOT NULL); INSERT INTO potapoff_backup_ci_product_fixture(tag) VALUES ('safe-fixture'); CREATE TABLE users(id uuid PRIMARY KEY, email text, created_at timestamptz NOT NULL); INSERT INTO users VALUES ('00000000-0000-0000-0000-000000000001','ci@example.invalid',now()); CREATE TABLE tokens(id bigserial PRIMARY KEY, mint_address varchar(64) NOT NULL, status varchar(16) NOT NULL); INSERT INTO tokens(mint_address,status) VALUES ('fixture-mint','active'); CREATE TABLE wallets(id bigserial PRIMARY KEY, wallet_address varchar(64) NOT NULL); INSERT INTO wallets(wallet_address) VALUES ('fixture-wallet')" >/dev/null
 docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
   -c "CREATE TABLE alembic_version(version_num varchar(32) PRIMARY KEY); INSERT INTO alembic_version VALUES ('ci_review_head');" >/dev/null
+
+POSTGRES_BACKUP_PASSWORD=0000000000000000000000000000000000000000000000000000000000000000
+docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
+  -c "CREATE ROLE potapoff_backup LOGIN PASSWORD '$POSTGRES_BACKUP_PASSWORD' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION BYPASSRLS; GRANT CONNECT ON DATABASE potapoff TO potapoff_backup; GRANT pg_read_all_data TO potapoff_backup;" >/dev/null
 
 docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
   -c "CREATE TABLE potapoff_backup_ci_admin_fixture(id bigserial PRIMARY KEY, tag text NOT NULL); INSERT INTO potapoff_backup_ci_admin_fixture(tag) VALUES ('safe-fixture'); CREATE TABLE admin_audit(id bigserial PRIMARY KEY, action text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()); INSERT INTO admin_audit(action) VALUES ('fixture'); CREATE TABLE feature_flags(name text PRIMARY KEY, enabled boolean NOT NULL); INSERT INTO feature_flags VALUES ('ci.fixture',true); CREATE TABLE admin_background_tasks(id text PRIMARY KEY, state text NOT NULL); INSERT INTO admin_background_tasks VALUES ('ci-fixture','queued'); CREATE TABLE admin_security_sessions(nonce text PRIMARY KEY, username text NOT NULL); INSERT INTO admin_security_sessions VALUES ('ci-session','ci');" >/dev/null
@@ -182,7 +186,7 @@ for database in "$product potapoff potapoff potapoff_backup_ci_product_fixture" 
   }
 done
 
-printf 'POSTGRES_PASSWORD=ci-synthetic\nPOSTGRES_BACKUP_USER=potapoff\nPOSTGRES_BACKUP_PASSWORD=%064d\n' 0 > "$scratch/deploy/.env.server"
+printf 'POSTGRES_PASSWORD=ci-synthetic\nPOSTGRES_BACKUP_USER=potapoff_backup\nPOSTGRES_BACKUP_PASSWORD=%s\n' "$POSTGRES_BACKUP_PASSWORD" > "$scratch/deploy/.env.server"
 printf 'TEST_ONLY=1\n' > "$scratch/deploy/backend.env"
 printf 'ADMIN_ENVIRONMENT=test\n' > "$scratch/deploy/.env.runtime"
 printf 'services: {}\n' > "$scratch/deploy/docker-compose.production.yml"
