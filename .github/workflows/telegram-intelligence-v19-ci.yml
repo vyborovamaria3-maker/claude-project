@@ -91,6 +91,7 @@ jobs:
         run: |
           : > backend.env
           : > .env.server
+          # Compose requires env_file to exist even when CI injects values via step env.
           : > .env.runtime
       - name: Validate production Compose
         env:
