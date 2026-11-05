@@ -25,6 +25,10 @@ const dockerignore = await readFile(resolve(root, ".dockerignore"), "utf8");
 const telegramDockerfile = await readFile(resolve(root, "Dockerfile.telegram-bot"), "utf8");
 const subscriptionApiDockerfile = await readFile(resolve(root, "../solana-subscription-service/apps/api/Dockerfile"), "utf8");
 const backendDockerfile = await readFile(resolve(root, "backend/Dockerfile"), "utf8");
+const subscriptionCompose = await readFile(resolve(root, "../solana-subscription-service/docker-compose.prod.yml"), "utf8");
+const subscriptionReadonlySql = await readFile(resolve(root, "../solana-subscription-service/scripts/provision-readonly-role.sql"), "utf8");
+const memecoinCompose = await readFile(resolve(root, "../memecoin-intelligence/docker-compose.production.yml"), "utf8");
+const memecoinReadonlySql = await readFile(resolve(root, "../memecoin-intelligence/scripts/provision-readonly-role.sql"), "utf8");
 const fullBacktestWorkflow = await readFile(resolve(root, "../.github/workflows/full-backtest-audit.yml"), "utf8");
 const telegramWorkflow = await readFile(resolve(root, "../.github/workflows/telegram-intelligence-v19-ci.yml"), "utf8");
 const predeployWorkflow = await readFile(resolve(root, "../.github/workflows/potapoff-predeploy-gate.yml"), "utf8");
@@ -114,14 +118,36 @@ test("Backend production image removes vulnerable Python packaging tools", () =>
   assert.match(backendDockerfile, /importlib\.metadata/);
 });
 
-test("Admin source DSN variables are included in the runtime environment allowlist", () => {
+test("Admin product data sources use dedicated read-only roles and shared Docker aliases", () => {
   const allowed = new Set(adminRuntimeExample.split(/\r?\n/)
     .map((line) => line.match(/^([A-Z_][A-Z0-9_]*)=/)?.[1])
     .filter(Boolean));
+  const expected = {
+    potapoff: ["potapoff_readonly", "POTAPOFF_DB_READONLY_PASSWORD", "postgres"],
+    subscription: ["solsub_readonly", "SUBSCRIPTION_DB_READONLY_PASSWORD", "subscription-postgres"],
+    memecoin: ["memecoin_readonly", "MEMECOIN_DB_READONLY_PASSWORD", "memecoin-postgres"]
+  };
   for (const source of [...adminSources, ...adminSourcesExample]) {
-    for (const [, variable] of source.dsn.matchAll(/\$\{([A-Z_][A-Z0-9_]*)\}/g)) {
-      assert.ok(allowed.has(variable), `source ${source.id} references missing runtime variable ${variable}`);
-    }
+    const spec = expected[source.id];
+    if (!spec) continue;
+    const match = source.dsn.match(/^postgresql:\/\/([^:]+):\$\{([A-Z_][A-Z0-9_]*)\}@([^:]+):/);
+    assert.ok(match, "source " + source.id + " must use a password placeholder");
+    assert.equal(match[1], spec[0], source.id + " must not use the application login");
+    assert.equal(match[2], spec[1], source.id + " must use its dedicated read-only secret");
+    assert.equal(match[3], spec[2], source.id + " must resolve on the shared data network");
+    assert.ok(allowed.has(match[2]), "runtime allowlist must include " + match[2]);
+  }
+  assert.match(subscriptionCompose, /aliases:\s*\n\s*- subscription-postgres/);
+  assert.match(memecoinCompose, /aliases:\s*\n\s*- memecoin-postgres/);
+  assert.match(subscriptionCompose, /name: potapoff_default/);
+  assert.match(memecoinCompose, /name: potapoff_default/);
+  for (const sql of [subscriptionReadonlySql, memecoinReadonlySql]) {
+    assert.match(sql, /NOINHERIT/);
+    assert.match(sql, /NOBYPASSRLS/);
+    assert.match(sql, /GRANT SELECT ON ALL TABLES IN SCHEMA public/);
+    assert.match(sql, /ALTER DEFAULT PRIVILEGES FOR ROLE/);
+    assert.match(sql, /default_transaction_read_only = on/);
+    assert.doesNotMatch(sql, /GRANT ALL PRIVILEGES/);
   }
 });
 

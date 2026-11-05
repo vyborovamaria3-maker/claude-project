@@ -9,10 +9,36 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      test: ["CMD-SHELL", "pg_isready -U \"${POSTGRES_USER}\" -d \"${POSTGRES_DB}\""]
       interval: 10s
       timeout: 5s
       retries: 10
+    networks:
+      default: {}
+      potapoff-data:
+        aliases:
+          - memecoin-postgres
+
+  postgres-readonly-provisioner:
+    image: postgres:16-alpine
+    restart: "no"
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-memecoin}
+      PGUSER: ${POSTGRES_USER:-memecoin}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_READONLY_USER: memecoin_readonly
+      POSTGRES_READONLY_PASSWORD: ${POSTGRES_READONLY_PASSWORD:?set POSTGRES_READONLY_PASSWORD}
+    volumes:
+      - ./scripts/provision-readonly-role.sql:/provision/readonly-role.sql:ro
+    entrypoint: ["/bin/sh", "-ec"]
+    command: >-
+      test "$PGUSER" != "memecoin_readonly"
+      && exec psql -X -v ON_ERROR_STOP=1 -f /provision/readonly-role.sql
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   redis:
     image: redis:7-alpine
@@ -50,6 +76,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      postgres-readonly-provisioner:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 
@@ -73,9 +101,16 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      postgres-readonly-provisioner:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 
 volumes:
   postgres_data:
   redis_data:
+
+networks:
+  potapoff-data:
+    external: true
+    name: potapoff_default

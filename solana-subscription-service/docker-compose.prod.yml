@@ -13,6 +13,32 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    networks:
+      default: {}
+      potapoff-data:
+        aliases:
+          - subscription-postgres
+
+  postgres-readonly-provisioner:
+    image: postgres:16-alpine
+    restart: "no"
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-solsub}
+      PGUSER: ${POSTGRES_USER:-solsub}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_READONLY_USER: solsub_readonly
+      POSTGRES_READONLY_PASSWORD: ${POSTGRES_READONLY_PASSWORD:?POSTGRES_READONLY_PASSWORD is required}
+    volumes:
+      - ./scripts/provision-readonly-role.sql:/provision/readonly-role.sql:ro
+    entrypoint: ["/bin/sh", "-ec"]
+    command: >-
+      test "$PGUSER" != "solsub_readonly"
+      && exec psql -X -v ON_ERROR_STOP=1 -f /provision/readonly-role.sql
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   redis:
     image: redis:7-alpine
@@ -43,6 +69,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      postgres-readonly-provisioner:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     expose:
@@ -88,3 +116,8 @@ services:
 volumes:
   postgres_data:
   redis_data:
+
+networks:
+  potapoff-data:
+    external: true
+    name: potapoff_default

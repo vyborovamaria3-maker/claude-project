@@ -8,6 +8,8 @@ on:
       - "solana-launcher/**"
       - "admin-site/**"
       - "memecoin-intelligence/**"
+      - "solana-subscription-service/**"
+      - ".github/scripts/test-readonly-source-roles.sh"
       - ".github/workflows/potapoff-predeploy-gate.yml"
       - ".github/workflows/potapoff-production.yml"
       - ".github/workflows/potapoff-release-images.yml"
@@ -246,6 +248,32 @@ jobs:
       - name: Validate production Compose
         working-directory: solana-launcher
         run: docker compose --env-file .env.server -f docker-compose.production.yml config --quiet
+      - name: Validate Subscription and Memecoin production Compose
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > solana-subscription-service/.env <<'EOF'
+          POSTGRES_PASSWORD=ci-solsub-bootstrap-password
+          POSTGRES_READONLY_PASSWORD=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+          REDIS_PASSWORD=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+          NEXT_PUBLIC_API_URL=https://subscription.example.invalid
+          NEXT_PUBLIC_WEB_URL=https://subscription.example.invalid
+          NEXT_PUBLIC_TELEGRAM_BOT_USERNAME=ci_subscription_bot
+          NEXT_PUBLIC_SOLANA_CLUSTER=devnet
+          NEXT_PUBLIC_RPC_ENDPOINT=https://api.devnet.solana.com
+          NEXT_PUBLIC_TREASURY_WALLET=11111111111111111111111111111111
+          EOF
+          docker compose --env-file solana-subscription-service/.env -f solana-subscription-service/docker-compose.prod.yml config --quiet
+          cat > memecoin-intelligence/.env <<'EOF'
+          POSTGRES_PASSWORD=ci-memecoin-bootstrap-password
+          POSTGRES_READONLY_PASSWORD=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+          REDIS_PASSWORD=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+          INTERNAL_ADMIN_API_KEY=ci-memecoin-internal-admin-key
+          WEB_ORIGIN=https://memecoin.example.invalid
+          EOF
+          docker compose --env-file memecoin-intelligence/.env -f memecoin-intelligence/docker-compose.production.yml config --quiet
+      - name: Exercise PostgreSQL read-only source role provisioners
+        run: bash .github/scripts/test-readonly-source-roles.sh
       - name: Build backend production image
         run: docker build --pull -t potapoff-backend-predeploy:${{ github.sha }} solana-launcher/backend
       - name: Verify backend runtime excludes vulnerable Python build tooling

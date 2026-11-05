@@ -10,7 +10,7 @@
     "id": "potapoff",
     "label": "POTAPoff backend",
     "kind": "postgres",
-    "dsn": "postgresql://potapoff:${POTAPOFF_DB_READONLY_PASSWORD}@postgres:5432/potapoff",
+    "dsn": "postgresql://potapoff_readonly:${POTAPOFF_DB_READONLY_PASSWORD}@postgres:5432/potapoff",
     "schema": "public",
     "role": "core"
   },
@@ -18,7 +18,7 @@
     "id": "subscription",
     "label": "Subscription service",
     "kind": "postgres",
-    "dsn": "postgresql://solsub:${SUBSCRIPTION_DB_PASSWORD}@subscription-postgres:5432/solsub",
+    "dsn": "postgresql://solsub_readonly:${SUBSCRIPTION_DB_READONLY_PASSWORD}@subscription-postgres:5432/solsub",
     "schema": "public",
     "role": "subscription"
   },
@@ -33,7 +33,7 @@
     "id": "memecoin",
     "label": "Memecoin intelligence",
     "kind": "postgres",
-    "dsn": "postgresql://memecoin:${MEMECOIN_DB_PASSWORD}@memecoin-postgres:5432/memecoin",
+    "dsn": "postgresql://memecoin_readonly:${MEMECOIN_DB_READONLY_PASSWORD}@memecoin-postgres:5432/memecoin",
     "schema": "public",
     "role": "intelligence"
   }
