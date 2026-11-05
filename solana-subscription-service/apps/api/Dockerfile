@@ -23,6 +23,7 @@ COPY --from=build /app/packages/bigint-safe ./packages/bigint-safe
 COPY --from=build /app/packages/braces-safe ./packages/braces-safe
 COPY --from=build /app/apps/api/dist ./apps/api/dist
 COPY --from=build /app/apps/api/prisma ./apps/api/prisma
+COPY --from=build /app/packages/shared/package.json ./packages/shared/package.json
 COPY --from=build /app/packages/shared/dist ./packages/shared/dist
 COPY package*.json ./
 COPY apps/api/package.json apps/api/package.json
