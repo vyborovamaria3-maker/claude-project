@@ -51,6 +51,13 @@ def _transfer_public_relations(
         WHERE n.nspname = 'public'
           AND owner_role.rolname = %s
           AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
+          AND NOT EXISTS (
+              SELECT 1
+              FROM pg_depend AS extension_member
+              WHERE extension_member.classid = 'pg_class'::regclass
+                AND extension_member.objid = c.oid
+                AND extension_member.deptype = 'e'
+          )
         ORDER BY c.relkind, c.relname
         """,
         (source_role,),
