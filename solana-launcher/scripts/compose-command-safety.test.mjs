@@ -16,6 +16,8 @@ const localDeploy = await readFile(resolve(root, "scripts/deploy-production-loca
 const adminDeploy = await readFile(resolve(adminRoot, "deploy/production-deploy.sh"), "utf8");
 const adminRollback = await readFile(resolve(adminRoot, "deploy/production-rollback.sh"), "utf8");
 const productionWorkflow = await readFile(resolve(root, "../.github/workflows/potapoff-production.yml"), "utf8");
+const productionCompose = await readFile(resolve(root, "docker-compose.production.yml"), "utf8");
+const backupScript = await readFile(resolve(root, "scripts/backup-production.sh"), "utf8");
 const fullBacktestWorkflow = await readFile(resolve(root, "../.github/workflows/full-backtest-audit.yml"), "utf8");
 const telegramWorkflow = await readFile(resolve(root, "../.github/workflows/telegram-intelligence-v19-ci.yml"), "utf8");
 const predeployWorkflow = await readFile(resolve(root, "../.github/workflows/potapoff-predeploy-gate.yml"), "utf8");
@@ -92,6 +94,14 @@ test("deployment staging archives only tracked admin source", () => {
   assert.match(productionWorkflow, /git archive --format=tar "\$RELEASE_SHA" admin-site/);
   assert.doesNotMatch(localDeploy, /--exclude='admin-site\/\.env/);
   assert.doesNotMatch(productionWorkflow, /--exclude='admin-site\/\.env/);
+});
+
+test("production deploy stages every PostgreSQL provisioner and backup verifier dependency", () => {
+  assert.match(productionCompose, /\.\/scripts\/provision-postgres-roles\.sql:\/provision\/roles\.sql:ro/);
+  assert.match(productionWorkflow, /solana-launcher\/scripts\/provision-postgres-roles\.sql/);
+  assert.match(localDeploy, /install -m 0644 "\$SOURCE_ROOT\/solana-launcher\/scripts\/provision-postgres-roles\.sql"/);
+  assert.match(localDeploy, /"\$SOURCE_ROOT\/solana-launcher\/scripts\/verify-backup-restore\.sh"/);
+  assert.match(backupScript, /verify-backup-restore\.sh/);
 });
 
 test("production Compose CI fixtures always create the runtime env file", () => {
