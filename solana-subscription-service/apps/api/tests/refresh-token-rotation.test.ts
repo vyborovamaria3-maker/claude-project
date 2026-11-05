@@ -29,7 +29,9 @@ describe("rotateRefreshToken", () => {
     const token = await rotateRefreshToken("old-jti", "user-1", "123456");
     expect(token).toBeTruthy();
     expect(evalMock).toHaveBeenCalledTimes(1);
-    const [script, keyCount, oldKey, newKey, owner, ttl] = evalMock.mock.calls[0];
+    const call = evalMock.mock.calls[0];
+    if (!call) throw new Error("Expected one Redis eval call");
+    const [script, keyCount, oldKey, newKey, owner, ttl] = call;
     expect(keyCount).toBe(2);
     expect(oldKey).toBe("refresh:old-jti");
     expect(newKey).toMatch(/^refresh:/);
