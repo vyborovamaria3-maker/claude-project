@@ -139,6 +139,15 @@ jobs:
           runtime_uid="$(docker run --rm --entrypoint id "$image" -u)"
           test "$runtime_uid" != "0"
           docker run --rm --entrypoint node "$image" -e "import('@solsub/shared').then(({ addBillingPeriod }) => { if (typeof addBillingPeriod !== 'function') process.exit(1); })"
+      - name: Scan subscription API image for HIGH/CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: solsub-api-security:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "HIGH,CRITICAL"
       - name: Production dependency audit
         env:
           ALLOW_BIGINT_BUFFER_UNTIL: "2026-10-01"
