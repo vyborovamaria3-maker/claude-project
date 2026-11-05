@@ -245,6 +245,30 @@ def assert_runtime_restricted() -> None:
             bootstrap.execute("REVOKE pg_execute_server_program FROM admin_ci_runtime")
     verify_preprovisioned_schema(RUNTIME)
 
+    # Custom role attributes are also dangerous through SET ROLE even
+    # when the role owns no application schema or table.
+    with psycopg.connect(FIXTURE) as bootstrap:
+        bootstrap.execute("CREATE ROLE admin_ci_privileged_helper NOLOGIN CREATEROLE")
+        bootstrap.execute(
+            "GRANT admin_ci_privileged_helper TO admin_ci_runtime "
+            "WITH INHERIT FALSE, SET TRUE"
+        )
+    try:
+        with psycopg.connect(RUNTIME) as db:
+            db.execute("SET ROLE admin_ci_privileged_helper")
+            assert db.execute("SELECT current_user").fetchone()[0] == "admin_ci_privileged_helper"
+        try:
+            verify_preprovisioned_schema(RUNTIME)
+        except RuntimeError as exc:
+            assert "SET-reachable privileged role attributes" in str(exc), str(exc)
+        else:
+            raise AssertionError("SET-only CREATEROLE membership was accepted")
+    finally:
+        with psycopg.connect(FIXTURE) as bootstrap:
+            bootstrap.execute("REVOKE admin_ci_privileged_helper FROM admin_ci_runtime")
+            bootstrap.execute("DROP ROLE admin_ci_privileged_helper")
+    verify_preprovisioned_schema(RUNTIME)
+
     # A runtime account can be a non-INHERITING member of the schema-owner
     # role while retaining SET ROLE. Such an account can still become the
     # migration owner for DDL; startup verification must fail closed.
