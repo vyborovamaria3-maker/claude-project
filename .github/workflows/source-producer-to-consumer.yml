@@ -83,6 +83,9 @@ jobs:
           npm --prefix tg-collector run typecheck
           npm --prefix intelligence run typecheck
 
+      - name: Run Intelligence JavaScript unit and PostgreSQL integration suite
+        run: npm --prefix intelligence test
+
       - name: Run actual producer and destination integration with mocked RPC
         working-directory: tg-collector
         run: node --import tsx --test ../intelligence/integration/source-producer-to-consumer.test.mjs
