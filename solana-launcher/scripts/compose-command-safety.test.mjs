@@ -8,6 +8,9 @@ import { dirname, join, resolve } from "node:path";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const adminRoot = resolve(root, "../admin-site");
+const adminSources = JSON.parse(await readFile(resolve(adminRoot, "sources.json"), "utf8"));
+const adminSourcesExample = JSON.parse(await readFile(resolve(adminRoot, "sources.example.json"), "utf8"));
+const adminRuntimeExample = await readFile(resolve(adminRoot, ".env.runtime.example"), "utf8");
 const pkg = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
 const destructive = await readFile(resolve(root, "scripts/compose-down-volumes.mjs"), "utf8");
 const runtimeHelper = resolve(adminRoot, "deploy/refresh-runtime-env.sh");
@@ -96,6 +99,17 @@ test("deployment staging archives only tracked admin source", () => {
   assert.match(productionWorkflow, /git archive --format=tar "\$RELEASE_SHA" admin-site/);
   assert.doesNotMatch(localDeploy, /--exclude='admin-site\/\.env/);
   assert.doesNotMatch(productionWorkflow, /--exclude='admin-site\/\.env/);
+});
+
+test("Admin source DSN variables are included in the runtime environment allowlist", () => {
+  const allowed = new Set(adminRuntimeExample.split(/\r?\n/)
+    .map((line) => line.match(/^([A-Z_][A-Z0-9_]*)=/)?.[1])
+    .filter(Boolean));
+  for (const source of [...adminSources, ...adminSourcesExample]) {
+    for (const [, variable] of source.dsn.matchAll(/\$\{([A-Z_][A-Z0-9_]*)\}/g)) {
+      assert.ok(allowed.has(variable), `source ${source.id} references missing runtime variable ${variable}`);
+    }
+  }
 });
 
 test("Telegram bot Docker context excludes deployment environment secrets", () => {
