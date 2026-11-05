@@ -64,6 +64,16 @@ def provision_test_cluster() -> None:
     with psycopg.connect(FIXTURE, autocommit=True) as db:
         db.execute("CREATE DATABASE admin_roles_ci OWNER potapoff_admin")
 
+    # Simulate application relations left behind by the former bootstrap owner.
+    # The provisioner must transfer these without attempting to reassign
+    # PostgreSQL's shared/system objects owned by the bootstrap superuser.
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB, autocommit=True) as db:
+        db.execute(
+            "CREATE TABLE public.bootstrap_owned_legacy "
+            "(id bigint PRIMARY KEY, payload text NOT NULL)"
+        )
+        db.execute("CREATE SEQUENCE public.bootstrap_owned_legacy_seq")
+
     # Exercise the same role-provisioning path used by the production Compose
     # one-shot service, including ownership transfer and database ACL closure.
     provision_roles(
@@ -75,6 +85,27 @@ def provision_test_cluster() -> None:
         backup_user="admin_ci_backup",
         backup_password=BACKUP_PASSWORD,
     )
+
+    with psycopg.connect(MIGRATE) as db:
+        owners = dict(
+            db.execute(
+                """
+                SELECT c.relname, owner_role.rolname
+                FROM pg_class AS c
+                JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                JOIN pg_roles AS owner_role ON owner_role.oid = c.relowner
+                WHERE n.nspname = 'public'
+                  AND c.relname IN (
+                      'bootstrap_owned_legacy',
+                      'bootstrap_owned_legacy_seq'
+                  )
+                """
+            ).fetchall()
+        )
+    assert owners == {
+        "bootstrap_owned_legacy": "admin_ci_migration",
+        "bootstrap_owned_legacy_seq": "admin_ci_migration",
+    }, f"Bootstrap-owned application relations were not transferred: {owners}"
 
 
 def schema_objects(dsn: str) -> tuple[tuple[str, str, str], ...]:
