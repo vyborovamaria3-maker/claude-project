@@ -15,6 +15,8 @@ from psycopg.errors import InsufficientPrivilege
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "scripts"))
+from provision_admin_postgres import provision_roles, provision_schema  # noqa: E402
 
 from app.postgres_admin_state import (  # noqa: E402
     PostgresAuditStore, PostgresControlStore, PostgresLiveAnalysisProfileStore,
@@ -30,12 +32,19 @@ FIXTURE = (
     "postgresql://potapoff_admin:ci-admin-state-password"
     "@127.0.0.1:55434/potapoff_admin_test"
 )
+BOOTSTRAP_ADMIN_DB = (
+    "postgresql://potapoff_admin:ci-admin-state-password"
+    "@127.0.0.1:55434/admin_roles_ci"
+)
+MIGRATOR_PASSWORD = "a" * 64
+RUNTIME_PASSWORD = "b" * 64
+BACKUP_PASSWORD = "c" * 64
 MIGRATE = (
-    "postgresql://admin_ci_migration:ci-admin-migration-password"
+    f"postgresql://admin_ci_migration:{MIGRATOR_PASSWORD}"
     "@127.0.0.1:55434/admin_roles_ci"
 )
 RUNTIME = (
-    "postgresql://admin_ci_runtime:ci-admin-runtime-password"
+    f"postgresql://admin_ci_runtime:{RUNTIME_PASSWORD}"
     "@127.0.0.1:55434/admin_roles_ci"
 )
 
@@ -53,22 +62,19 @@ def require_ci_only() -> None:
 
 def provision_test_cluster() -> None:
     with psycopg.connect(FIXTURE, autocommit=True) as db:
-        for sql in (
-            "CREATE ROLE admin_ci_migration LOGIN NOSUPERUSER NOCREATEDB "
-            "NOCREATEROLE NOREPLICATION NOBYPASSRLS "
-            "PASSWORD 'ci-admin-migration-password'",
-            "CREATE ROLE admin_ci_runtime LOGIN NOSUPERUSER NOCREATEDB "
-            "NOCREATEROLE NOREPLICATION NOBYPASSRLS "
-            "PASSWORD 'ci-admin-runtime-password'",
-            "CREATE DATABASE admin_roles_ci OWNER admin_ci_migration",
-        ):
-            db.execute(sql)
+        db.execute("CREATE DATABASE admin_roles_ci OWNER potapoff_admin")
 
-    with psycopg.connect(MIGRATE) as db:
-        db.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
-        db.execute("REVOKE ALL ON DATABASE admin_roles_ci FROM PUBLIC")
-        db.execute("GRANT CONNECT ON DATABASE admin_roles_ci TO admin_ci_runtime")
-        db.execute("GRANT USAGE ON SCHEMA public TO admin_ci_runtime")
+    # Exercise the same role-provisioning path used by the production Compose
+    # one-shot service, including ownership transfer and database ACL closure.
+    provision_roles(
+        bootstrap_dsn=BOOTSTRAP_ADMIN_DB,
+        app_user="admin_ci_runtime",
+        app_password=RUNTIME_PASSWORD,
+        migrator_user="admin_ci_migration",
+        migrator_password=MIGRATOR_PASSWORD,
+        backup_user="admin_ci_backup",
+        backup_password=BACKUP_PASSWORD,
+    )
 
 
 def schema_objects(dsn: str) -> tuple[tuple[str, str, str], ...]:
@@ -83,34 +89,13 @@ def schema_objects(dsn: str) -> tuple[tuple[str, str, str], ...]:
 
 
 def bootstrap_schema_under_migration_owner() -> None:
-    os.environ["ADMIN_PG_SCHEMA_MODE"] = "legacy"
-    PostgresAuditStore(MIGRATE)
-    PostgresControlStore(MIGRATE)
-    PostgresLiveAnalysisProfileStore(MIGRATE)
-    PostgresTaskQueue(MIGRATE, workers=1)
-    PostgresAdminSessionStore(
-        MIGRATE, ip_binding=lambda _: "", ua_binding=lambda _: ""
+    # This is the same DDL + ACL path used before the production Admin API starts.
+    provision_schema(
+        migrator_dsn=MIGRATE,
+        runtime_dsn=RUNTIME,
+        app_user="admin_ci_runtime",
+        migrator_user="admin_ci_migration",
     )
-
-    with psycopg.connect(MIGRATE) as db:
-        missing = set(TABLES) - {
-            r[0] for r in db.execute(
-                "SELECT tablename FROM pg_tables WHERE schemaname='public'"
-            )
-        }
-        assert not missing, missing
-        db.execute(
-            "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public "
-            "TO admin_ci_runtime"
-        )
-        # Keep audit history immutable to the live application login.
-        db.execute(
-            "REVOKE UPDATE, DELETE ON TABLE public.admin_audit FROM admin_ci_runtime"
-        )
-        db.execute(
-            "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public "
-            "TO admin_ci_runtime"
-        )
 
 
 def assert_runtime_restricted() -> None:
