@@ -130,7 +130,7 @@ async function queueAffectedTokensForRecalculation(
   for(const canonicalTokenId of tokens)
     await queueAnalyticsInvalidation(tx,{
       canonicalTokenId,sourceSystem:event.sourceSystem as "x"|"tg",
-      eventKind:event.eventKind,eventKey:event.eventKey,reason,
+      eventKind:event.eventKind,eventKey:event.eventKey,coalesceKey:evidenceRef,reason,
     });
 }
 
