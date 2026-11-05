@@ -156,6 +156,10 @@ jobs:
           set -Eeuo pipefail
           cp admin-site/.env.example admin-site/.env
           sed -i 's/^ADMIN_STATE_DB_PASSWORD=.*/ADMIN_STATE_DB_PASSWORD=ci-compose-password/' admin-site/.env
+          sed -i 's/^ADMIN_STATE_APP_PASSWORD=.*/ADMIN_STATE_APP_PASSWORD=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/' admin-site/.env
+          sed -i 's/^ADMIN_STATE_MIGRATOR_PASSWORD=.*/ADMIN_STATE_MIGRATOR_PASSWORD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/' admin-site/.env
+          sed -i 's/^ADMIN_STATE_BACKUP_PASSWORD=.*/ADMIN_STATE_BACKUP_PASSWORD=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/' admin-site/.env
+          sed -i 's/^ADMIN_STATE_RUNTIME_PASSWORD=.*/ADMIN_STATE_RUNTIME_PASSWORD=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/' admin-site/.env
           sed -i 's/^SUBSCRIPTION_ADMIN_KEY=.*/SUBSCRIPTION_ADMIN_KEY=ci-subscription-admin-key/' admin-site/.env
           cp admin-site/.env.intelligence.example admin-site/.env.intelligence
           cp admin-site/sources.example.json admin-site/sources.json
@@ -216,6 +220,11 @@ jobs:
           cat > solana-launcher/.env.server <<'EOF'
           IMAGE_TAG=predeploy-ci
           POSTGRES_PASSWORD=ci-postgres-password
+          POSTGRES_APP_PASSWORD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          POSTGRES_MIGRATOR_PASSWORD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          POSTGRES_BACKUP_PASSWORD=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+          POSTGRES_READONLY_PASSWORD=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+          REDIS_PASSWORD=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
           RABBITMQ_PASSWORD=ci-rabbitmq-password
           SECRET_KEY=ci-signing-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm
           BACKEND_API_KEY=ci-backend-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm
