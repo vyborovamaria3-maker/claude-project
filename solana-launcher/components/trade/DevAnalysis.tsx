@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, UserCheck, Bookmark, Copy, ExternalLink, ArrowUpDown, ChevronDown, ChevronUp, Wallet, Coins } from "lucide-react";
 import dynamic from "next/dynamic";
 import { authHeaders } from "@/lib/clientAuth";
+import type { DevAssessment } from "@/lib/trade/hood-hunt-dev";
 
 const DevForensicsPanel = dynamic(() => import("./DevForensicsPanel"), { ssr: false, loading: () => (
   <div className="flex items-center gap-2 text-xs text-white/40 py-2"><Loader2 className="w-3 h-3 animate-spin" />Загружаю forensics…</div>
@@ -50,6 +51,7 @@ interface DevAnalysisData {
   degraded?: boolean;
   warning?: string | null;
   sourceMint?: string | null;
+  hoodHuntPresets?: DevAssessment;
 }
 
 const RISK_COLORS: Record<string, { bg: string; text: string; border: string; label: string }> = {
@@ -115,7 +117,7 @@ function buildAnalysisFromWallet(payload: any, mint: string): DevAnalysisData | 
     reached300kCount,
     rate300k,
     bestLaunchHourUtc,
-    launchesByHour: Array.from({ length: 24 }, () => 0),
+    launchesByHour: [], // Missing hourly observations must not appear as 24 observed zeroes.
     userTag: payload?.userTag ?? null,
     userNote: payload?.userNote ?? null,
     degraded: true,
@@ -288,6 +290,7 @@ export default function DevAnalysis({ mint }: { mint: string }) {
         <div>
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-white">DEV Analysis</span>
+            <a href="/trade/hood-hunt" className="text-[11px] text-sky-300 hover:underline">Управление стратегией</a>
             {data.userTag && (
               <span className="px-2 py-0.5 rounded bg-neon-purple/15 border border-neon-purple/30 text-[10px] font-bold text-neon-purple">
                 <Bookmark className="w-3 h-3 inline mr-0.5" />
@@ -379,6 +382,35 @@ export default function DevAnalysis({ mint }: { mint: string }) {
           </div>
         );
       })()}
+
+      {/* Hood Hunt-style DEV presets: explicit missing evidence, never live trading advice. */}
+      {data.hoodHuntPresets && (
+        <div className="rounded-lg border border-bg-border bg-white/[0.025] p-3 space-y-2">
+          <div className="text-xs font-semibold text-white">DEV presets · оценка пригодности</div>
+          <p className="text-[11px] text-white/45">
+            Сетапы Strict, Upside, Fast start, After bundle и Dev sell используют подтверждённые данные.
+            Если нет истории бандлов, ранних продаж или цен на момент входа, статус остаётся «Недостаточно данных».
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {Object.values(data.hoodHuntPresets.presets).map((preset) => (
+              <div key={preset.preset} className="flex flex-col gap-1 rounded-md border border-bg-border/70 px-3 py-2">
+                <div className="flex justify-between gap-2 text-xs">
+                  <span className="font-semibold text-white">{preset.preset}</span>
+                  <span className={preset.verdict === "Снайпить" ? "text-green-400"
+                    : preset.verdict === "Пропустить" ? "text-red-400"
+                    : "text-yellow-300"}>{preset.verdict}</span>
+                </div>
+                <div className="text-[10px] text-white/45">
+                  $20K: {preset.hit20kRate === null ? "—" : (preset.hit20kRate * 100).toFixed(0) + "%"}
+                  {" · "} чисто: {preset.clean20kRate === null ? "—" : (preset.clean20kRate * 100).toFixed(0) + "%"}
+                  {" · "} симуляций: {preset.simulationSamples}
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-white/40">{data.hoodHuntPresets.note}</p>
+        </div>
+      )}
 
       {/* Risk-derived stats */}
       {(data.rugRate !== undefined || data.successRate !== undefined) && (

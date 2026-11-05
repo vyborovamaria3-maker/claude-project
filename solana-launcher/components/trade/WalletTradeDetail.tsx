@@ -4,9 +4,8 @@
 import { useMemo, useState } from "react";
 import { ExternalLink } from "lucide-react";
 
-// Pump.fun standard supply = 1B tokens. SOL price assumed ~$150 (matches API u-value estimation).
+// Indicative Pump.fun supply assumption. No fixed SOL/USD conversion.
 const PUMP_SUPPLY = 1_000_000_000;
-const SOL_USD = 150;
 
 export interface CompactTrade {
   ts: number;     // unix sec
@@ -117,7 +116,7 @@ export default function WalletTradeDetail({ walletAddress, allTrades }: Props) {
                     )}
                   </td>
                   <td className="px-3 py-1.5 text-right text-white/80 font-mono">
-                    ${formatMC(priceToMC(t.p))}
+                    ${formatMC(priceToMC(t.p))} SOL est.
                   </td>
                   <td className="px-3 py-1.5 text-right text-white">
                     {t.s.toFixed(4)}
@@ -191,7 +190,7 @@ function PriceChart({
   // Y-axis: show in MC instead of raw price
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
     const p = minP + f * pRange;
-    return { y: yOf(p), label: formatMC(priceToMC(p)) };
+    return { y: yOf(p), label: formatMC(priceToMC(p)) + " SOL" };
   });
 
   return (
@@ -290,7 +289,7 @@ function PriceChart({
 function TradeTooltip({ trade }: { trade: CompactTrade }) {
   const isBuy = trade.t === 1;
   const mc = priceToMC(trade.p);
-  const usd = trade.u ?? trade.s * SOL_USD;
+  const usd = typeof trade.u === 'number' && Number.isFinite(trade.u) ? trade.u : null;
   return (
     <div
       className={`min-w-[180px] rounded-lg border backdrop-blur-md shadow-2xl px-3 py-2.5 text-xs ${
@@ -310,8 +309,8 @@ function TradeTooltip({ trade }: { trade: CompactTrade }) {
 
       {/* MC — primary metric */}
       <div className="pt-2 pb-1">
-        <div className="text-[9px] text-white/40 uppercase tracking-wider">Market Cap</div>
-        <div className="text-base font-bold text-white">${formatMC(mc)}</div>
+        <div className="text-[9px] text-white/40 uppercase tracking-wider">Estimated FDV (SOL)</div>
+        <div className="text-base font-bold text-white">≈{formatMC(mc)} SOL</div>
       </div>
 
       {/* SOL + USD */}
@@ -322,7 +321,7 @@ function TradeTooltip({ trade }: { trade: CompactTrade }) {
         </div>
         <div className="text-right">
           <div className="text-[9px] text-white/40 uppercase">USD</div>
-          <div className="text-xs font-mono text-white">${usd >= 1 ? usd.toFixed(2) : usd.toFixed(4)}</div>
+          <div className="text-xs font-mono text-white">{usd === null ? "—" : `${usd >= 1 ? usd.toFixed(2) : usd.toFixed(4)} (est.)`}</div>
         </div>
       </div>
     </div>
@@ -375,9 +374,9 @@ function formatTime(unixSec: number): string {
   });
 }
 
-// price (SOL/token) → market cap in USD assuming pump.fun standard 1B supply
+// SOL/token × assumed 1B token supply: indicative FDV in SOL, not USD.
 function priceToMC(priceSol: number): number {
-  return priceSol * SOL_USD * PUMP_SUPPLY;
+  return priceSol * PUMP_SUPPLY;
 }
 
 function formatMC(usd: number): string {
