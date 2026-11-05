@@ -45,12 +45,18 @@ export async function processInvalidationBatch(
       await tx.query("UPDATE analytics_invalidation_queue SET status='processing',attempts=attempts+1 WHERE invalidation_id=$1",[id]);
       await tx.query("SAVEPOINT invalidation_refresh");savepoint=true;
       try{
-        const matched=await tx.query(`SELECT MIN((t.occurred_at AT TIME ZONE 'UTC')::date)::text AS day
+        // Not every source event is a generic timeline event: verified token
+        // links and their retractions intentionally have no timelineEvent.
+        // entity_evidence is written for every validated registry event in the
+        // same transaction as the inbox row, so it is the canonical clock for
+        // both timeline-backed revisions and evidence-only link assertions.
+        const matched=await tx.query(`SELECT MIN((COALESCE(e.occurred_at,e.observed_at)
+            AT TIME ZONE 'UTC')::date)::text AS day
           FROM intelligence_inbox origin
-          JOIN timeline_events t ON t.source_system=origin.source_system
-            AND t.evidence_source_id=origin.evidence_source_id
+          JOIN entity_evidence e ON e.source_system=origin.source_system
+            AND e.event_kind=origin.event_kind AND e.event_key=origin.event_key
           WHERE origin.source_system=$1 AND origin.event_kind=$2 AND origin.event_key=$3
-            AND t.source_system IN ('x','tg')`,[item.source_system,item.event_kind,item.event_key]);
+            AND e.evidence_kind IN ('x_tweet','tg_message')`,[item.source_system,item.event_kind,item.event_key]);
         const earliestDay=matched.rows[0]?.day;
         const startDay=item.next_day==null?earliestDay:String(item.next_day);
         if(typeof startDay!=="string"||!/^\d{4}-\d{2}-\d{2}$/.test(startDay))
