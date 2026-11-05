@@ -34,10 +34,12 @@ cleanup(){
 }
 trap cleanup EXIT
 
-for file in .env.server backend.env docker-compose.production.yml; do
+for file in .env.server .env.runtime backend.env docker-compose.production.yml; do
   [[ -r "$DEPLOY_DIR/$file" ]] || { echo "Missing required backup config: $file" >&2; exit 1; }
   cp -a "$DEPLOY_DIR/$file" "$DEST/"
 done
+cp -a "$ROLE_FINGERPRINT_SQL" "$DEST/"
+cp -a "$DEPLOY_DIR/scripts/provision-postgres-roles.sql" "$DEST/"
 if [[ -r "$DEPLOY_DIR/.current-image-tag" ]]; then
   cp -a "$DEPLOY_DIR/.current-image-tag" "$DEST/"
 fi
@@ -65,8 +67,15 @@ if [[ "${#POSTGRES_CONTAINERS[@]}" -ne 1 ]]; then
 fi
 POSTGRES_CONTAINER="${POSTGRES_CONTAINERS[0]}"
 
-docker exec "$POSTGRES_CONTAINER" \
-  pg_dump -U potapoff -d potapoff -Fc \
+POSTGRES_BACKUP_USER="$(sed -n 's/^POSTGRES_BACKUP_USER=//p' "$DEPLOY_DIR/.env.server" | tail -n 1)"
+POSTGRES_BACKUP_PASSWORD="$(sed -n 's/^POSTGRES_BACKUP_PASSWORD=//p' "$DEPLOY_DIR/.env.server" | tail -n 1)"
+if [[ ! "$POSTGRES_BACKUP_USER" =~ ^[a-z_][a-z0-9_]{0,62}$ || ! "$POSTGRES_BACKUP_PASSWORD" =~ ^[A-Fa-f0-9]{64}$ ]]; then
+  echo "Dedicated PostgreSQL backup credentials are missing or invalid" >&2
+  exit 1
+fi
+
+docker exec -e "PGPASSWORD=$POSTGRES_BACKUP_PASSWORD" "$POSTGRES_CONTAINER" \
+  pg_dump -h 127.0.0.1 -U "$POSTGRES_BACKUP_USER" -d potapoff -Fc \
   > "$DEST/postgres.dump"
 
 test -s "$DEST/postgres.dump"
