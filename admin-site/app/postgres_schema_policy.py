@@ -204,6 +204,19 @@ def verify_preprovisioned_schema(dsn: str) -> None:
             powerful_memberships = cur.fetchone()
             if not powerful_memberships or any(powerful_memberships):
                 raise RuntimeError("Admin runtime has unsafe PostgreSQL predefined-role membership")
+            # Role attributes such as CREATEROLE, CREATEDB, REPLICATION and
+            # BYPASSRLS are not ordinary table grants. A custom NOLOGIN role
+            # can still confer them when the runtime identity may SET ROLE.
+            cur.execute(
+                "SELECT r.rolname FROM pg_roles r "
+                "WHERE r.rolname <> current_user "
+                "AND pg_has_role(current_user,r.oid,'SET') "
+                "AND (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole "
+                "OR r.rolreplication OR r.rolbypassrls) LIMIT 1"
+            )
+            privileged_set_role = cur.fetchone()
+            if privileged_set_role:
+                raise RuntimeError("Admin runtime has SET-reachable privileged role attributes")
             cur.execute(
                 "SELECT has_schema_privilege(current_user, 'public', 'USAGE'), "
                 "has_schema_privilege(current_user, 'public', 'CREATE')"
