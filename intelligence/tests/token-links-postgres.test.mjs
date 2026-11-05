@@ -7,7 +7,7 @@ import {
   buildEntityRef,buildEvidenceRef,buildVerifiedTokenLinkEvent,
   buildTokenLinksInvalidatedEvent,formatSourceId,formatAuthorId,formatTokenId,canonicalTokenIdFromNative,
 } from "@claude-project/contracts";
-import {runDeliveryBatch,queryActiveTokenLinks,queryTokenTimeline,storeEncryptedEventText,readEncryptedEventText} from "../dist/index.js";
+import {runDeliveryBatch,processInvalidationBatch,queryActiveTokenLinks,queryTokenTimeline,storeEncryptedEventText,readEncryptedEventText} from "../dist/index.js";
 
 const url=process.env.INTELLIGENCE_TEST_DB_URL;
 const mint="So11111111111111111111111111111111111111112";
@@ -233,6 +233,24 @@ test("real PostgreSQL: late arrivals, edit retractions, historical as-of and rep
     )).rows[0].n;
     assert.equal(auditedCount,queueCount,
       "every queued invalidation has an append-only audit entry");
+
+    // Verified-link assertions and their retractions intentionally have no
+    // timeline_events row. The worker must resolve their source day from the
+    // registry's entity_evidence row and complete the queue without retries.
+    const invalidationClient=await pool.connect();
+    let invalidationResult;
+    try{
+      invalidationResult=await processInvalidationBatch(invalidationClient,20);
+    }finally{
+      invalidationClient.release();
+    }
+    assert.equal(invalidationResult.completed,queueCount);
+    assert.equal(invalidationResult.retried,0);
+    assert.equal(invalidationResult.failed,0);
+    const unfinished=(await pool.query(
+      "SELECT count(*)::integer AS n FROM analytics_invalidation_queue WHERE status<>'completed'"
+    )).rows[0].n;
+    assert.equal(unfinished,0,"all evidence-only link invalidations must complete");
   }finally{
     if(pool)await pool.end();
     await admin.query("SET search_path TO public");
