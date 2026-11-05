@@ -49,8 +49,9 @@
   }
   function draw() {
     const columns = data.table.columns;
+    const allowedActions = new Set(data.table.allowed_actions || []);
     const publicColumns = columns.filter(c => !c.sensitive && !['json','jsonb'].includes(c.type) && !c.name.endsWith('_json'));
-    const canEdit = data.table.editable && columns.some(c => c.primary_key);
+    const canEdit = (allowedActions.has('update') || allowedActions.has('delete')) && columns.some(c => c.primary_key);
     content.innerHTML = `<section class="section full"><h3>${esc(data.table.label)}</h3>
       <p class="muted">${esc(data.table.description)}</p><p class="muted">Вся база X Collector: таблицы содержат исходные данные, очереди и результаты анализа. Секреты скрыты. Представления — вычисляемые данные, доступные для чтения.</p>
       <form id="xcFilters" class="stack"><label>Раздел базы<select id="xcTable">${tables.map(t=>`<option value="${esc(t.name)}" ${t.name===table?'selected':''}>${esc(t.label)} · ${esc(t.name)}${['v','m'].includes(t.kind)?' (представление)':''}</option>`).join('')}</select></label>
@@ -59,7 +60,7 @@
       <label>Сортировка<select id="xcSort"><option value="">По первичному ключу</option>${publicColumns.map(c=>`<option value="${esc(c.name)}" ${c.name===sort?'selected':''}>${esc(label(c.name))}</option>`).join('')}</select></label>
       <label><input type="checkbox" id="xcDescending" ${descending?'checked':''}> По убыванию</label><button class="secondary">Применить</button></form>
       <p id="xcStatus" role="status">Найдено записей: ${esc(data.total)}. Показано ${data.rows.length ? offset+1 : 0}–${offset+data.rows.length}.</p>
-      ${data.table.editable?'<button id="xcAdd" class="primary">Добавить запись</button>':''}
+      ${allowedActions.has('insert')?'<button id="xcAdd" class="primary">Добавить запись</button>':''}
       <div style="overflow:auto;margin-top:16px"><table><thead><tr><th>Действия</th>${columns.map(c=>`<th title="${esc(c.name+' · '+c.type)}">${esc(label(c.name))}${c.primary_key?' 🔑':''}</th>`).join('')}</tr></thead><tbody>${data.rows.map((r,i)=>`<tr><td><button data-record="${i}">${canEdit?'Открыть / изменить':'Подробнее'}</button></td>${columns.map(c=>`<td title="${esc(cell(r[c.name],c.name))}">${esc(cell(r[c.name],c.name).slice(0,180))}</td>`).join('')}</tr>`).join('')||`<tr><td colspan="${columns.length+1}">Записей нет. Измените фильтры или запустите сбор.</td></tr>`}</tbody></table></div>
       <div style="display:flex;gap:12px;margin-top:16px"><button id="xcPrev" ${offset===0?'disabled':''}>Назад</button><button id="xcNext" ${offset+50>=data.total?'disabled':''}>Далее</button></div>
       <div id="xcEditor"></div></section>`;
@@ -73,9 +74,12 @@
   function editor(row) {
     const host = content.querySelector('#xcEditor');
     const columns = data.table.columns;
-    const writable = data.table.editable && (!row || columns.some(c=>c.primary_key));
-    const editable = c => writable && !c.sensitive && !row?.__protected_fields?.includes(c.name) && !c.generated && c.identity!=='a' && (!row || !c.primary_key);
-    host.innerHTML = `<form id="xcEditForm" class="stack" style="margin-top:24px"><h3>${row?'Карточка записи':'Новая запись'}</h3><p class="muted">Отметьте только поля, которые хотите записать. Числа вводятся без разделителей; JSON — в виде объекта или массива. Время в полях *_at хранится в миллисекундах Unix. Неотмеченные поля сохраняют текущее значение или значение по умолчанию.</p>${columns.map((c,i)=>`<label>${esc(label(c.name))} <small>${esc(c.name+' · '+c.type)}${c.nullable?' · допускается NULL':' · обязательное'}</small>${editable(c)?`<span><input type="checkbox" data-use="${i}"> Записать поле <input type="checkbox" data-null="${i}"> NULL</span><textarea data-field="${i}" rows="2">${esc(row&&row[c.name]!=null ? (typeof row[c.name]==='object'?JSON.stringify(row[c.name],null,2):row[c.name]) : '')}</textarea>`:`<pre style="white-space:pre-wrap">${esc(row?cell(row[c.name],c.name):'Автоматическое или защищённое поле')}</pre>`}</label>`).join('')}<p id="xcEditStatus" role="status"></p>${writable?'<button type="submit" class="primary">Сохранить</button>':''}${row&&writable?'<button type="button" id="xcDelete">Удалить запись</button>':''}<button type="button" id="xcClose">Закрыть карточку</button></form>`;
+    const allowedActions = new Set(data.table.allowed_actions || []);
+    const saveAction = row ? 'update' : 'insert';
+    const writable = allowedActions.has(saveAction) && (!row || columns.some(c=>c.primary_key));
+    const canDelete = Boolean(row) && allowedActions.has('delete');
+    const editable = c => writable && (c.editable_actions || []).includes(saveAction) && !c.sensitive && !row?.__protected_fields?.includes(c.name) && !c.generated && c.identity!=='a' && (!row || !c.primary_key);
+    host.innerHTML = `<form id="xcEditForm" class="stack" style="margin-top:24px"><h3>${row?'Карточка записи':'Новая запись'}</h3><p class="muted">Отметьте только поля, которые хотите записать. Числа вводятся без разделителей; JSON — в виде объекта или массива. Время в полях *_at хранится в миллисекундах Unix. Неотмеченные поля сохраняют текущее значение или значение по умолчанию.</p>${columns.map((c,i)=>`<label>${esc(label(c.name))} <small>${esc(c.name+' · '+c.type)}${c.nullable?' · допускается NULL':' · обязательное'}</small>${editable(c)?`<span><input type="checkbox" data-use="${i}"> Записать поле <input type="checkbox" data-null="${i}"> NULL</span><textarea data-field="${i}" rows="2">${esc(row&&row[c.name]!=null ? (typeof row[c.name]==='object'?JSON.stringify(row[c.name],null,2):row[c.name]) : '')}</textarea>`:`<pre style="white-space:pre-wrap">${esc(row?cell(row[c.name],c.name):'Автоматическое или защищённое поле')}</pre>`}</label>`).join('')}<p id="xcEditStatus" role="status"></p>${writable?'<button type="submit" class="primary">Сохранить</button>':''}${canDelete?'<button type="button" id="xcDelete">Удалить запись</button>':''}<button type="button" id="xcClose">Закрыть карточку</button></form>`;
     host.scrollIntoView({behavior:'smooth',block:'start'});
     host.querySelector('#xcClose').onclick=()=>{host.innerHTML='';};
     async function save(method) {
