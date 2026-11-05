@@ -16,6 +16,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - name: Scan tracked files for committed secrets
+        run: python3 security/audit/secret-scan.py --mode current
+      - name: Scan newly introduced PR lines for secrets
+        if: github.event_name == 'pull_request'
+        env:
+          AUDIT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          AUDIT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 security/audit/secret-scan.py --mode diff --base "$AUDIT_BASE_SHA" --head "$AUDIT_HEAD_SHA"
+      - name: Scan repository history for secrets
+        if: github.event_name == 'pull_request'
+        run: python3 security/audit/secret-scan.py --mode history
       - name: Set up Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
