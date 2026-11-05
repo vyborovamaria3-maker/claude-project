@@ -100,6 +100,7 @@ function usage(){
     "  Use --sources x or --sources tg,blockchain to run only configured sources.",
     "  X_SOURCE_DATABASE_URL, TG_SOURCE_DATABASE_URL, SOLANA_TRADE_DB_PATH",
     "  INTELLIGENCE_DATABASE_URL: separate target PostgreSQL with migrations 001+002+004+017.",
+    "  Optional INTELLIGENCE_INVALIDATION_WORKER_ENABLED=true requires migrations 010+013+018.",
     "  Requires existing source outbox schemas; does NOT apply migrations.",
     "  Preserve separate producer opt-ins; never point this at live DBs before backup/restore.",
   ].join("\n");
@@ -130,12 +131,15 @@ async function main(){
     }
     destination=destinationConnection();
     await checkDestination(destination,{requireBlockchainRevisions:options.sources.includes('blockchain')});
+    const invalidationEnabled=process.env.INTELLIGENCE_INVALIDATION_WORKER_ENABLED==="true";
+    const invalidationBatchSize=invalidationEnabled?parseInvalidationBatchSize():4;
+    if(invalidationEnabled)await checkInvalidationDestination(destination);
     const ai=await createAiRuntime(destination,Object.fromEntries(sources.filter(s=>s.connection.kind==='pg').map(s=>[s.name,s.connection.connection])));
     const report=event=>console.log(JSON.stringify({
       timestamp:new Date().toISOString(),...event,
     }));
     report({kind:"startup",sources:options.sources,mode:"foreground",
-      perSourceClaimLimit:1,leaseMs:options.leaseMs});
+      perSourceClaimLimit:1,leaseMs:options.leaseMs,invalidationWorker:invalidationEnabled});
     const executions=sources.map(async({name,connection,workerId})=>{
       let lastHealthAt=0;
       try{
@@ -166,6 +170,26 @@ async function main(){
         throw error;
       }
     });
+    if(invalidationEnabled){
+      executions.push((async()=>{
+        try{
+          return await runSourceLoop({
+            source:"invalidation",signal:stop.signal,pollMs:options.pollMs,
+            paceMs:options.paceMs,maxFailures:options.maxFailures,
+            maxBatches:options.maxBatches,onReport:report,
+            runBatch:async()=>{
+              const stats=await runInvalidationBatch(destination,invalidationBatchSize);
+              report({kind:"invalidation_batch",...stats});
+              return {
+                claimed:stats.completed+stats.continued+stats.retried+stats.failed,
+                delivered:stats.completed+stats.continued,duplicates:0,
+                failed:stats.failed,lostLeases:0,
+              };
+            },
+          });
+        }catch(error){stop.abort();throw error;}
+      })());
+    }
     const results=await Promise.allSettled(executions);
     const failures=results.filter(result=>result.status==="rejected");
     for(const result of results)if(result.status==="fulfilled"){

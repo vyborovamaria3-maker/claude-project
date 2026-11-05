@@ -53,9 +53,9 @@ export async function processInvalidationBatch(
             AND t.source_system IN ('x','tg')`,[item.source_system,item.event_kind,item.event_key]);
         const earliestDay=matched.rows[0]?.day;
         const startDay=item.next_day==null?earliestDay:String(item.next_day);
-        if(typeof startDay!=="string"||!/^\\d{4}-\\d{2}-\\d{2}$/.test(startDay))
+        if(typeof startDay!=="string"||!/^\d{4}-\d{2}-\d{2}$/.test(startDay))
           throw new Error("invalidation_day_unavailable");
-        const dayResult=await tx.query(`SELECT day::text AS day FROM token_daily_cross_platform
+        const dayResult=await tx.query(`SELECT DISTINCT day::text AS day FROM token_daily_cross_platform
           WHERE canonical_token_id=$1 AND day>=COALESCE($2::date,$3::date)
           ORDER BY day LIMIT $4`,[token,item.next_day??null,earliestDay,maxDays+1]);
         const dayRows=dayResult.rows;
@@ -68,7 +68,7 @@ export async function processInvalidationBatch(
         }
         const more=dayRows.length>maxDays;
         const days=dayRows.slice(0,maxDays).map(row=>String(row.day));
-        if(days.some(day=>!/^\\d{4}-\\d{2}-\\d{2}$/.test(day)))
+        if(days.some(day=>!/^\d{4}-\d{2}-\d{2}$/.test(day)))
           throw new Error("invalidation_snapshot_day_invalid");
         const now=(await tx.query("SELECT clock_timestamp() AS at")).rows[0]?.at;
         if(!(now instanceof Date)&&typeof now!=="string")
