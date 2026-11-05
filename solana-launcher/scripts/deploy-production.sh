@@ -144,6 +144,8 @@ refresh_admin_runtime_env() {
   local helper="$ADMIN_DIR/deploy/refresh-runtime-env.sh"
   if [[ -r "$helper" ]]; then
     ADMIN_DIR="$ADMIN_DIR" bash "$helper"
+  elif [[ -n "${ADMIN_STAGE_DIR:-}" && -r "$ADMIN_STAGE_DIR/admin-site/deploy/refresh-runtime-env.sh" && -r "$ADMIN_STAGE_DIR/admin-site/.env.runtime.example" ]]; then
+    ADMIN_DIR="$ADMIN_DIR" RUNTIME_ENV_TEMPLATE="$ADMIN_STAGE_DIR/admin-site/.env.runtime.example" bash "$ADMIN_STAGE_DIR/admin-site/deploy/refresh-runtime-env.sh"
   elif [[ -f "$ADMIN_DIR/.env.runtime" ]]; then
     echo "Legacy rollback source has no allowlist helper; retaining its existing .env.runtime"
   elif grep -q '\.env\.runtime' "$ADMIN_DIR/docker-compose.yml"; then

@@ -5,7 +5,7 @@ umask 077
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ADMIN_DIR="${ADMIN_DIR:-$(cd -- "$SCRIPT_DIR/.." && pwd)}"
-TEMPLATE="$ADMIN_DIR/.env.runtime.example"
+TEMPLATE="${RUNTIME_ENV_TEMPLATE:-$ADMIN_DIR/.env.runtime.example}"
 SOURCE="$ADMIN_DIR/.env"
 TARGET="$ADMIN_DIR/.env.runtime"
 

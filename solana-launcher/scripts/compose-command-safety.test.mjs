@@ -70,6 +70,7 @@ test("forward deploy and rollback regenerate the runtime environment safely", ()
   const forward = mainDeploy.slice(mainDeploy.lastIndexOf("\nactivate_admin_source\n"));
   assert.match(forward, /activate_admin_source\s+ensure_twitter_crawler_admin_secret\s+refresh_admin_runtime_env/);
   assert.match(mainDeploy, /refresh_admin_runtime_env\(\)[\s\S]*refresh-runtime-env\.sh/);
+  assert.match(mainDeploy, /RUNTIME_ENV_TEMPLATE="\$ADMIN_STAGE_DIR\/admin-site\/\.env\.runtime\.example"/);
   assert.match(adminDeploy, /bash "\$SCRIPT_DIR\/refresh-runtime-env\.sh"/);
   assert.match(adminRollback, /refresh-runtime-env\.sh/);
 });
