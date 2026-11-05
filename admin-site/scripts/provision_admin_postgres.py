@@ -29,10 +29,13 @@ def _ensure_login_role(db: psycopg.Connection[Any], name: str, password: str, *,
     exists = db.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (name,)).fetchone()
     flags = "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION " + ("BYPASSRLS" if bypass_rls else "NOBYPASSRLS")
     action = "ALTER ROLE" if exists else "CREATE ROLE"
-    statement = sql.SQL("{} {} WITH LOGIN PASSWORD %s {}").format(
-        sql.SQL(action), sql.Identifier(name), sql.SQL(flags)
+    # PostgreSQL utility statements such as CREATE ROLE do not accept
+    # protocol bind parameters in this position. Compose the password as a
+    # safely quoted SQL literal instead; role names remain quoted identifiers.
+    statement = sql.SQL("{} {} WITH LOGIN PASSWORD {} {}").format(
+        sql.SQL(action), sql.Identifier(name), sql.Literal(password), sql.SQL(flags)
     )
-    db.execute(statement, (password,))
+    db.execute(statement)
 
 
 def provision_roles(
