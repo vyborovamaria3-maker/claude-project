@@ -57,7 +57,9 @@ def test_worker_does_not_receive_subscription_credentials():
 def test_production_database_runtime_uses_restricted_role_and_migrations_use_separate_role():
     compose = (LAUNCHER_ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
     deploy = (LAUNCHER_ROOT / "scripts" / "deploy-production.sh").read_text(encoding="utf-8")
-    role_sql = (LAUNCHER_ROOT / "scripts" / "provision-postgres-roles.sql").read_text(encoding="utf-8")
+    role_sql = (
+        LAUNCHER_ROOT / "scripts" / "provision-postgres-roles.sql"
+    ).read_text(encoding="utf-8")
 
     backend = _service_block(compose, "backend", "celery-worker")
     postgres = _service_block(compose, "postgres", "postgres-role-provisioner")
@@ -98,8 +100,16 @@ def test_backup_uses_separate_database_backup_login():
 
 def test_runtime_env_filter_removes_bootstrap_and_migration_secrets():
     deploy = (LAUNCHER_ROOT / "scripts" / "deploy-production.sh").read_text(encoding="utf-8")
-    assert "awk -F= '$1 !~ /^POSTGRES_/ && $1 != \"REDIS_PASSWORD\" { print }' .env.server" in deploy
-    assert 'set_env_value "$ADMIN_ENV_FILE" POTAPOFF_DB_READONLY_PASSWORD "$POSTGRES_READONLY_PASSWORD"' in deploy
+    expected_env_filter = (
+        "awk -F= '$1 !~ /^POSTGRES_/ && $1 != \"REDIS_PASSWORD\" { print }' "
+        ".env.server"
+    )
+    expected_readonly_assignment = (
+        'set_env_value "$ADMIN_ENV_FILE" POTAPOFF_DB_READONLY_PASSWORD '
+        '"$POSTGRES_READONLY_PASSWORD"'
+    )
+    assert expected_env_filter in deploy
+    assert expected_readonly_assignment in deploy
 
 
 def test_admin_postgres_source_uses_read_only_role():
