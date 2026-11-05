@@ -177,8 +177,9 @@ for database in "$product potapoff potapoff potapoff_backup_ci_product_fixture" 
   }
 done
 
-printf 'POSTGRES_PASSWORD=ci-synthetic\n' > "$scratch/deploy/.env.server"
+printf 'POSTGRES_PASSWORD=ci-synthetic\nPOSTGRES_BACKUP_USER=potapoff\nPOSTGRES_BACKUP_PASSWORD=%064d\n' 0 > "$scratch/deploy/.env.server"
 printf 'TEST_ONLY=1\n' > "$scratch/deploy/backend.env"
+printf 'ADMIN_ENVIRONMENT=test\n' > "$scratch/deploy/.env.runtime"
 printf 'services: {}\n' > "$scratch/deploy/docker-compose.production.yml"
 printf 'ci-image-tag\n' > "$scratch/deploy/.current-image-tag"
 printf 'ADMIN_ENVIRONMENT=test\n' > "$scratch/admin/.env"
