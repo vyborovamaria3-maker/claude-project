@@ -61,10 +61,57 @@ set_env_value() {
   fi
 }
 
+ensure_runtime_database_credentials() {
+  local key value default_user tmp
+  for key in POSTGRES_APP_PASSWORD POSTGRES_MIGRATOR_PASSWORD POSTGRES_BACKUP_PASSWORD POSTGRES_READONLY_PASSWORD REDIS_PASSWORD; do
+    value="$(resolve_env_value "$key")"
+    if [[ -z "$value" ]]; then
+      value="$(openssl rand -hex 32)"
+      echo "Generated $key"
+    fi
+    if [[ ! "$value" =~ ^[A-Fa-f0-9]{64}$ ]]; then
+      echo "$key must be a 64-character hexadecimal secret" >&2
+      return 1
+    fi
+    set_env_value .env.server "$key" "$value"
+    export "$key=$value"
+  done
+
+  for key in POSTGRES_APP_USER POSTGRES_MIGRATOR_USER POSTGRES_BACKUP_USER POSTGRES_READONLY_USER; do
+    value="$(resolve_env_value "$key")"
+    if [[ -z "$value" ]]; then
+      case "$key" in
+        POSTGRES_APP_USER) default_user=potapoff_app ;;
+        POSTGRES_MIGRATOR_USER) default_user=potapoff_migrator ;;
+        POSTGRES_BACKUP_USER) default_user=potapoff_backup ;;
+        POSTGRES_READONLY_USER) default_user=potapoff_readonly ;;
+      esac
+      value="$default_user"
+    fi
+    if [[ ! "$value" =~ ^[a-z_][a-z0-9_]{0,62}$ ]]; then
+      echo "$key must be a lowercase PostgreSQL role identifier" >&2
+      return 1
+    fi
+    set_env_value .env.server "$key" "$value"
+    export "$key=$value"
+  done
+
+  if grep -Eq '^(POSTGRES_|REDIS_PASSWORD=)' backend.env; then
+    echo "Remove database credentials from backend.env; runtime DSNs are injected by Compose" >&2
+    return 1
+  fi
+  tmp="$(mktemp)"
+  awk -F= '$1 !~ /^POSTGRES_/ && $1 != "REDIS_PASSWORD" { print }' .env.server > "$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" .env.runtime
+  set_env_value "$ADMIN_ENV_FILE" POTAPOFF_DB_READONLY_PASSWORD "$POSTGRES_READONLY_PASSWORD"
+  chmod 600 .env.server .env.runtime "$ADMIN_ENV_FILE" 2>/dev/null || true
+}
+
 ensure_twitter_crawler_admin_secret() {
   local backend_key admin_key key
 
-  # backend and worker containers load backend.env first and .env.server second.
+  # backend and worker containers load backend.env first and .env.runtime second.
   # A value in .env.server would therefore override the dedicated backend-only
   # credential, including an empty assignment. Keep this secret exclusively in
   # backend.env + admin-site/.env and fail before touching the deployment.
@@ -149,6 +196,8 @@ resolve_subscription_admin_key() {
   fi
   export SUBSCRIPTION_ADMIN_KEY="$key"
 }
+
+ensure_runtime_database_credentials
 
 COMPOSE=(docker compose --env-file .env.server -f "$COMPOSE_FILE")
 export DB_BUSY_TIMEOUT="${DB_BUSY_TIMEOUT:-5000}"
@@ -455,6 +504,9 @@ export ADMIN_IMAGE_TAG="$NEW_TAG"
 "${COMPOSE[@]}" config >/dev/null
 "${ADMIN_COMPOSE[@]}" config --quiet
 
+# Provision least-privilege roles before backup and migration; runtime services
+# never receive the bootstrap or migration credentials.
+"${COMPOSE[@]}" run --rm postgres-role-provisioner
 "$BACKUP_SCRIPT"
 DEPLOYMENT_STARTED=1
 printf '%s\n' "$PREVIOUS_TAG" > .previous-image-tag
@@ -473,7 +525,8 @@ stop_celery_runtime
 # database. This prevents new application code from seeing a pre-migration
 # schema and still allows rollback because production backend startup does not
 # run Alembic implicitly.
-"${COMPOSE[@]}" run --rm --no-deps backend alembic upgrade heads
+MIGRATOR_DATABASE_URL="postgresql+asyncpg://${POSTGRES_MIGRATOR_USER}:${POSTGRES_MIGRATOR_PASSWORD}@postgres:5432/potapoff"
+"${COMPOSE[@]}" run --rm --no-deps -e DATABASE_URL="$MIGRATOR_DATABASE_URL" backend alembic upgrade heads
 
 start_core_services
 start_admin
