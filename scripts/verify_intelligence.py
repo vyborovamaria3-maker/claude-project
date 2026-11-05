@@ -123,18 +123,27 @@ def _verify_secret_templates() -> None:
         "ADMIN_STATE_BACKUP_PASSWORD",
         "ADMIN_STATE_RUNTIME_PASSWORD",
         "ADMIN_STATE_POSTGRES_DSN",
+        "ADMIN_STATE_BOOTSTRAP_DSN",
+        "ADMIN_STATE_MIGRATOR_DSN",
+        "ADMIN_STATE_RUNTIME_DSN",
         "ADMIN_STATE_APP_USER",
         "ADMIN_STATE_MIGRATOR_USER",
         "ADMIN_STATE_BACKUP_USER",
         "ADMIN_STATE_RUNTIME_USER",
         "ADMIN_PG_SCHEMA_MODE",
+        "ADMIN_INTELLIGENCE_DB",
+        "POTAPOFF_INTELLIGENCE_DB",
         "POTAPOFF_BACKEND_URL",
         "POTAPOFF_SUBSCRIPTION_ADMIN_KEY",
         "SUBSCRIPTION_ADMIN_KEY",
+        "POSTGRES_DB",
+        "POSTGRES_USER",
+        "POSTGRES_PASSWORD",
+        "REDIS_PASSWORD",
     }
     leaked = sorted(runtime_keys & privileged_keys)
     if leaked:
-        raise VerificationError("privileged Compose credentials must not be passed through .env.runtime: " + ", ".join(leaked))
+        raise VerificationError("Compose-only or privileged keys must not be passed through .env.runtime: " + ", ".join(leaked))
 
 
 def _verify_credential_files() -> None:

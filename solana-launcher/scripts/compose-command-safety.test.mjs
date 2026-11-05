@@ -47,7 +47,13 @@ test("admin runtime env is generated from the explicit allowlist and mode 0600",
       "TWITTER_CRAWLER_ADMIN_KEY=dedicated-admin-key",
       "ADMIN_STATE_DB_PASSWORD=bootstrap-secret",
       "ADMIN_STATE_APP_PASSWORD=app-secret",
+      "ADMIN_STATE_BOOTSTRAP_DSN=postgresql://bootstrap",
+      "ADMIN_STATE_MIGRATOR_DSN=postgresql://migrator",
+      "ADMIN_STATE_RUNTIME_DSN=postgresql://runtime",
+      "POSTGRES_PASSWORD=postgres-secret",
+      "REDIS_PASSWORD=redis-secret",
       "SUBSCRIPTION_ADMIN_KEY=subscription-secret",
+      "ADMIN_INTELLIGENCE_DB=admin_intelligence",
       "EXTRA_UNLISTED_SECRET=must-not-pass",
       ""
     ].join("\n"));
@@ -59,7 +65,7 @@ test("admin runtime env is generated from the explicit allowlist and mode 0600",
     assert.match(runtime, /ADMIN_USERNAME=operator/);
     assert.match(runtime, /ADMIN_INTELLIGENCE_POSTGRES_DSN=postgresql:\/\/readonly/);
     assert.match(runtime, /TWITTER_CRAWLER_ADMIN_KEY=dedicated-admin-key/);
-    assert.doesNotMatch(runtime, /ADMIN_STATE_DB_PASSWORD|ADMIN_STATE_APP_PASSWORD|ADMIN_STATE_POSTGRES_DSN|ADMIN_STATE_RUNTIME_USER|POTAPOFF_SUBSCRIPTION_ADMIN_KEY|SUBSCRIPTION_ADMIN_KEY|EXTRA_UNLISTED_SECRET/);
+    assert.doesNotMatch(runtime, /ADMIN_STATE_DB_PASSWORD|ADMIN_STATE_APP_PASSWORD|ADMIN_STATE_POSTGRES_DSN|ADMIN_STATE_BOOTSTRAP_DSN|ADMIN_STATE_MIGRATOR_DSN|ADMIN_STATE_RUNTIME_DSN|ADMIN_STATE_RUNTIME_USER|POSTGRES_PASSWORD|REDIS_PASSWORD|POTAPOFF_SUBSCRIPTION_ADMIN_KEY|SUBSCRIPTION_ADMIN_KEY|ADMIN_INTELLIGENCE_DB|EXTRA_UNLISTED_SECRET/);
     assert.equal((await stat(join(fixture, ".env.runtime"))).mode & 0o777, 0o600);
   } finally {
     await rm(fixture, { recursive: true, force: true });
