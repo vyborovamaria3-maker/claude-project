@@ -2,12 +2,41 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { runDeliveryBatch } from "../dist/index.js";
+import { runDeliveryBatch, processInvalidationBatch } from "../dist/index.js";
 import {
   sourceConnection, checkPgOutbox, checkDestination, destinationConnection,
 } from "./etl-connections.mjs";
 import { runSourceLoop } from "./supervisor-core.mjs";
 import { createAiRuntime } from "./ai-runtime.mjs";
+import { readOutboxHealth, healthAlerts } from "./outbox-health.mjs";
+
+const HEALTH_INTERVAL_MS = 30_000;
+
+export function parseInvalidationBatchSize(value=process.env.INTELLIGENCE_INVALIDATION_BATCH_SIZE??"4"){
+  const size=Number(value);
+  if(!Number.isSafeInteger(size)||size<1||size>20)throw new RangeError("invalid invalidation batch size");
+  return size;
+}
+
+export async function runInvalidationBatch(pool,maxJobs=4,processor=processInvalidationBatch){
+  const client=await pool.connect();
+  try{return await processor(client,maxJobs);}
+  finally{client.release();}
+}
+
+async function checkInvalidationDestination(pool){
+  const sql=[
+    "SELECT to_regclass('analytics_invalidation_queue') IS NOT NULL AS queue,",
+    "to_regclass('analytics_invalidation_log') IS NOT NULL AS audit,",
+    "EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='analytics_invalidation_queue' AND column_name='next_attempt_at') AS retry_schedule,",
+    "EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='analytics_invalidation_queue' AND column_name='coalesce_key') AS coalescing,",
+    "EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='analytics_invalidation_queue' AND column_name='next_day') AS cursor",
+  ].join(" ");
+  const result=await pool.query(sql);
+  const row=result.rows[0];
+  if(!row?.queue||!row.audit||!row.retry_schedule||!row.coalescing||!row.cursor)
+    throw new Error("destination Intelligence migrations 010+013+018 required");
+}
 
 /**
  * Foreground-only, laptop-local ETL process. Nothing runs unless explicitly
@@ -70,7 +99,8 @@ function usage(){
     "  --max-batches N is a per-source upper bound; 0 means until SIGINT/SIGTERM.",
     "  Use --sources x or --sources tg,blockchain to run only configured sources.",
     "  X_SOURCE_DATABASE_URL, TG_SOURCE_DATABASE_URL, SOLANA_TRADE_DB_PATH",
-    "  INTELLIGENCE_DATABASE_URL: separate target PostgreSQL with migrations 001+002+004.",
+    "  INTELLIGENCE_DATABASE_URL: separate target PostgreSQL with migrations 001+002+004+017.",
+    "  Optional INTELLIGENCE_INVALIDATION_WORKER_ENABLED=true requires migrations 010+013+018.",
     "  Requires existing source outbox schemas; does NOT apply migrations.",
     "  Preserve separate producer opt-ins; never point this at live DBs before backup/restore.",
   ].join("\n");
@@ -101,13 +131,17 @@ async function main(){
     }
     destination=destinationConnection();
     await checkDestination(destination,{requireBlockchainRevisions:options.sources.includes('blockchain')});
+    const invalidationEnabled=process.env.INTELLIGENCE_INVALIDATION_WORKER_ENABLED==="true";
+    const invalidationBatchSize=invalidationEnabled?parseInvalidationBatchSize():4;
+    if(invalidationEnabled)await checkInvalidationDestination(destination);
     const ai=await createAiRuntime(destination,Object.fromEntries(sources.filter(s=>s.connection.kind==='pg').map(s=>[s.name,s.connection.connection])));
     const report=event=>console.log(JSON.stringify({
       timestamp:new Date().toISOString(),...event,
     }));
     report({kind:"startup",sources:options.sources,mode:"foreground",
-      perSourceClaimLimit:1,leaseMs:options.leaseMs});
+      perSourceClaimLimit:1,leaseMs:options.leaseMs,invalidationWorker:invalidationEnabled});
     const executions=sources.map(async({name,connection,workerId})=>{
+      let lastHealthAt=0;
       try{
         return await runSourceLoop({
           source:name,signal:stop.signal,pollMs:options.pollMs,
@@ -115,6 +149,17 @@ async function main(){
           maxBatches:options.maxBatches,onReport:report,
           runBatch:async()=>{
             const stats=await runDeliveryBatch(connection.port,destination,{workerId,batchSize:1,leaseMs:options.leaseMs});
+            const healthNow=Date.now();
+            if(healthNow-lastHealthAt>=HEALTH_INTERVAL_MS||stats.failed>0||stats.lostLeases>0){
+              lastHealthAt=healthNow;
+              try{
+                const health=await readOutboxHealth(connection);
+                report({kind:"health",source:name,...health});
+                for(const alert of healthAlerts(health))report({kind:"health_alert",source:name,...alert});
+              }catch{
+                report({kind:"health",source:name,code:"health_snapshot_failed"});
+              }
+            }
             if(ai&&name!=='blockchain'&&!stop.signal.aborted)try{report({kind:"ai",source:name,...(await ai.run(name,stop.signal))});}
             catch{report({kind:"ai",source:name,code:"ai_batch_failed"});}
             return stats;
@@ -125,6 +170,26 @@ async function main(){
         throw error;
       }
     });
+    if(invalidationEnabled){
+      executions.push((async()=>{
+        try{
+          return await runSourceLoop({
+            source:"invalidation",signal:stop.signal,pollMs:options.pollMs,
+            paceMs:options.paceMs,maxFailures:options.maxFailures,
+            maxBatches:options.maxBatches,onReport:report,
+            runBatch:async()=>{
+              const stats=await runInvalidationBatch(destination,invalidationBatchSize);
+              report({kind:"invalidation_batch",...stats});
+              return {
+                claimed:stats.completed+stats.continued+stats.retried+stats.failed,
+                delivered:stats.completed+stats.continued,duplicates:0,
+                failed:stats.failed,lostLeases:0,
+              };
+            },
+          });
+        }catch(error){stop.abort();throw error;}
+      })());
+    }
     const results=await Promise.allSettled(executions);
     const failures=results.filter(result=>result.status==="rejected");
     for(const result of results)if(result.status==="fulfilled"){

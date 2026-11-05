@@ -65,6 +65,8 @@ preflight() {
   [[ -f "$ADMIN_DIR/.env.intelligence" ]] || die "missing $ADMIN_DIR/.env.intelligence"
   [[ -f "$ADMIN_DIR/sources.json" ]] || die "missing $ADMIN_DIR/sources.json"
   [[ -f "$ADMIN_DIR/logs.json" ]] || die "missing $ADMIN_DIR/logs.json"
+  bash "$SCRIPT_DIR/refresh-runtime-env.sh"
+  [[ -f "$ADMIN_DIR/.env.runtime" ]] || die "runtime environment was not generated"
 
   [[ "$(env_get ADMIN_ENVIRONMENT)" == "production" ]] || die "ADMIN_ENVIRONMENT must be production"
   require_nonempty ADMIN_PASSWORD_HASH
@@ -125,7 +127,7 @@ backup_state() {
   dir="$BACKUP_ROOT/$stamp"
   install -d -m 0700 "$BACKUP_ROOT" "$dir"
   git -C "$REPO_DIR" rev-parse HEAD > "$dir/git-sha.txt"
-  for file in .env .env.intelligence sources.json logs.json; do
+  for file in .env .env.runtime .env.intelligence sources.json logs.json; do
     if [[ -f "$ADMIN_DIR/$file" ]]; then
       cp -a "$ADMIN_DIR/$file" "$dir/$file"
       chmod 0600 "$dir/$file" || true

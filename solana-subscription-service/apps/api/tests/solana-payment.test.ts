@@ -15,6 +15,7 @@ vi.stubEnv("RPC_ENDPOINT", "https://api.devnet.solana.com");
 vi.stubEnv("TREASURY_WALLET", "11111111111111111111111111111111");
 vi.stubEnv("TREASURY_USDC_TOKEN_ACCOUNT", "11111111111111111111111111111111");
 vi.stubEnv("USDC_MINT", "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
+vi.stubEnv("PAYMENT_CONFIRMATION_COMMITMENT", "finalized");
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -45,6 +46,110 @@ describe("verifySolanaPayment", () => {
       })
     ).rejects.toMatchObject({ code: "PAYMENT_TX_FAILED" });
     expect(parsedSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not accept a merely confirmed signature when finalization is required", async () => {
+    const { PaymentCurrency } = await import("@prisma/client");
+    const { solanaConnection, verifySolanaPayment } = await import("../src/services/solana.service");
+
+    vi.spyOn(solanaConnection, "getSignatureStatus").mockResolvedValue({
+      context: { slot: 1 },
+      value: {
+        slot: 1,
+        confirmations: 1,
+        err: null,
+        confirmationStatus: "confirmed"
+      }
+    } as never);
+    const parsedSpy = vi.spyOn(solanaConnection, "getParsedTransaction");
+
+    await expect(verifySolanaPayment({
+      signature: "7".repeat(88),
+      nonce: "solsub-finality",
+      expectedAmount: 1,
+      currency: PaymentCurrency.SOL
+    })).rejects.toMatchObject({ code: "PAYMENT_NOT_FINALIZED" });
+    expect(parsedSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not accept a nonce emitted only by arbitrary program logs or a lookalike program id", async () => {
+    const { PaymentCurrency } = await import("@prisma/client");
+    const { solanaConnection, verifySolanaPayment } = await import("../src/services/solana.service");
+    const nonce = "solsub-arbitrary-log";
+    vi.spyOn(solanaConnection, "getSignatureStatus").mockResolvedValue({
+      context: { slot: 1 },
+      value: { slot: 1, confirmations: null, err: null, confirmationStatus: "finalized" }
+    } as never);
+    vi.spyOn(solanaConnection, "getParsedTransaction").mockResolvedValue({
+      meta: { err: null, logMessages: [`Program log: ${nonce}`] },
+      transaction: { message: { instructions: [
+        {
+          programId: { equals: () => true },
+          parsed: { type: "transfer", info: { destination: "11111111111111111111111111111111", lamports: 1_000_000_000 } }
+        },
+        {
+          programId: { toBase58: () => "FakeMemoProgram111111111111111111111111111111" },
+          data: nonce
+        }
+      ] } }
+    } as never);
+
+    await expect(verifySolanaPayment({
+      signature: "8".repeat(88),
+      nonce,
+      expectedAmount: 1,
+      currency: PaymentCurrency.SOL
+    })).rejects.toMatchObject({ code: "PAYMENT_NONCE_MISMATCH" });
+  });
+
+  it("requires an exact parsed SPL Memo value rather than a substring", async () => {
+    const { PaymentCurrency } = await import("@prisma/client");
+    const { solanaConnection, verifySolanaPayment } = await import("../src/services/solana.service");
+    const nonce = "solsub-exact-memo";
+    vi.spyOn(solanaConnection, "getSignatureStatus").mockResolvedValue({
+      context: { slot: 1 },
+      value: { slot: 1, confirmations: null, err: null, confirmationStatus: "finalized" }
+    } as never);
+    vi.spyOn(solanaConnection, "getParsedTransaction").mockResolvedValue({
+      meta: { err: null, logMessages: [] },
+      transaction: { message: { instructions: [
+        { program: "spl-memo", parsed: `${nonce}-suffix` }
+      ] } }
+    } as never);
+
+    await expect(verifySolanaPayment({
+      signature: "9".repeat(88),
+      nonce,
+      expectedAmount: 1,
+      currency: PaymentCurrency.SOL
+    })).rejects.toMatchObject({ code: "PAYMENT_NONCE_MISMATCH" });
+  });
+
+  it("accepts the exact parsed SPL Memo instruction", async () => {
+    const { PaymentCurrency } = await import("@prisma/client");
+    const { solanaConnection, verifySolanaPayment } = await import("../src/services/solana.service");
+    const nonce = "solsub-valid-memo";
+    vi.spyOn(solanaConnection, "getSignatureStatus").mockResolvedValue({
+      context: { slot: 1 },
+      value: { slot: 1, confirmations: null, err: null, confirmationStatus: "finalized" }
+    } as never);
+    vi.spyOn(solanaConnection, "getParsedTransaction").mockResolvedValue({
+      meta: { err: null, logMessages: [] },
+      transaction: { message: { instructions: [
+        { program: "spl-memo", parsed: nonce },
+        {
+          programId: { equals: () => true },
+          parsed: { type: "transfer", info: { destination: "11111111111111111111111111111111", lamports: 1_000_000_000 } }
+        }
+      ] } }
+    } as never);
+
+    await expect(verifySolanaPayment({
+      signature: "A".repeat(88),
+      nonce,
+      expectedAmount: 1,
+      currency: PaymentCurrency.SOL
+    })).resolves.toBeUndefined();
   });
 
   it("rejects a parsed transaction whose metadata contains an error", async () => {

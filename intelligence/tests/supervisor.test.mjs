@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { runSourceLoop } from "../scripts/supervisor-core.mjs";
-import { parseArguments } from "../scripts/supervise.mjs";
+import { parseArguments, parseInvalidationBatchSize, runInvalidationBatch } from "../scripts/supervise.mjs";
 
 const cli=fileURLToPath(new URL("../scripts/supervise.mjs",import.meta.url));
 const cwd=fileURLToPath(new URL("..",import.meta.url));
@@ -24,6 +24,19 @@ test("supervisor refuses to start without both explicit opt-ins",()=>{
   assert.equal(run.status,1);
   assert.match(run.stderr,/source_or_destination_operation_failed/);
   assert.doesNotMatch(run.stderr,/postgres:|password=|SOLANA_TRADE_DB_PATH=/);
+});
+
+test("invalidation batch size is bounded and invalidation DB clients are always released",async()=>{
+  assert.equal(parseInvalidationBatchSize("7"),7);
+  for(const value of ["0","21","1.5","NaN",""])assert.throws(()=>parseInvalidationBatchSize(value));
+  let released=false;
+  const pool={async connect(){return {release(){released=true}}}};
+  const result=await runInvalidationBatch(pool,2,async(_client,size)=>({completed:size}));
+  assert.deepEqual(result,{completed:2});
+  assert.equal(released,true);
+  released=false;
+  await assert.rejects(runInvalidationBatch(pool,2,async()=>{throw new Error("fixture")} ),/fixture/);
+  assert.equal(released,true);
 });
 
 test("CLI forbids duplicate, missing or unknown sources and unsafe numeric values",()=>{
@@ -92,6 +105,17 @@ test("two independent sources can make progress without sharing a claim queue",a
   assert.equal(b.delivered,2);
   assert.equal(tg,2);
   assert.equal(chain,2);
+});
+
+test("invalidation queue can run under the same bounded foreground loop",async()=>{
+  let calls=0;
+  const result=await runSourceLoop({
+    source:"invalidation",signal:new AbortController().signal,
+    maxBatches:2,pollMs:100,paceMs:0,
+    runBatch:async()=>{calls++;return {claimed:1,delivered:1,duplicates:0,failed:0,lostLeases:0}},
+  });
+  assert.equal(calls,2);
+  assert.equal(result.delivered,2);
 });
 
 test("source errors are redacted, retried and cut off at safety threshold",async()=>{

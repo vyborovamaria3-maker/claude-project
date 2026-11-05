@@ -54,9 +54,9 @@ test("Postgres claims use the database statement clock unless a deterministic ov
   assert.ok(claim);
   assert.equal(claim.params[0],null,"production claims must not depend on the host wall clock");
   assert.equal(claim.params[3],5000);
-  assert.match(claim.sql,/DATE_TRUNC\('milliseconds', statement_timestamp\(\)\)/);
-  assert.match(claim.sql,/next_attempt_at <= COALESCE/);
-  assert.match(claim.sql,/lease_until=COALESCE/);
+  assert.match(claim.sql,/next_attempt_at <= COALESCE\(\$1::timestamptz, statement_timestamp\(\)\)/);
+  assert.match(claim.sql,/lease_until IS NULL OR lease_until <= COALESCE\(\$1::timestamptz, statement_timestamp\(\)\)/);
+  assert.match(claim.sql,/lease_until=DATE_TRUNC\('milliseconds', COALESCE\(\$1::timestamptz, statement_timestamp\(\)\)\)/);
 });
 
 test("Postgres claim keeps an explicit deterministic clock override",async()=>{

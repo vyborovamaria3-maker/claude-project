@@ -10,7 +10,8 @@ const token="solana:So11111111111111111111111111111111111111112";
 const migrations=["001_entity_registry.sql","002_timeline.sql","003_feature_store.sql",
   "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql",
   "006_cross_platform_analytics.sql","008_alert_status_history.sql","009_ai_analysis.sql",
-  "010_intelligence_governance.sql","011_validation_preregistration.sql"];
+  "010_intelligence_governance.sql","011_validation_preregistration.sql",
+  "013_invalidation_retry_schedule.sql","018_event_revision_invalidation.sql"];
 
 test("Intelligence 2.2 PostgreSQL schema: as-of, coverage, validation, dedup and privacy",{
   skip:!url,
@@ -47,11 +48,19 @@ test("Intelligence 2.2 PostgreSQL schema: as-of, coverage, validation, dedup and
     assert.equal(cost.rows[0].count,1);
 
     const change={canonicalTokenId:token,sourceSystem:"x",eventKind:"tweet_edited",
-      eventKey:"test:revision-1",reason:"edit"};
+      eventKey:"test:revision-1",coalesceKey:"x:post:123",reason:"edit"};
     assert.equal(await queueAnalyticsInvalidation(db,change),true);
     assert.equal(await queueAnalyticsInvalidation(db,change),false);
-    const queued=await db.query("SELECT count(*)::integer AS count FROM analytics_invalidation_log");
+    assert.equal(await queueAnalyticsInvalidation(db,{...change,eventKey:"test:revision-2"}),true,
+      "a newer revision of the same evidence reopens the coalesced invalidation");
+    const queued=await db.query(`SELECT count(*)::integer AS count,
+      min(event_key) AS event_key,min(status) AS status
+      FROM analytics_invalidation_queue`);
     assert.equal(queued.rows[0].count,1);
+    assert.equal(queued.rows[0].event_key,"test:revision-2");
+    assert.equal(queued.rows[0].status,"queued");
+    const audit=await db.query("SELECT count(*)::integer AS count FROM analytics_invalidation_log");
+    assert.equal(audit.rows[0].count,2);
 
     const signalVersion="cross-platform-heuristics-v2";
     const signalTime=new Date(Date.now()+3600000);

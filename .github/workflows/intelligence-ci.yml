@@ -13,6 +13,8 @@ on:
       - "admin-site/docker-compose.yml"
       - "admin-site/.env.example"
       - "admin-site/.env.intelligence.example"
+      - "admin-site/.env.runtime.example"
+      - "admin-site/deploy/refresh-runtime-env.sh"
       - "admin-site/requirements.txt"
       - ".gitignore"
       - ".github/workflows/intelligence-ci.yml"

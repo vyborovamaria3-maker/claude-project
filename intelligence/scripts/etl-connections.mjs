@@ -15,6 +15,17 @@ export function requiredEnv(name,env=process.env) {
   return value;
 }
 
+export function postgresSourcePoolOptions(source,write,env=process.env){
+  if(!["x","tg"].includes(source)||typeof write!=="boolean")throw new Error("invalid PostgreSQL source connection mode");
+  return {
+    connectionString:requiredEnv(source==="x"?"X_SOURCE_DATABASE_URL":"TG_SOURCE_DATABASE_URL",env),
+    max:2,connectionTimeoutMillis:5000,
+    query_timeout:30_000,statement_timeout:30_000,
+    application_name:write?"potapoff-intelligence-source-writer":"potapoff-intelligence-source-reader",
+    ...(write?{}:{options:"-c default_transaction_read_only=on"}),
+  };
+}
+
 export function sourceConnection(source,write) {
   if(source==="blockchain"){
     const filename=requiredEnv("SOLANA_TRADE_DB_PATH");
@@ -35,11 +46,7 @@ export function sourceConnection(source,write) {
     }catch(error){db.close();throw error;}
   }
   if(!["x","tg"].includes(source))throw new Error("unknown source");
-  const url=requiredEnv(source==="x"?"X_SOURCE_DATABASE_URL":"TG_SOURCE_DATABASE_URL");
-  const pool=new pg.Pool({
-    connectionString:url,max:2,connectionTimeoutMillis:5000,
-    query_timeout:30_000,statement_timeout:30_000,
-  });
+  const pool=new pg.Pool(postgresSourcePoolOptions(source,write));
   return {
     kind:"pg",connection:pool,
     close:async()=>pool.end(),
@@ -64,11 +71,16 @@ export async function checkDestination(pool,options={}){
     to_regclass('entity_evidence') IS NOT NULL AS evidence,
     to_regclass('timeline_events') IS NOT NULL AS timeline,
     to_regclass('token_link_observations') IS NOT NULL AS token_links,
-    to_regclass('blockchain_swap_evidence_revisions') IS NOT NULL AS blockchain_revisions`);
+    to_regclass('blockchain_swap_evidence_revisions') IS NOT NULL AS blockchain_revisions,
+    EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('intelligence_inbox')
+      AND attname='payload_sha256' AND NOT attisdropped) AS inbox_fingerprint`);
   const row=result.rows[0];
   // Every consumer may encounter token-link events, so reject missing 004 before claiming.
   if(!row?.inbox||!row.registry||!row.evidence||!row.timeline||!row.token_links){
     throw new Error("destination Intelligence migrations 001+002+004 required");
+  }
+  if(!row.inbox_fingerprint){
+    throw new Error("destination Intelligence migration 017 required before source claims");
   }
   if(options.requireBlockchainRevisions===true && !row.blockchain_revisions){
     throw new Error("destination Intelligence migration 005 required before Blockchain claim");

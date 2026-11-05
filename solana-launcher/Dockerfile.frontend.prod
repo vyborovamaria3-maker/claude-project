@@ -73,7 +73,9 @@ EXPOSE 3000
 # Copy both packages explicitly because server-side code imports Playwright.
 COPY --from=builder /app/node_modules/playwright ./node_modules/playwright
 COPY --from=builder /app/node_modules/playwright-core ./node_modules/playwright-core
-RUN test -f /app/node_modules/playwright-core/browsers.json \
+# The production backup command uses the same native SQLite driver as the app.
+RUN node -e "require('better-sqlite3')" \
+    && test -f /app/node_modules/playwright-core/browsers.json \
     && chown -R potapoff:potapoff /app
 
 ENV PORT=3000

@@ -26,7 +26,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: solana-launcher/package-lock.json
       - name: Prepare isolated frontend audit runtime
@@ -347,6 +347,7 @@ jobs:
         run: |
           : > backend.env
           : > .env.server
+          : > .env.runtime
       - id: shell
         name: Shell syntax for deployment scripts
         continue-on-error: true
@@ -363,6 +364,11 @@ jobs:
         env:
           IMAGE_TAG: audit
           POSTGRES_PASSWORD: test-postgres
+          POSTGRES_APP_PASSWORD: ci-postgres-app
+          POSTGRES_MIGRATOR_PASSWORD: ci-postgres-migrator
+          POSTGRES_BACKUP_PASSWORD: ci-postgres-backup
+          POSTGRES_READONLY_PASSWORD: ci-postgres-readonly
+          REDIS_PASSWORD: ci-redis
           RABBITMQ_PASSWORD: test-rabbit
           SECRET_KEY: a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9
           KOL_INTERNAL_KEY: ci-kol-internal-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm

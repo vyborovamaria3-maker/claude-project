@@ -98,16 +98,52 @@ def _verify_unit_tests() -> None:
 
 def _verify_secret_templates() -> None:
     admin_template = (ADMIN / ".env.example").read_text(encoding="utf-8")
+    admin_runtime_template = (ADMIN / ".env.runtime.example").read_text(encoding="utf-8")
     worker_template = (ADMIN / ".env.intelligence.example").read_text(encoding="utf-8")
 
-    if "POTAPOFF_INTELLIGENCE_POSTGRES_DSN=" in admin_template:
-        raise VerificationError("worker write DSN must not exist in admin .env template")
+    admin_templates = (admin_template, admin_runtime_template)
+    if any("POTAPOFF_INTELLIGENCE_POSTGRES_DSN=" in item for item in admin_templates):
+        raise VerificationError("worker write DSN must not exist in either admin environment template")
     if "POTAPOFF_INTELLIGENCE_POSTGRES_DSN=" not in worker_template:
         raise VerificationError("worker .env template is missing POTAPOFF_INTELLIGENCE_POSTGRES_DSN")
-    if "ADMIN_INTELLIGENCE_POSTGRES_DSN=" not in admin_template:
-        raise VerificationError("admin .env template is missing ADMIN_INTELLIGENCE_POSTGRES_DSN")
+    if any("ADMIN_INTELLIGENCE_POSTGRES_DSN=" not in item for item in admin_templates):
+        raise VerificationError("admin environment templates must include ADMIN_INTELLIGENCE_POSTGRES_DSN")
     if "ADMIN_INTELLIGENCE_POSTGRES_DSN=" in worker_template:
         raise VerificationError("admin read-only DSN must not exist in worker .env template")
+
+    runtime_keys = {
+        line.partition("=")[0]
+        for line in admin_runtime_template.splitlines()
+        if line and not line.lstrip().startswith("#") and "=" in line
+    }
+    privileged_keys = {
+        "ADMIN_STATE_DB_PASSWORD",
+        "ADMIN_STATE_APP_PASSWORD",
+        "ADMIN_STATE_MIGRATOR_PASSWORD",
+        "ADMIN_STATE_BACKUP_PASSWORD",
+        "ADMIN_STATE_RUNTIME_PASSWORD",
+        "ADMIN_STATE_POSTGRES_DSN",
+        "ADMIN_STATE_BOOTSTRAP_DSN",
+        "ADMIN_STATE_MIGRATOR_DSN",
+        "ADMIN_STATE_RUNTIME_DSN",
+        "ADMIN_STATE_APP_USER",
+        "ADMIN_STATE_MIGRATOR_USER",
+        "ADMIN_STATE_BACKUP_USER",
+        "ADMIN_STATE_RUNTIME_USER",
+        "ADMIN_PG_SCHEMA_MODE",
+        "ADMIN_INTELLIGENCE_DB",
+        "POTAPOFF_INTELLIGENCE_DB",
+        "POTAPOFF_BACKEND_URL",
+        "POTAPOFF_SUBSCRIPTION_ADMIN_KEY",
+        "SUBSCRIPTION_ADMIN_KEY",
+        "POSTGRES_DB",
+        "POSTGRES_USER",
+        "POSTGRES_PASSWORD",
+        "REDIS_PASSWORD",
+    }
+    leaked = sorted(runtime_keys & privileged_keys)
+    if leaked:
+        raise VerificationError("Compose-only or privileged keys must not be passed through .env.runtime: " + ", ".join(leaked))
 
 
 def _verify_credential_files() -> None:
@@ -150,6 +186,10 @@ def _compose_fixture_files() -> Iterator[None]:
                 continue
             shutil.copyfile(source, destination)
             created.append(destination)
+        runtime_env = ADMIN / ".env.runtime"
+        if not runtime_env.exists():
+            _run(("bash", str(ADMIN / "deploy" / "refresh-runtime-env.sh")))
+            created.append(runtime_env)
         yield
     finally:
         for path in reversed(created):
@@ -162,10 +202,26 @@ def _compose_fixture_files() -> Iterator[None]:
 def _verify_compose_boundary() -> None:
     _require_executable("docker")
     compose = ("docker", "compose", "-f", "admin-site/docker-compose.yml")
-    _run((*compose, "config", "--quiet"))
+    # This check only renders Compose; it never starts services. Supply synthetic
+    # credentials when the caller has not provided them so the example template
+    # can be validated without requiring real secrets.
+    compose_env = os.environ.copy()
+    synthetic_credentials = {
+        "ADMIN_STATE_DB_PASSWORD": "ci-bootstrap-password",
+        "ADMIN_STATE_APP_PASSWORD": "a" * 64,
+        "ADMIN_STATE_MIGRATOR_PASSWORD": "b" * 64,
+        "ADMIN_STATE_BACKUP_PASSWORD": "c" * 64,
+        "ADMIN_STATE_RUNTIME_PASSWORD": "a" * 64,
+        "SUBSCRIPTION_ADMIN_KEY": "ci-subscription-admin-key",
+    }
+    for key, value in synthetic_credentials.items():
+        if not compose_env.get(key, "").strip():
+            compose_env[key] = value
+    _run((*compose, "config", "--quiet"), env=compose_env)
     result = subprocess.run(
         [*compose, "config", "--format", "json"],
         cwd=ROOT,
+        env=compose_env,
         capture_output=True,
         text=True,
         check=False,

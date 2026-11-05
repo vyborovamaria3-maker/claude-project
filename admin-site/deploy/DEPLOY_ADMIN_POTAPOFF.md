@@ -26,9 +26,9 @@ docker compose run --rm admin python scripts/hash_password.py
 # use output as ADMIN_PASSWORD_HASH
 ```
 
-Never commit `.env`, `.env.intelligence`, `sources.json` containing credentials, or generated state DBs.
+Never commit `.env`, `.env.runtime`, `.env.intelligence`, `sources.json` containing credentials, or generated state DBs.
 
-**Secret boundary:** `.env` belongs to the admin container. `.env.intelligence` belongs only to `intelligence-worker`. Never copy the worker PostgreSQL DSN into `.env`, and never pass the complete admin `.env` to the worker.
+**Secret boundary:** `.env` is used for Compose substitution and provisioning. `deploy/refresh-runtime-env.sh` creates `.env.runtime` for the admin container using the explicit allowlist in `.env.runtime.example`; PostgreSQL bootstrap, migrator, backup and subscription-admin credentials are excluded. `.env.intelligence` belongs only to `intelligence-worker`. Never copy the worker PostgreSQL DSN into the admin runtime environment or pass the complete admin `.env` to the worker.
 
 ## 3. Database access
 
@@ -119,6 +119,7 @@ Attach the PostgreSQL services that admin/worker must reach to `potapoff-shared`
 ## 6. Validate and start
 
 ```bash
+bash deploy/refresh-runtime-env.sh
 docker compose config
 docker compose build --pull
 

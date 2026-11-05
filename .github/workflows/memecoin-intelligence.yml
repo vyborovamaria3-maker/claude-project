@@ -36,7 +36,10 @@ jobs:
         run: npm run build
       - name: Validate production Compose
         env:
+          POSTGRES_USER: memecoin
+          POSTGRES_DB: memecoin
           POSTGRES_PASSWORD: ci-postgres-password
+          POSTGRES_READONLY_PASSWORD: ci-postgres-readonly-password
           REDIS_PASSWORD: ci-redis-password
           INTERNAL_ADMIN_API_KEY: ci-admin-key
         run: docker compose -f docker-compose.production.yml config >/dev/null

@@ -18,10 +18,15 @@ async function main(){
     await db.connect();
     const ready=await db.query("SELECT to_regclass('analytics_invalidation_queue') IS NOT NULL AS ready");
     if(ready.rows[0]?.ready!==true)throw new Error("intelligence_migration_010_required");
-    const retryColumn=await db.query(`SELECT EXISTS(SELECT 1 FROM information_schema.columns
-      WHERE table_schema=current_schema() AND table_name='analytics_invalidation_queue'
-        AND column_name='next_attempt_at') AS ready`);
-    if(retryColumn.rows[0]?.ready!==true)throw new Error("intelligence_migration_013_required");
+    const requiredColumns=await db.query(`SELECT
+      bool_or(column_name='next_attempt_at') AS retry_schedule,
+      bool_or(column_name='coalesce_key') AS coalescing,
+      bool_or(column_name='next_day') AS cursor
+      FROM information_schema.columns
+      WHERE table_schema=current_schema() AND table_name='analytics_invalidation_queue'`);
+    const columns=requiredColumns.rows[0];
+    if(columns?.retry_schedule!==true||columns?.coalescing!==true||columns?.cursor!==true)
+      throw new Error("intelligence_migrations_013_and_018_required");
     const result=await processInvalidationBatch(db,limit);
     process.stdout.write(JSON.stringify(result)+"\n");
   }finally{await db.end()}

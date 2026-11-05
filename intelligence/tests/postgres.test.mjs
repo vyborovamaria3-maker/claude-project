@@ -21,6 +21,13 @@ test("PostgreSQL real transaction: replay, provenance and time bounds", {skip:!u
     const tg={sourceSystem:"tg",eventKind:"message_observed",eventKey:"tg:-100222:37:v1",schemaVersion:"v1",entityRefs:[entity],evidenceRef:tgEvidence};
     assert.equal(await ingestRegistryEvent(client,tg),true);
     assert.equal(await ingestRegistryEvent(client,tg),false);
+    const storedFingerprint=await client.query(
+      "SELECT payload_sha256 FROM intelligence_inbox WHERE source_system=$1 AND event_key=$2",["tg",tg.eventKey]);
+    assert.match(storedFingerprint.rows[0].payload_sha256,/^[0-9a-f]{64}$/);
+    const changedEntity=buildEntityRef({kind:"token",
+      canonicalId:formatTokenId("solana","EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),
+      firstSeenAt:t1,lastSeenAt:t1});
+    await assert.rejects(ingestRegistryEvent(client,{...tg,entityRefs:[changedEntity]}),/identity collision/);
     await assert.rejects(ingestRegistryEvent(client,{
       ...tg,evidenceRef:buildEvidenceRef({
         sourceKind:"tg_message",sourceAccountId:"-100222",messageId:"38",observedAt:t1

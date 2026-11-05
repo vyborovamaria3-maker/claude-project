@@ -39,8 +39,14 @@ export async function verifySolanaPayment(check: SolanaPaymentCheck) {
   }
 
   const confirmation = status.value?.confirmationStatus;
-  if (!confirmation || !["confirmed", "finalized"].includes(confirmation)) {
-    throw new AppError(409, "Transaction is not confirmed yet", "PAYMENT_NOT_CONFIRMED");
+  const confirmationRank = confirmation === "finalized" ? 2 : confirmation === "confirmed" ? 1 : 0;
+  const requiredRank = env.PAYMENT_CONFIRMATION_COMMITMENT === "finalized" ? 2 : 1;
+  if (confirmationRank < requiredRank) {
+    throw new AppError(
+      409,
+      requiredRank === 2 ? "Transaction is not finalized yet" : "Transaction is not confirmed yet",
+      requiredRank === 2 ? "PAYMENT_NOT_FINALIZED" : "PAYMENT_NOT_CONFIRMED"
+    );
   }
 
   const tx = await solanaConnection.getParsedTransaction(check.signature, {
@@ -55,14 +61,17 @@ export async function verifySolanaPayment(check: SolanaPaymentCheck) {
   }
 
   const allInstructions = tx.transaction.message.instructions;
-  const memoFound = allInstructions.some((ix) => {
-    if ("program" in ix && ix.program === "spl-memo") {
-      return String(ix.parsed ?? "").includes(check.nonce);
-    }
-    return "programId" in ix && ix.programId.toBase58().includes("Memo") && JSON.stringify(ix).includes(check.nonce);
-  });
-  if (!memoFound && !JSON.stringify(tx.meta?.logMessages ?? []).includes(check.nonce)) {
-    throw new AppError(400, "Payment nonce was not found in memo", "PAYMENT_NONCE_MISMATCH");
+  // Only a parsed instruction from the recognized SPL Memo program is
+  // authoritative. Arbitrary program logs and program IDs containing the
+  // word "Memo" are attacker-controlled and must never bind a payment nonce.
+  const memoFound = allInstructions.some((ix) =>
+    "program" in ix &&
+    ix.program === "spl-memo" &&
+    typeof ix.parsed === "string" &&
+    ix.parsed === check.nonce
+  );
+  if (!memoFound) {
+    throw new AppError(400, "Payment nonce was not found in SPL Memo instruction", "PAYMENT_NONCE_MISMATCH");
   }
 
   if (check.currency === PaymentCurrency.SOL) {

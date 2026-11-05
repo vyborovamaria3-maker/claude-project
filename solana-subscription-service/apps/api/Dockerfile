@@ -13,7 +13,7 @@ FROM node:22-alpine AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run build -w @solsub/api
+RUN npm run build -w @solsub/shared && npm run build -w @solsub/api
 
 FROM node:22-alpine AS runner
 WORKDIR /app
@@ -23,10 +23,19 @@ COPY --from=build /app/packages/bigint-safe ./packages/bigint-safe
 COPY --from=build /app/packages/braces-safe ./packages/braces-safe
 COPY --from=build /app/apps/api/dist ./apps/api/dist
 COPY --from=build /app/apps/api/prisma ./apps/api/prisma
+COPY --from=build /app/packages/shared/package.json ./packages/shared/package.json
 COPY --from=build /app/packages/shared/dist ./packages/shared/dist
 COPY package*.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY apps/bot/package.json apps/bot/package.json
+# The final image runs Node directly; keep npm's vulnerable CLI dependency tree
+# and all workspace-only development/test packages out of the production image.
+RUN npm prune --omit=dev \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+# Prisma Client is generated in the build stage and is not an npm-managed
+# package; restore its generated runtime artifacts after pruning extraneous deps.
+COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
+USER node
 EXPOSE 4000
 CMD ["node", "apps/api/dist/apps/api/src/server.js"]

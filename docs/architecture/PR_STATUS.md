@@ -1,4 +1,20 @@
-# PR_STATUS — GitHub PR inventory (2026-10-24, after #165 merge)
+# PR_STATUS — GitHub PR inventory
+
+## Current snapshot — 2026-11-05
+
+This section supersedes the historical PR inventory below. GitHub is authoritative for current PR state, checks, review and merge base.
+
+- Current `main` HEAD at integration start: `d7fc77235fa3134e764349c77010fad336b73c5b`.
+- [#212](https://github.com/vyborovamaria3-maker/claude-project/pull/212) is **CLOSED / UNMERGED / SUPERSEDED** by [#215](https://github.com/vyborovamaria3-maker/claude-project/pull/215). Its seven inline review threads were already resolved; the historical review discussion remains available.
+- [#215](https://github.com/vyborovamaria3-maker/claude-project/pull/215) is the active integration candidate: OPEN / DRAFT, base `main`, branch `codex/architecture-hardening-20261105`. Before this status-documentation commit its exact head was `b8c8b31342cf58350ec3cbbc04924a3f44fb5fa8`, 9 commits ahead, 0 behind, 112 changed paths. This commit updates status documentation; check the PR page for the new exact head.
+- At the pre-documentation head, GitHub exposed 48 check runs: 1 SUCCESS, 1 IN_PROGRESS, 45 QUEUED and 1 SKIPPED; no failures were observed. CI was not complete. The skipped `Security Lock Refresh` job is conditional and is not counted as a pass. All results must be refreshed against the latest PR head.
+- PR #215 has no review threads at this snapshot. Independent review and approval are still required; do not mark it ready/merge solely from the source PR's old CI.
+- [#213](https://github.com/vyborovamaria3-maker/claude-project/pull/213) remains a separate Draft optional alert-webhook proposal stacked on #206; it is not included in #215 and no webhook endpoint/secret is configured.
+- #209, #211 and #214 remain closed unmerged. Do not reopen or independently merge their historical branches.
+- Branch-protection read returned 403 `Resource not accessible by integration`; no protection or ruleset was changed. The last successful read in the 2026-11-03 snapshot reported `protected:false`; current state must be confirmed by a repository administrator under issue #170.
+- Remaining operator gates: physical production DB/volume inventory; complete encrypted off-host backups for every stateful store; real isolated restore and credential recovery; measured RPO/RTO; production least-privilege role cutover; live X/TG/Solana verification; named supervisor owner/process manager; independent PR approval.
+
+---
 
 Point-in-time snapshot of the public [GitHub PR listing](https://github.com/vyborovamaria3-maker/claude-project/pulls). **GitHub is authoritative** for current status, CI, review and merge base; this file can become stale after every update.
 

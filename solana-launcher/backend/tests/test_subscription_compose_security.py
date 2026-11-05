@@ -52,3 +52,67 @@ def test_worker_does_not_receive_subscription_credentials():
 
     assert "SUBSCRIPTION_INTERNAL_KEY" not in worker
     assert "SUBSCRIPTION_ADMIN_KEY" not in worker
+
+
+def test_production_database_runtime_uses_restricted_role_and_migrations_use_separate_role():
+    compose = (LAUNCHER_ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+    deploy = (LAUNCHER_ROOT / "scripts" / "deploy-production.sh").read_text(encoding="utf-8")
+    role_sql = (
+        LAUNCHER_ROOT / "scripts" / "provision-postgres-roles.sql"
+    ).read_text(encoding="utf-8")
+
+    backend = _service_block(compose, "backend", "celery-worker")
+    postgres = _service_block(compose, "postgres", "postgres-role-provisioner")
+    assert "POSTGRES_APP_USER" in backend
+    assert "POSTGRES_APP_PASSWORD" in backend
+    assert "postgresql+asyncpg://potapoff:${POSTGRES_PASSWORD}" not in backend
+    assert ".env.runtime" in backend
+    assert ".env.server" not in backend
+    assert ".env.server" not in postgres
+    assert "postgres-role-provisioner" in backend
+    assert 'DATABASE_URL="$MIGRATOR_DATABASE_URL"' in deploy
+    assert "REASSIGN OWNED BY" in role_sql
+    assert "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES" in role_sql
+    assert "ALTER DEFAULT PRIVILEGES FOR ROLE" in role_sql
+    assert "pg_read_all_data" in role_sql
+
+
+def test_production_redis_is_password_protected_and_isolated_from_public_frontend():
+    compose = (LAUNCHER_ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+    redis = _service_block(compose, "redis", "rabbitmq")
+    frontend = _service_block(compose, "frontend", "telegram-bot")
+    backend = _service_block(compose, "backend", "celery-worker")
+
+    assert "--requirepass" in redis
+    assert "REDIS_PASSWORD" in redis
+    assert "data-network" in redis
+    assert "data-network" in backend
+    assert "REDIS_PASSWORD" not in frontend
+    assert "data-network" not in frontend
+
+
+def test_backup_uses_separate_database_backup_login():
+    backup = (LAUNCHER_ROOT / "scripts" / "backup-production.sh").read_text(encoding="utf-8")
+    assert "POSTGRES_BACKUP_USER" in backup
+    assert "POSTGRES_BACKUP_PASSWORD" in backup
+    assert 'pg_dump -h 127.0.0.1 -U "$POSTGRES_BACKUP_USER"' in backup
+
+
+def test_runtime_env_filter_removes_bootstrap_and_migration_secrets():
+    deploy = (LAUNCHER_ROOT / "scripts" / "deploy-production.sh").read_text(encoding="utf-8")
+    expected_env_filter = (
+        "awk -F= '$1 !~ /^POSTGRES_/ && $1 != \"REDIS_PASSWORD\" { print }' "
+        ".env.server"
+    )
+    expected_readonly_assignment = (
+        'set_env_value "$ADMIN_ENV_FILE" POTAPOFF_DB_READONLY_PASSWORD '
+        '"$POSTGRES_READONLY_PASSWORD"'
+    )
+    assert expected_env_filter in deploy
+    assert expected_readonly_assignment in deploy
+
+
+def test_admin_postgres_source_uses_read_only_role():
+    sources = (LAUNCHER_ROOT.parent / "admin-site" / "sources.json").read_text(encoding="utf-8")
+    assert "potapoff_readonly:${POTAPOFF_DB_READONLY_PASSWORD}" in sources
+    assert "potapoff:${POTAPOFF_DB_PASSWORD}" not in sources

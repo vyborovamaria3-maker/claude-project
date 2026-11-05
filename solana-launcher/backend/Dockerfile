@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -18,6 +18,8 @@ COPY data ./data
 
 RUN pip install --upgrade pip \
     && pip install -e . \
+    && pip uninstall -y setuptools wheel jaraco.context \
+    && python -c 'import importlib.metadata as m; blocked={"setuptools","wheel","jaraco.context"}; installed={d.metadata.get("Name","").lower() for d in m.distributions()}; remaining=sorted(blocked & installed); assert not remaining, remaining' \
     && groupadd --system potapoff \
     && useradd --system --gid potapoff --home-dir /app --shell /usr/sbin/nologin potapoff \
     && chown -R potapoff:potapoff /app

@@ -118,6 +118,8 @@ jobs:
           "${SCP[@]}" \
             solana-launcher/scripts/backup-production.sh \
             solana-launcher/scripts/verify-backup-restore.sh \
+            solana-launcher/scripts/postgres-role-restoration-fingerprint.sql \
+            solana-launcher/scripts/provision-postgres-roles.sql \
             solana-launcher/scripts/healthcheck-production.sh \
             solana-launcher/scripts/deploy-production.sh \
             "$SERVER_USER@$SERVER_HOST:/opt/potapoff-deploy/scripts/"
@@ -202,14 +204,7 @@ jobs:
           local_archive="potapoff-admin-${RELEASE_SHA}.tar.gz"
           remote_archive="/tmp/potapoff-admin-${RELEASE_SHA}.tar.gz"
 
-          tar \
-            --exclude='admin-site/.env' \
-            --exclude='admin-site/.env.*' \
-            --exclude='admin-site/sources.json' \
-            --exclude='admin-site/logs.json' \
-            --exclude='admin-site/__pycache__' \
-            --exclude='admin-site/**/__pycache__' \
-            -czf "$local_archive" admin-site
+          git archive --format=tar "$RELEASE_SHA" admin-site | gzip -c > "$local_archive"
 
           "${SSH[@]}" 'mkdir -p /opt/claude-project'
           "${SSH[@]}" "rm -f '$remote_archive'"
