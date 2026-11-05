@@ -130,6 +130,15 @@ jobs:
         run: node --test ../security/audit/bigint-safe.test.mjs ../security/audit/braces-safe.test.mjs
       - name: API security regressions
         run: npm run test -w @solsub/api
+      - name: Build and smoke-test non-root production API image
+        run: |
+          image="solsub-api-security:${GITHUB_SHA}"
+          docker build --pull -f apps/api/Dockerfile -t "$image" .
+          runtime_user="$(docker image inspect "$image" --format '{{.Config.User}}')"
+          test "$runtime_user" = "node"
+          runtime_uid="$(docker run --rm --entrypoint id "$image" -u)"
+          test "$runtime_uid" != "0"
+          docker run --rm --entrypoint node "$image" -e "import('@solsub/shared').then(({ addBillingPeriod }) => { if (typeof addBillingPeriod !== 'function') process.exit(1); })"
       - name: Production dependency audit
         env:
           ALLOW_BIGINT_BUFFER_UNTIL: "2026-10-01"
