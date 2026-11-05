@@ -34,7 +34,6 @@
 ```bash
 cd admin-site
 cp .env.example .env
-bash deploy/refresh-runtime-env.sh
 cp .env.intelligence.example .env.intelligence
 cp sources.example.json sources.json
 cp logs.example.json logs.json
@@ -45,6 +44,9 @@ cp logs.example.json logs.json
 docker compose build
 docker compose run --rm admin python scripts/hash_password.py
 # вставьте результат в ADMIN_PASSWORD_HASH
+
+# После всех изменений .env сформируйте ограниченный runtime-файл.
+bash deploy/refresh-runtime-env.sh
 
 docker network create potapoff-shared || true
 docker compose up -d

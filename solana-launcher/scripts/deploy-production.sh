@@ -146,7 +146,7 @@ refresh_admin_runtime_env() {
     ADMIN_DIR="$ADMIN_DIR" bash "$helper"
   elif [[ -f "$ADMIN_DIR/.env.runtime" ]]; then
     echo "Legacy rollback source has no allowlist helper; retaining its existing .env.runtime"
-  elif grep -Eq '^[[:space:]]*env_file:[[:space:]]*\.env\.runtime' "$ADMIN_DIR/docker-compose.yml"; then
+  elif grep -q '\.env\.runtime' "$ADMIN_DIR/docker-compose.yml"; then
     echo "Admin runtime env helper and .env.runtime are missing" >&2
     return 1
   fi

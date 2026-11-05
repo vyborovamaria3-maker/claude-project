@@ -41,7 +41,7 @@ fi
 
 if [[ -r "$SCRIPT_DIR/refresh-runtime-env.sh" ]]; then
   bash "$SCRIPT_DIR/refresh-runtime-env.sh"
-elif grep -Eq '^[[:space:]]*env_file:[[:space:]]*\.env\.runtime' "$ADMIN_DIR/docker-compose.yml" && [[ ! -f "$ADMIN_DIR/.env.runtime" ]]; then
+elif grep -q '\.env\.runtime' "$ADMIN_DIR/docker-compose.yml" && [[ ! -f "$ADMIN_DIR/.env.runtime" ]]; then
   die "rollback target requires .env.runtime but neither an allowlist helper nor a saved runtime env is available"
 fi
 

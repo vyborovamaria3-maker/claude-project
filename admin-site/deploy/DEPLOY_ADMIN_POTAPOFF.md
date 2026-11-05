@@ -11,7 +11,6 @@ Create an A/AAAA record for `admin.potapoff.fun` pointing to the production serv
 ```bash
 cd /opt/claude-project/admin-site
 cp .env.example .env
-bash deploy/refresh-runtime-env.sh
 cp .env.intelligence.example .env.intelligence
 cp sources.example.json sources.json
 cp logs.example.json logs.json
@@ -120,6 +119,7 @@ Attach the PostgreSQL services that admin/worker must reach to `potapoff-shared`
 ## 6. Validate and start
 
 ```bash
+bash deploy/refresh-runtime-env.sh
 docker compose config
 docker compose build --pull
 

@@ -122,6 +122,14 @@ def _verify_secret_templates() -> None:
         "ADMIN_STATE_MIGRATOR_PASSWORD",
         "ADMIN_STATE_BACKUP_PASSWORD",
         "ADMIN_STATE_RUNTIME_PASSWORD",
+        "ADMIN_STATE_POSTGRES_DSN",
+        "ADMIN_STATE_APP_USER",
+        "ADMIN_STATE_MIGRATOR_USER",
+        "ADMIN_STATE_BACKUP_USER",
+        "ADMIN_STATE_RUNTIME_USER",
+        "ADMIN_PG_SCHEMA_MODE",
+        "POTAPOFF_BACKEND_URL",
+        "POTAPOFF_SUBSCRIPTION_ADMIN_KEY",
         "SUBSCRIPTION_ADMIN_KEY",
     }
     leaked = sorted(runtime_keys & privileged_keys)
