@@ -18,6 +18,8 @@ const adminRollback = await readFile(resolve(adminRoot, "deploy/production-rollb
 const productionWorkflow = await readFile(resolve(root, "../.github/workflows/potapoff-production.yml"), "utf8");
 const productionCompose = await readFile(resolve(root, "docker-compose.production.yml"), "utf8");
 const backupScript = await readFile(resolve(root, "scripts/backup-production.sh"), "utf8");
+const dockerignore = await readFile(resolve(root, ".dockerignore"), "utf8");
+const telegramDockerfile = await readFile(resolve(root, "Dockerfile.telegram-bot"), "utf8");
 const fullBacktestWorkflow = await readFile(resolve(root, "../.github/workflows/full-backtest-audit.yml"), "utf8");
 const telegramWorkflow = await readFile(resolve(root, "../.github/workflows/telegram-intelligence-v19-ci.yml"), "utf8");
 const predeployWorkflow = await readFile(resolve(root, "../.github/workflows/potapoff-predeploy-gate.yml"), "utf8");
@@ -94,6 +96,13 @@ test("deployment staging archives only tracked admin source", () => {
   assert.match(productionWorkflow, /git archive --format=tar "\$RELEASE_SHA" admin-site/);
   assert.doesNotMatch(localDeploy, /--exclude='admin-site\/\.env/);
   assert.doesNotMatch(productionWorkflow, /--exclude='admin-site\/\.env/);
+});
+
+test("Telegram bot Docker context excludes deployment environment secrets", () => {
+  assert.match(telegramDockerfile, /COPY --chown=node:node \. \./);
+  assert.match(dockerignore, /^backend\.env\*/m);
+  assert.match(dockerignore, /^\*\.env$/m);
+  assert.match(dockerignore, /^\*\.env\.\*/m);
 });
 
 test("production deploy stages every PostgreSQL provisioner and backup verifier dependency", () => {
