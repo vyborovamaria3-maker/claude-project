@@ -24,7 +24,7 @@ test("invalidation worker skips clean queue without writes",async()=>{
   assert.deepEqual(sql,["BEGIN",sql[1],"COMMIT"]);
 });
 
-test("missing publication day is retried and audited, not silently completed",async()=>{
+test("missing registry evidence day is retried and audited, not silently completed",async()=>{
   const {queries,db}=missingDayFake(0);
   const result=await processInvalidationBatch(db,1);
   assert.equal(result.retried,1);assert.equal(result.completed,0);
@@ -40,6 +40,33 @@ test("fifth unsuccessful attempt fails terminally and remains auditable",async()
   const result=await processInvalidationBatch(db,1);
   assert.equal(result.failed,1);
   assert.deepEqual(queries.find(x=>x.sql.includes("SET status=$2")).params,[1,"failed"]);
+});
+
+test("evidence-only token link events derive their day without a timeline row",async()=>{
+  for(const eventKind of ["token_link_verified","token_links_invalidated"]){
+    const queries=[];
+    let claimed=true;
+    const db={async query(sql,params){
+      queries.push({sql,params});
+      if(sql.includes("FROM analytics_invalidation_queue")&&sql.includes("FOR UPDATE SKIP LOCKED")){
+        if(!claimed)return {rows:[]};
+        claimed=false;
+        return {rows:[{invalidation_id:"9",canonical_token_id:token,source_system:"tg",
+          event_kind:eventKind,event_key:"evidence-only-event",attempts:0,next_day:null}]};
+      }
+      if(sql.includes("FROM intelligence_inbox origin"))return {rows:[{day:"2026-10-19"}]};
+      return {rows:[]};
+    }};
+    const result=await processInvalidationBatch(db,1);
+    assert.equal(result.completed,1,eventKind);
+    assert.equal(result.retried,0,eventKind);
+    assert.equal(result.failed,0,eventKind);
+    const evidenceLookup=queries.find(x=>x.sql.includes("FROM intelligence_inbox origin"));
+    assert.ok(evidenceLookup.sql.includes("JOIN entity_evidence"),eventKind);
+    assert.ok(!evidenceLookup.sql.includes("JOIN timeline_events"),eventKind);
+    assert.deepEqual(evidenceLookup.params,["tg",eventKind,"evidence-only-event"]);
+    assert.ok(queries.some(x=>x.sql.includes("status='completed'")),eventKind);
+  }
 });
 
 test("historical invalidation recomputes every existing later snapshot in bounded chunks",async()=>{
