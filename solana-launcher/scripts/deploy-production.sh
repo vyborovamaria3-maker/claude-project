@@ -105,7 +105,48 @@ ensure_runtime_database_credentials() {
   chmod 600 "$tmp"
   mv "$tmp" .env.runtime
   set_env_value "$ADMIN_ENV_FILE" POTAPOFF_DB_READONLY_PASSWORD "$POSTGRES_READONLY_PASSWORD"
+  for key in ADMIN_STATE_APP_PASSWORD ADMIN_STATE_MIGRATOR_PASSWORD ADMIN_STATE_BACKUP_PASSWORD; do
+    value="$(env_value_from_file "$ADMIN_ENV_FILE" "$key")"
+    if [[ -z "$value" ]]; then
+      value="$(openssl rand -hex 32)"
+      echo "Generated $key"
+    fi
+    if [[ ! "$value" =~ ^[A-Fa-f0-9]{64}$ ]]; then
+      echo "$key must be a 64-character hexadecimal secret" >&2
+      return 1
+    fi
+    set_env_value "$ADMIN_ENV_FILE" "$key" "$value"
+  done
+
+  for key in ADMIN_STATE_APP_USER ADMIN_STATE_MIGRATOR_USER ADMIN_STATE_BACKUP_USER; do
+    value="$(env_value_from_file "$ADMIN_ENV_FILE" "$key")"
+    if [[ -z "$value" ]]; then
+      case "$key" in
+        ADMIN_STATE_APP_USER) value=potapoff_admin_app ;;
+        ADMIN_STATE_MIGRATOR_USER) value=potapoff_admin_migrator ;;
+        ADMIN_STATE_BACKUP_USER) value=potapoff_admin_backup ;;
+      esac
+    fi
+    if [[ ! "$value" =~ ^[a-z_][a-z0-9_]{0,62}$ ]]; then
+      echo "$key must be a lowercase PostgreSQL role identifier" >&2
+      return 1
+    fi
+    set_env_value "$ADMIN_ENV_FILE" "$key" "$value"
+  done
+
+  set_env_value "$ADMIN_ENV_FILE" ADMIN_STATE_RUNTIME_USER "$(env_value_from_file "$ADMIN_ENV_FILE" ADMIN_STATE_APP_USER)"
+  set_env_value "$ADMIN_ENV_FILE" ADMIN_STATE_RUNTIME_PASSWORD "$(env_value_from_file "$ADMIN_ENV_FILE" ADMIN_STATE_APP_PASSWORD)"
+  set_env_value "$ADMIN_ENV_FILE" ADMIN_PG_SCHEMA_MODE preprovisioned
+  refresh_admin_runtime_env
   chmod 600 .env.server .env.runtime "$ADMIN_ENV_FILE" 2>/dev/null || true
+}
+
+refresh_admin_runtime_env() {
+  local tmp
+  tmp="$(mktemp)"
+  awk -F= '$1 !~ /^ADMIN_STATE_(DB|APP|MIGRATOR|BACKUP)_PASSWORD$/ && $1 != "ADMIN_STATE_RUNTIME_PASSWORD" { print }' "$ADMIN_ENV_FILE" > "$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$(dirname "$ADMIN_ENV_FILE")/.env.runtime"
 }
 
 ensure_twitter_crawler_admin_secret() {
@@ -471,6 +512,13 @@ rollback() {
   stop_twitter_discovery
   stop_celery_runtime
   start_core_services
+  # The previous image predates DML-only Admin startup. Use the bootstrap login
+  # only for this emergency rollback, then the next forward deploy restores the
+  # restricted runtime identity.
+  set_env_value "$ADMIN_ENV_FILE" ADMIN_STATE_RUNTIME_USER potapoff_admin
+  set_env_value "$ADMIN_ENV_FILE" ADMIN_STATE_RUNTIME_PASSWORD "$(env_value_from_file "$ADMIN_ENV_FILE" ADMIN_STATE_DB_PASSWORD)"
+  set_env_value "$ADMIN_ENV_FILE" ADMIN_PG_SCHEMA_MODE legacy
+  refresh_admin_runtime_env
   start_admin
   start_celery_runtime
   start_twitter_discovery_rollback
@@ -503,6 +551,7 @@ export IMAGE_TAG="$NEW_TAG"
 export ADMIN_IMAGE_TAG="$NEW_TAG"
 "${COMPOSE[@]}" config >/dev/null
 "${ADMIN_COMPOSE[@]}" config --quiet
+"${ADMIN_COMPOSE[@]}" run --rm admin-db-provisioner
 
 # Provision least-privilege roles before backup and migration; runtime services
 # never receive the bootstrap or migration credentials.
