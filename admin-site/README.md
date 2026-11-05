@@ -34,6 +34,8 @@
 ```bash
 cd admin-site
 cp .env.example .env
+cp .env.runtime.example .env.runtime
+cp .env.intelligence.example .env.intelligence
 cp sources.example.json sources.json
 cp logs.example.json logs.json
 
@@ -47,6 +49,8 @@ docker compose run --rm admin python scripts/hash_password.py
 docker network create potapoff-shared || true
 docker compose up -d
 ```
+
+`.env` используется Compose для подстановки и provisioner; `.env.runtime` передаётся только контейнеру админки; `.env.intelligence` — только worker. Заполните runtime-файл собственными значениями. Не переносите в него bootstrap-, migrator- и backup-пароли PostgreSQL.
 
 Обновите DSN в `sources.json` под реальные read-only credentials и сетевые имена контейнеров.
 

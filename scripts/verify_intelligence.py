@@ -98,16 +98,35 @@ def _verify_unit_tests() -> None:
 
 def _verify_secret_templates() -> None:
     admin_template = (ADMIN / ".env.example").read_text(encoding="utf-8")
+    admin_runtime_template = (ADMIN / ".env.runtime.example").read_text(encoding="utf-8")
     worker_template = (ADMIN / ".env.intelligence.example").read_text(encoding="utf-8")
 
-    if "POTAPOFF_INTELLIGENCE_POSTGRES_DSN=" in admin_template:
-        raise VerificationError("worker write DSN must not exist in admin .env template")
+    admin_templates = (admin_template, admin_runtime_template)
+    if any("POTAPOFF_INTELLIGENCE_POSTGRES_DSN=" in item for item in admin_templates):
+        raise VerificationError("worker write DSN must not exist in either admin environment template")
     if "POTAPOFF_INTELLIGENCE_POSTGRES_DSN=" not in worker_template:
         raise VerificationError("worker .env template is missing POTAPOFF_INTELLIGENCE_POSTGRES_DSN")
-    if "ADMIN_INTELLIGENCE_POSTGRES_DSN=" not in admin_template:
-        raise VerificationError("admin .env template is missing ADMIN_INTELLIGENCE_POSTGRES_DSN")
+    if any("ADMIN_INTELLIGENCE_POSTGRES_DSN=" not in item for item in admin_templates):
+        raise VerificationError("admin environment templates must include ADMIN_INTELLIGENCE_POSTGRES_DSN")
     if "ADMIN_INTELLIGENCE_POSTGRES_DSN=" in worker_template:
         raise VerificationError("admin read-only DSN must not exist in worker .env template")
+
+    runtime_keys = {
+        line.partition("=")[0]
+        for line in admin_runtime_template.splitlines()
+        if line and not line.lstrip().startswith("#") and "=" in line
+    }
+    privileged_keys = {
+        "ADMIN_STATE_DB_PASSWORD",
+        "ADMIN_STATE_APP_PASSWORD",
+        "ADMIN_STATE_MIGRATOR_PASSWORD",
+        "ADMIN_STATE_BACKUP_PASSWORD",
+        "ADMIN_STATE_RUNTIME_PASSWORD",
+        "SUBSCRIPTION_ADMIN_KEY",
+    }
+    leaked = sorted(runtime_keys & privileged_keys)
+    if leaked:
+        raise VerificationError("privileged Compose credentials must not be passed through .env.runtime: " + ", ".join(leaked))
 
 
 def _verify_credential_files() -> None:
@@ -139,6 +158,7 @@ def _verify_postgres() -> None:
 def _compose_fixture_files() -> Iterator[None]:
     mappings = (
         (ADMIN / ".env.example", ADMIN / ".env"),
+        (ADMIN / ".env.runtime.example", ADMIN / ".env.runtime"),
         (ADMIN / ".env.intelligence.example", ADMIN / ".env.intelligence"),
         (ADMIN / "sources.example.json", ADMIN / "sources.json"),
         (ADMIN / "logs.example.json", ADMIN / "logs.json"),
