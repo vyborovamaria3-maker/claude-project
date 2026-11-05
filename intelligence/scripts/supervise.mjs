@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { runDeliveryBatch } from "../dist/index.js";
+import { runDeliveryBatch, processInvalidationBatch } from "../dist/index.js";
 import {
   sourceConnection, checkPgOutbox, checkDestination, destinationConnection,
 } from "./etl-connections.mjs";
@@ -11,6 +11,32 @@ import { createAiRuntime } from "./ai-runtime.mjs";
 import { readOutboxHealth, healthAlerts } from "./outbox-health.mjs";
 
 const HEALTH_INTERVAL_MS = 30_000;
+
+export function parseInvalidationBatchSize(value=process.env.INTELLIGENCE_INVALIDATION_BATCH_SIZE??"4"){
+  const size=Number(value);
+  if(!Number.isSafeInteger(size)||size<1||size>20)throw new RangeError("invalid invalidation batch size");
+  return size;
+}
+
+export async function runInvalidationBatch(pool,maxJobs=4,processor=processInvalidationBatch){
+  const client=await pool.connect();
+  try{return await processor(client,maxJobs);}
+  finally{client.release();}
+}
+
+async function checkInvalidationDestination(pool){
+  const sql=[
+    "SELECT to_regclass('analytics_invalidation_queue') IS NOT NULL AS queue,",
+    "to_regclass('analytics_invalidation_log') IS NOT NULL AS audit,",
+    "EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='analytics_invalidation_queue' AND column_name='next_attempt_at') AS retry_schedule,",
+    "EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='analytics_invalidation_queue' AND column_name='coalesce_key') AS coalescing,",
+    "EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='analytics_invalidation_queue' AND column_name='next_day') AS cursor",
+  ].join(" ");
+  const result=await pool.query(sql);
+  const row=result.rows[0];
+  if(!row?.queue||!row.audit||!row.retry_schedule||!row.coalescing||!row.cursor)
+    throw new Error("destination Intelligence migrations 010+013+018 required");
+}
 
 /**
  * Foreground-only, laptop-local ETL process. Nothing runs unless explicitly
