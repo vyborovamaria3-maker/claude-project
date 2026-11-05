@@ -103,8 +103,18 @@ if [[ -z "$ADMIN_POSTGRES_CONTAINER" ]]; then
   exit 1
 fi
 
-docker exec "$ADMIN_POSTGRES_CONTAINER" \
-  pg_dump -U potapoff_admin -d potapoff_admin -Fc \
+ADMIN_STATE_BACKUP_USER="$(sed -n 's/^ADMIN_STATE_BACKUP_USER=//p' "$ADMIN_DIR/.env" | tail -n 1)"
+ADMIN_STATE_BACKUP_PASSWORD="$(sed -n 's/^ADMIN_STATE_BACKUP_PASSWORD=//p' "$ADMIN_DIR/.env" | tail -n 1)"
+if [[ ! "$ADMIN_STATE_BACKUP_USER" =~ ^[a-z_][a-z0-9_]{0,62}$ || ! "$ADMIN_STATE_BACKUP_PASSWORD" =~ ^[A-Fa-f0-9]{64}$ ]]; then
+  echo "Dedicated Control Center PostgreSQL backup credentials are missing or invalid" >&2
+  exit 1
+fi
+
+# Data dumps use the dedicated read-only backup login over authenticated TCP.
+# The bootstrap login is reserved below for global role metadata and catalog
+# fingerprints, which require elevated catalog visibility.
+docker exec -e "PGPASSWORD=$ADMIN_STATE_BACKUP_PASSWORD" "$ADMIN_POSTGRES_CONTAINER" \
+  pg_dump -h 127.0.0.1 -U "$ADMIN_STATE_BACKUP_USER" -d potapoff_admin -Fc \
   > "$DEST/admin-postgres.dump"
 
 test -s "$DEST/admin-postgres.dump"
