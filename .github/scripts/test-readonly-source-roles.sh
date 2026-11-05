@@ -17,7 +17,7 @@ if [[ "$ready" != true ]]; then docker logs "$container"; echo "Temporary Postgr
 
 test_role() {
   local database="$1" readonly_user="$2" sql_path="$3"
-  docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -c "CREATE DATABASE \\"$database\\"" >/dev/null
+  docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -c "CREATE DATABASE $database" >/dev/null
   docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$database" -c "CREATE TABLE source_probe (id integer PRIMARY KEY, value text); INSERT INTO source_probe VALUES (1, 'visible');" >/dev/null
   docker cp "$repo_root/$sql_path" "$container:/tmp/provision-readonly-role.sql" >/dev/null
   for _ in 1 2; do
