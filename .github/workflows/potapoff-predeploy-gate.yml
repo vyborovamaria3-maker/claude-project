@@ -281,10 +281,10 @@ jobs:
         run: bash .github/scripts/test-readonly-source-roles.sh
       - name: Build backend production image
         run: docker build --pull -t potapoff-backend-predeploy:${{ github.sha }} solana-launcher/backend
-      - name: Verify backend runtime has patched setuptools and excludes build-only tooling
+      - name: Verify backend runtime excludes build-only Python tooling
         run: |
           image="potapoff-backend-predeploy:${{ github.sha }}"
-          docker run --rm --entrypoint python "$image" -c 'import importlib.metadata as m; version=m.version("setuptools"); assert int(version.split(".")[0]) >= 83, version; blocked={"wheel","jaraco.context"}; installed={d.metadata.get("Name","").lower() for d in m.distributions()}; remaining=sorted(blocked & installed); assert not remaining, remaining'
+          docker run --rm --entrypoint python "$image" -c 'import importlib.metadata as m; blocked={"setuptools","wheel","jaraco.context"}; installed={d.metadata.get("Name","").lower() for d in m.distributions()}; remaining=sorted(blocked & installed); assert not remaining, remaining'
       - name: Scan backend image for HIGH/CRITICAL vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
