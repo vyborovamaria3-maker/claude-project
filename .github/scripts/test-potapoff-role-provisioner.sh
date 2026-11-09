@@ -142,7 +142,7 @@ run_psql "$migrator_user" "$migrator_password" -c "
 
 # New migration-created functions must not inherit PostgreSQL's default PUBLIC EXECUTE.
 run_psql "$migrator_user" "$migrator_password" -c \
-  "CREATE FUNCTION public.migration_private_fn() RETURNS integer LANGUAGE sql AS \\$\\$ SELECT 7 \\$\\$" >/dev/null
+  "CREATE FUNCTION public.migration_private_fn() RETURNS integer LANGUAGE sql AS \$\$ SELECT 7 \$\$" >/dev/null
 for role in "$app_user" "$backup_user" "$readonly_user"; do
   case "$role" in
     "$app_user") role_password="$app_password" ;;
