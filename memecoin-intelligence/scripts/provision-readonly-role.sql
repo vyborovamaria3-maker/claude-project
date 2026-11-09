@@ -63,53 +63,65 @@ SELECT EXISTS (
   \quit 3
 \endif
 
-WITH extension_members AS (
-  SELECT classid, objid FROM pg_depend WHERE deptype = 'e'
-),
-application_objects AS (
-  SELECT n.nspname AS schema_name, c.relowner AS owner_oid
-  FROM pg_class c
-  JOIN pg_namespace n ON n.oid = c.relnamespace
-  WHERE n.nspname <> 'information_schema'
-    AND n.nspname NOT LIKE 'pg_%'
-    AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
-    AND NOT EXISTS (
-      SELECT 1 FROM extension_members e
-      WHERE e.classid = 'pg_class'::regclass AND e.objid = c.oid
-    )
-  UNION ALL
-  SELECT n.nspname, p.proowner
-  FROM pg_proc p
-  JOIN pg_namespace n ON n.oid = p.pronamespace
-  WHERE n.nspname <> 'information_schema'
-    AND n.nspname NOT LIKE 'pg_%'
-    AND NOT EXISTS (
-      SELECT 1 FROM extension_members e
-      WHERE e.classid = 'pg_proc'::regclass AND e.objid = p.oid
-    )
-  UNION ALL
-  SELECT n.nspname, t.typowner
-  FROM pg_type t
-  JOIN pg_namespace n ON n.oid = t.typnamespace
-  WHERE n.nspname <> 'information_schema'
-    AND n.nspname NOT LIKE 'pg_%'
-    AND t.typtype IN ('b', 'c', 'd', 'e', 'm', 'p', 'r')
-    AND NOT EXISTS (
-      SELECT 1 FROM extension_members e
-      WHERE e.classid = 'pg_type'::regclass AND e.objid = t.oid
-    )
-)
-SELECT CASE WHEN EXISTS (
-  SELECT 1 FROM application_objects
-  WHERE schema_name <> 'public'
-     OR owner_oid IS DISTINCT FROM (
-       SELECT oid FROM pg_roles WHERE rolname = :'migrator_user'
-     )
-) THEN 'true' ELSE 'false' END AS has_unprepared_application_owners \gset
-\if :has_unprepared_application_owners
-\echo 'Provisioning blocked: application objects must be transferred through a separately reviewed object-level allowlist'
-\quit 3
-\endif
+SELECT set_config('app.provision_migrator_user', :'migrator_user', false);
+
+DO $ownership$
+DECLARE
+  migration_owner oid;
+  has_unprepared_application_owners boolean;
+BEGIN
+  SELECT oid INTO migration_owner
+  FROM pg_roles
+  WHERE rolname = current_setting('app.provision_migrator_user');
+
+  WITH extension_members AS (
+    SELECT classid, objid FROM pg_depend WHERE deptype = 'e'
+  ),
+  application_objects AS (
+    SELECT n.nspname AS schema_name, c.relowner AS owner_oid
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname <> 'information_schema'
+      AND n.nspname NOT LIKE 'pg_%'
+      AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
+      AND NOT EXISTS (
+        SELECT 1 FROM extension_members e
+        WHERE e.classid = 'pg_class'::regclass AND e.objid = c.oid
+      )
+    UNION ALL
+    SELECT n.nspname, p.proowner
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname <> 'information_schema'
+      AND n.nspname NOT LIKE 'pg_%'
+      AND NOT EXISTS (
+        SELECT 1 FROM extension_members e
+        WHERE e.classid = 'pg_proc'::regclass AND e.objid = p.oid
+      )
+    UNION ALL
+    SELECT n.nspname, t.typowner
+    FROM pg_type t
+    JOIN pg_namespace n ON n.oid = t.typnamespace
+    WHERE n.nspname <> 'information_schema'
+      AND n.nspname NOT LIKE 'pg_%'
+      AND t.typtype IN ('b', 'c', 'd', 'e', 'm', 'p', 'r')
+      AND NOT EXISTS (
+        SELECT 1 FROM extension_members e
+        WHERE e.classid = 'pg_type'::regclass AND e.objid = t.oid
+      )
+  )
+  SELECT EXISTS (
+    SELECT 1 FROM application_objects
+    WHERE schema_name <> 'public'
+       OR owner_oid IS DISTINCT FROM migration_owner
+  ) INTO has_unprepared_application_owners;
+
+  IF has_unprepared_application_owners THEN
+    RAISE EXCEPTION
+      'Provisioning blocked: application objects must be transferred through a separately reviewed object-level allowlist';
+  END IF;
+END
+$ownership$;
 
 SELECT EXISTS (
   SELECT 1

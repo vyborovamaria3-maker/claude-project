@@ -50,4 +50,18 @@ describe("rotateRefreshToken", () => {
     await expect(rotateRefreshToken("old-jti", "user-1", "123456")).resolves.toBeNull();
     expect(evalMock).toHaveBeenCalledTimes(1);
   });
+  
+  it("requires the double-submit CSRF middleware on refresh and logout", async () => {
+    const { default: authRoutes } = await import("../src/routes/auth.routes");
+    const { requireCsrf } = await import("../src/middleware/auth");
+    const layers = (authRoutes as unknown as {
+      stack: Array<{ route?: { path: string; stack: Array<{ handle: unknown }> } }>;
+    }).stack;
+
+    for (const path of ["/refresh", "/logout"]) {
+      const route = layers.find((layer) => layer.route?.path === path)?.route;
+      expect(route?.stack.some((handler) => handler.handle === requireCsrf)).toBe(true);
+    }
+  });
+
 });

@@ -5,7 +5,7 @@ import { asyncHandler } from "../utils/async-handler";
 import { clearAuthCookies, setAuthCookies } from "../security/cookies";
 import { revokeRefreshToken, rotateRefreshToken, signAccessToken, signRefreshToken, verifyRefreshToken } from "../security/tokens";
 import { verifyTelegramLoginWidget, verifyTelegramMiniAppInitData } from "../security/telegram";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, requireCsrf } from "../middleware/auth";
 
 const router = Router();
 
@@ -50,6 +50,7 @@ router.post(
 
 router.post(
   "/refresh",
+  requireCsrf,
   asyncHandler(async (req, res) => {
     const refreshToken = req.cookies?.refresh_token as string | undefined;
     if (!refreshToken) {
@@ -71,6 +72,7 @@ router.post(
 
 router.post(
   "/logout",
+  requireCsrf,
   asyncHandler(async (req, res) => {
     const refreshToken = req.cookies?.refresh_token as string | undefined;
     if (refreshToken) {

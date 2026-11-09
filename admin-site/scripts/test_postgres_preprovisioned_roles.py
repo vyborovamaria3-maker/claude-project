@@ -344,7 +344,11 @@ def bootstrap_schema_under_migration_owner() -> None:
     )
     with psycopg.connect(BACKUP) as db:
         assert db.execute("SELECT count(*) FROM public.admin_audit").fetchone()[0] == 0
+        # Finish the SELECT transaction before changing the default for the
+        # next transaction; otherwise the DELETE still runs read-only.
+        db.commit()
         db.execute("SET default_transaction_read_only=off")
+        db.commit()
         try:
             with db.transaction():
                 db.execute("DELETE FROM public.admin_audit")
