@@ -132,7 +132,7 @@ docker exec -i "$container" pg_restore --list < "$archive" >/dev/null
   "SELECT pg_has_role(current_user, 'pg_read_all_data', 'MEMBER')")" == "f" ]]
 
 # The deployment guard must block before the reviewed object-level cutover.
-if run_psql "$bootstrap_user" "$bootstrap_password" -v migrator_user="$migrator_user" \
+if run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_user" -v migrator_user="$migrator_user" \
   -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
   -f /tmp/check-postgres-migrator-ownership.sql >/dev/null 2>&1; then
   echo "Ownership guard unexpectedly accepted bootstrap-owned legacy objects" >&2
@@ -151,7 +151,7 @@ run_psql "$bootstrap_user" "$bootstrap_password" -c "
   GRANT EXECUTE ON FUNCTION public.legacy_label_count() TO $app_user;
 " >/dev/null
 
-if run_psql "$bootstrap_user" "$bootstrap_password" -v migrator_user="$migrator_user" \
+if run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_user" -v migrator_user="$migrator_user" \
   -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
   -f /tmp/check-postgres-migrator-ownership.sql >/dev/null 2>&1; then
   echo "Ownership guard unexpectedly accepted a PUBLIC-executable SECURITY DEFINER function" >&2
@@ -161,7 +161,7 @@ run_psql "$bootstrap_user" "$bootstrap_password" -c "
   REVOKE ALL ON FUNCTION public.legacy_security_definer() FROM PUBLIC;
   GRANT EXECUTE ON FUNCTION public.legacy_security_definer() TO $app_user;
 " >/dev/null
-run_psql "$bootstrap_user" "$bootstrap_password" -v migrator_user="$migrator_user" \
+run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_user" -v migrator_user="$migrator_user" \
   -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
   -f /tmp/check-postgres-migrator-ownership.sql >/dev/null
 
