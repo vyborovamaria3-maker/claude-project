@@ -67,16 +67,24 @@ test_role_set() {
   done
 
   # The shell entrypoint must fail closed if invoked with any restricted login.
-  if docker exec \
-    -e PGHOST=127.0.0.1 -e PGDATABASE="$database" \
-    -e PGUSER="$app_user" -e PGPASSWORD="$app_password" \
-    -e POSTGRES_APP_USER="$app_user" -e POSTGRES_APP_PASSWORD="$app_password" \
-    -e POSTGRES_MIGRATOR_USER="$migrator_user" -e POSTGRES_MIGRATOR_PASSWORD="$migrator_password" \
-    -e POSTGRES_READONLY_USER="$readonly_user" -e POSTGRES_READONLY_PASSWORD="$readonly_password" \
-    "$container" /bin/sh /provision/run-readonly-role-provisioner.sh >/dev/null 2>&1; then
-    echo "$app_user unexpectedly ran the privileged role provisioner" >&2
-    return 1
-  fi
+  for restricted_user in "$app_user" "$migrator_user" "$readonly_user"; do
+    local restricted_password
+    case "$restricted_user" in
+      "$app_user") restricted_password="$app_password" ;;
+      "$migrator_user") restricted_password="$migrator_password" ;;
+      *) restricted_password="$readonly_password" ;;
+    esac
+    if docker exec \
+      -e PGHOST=127.0.0.1 -e PGDATABASE="$database" \
+      -e PGUSER="$restricted_user" -e PGPASSWORD="$restricted_password" \
+      -e POSTGRES_APP_USER="$app_user" -e POSTGRES_APP_PASSWORD="$app_password" \
+      -e POSTGRES_MIGRATOR_USER="$migrator_user" -e POSTGRES_MIGRATOR_PASSWORD="$migrator_password" \
+      -e POSTGRES_READONLY_USER="$readonly_user" -e POSTGRES_READONLY_PASSWORD="$readonly_password" \
+      "$container" /bin/sh /provision/run-readonly-role-provisioner.sh >/dev/null 2>&1; then
+      echo "$restricted_user unexpectedly ran the privileged role provisioner" >&2
+      return 1
+    fi
+  done
 
   # Runtime has DML on existing objects but no schema/role administration.
   [[ "$(run_psql "$database" "$app_user" "$app_password" -Atq -c "SELECT value FROM source_probe WHERE id=1")" == "visible" ]]
