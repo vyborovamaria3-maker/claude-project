@@ -158,6 +158,11 @@ test("Admin product data sources use dedicated read-only roles and shared Docker
   }
 });
 
+test("PostgreSQL role provisioners defer PGUSER expansion to the container shell", () => {
+  assert.match(subscriptionCompose, /test "\$\$\{PGUSER\}" != "solsub_readonly"/);
+  assert.match(memecoinCompose, /test "\$\$\{PGUSER\}" != "memecoin_readonly"/);
+});
+
 test("Telegram bot Docker context excludes deployment environment secrets", () => {
   assert.match(telegramDockerfile, /COPY --chown=node:node \. \./);
   assert.match(dockerignore, /^backend\.env\*/m);
