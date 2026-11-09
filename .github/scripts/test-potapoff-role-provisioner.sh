@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 container="potapoff-role-provisioner-ci-${GITHUB_RUN_ID:-local}-$$"
 bootstrap_user=potapoff_bootstrap
 bootstrap_password=ci-bootstrap-password
@@ -50,22 +50,14 @@ run_psql() {
 
 # Seed bootstrap-owned legacy objects. The provisioner must not silently
 # transfer any of these objects to the migration role.
+run_psql "$bootstrap_user" "$bootstrap_password" -c "CREATE TYPE public.legacy_state AS ENUM ('old','new')" >/dev/null
 run_psql "$bootstrap_user" "$bootstrap_password" -c "
   CREATE TABLE public.legacy_records (
     id bigserial PRIMARY KEY,
     label text NOT NULL,
     state public.legacy_state
   );
-" >/dev/null 2>&1 || {
-  run_psql "$bootstrap_user" "$bootstrap_password" -c "CREATE TYPE public.legacy_state AS ENUM ('old','new')" >/dev/null
-  run_psql "$bootstrap_user" "$bootstrap_password" -c "
-    CREATE TABLE public.legacy_records (
-      id bigserial PRIMARY KEY,
-      label text NOT NULL,
-      state public.legacy_state
-    );
-  " >/dev/null
-}
+" >/dev/null
 run_psql "$bootstrap_user" "$bootstrap_password" -c "
   INSERT INTO public.legacy_records(label, state) VALUES ('legacy-row', 'old');
   CREATE TABLE public.alembic_version(version_num varchar(64) PRIMARY KEY);
@@ -158,8 +150,12 @@ run_psql "$app_user" "$app_password" -c "
   "SELECT label FROM public.migration_created WHERE id=1")" == "migration" ]]
 
 for role in "$app_user" "$backup_user" "$readonly_user"; do
-  if run_psql "$role" "$(case "$role" in "$app_user") printf '%s' "$app_password";; "$backup_user") printf '%s' "$backup_password";; *) printf '%s' "$readonly_password";; esac)" \
-    -c "CREATE TABLE public.must_not_ddl(id integer)" >/dev/null 2>&1; then
+  case "$role" in
+    "$app_user") role_password="$app_password" ;;
+    "$backup_user") role_password="$backup_password" ;;
+    *) role_password="$readonly_password" ;;
+  esac
+  if run_psql "$role" "$role_password" -c "CREATE TABLE public.must_not_ddl(id integer)" >/dev/null 2>&1; then
     echo "$role unexpectedly created a table" >&2
     exit 1
   fi
