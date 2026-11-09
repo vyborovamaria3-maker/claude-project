@@ -109,8 +109,13 @@ test_role_set() {
       echo "$role still has role memberships: $memberships" >&2
       return 1
     }
-    if run_psql "$database" "$role" "$([[ "$role" == "$app_user" ]] && printf '%s' "$app_password" || [[ "$role" == "$migrator_user" ]] && printf '%s' "$migrator_password" || printf '%s' "$readonly_password")" \
-      -c "SET ROLE postgres" >/dev/null 2>&1; then
+    local role_password
+    case "$role" in
+      "$app_user") role_password="$app_password" ;;
+      "$migrator_user") role_password="$migrator_password" ;;
+      *) role_password="$readonly_password" ;;
+    esac
+    if run_psql "$database" "$role" "$role_password" -c "SET ROLE postgres" >/dev/null 2>&1; then
       echo "$role unexpectedly escalated to bootstrap" >&2
       return 1
     fi
@@ -119,8 +124,8 @@ test_role_set() {
   [[ "$(run_psql "$database" "$readonly_user" "$readonly_password" -Atq -c "SHOW default_transaction_read_only")" == "on" ]]
   local readonly_writes
   readonly_writes="$(run_psql "$database" postgres "$bootstrap_password" -Atq -c \
-    "SELECT has_table_privilege('$readonly_user','source_probe','INSERT')::text || '|' || has_table_privilege('$readonly_user','source_probe','UPDATE')::text || '|' || has_table_privilege('$readonly_user','source_probe','DELETE')::text || '|' || has_table_privilege('$readonly_user,'migration_probe','INSERT')::text")"
-  [[ "$readonly_writes" == "false|false|false|false" ]] || {
+    "SELECT has_table_privilege('$readonly_user','source_probe','INSERT')::text || '|' || has_table_privilege('$readonly_user','source_probe','UPDATE')::text || '|' || has_table_privilege('$readonly_user','source_probe','DELETE')::text || '|' || has_table_privilege('$readonly_user','source_probe','TRUNCATE')::text || '|' || has_table_privilege('$readonly_user','migration_probe','INSERT')::text || '|' || has_table_privilege('$readonly_user','migration_probe','UPDATE')::text || '|' || has_table_privilege('$readonly_user','migration_probe','DELETE')::text || '|' || has_table_privilege('$readonly_user','migration_probe','TRUNCATE')::text")"
+  [[ "$readonly_writes" == "false|false|false|false|false|false|false|false" ]] || {
     echo "$readonly_user has write privileges: $readonly_writes" >&2
     return 1
   }
