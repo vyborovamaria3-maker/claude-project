@@ -113,9 +113,16 @@ test("Subscription API production image prunes development packages and the npm 
   assert.match(subscriptionApiDockerfile, /COPY --from=build \/app\/node_modules\/\.prisma \.\/node_modules\/\.prisma/);
 });
 
-test("Backend production image removes vulnerable Python packaging tools", () => {
-  assert.match(backendDockerfile, /pip uninstall -y setuptools wheel jaraco\.context/);
-  assert.match(backendDockerfile, /importlib\.metadata/);
+test("Backend production image isolates build tools from the runtime stage", () => {
+  const runtimeStage = backendDockerfile.split(/^FROM python:3\.12-slim AS runtime$/m)[1];
+  assert.ok(runtimeStage, "backend Dockerfile must define a dedicated runtime stage");
+  assert.match(backendDockerfile, /^FROM python:3\.12-slim AS builder$/m);
+  assert.match(backendDockerfile, /^FROM python:3\.12-slim AS runtime$/m);
+  assert.match(runtimeStage, /COPY --from=builder \/install\/ \/usr\/local\//);
+  assert.match(runtimeStage, /pip uninstall -y setuptools wheel/);
+  assert.match(runtimeStage, /importlib\.metadata/);
+  assert.match(runtimeStage, /blocked=\{"setuptools","wheel","jaraco\.context"\}/);
+  assert.doesNotMatch(runtimeStage, /apt-get install[^\n]*build-essential|pip wheel|pip install -e \.|COPY pyproject\.toml/);
 });
 
 test("Admin product data sources use dedicated read-only roles and shared Docker aliases", () => {
