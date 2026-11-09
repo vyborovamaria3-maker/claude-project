@@ -56,6 +56,10 @@ test_role_set() {
   local sql_path="$5" entrypoint_path="$6"
 
   run_psql postgres postgres "$bootstrap_password" -c "CREATE DATABASE $database" >/dev/null
+  # Simulate a legacy database upgraded from a PostgreSQL version where
+  # PUBLIC still had CREATE on the public schema.
+  run_psql "$database" postgres "$bootstrap_password" -c \
+    "GRANT CREATE ON SCHEMA public TO PUBLIC" >/dev/null
   run_psql "$database" postgres "$bootstrap_password" -c \
     "CREATE TABLE source_probe (id integer PRIMARY KEY, value text); INSERT INTO source_probe VALUES (1, 'visible');" >/dev/null
 
@@ -133,6 +137,13 @@ test_role_set() {
     done
     [[ "$(run_psql "$database" "$migrator_user" "$migrator_password" -Atq -c "SELECT gen_random_uuid() IS NOT NULL")" == "t" ]]
   fi
+
+  public_create="$(run_psql "$database" postgres "$bootstrap_password" -Atq -c \
+    "SELECT EXISTS (SELECT 1 FROM pg_namespace n CROSS JOIN LATERAL aclexplode(COALESCE(n.nspacl, acldefault('n', n.nspowner))) acl WHERE n.nspname='public' AND acl.grantee=0 AND acl.privilege_type='CREATE')")"
+  [[ "$public_create" == "f" ]] || {
+    echo "$database retained PUBLIC CREATE on schema public" >&2
+    return 1
+  }
 
   # Runtime has DML on existing objects but no schema/role administration.
   [[ "$(run_psql "$database" "$app_user" "$app_password" -Atq -c "SELECT value FROM source_probe WHERE id=1")" == "visible" ]]
