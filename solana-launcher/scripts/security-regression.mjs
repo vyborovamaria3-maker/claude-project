@@ -183,12 +183,18 @@ assert(!postgresRoleProvisioner.includes("REASSIGN OWNED"), "role provisioner mu
 assert(!/ALTER DATABASE .* OWNER TO/.test(postgresRoleProvisioner), "migrator must not become database owner");
 assert(!postgresRoleProvisioner.includes("ALTER SCHEMA public OWNER"), "schema ownership transfer must remain a reviewed cutover");
 assert(postgresRoleProvisioner.includes("NOBYPASSRLS NOINHERIT"), "all provisioned roles must be non-inheriting and must not bypass RLS");
+assert(postgresRoleProvisioner.includes("REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC"), "new migration functions must not be executable by PUBLIC by default");
+assert(postgresRoleProvisioner.includes("REVOKE CREATE ON SCHEMA public FROM PUBLIC"), "PUBLIC must not create objects in the app schema");
+assert(!postgresRoleProvisioner.includes("REVOKE ALL ON DATABASE"), "provisioner must preserve unrelated PUBLIC database ACLs pending inventory");
+assert(!postgresRoleProvisioner.includes("REVOKE ALL ON SCHEMA public"), "provisioner must preserve unrelated schema USAGE grants");
 assert(!postgresRoleProvisioner.includes("pg_read_all_data"), "backup role must use explicit SELECT grants, not a broad predefined role");
 assert(postgresRoleProvisioner.includes('GRANT SELECT ON ALL TABLES IN SCHEMA public TO :"backup_user"'),
   "backup role must receive explicit table SELECT grants");
 const migratorOwnershipGuard = read("scripts/check-postgres-migrator-ownership.sql");
 assert(migratorOwnershipGuard.includes("extension_members"), "migrator guard must identify extension-managed objects");
 assert(migratorOwnershipGuard.includes("non_migrator_object_count"), "migrator guard must block legacy-owned application objects");
+assert(migratorOwnershipGuard.includes("migrator_can_create_database"), "migrator guard must reject database-level CREATE");
+assert(migratorOwnershipGuard.includes("app_schemas_without_create"), "migrator guard must verify CREATE on every application schema");
 assert(migratorOwnershipGuard.includes("\\quit 3"), "migrator ownership guard must fail closed");
 const deployScript = read("scripts/deploy-production.sh");
 assert(deployScript.includes("check-postgres-migrator-ownership.sql"), "production deployment must run the read-only migrator ownership guard");
