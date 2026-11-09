@@ -1,19 +1,32 @@
-const Database = require('better-sqlite3');
 const path = require('path');
 
 const SRC = process.argv[2] || 'C:\\Users\\Рафаил\\claude-project\\data\\trade.db';
-const DST = process.argv[3] || path.resolve(__dirname, '..', 'data', 'trade.db');
+const DST = path.resolve(process.argv[3] || path.resolve(__dirname, '..', 'data', 'trade.db'));
+
+// Use the application connection so source-revision triggers exist before rows
+// are merged. Refresh the materialized wallet summary before exiting.
+process.env.SOLANA_TRADE_DB_PATH = DST;
+require('ts-node').register({
+  skipProject: true,
+  transpileOnly: true,
+  compilerOptions: {
+    module: 'commonjs',
+    moduleResolution: 'node',
+    esModuleInterop: true,
+    allowJs: true,
+    resolveJsonModule: true,
+  },
+});
+const { getDb } = require('../lib/trade/db.ts');
+const { rebuildWalletSummary } = require('../lib/trade/wallet-summary.ts');
 
 console.log('Merging tokens from:');
 console.log('  SRC:', SRC);
 console.log('  DST:', DST);
 
-const db = new Database(DST);
-db.pragma('journal_mode = WAL');
+const db = getDb();
 db.pragma('foreign_keys = OFF');
 
-// Make sure migration tables exist on destination — they will, since lib/trade/db.ts init created them.
-// We connect via the standard codepath for safety.
 db.exec(`ATTACH DATABASE '${SRC.replace(/'/g, "''")}' AS src`);
 
 const before = {
@@ -91,6 +104,10 @@ console.log('Added unique tokens:', after.uniqTokens - before.uniqTokens);
 console.log('Added wallets (rows):', after.wallets - before.wallets);
 console.log('Added xlsx files:', after.files - before.files);
 
+const walletSummary = rebuildWalletSummary(db);
+console.log('Wallet summary:', walletSummary);
+
 db.exec('DETACH DATABASE src');
 db.close();
+global.__TRADE_DB__ = undefined;
 console.log('\n✅ Merge complete.');
