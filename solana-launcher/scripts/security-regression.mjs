@@ -203,6 +203,7 @@ assert(migratorOwnershipGuard.includes("migrator_can_create_database"), "migrato
 assert(migratorOwnershipGuard.includes("app_schemas_without_create"), "migrator guard must verify CREATE on every application schema");
 assert(migratorOwnershipGuard.includes("restricted_database_create_count"), "runtime, backup and read-only roles must not have database CREATE");
 assert(migratorOwnershipGuard.includes("restricted_schemas_with_create"), "runtime, backup and read-only roles must not have application-schema CREATE");
+assert(migratorOwnershipGuard.includes("migrator_nonpublic_schema_create_count"), "migration role must not have CREATE outside public schema");
 assert(migratorOwnershipGuard.includes("\\quit 3"), "migrator ownership guard must fail closed");
 const deployScript = read("scripts/deploy-production.sh");
 assert(deployScript.includes("check-postgres-migrator-ownership.sql"), "production deployment must run the read-only migrator ownership guard");
