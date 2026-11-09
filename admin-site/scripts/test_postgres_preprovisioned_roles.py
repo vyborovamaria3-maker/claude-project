@@ -305,7 +305,12 @@ def provision_test_cluster() -> None:
         assert db.execute(
             "SELECT payload FROM public.bootstrap_owned_legacy WHERE id=1"
         ).fetchone()[0] == "legacy-row"
+        # End the read-only transaction opened by the SELECT before changing
+        # the default for the next transaction. This ensures the following
+        # UPDATE tests table ACLs, not only default_transaction_read_only.
+        db.commit()
         db.execute("SET default_transaction_read_only=off")
+        db.commit()
         try:
             with db.transaction():
                 db.execute(

@@ -2,7 +2,6 @@ import argparse
 from types import SimpleNamespace
 
 import pytest_asyncio
-
 from app.cli import twitter_scrape_bridge as bridge
 from app.db.base import Base
 from app.models.twitter_discovery_scoring import TwitterDiscoveryScore
