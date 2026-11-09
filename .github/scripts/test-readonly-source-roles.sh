@@ -6,6 +6,20 @@ bootstrap_password="ci-bootstrap-password"
 app_password="ci-app-password"
 migrator_password="ci-migrator-password"
 readonly_password="ci-readonly-password"
+
+# These provisioners must never transfer existing owners or grant broad
+# predefined read/bypass roles; they must stop before role changes on mismatch.
+for provisioner in \
+  "$repo_root/memecoin-intelligence/scripts/provision-readonly-role.sql" \
+  "$repo_root/solana-subscription-service/scripts/provision-readonly-role.sql"; do
+  if grep -Eiq '^[[:space:]]*REASSIGN[[:space:]]+OWNED\\b|GRANT[[:space:]]+pg_read_all_data|[[:space:]]BYPASSRLS([;[:space:]]|$)' "$provisioner"; then
+    echo "Unsafe automatic ownership or broad read/bypass grant in $provisioner" >&2
+    exit 1
+  fi
+  grep -Fq 'has_unprepared_application_owners' "$provisioner"
+  grep -Fq 'has_public_security_definer_execute' "$provisioner"
+done
+
 cleanup() { docker rm -f "$container" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
