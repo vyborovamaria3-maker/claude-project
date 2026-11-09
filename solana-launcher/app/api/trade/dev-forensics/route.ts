@@ -1,5 +1,5 @@
 // data-tag: api.trade.dev_forensics
-// GET /api/trade/dev-forensics?creator=...&mint=...
+// POST /api/trade/dev-forensics?creator=...&mint=... (refreshes persisted forensic observations)
 // Returns: total/created/migrated tokens, avg lifespan, Solana volume correlation, detailed analytics
 
 import { NextRequest, NextResponse } from "next/server";
@@ -675,6 +675,7 @@ async function analyzeToken(
         const twitterRes = await fetch(
           `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/trade/dev-twitter?mint=${encodeURIComponent(mint)}`,
           {
+            method: "POST",
             headers: options.authHeaders,
             cache: "no-store",
             signal: AbortSignal.timeout(30000),
@@ -892,7 +893,7 @@ function computeVolumeCorrelation(tokens: TokenForensics[]): VolumeCorrelationBi
   return bins.filter((b) => b.tokenCount > 0);
 }
 
-export async function GET(req: NextRequest) {
+export async function POST(req: NextRequest) {
   const authHeaders = forwardedAuthHeaders(req);
   const creator = req.nextUrl.searchParams.get("creator")?.trim();
   const mint = req.nextUrl.searchParams.get("mint")?.trim();
@@ -1409,4 +1410,12 @@ async function getCreatorForMint(
   }
 
   return null;
+}
+
+/** Forensic refreshes persist observations; GET is intentionally non-mutating. */
+export async function GET() {
+  return NextResponse.json(
+    { error: "Method Not Allowed. Use POST to refresh developer forensics.", code: "METHOD_NOT_ALLOWED" },
+    { status: 405, headers: { Allow: "POST", "Cache-Control": "no-store" } },
+  );
 }
