@@ -19,6 +19,8 @@ fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 declare global {
   // eslint-disable-next-line no-var
   var __TRADE_DB__: Database.Database | undefined;
+  // eslint-disable-next-line no-var
+  var __TRADE_DB_READONLY__: Database.Database | undefined;
 }
 
 let initializedDb: Database.Database | null = null;
@@ -576,6 +578,21 @@ export function getDb(): Database.Database {
     initializedDb = global.__TRADE_DB__;
   }
   return global.__TRADE_DB__;
+}
+
+/**
+ * Shared read-only SQLite connection for GET/readiness paths. It deliberately
+ * skips init(): schema changes and source-revision triggers belong to the
+ * write-capable application/maintenance path, never a read request.
+ */
+export function getReadOnlyDb(): Database.Database {
+  if (!global.__TRADE_DB_READONLY__ || !global.__TRADE_DB_READONLY__.open) {
+    const db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
+    db.pragma("busy_timeout = 5000");
+    db.pragma("query_only = ON");
+    global.__TRADE_DB_READONLY__ = db;
+  }
+  return global.__TRADE_DB_READONLY__;
 }
 
 // ── Dev tags ──────────────────────────────────────────────────
