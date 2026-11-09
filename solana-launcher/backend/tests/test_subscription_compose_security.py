@@ -78,7 +78,7 @@ def test_production_database_runtime_uses_restricted_role_and_migrations_use_sep
     assert "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES" in role_sql
     assert "ALTER DEFAULT PRIVILEGES FOR ROLE" in role_sql
     assert "GRANT SELECT ON ALL TABLES IN SCHEMA public TO :" in role_sql
-    assert not re.search(r"\\bGRANT\\s+pg_read_all_data\\b", role_sql, re.IGNORECASE)
+    assert "GRANT pg_read_all_data" not in role_sql
 
 
 def test_production_redis_is_password_protected_and_isolated_from_public_frontend():
