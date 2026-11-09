@@ -154,6 +154,8 @@ assert(/pathname === "\/api\/trade\/dev-twitter"[\s\S]*request\.method === "POST
 
 const socialClient = read("backend/app/services/social_intelligence.py");
 assert(socialClient.includes('"x-internal-service-key"'), "FastAPI social client must authenticate internal collection");
+assert(socialClient.includes("base != configured_internal"), "FastAPI must not forward the service key to an arbitrary frontend host");
+assert(socialClient.includes("follow_redirects=False"), "FastAPI must not forward the service key across redirects");
 const twitterBridgeClient = read("backend/app/cli/twitter_scrape_bridge.py");
 assert(twitterBridgeClient.includes('"x-internal-service-key"'), "Twitter discovery bridge must authenticate internal collection");
 assert(twitterBridgeClient.includes("candidate != configured_internal"), "CLI must not forward the service key to an arbitrary frontend host");
