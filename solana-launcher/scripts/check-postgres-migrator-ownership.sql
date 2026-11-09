@@ -20,6 +20,17 @@ WHERE NOT EXISTS (
   \quit 3
 \endif
 
+SELECT COALESCE((
+  SELECT pg_get_userbyid(datdba) = :'bootstrap_user'
+  FROM pg_database
+  WHERE datname = current_database()
+), false) AS bootstrap_owns_database \gset
+\if :bootstrap_owns_database
+\else
+  \echo 'Production migration blocked: database owner differs from the configured bootstrap identity'
+  \quit 3
+\endif
+
 SELECT count(*)::integer AS restricted_database_create_count
 FROM (VALUES (:'app_user'), (:'backup_user'), (:'readonly_user')) AS restricted(role_name)
 WHERE has_database_privilege(restricted.role_name, current_database(), 'CREATE') \gset
