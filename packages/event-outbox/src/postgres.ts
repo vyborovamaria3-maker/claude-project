@@ -63,9 +63,9 @@ export async function claimPostgres(pool: PgPool, options: ClaimOptions): Promis
 }
 
 export async function ackPostgres(client: PgQuery, id: string, owner: string, leaseUntil: string): Promise<boolean> {
-  const result = await client.query(`UPDATE outbox_events SET processed_at=NOW(),
+  const result = await client.query(`UPDATE outbox_events SET processed_at=clock_timestamp(),
     lease_owner=NULL, lease_until=NULL
-    WHERE id=$1 AND lease_owner=$2 AND lease_until=$3::timestamptz AND lease_until>NOW()
+    WHERE id=$1 AND lease_owner=$2 AND lease_until=$3::timestamptz AND lease_until>clock_timestamp()
       AND processed_at IS NULL AND dead_lettered_at IS NULL RETURNING id`,[id,owner,leaseUntil]);
   return result.rows.length === 1;
 }
@@ -81,11 +81,11 @@ export async function failPostgres(
   }
   const result = await client.query(`UPDATE outbox_events SET
     attempts=attempts+1, last_error=$3,
-    dead_lettered_at=CASE WHEN attempts+1 >= $5 THEN NOW() ELSE NULL END,
+    dead_lettered_at=CASE WHEN attempts+1 >= $5 THEN clock_timestamp() ELSE NULL END,
     next_attempt_at=CASE WHEN $7::integer IS NULL THEN $4::timestamptz
       ELSE DATE_TRUNC('milliseconds', statement_timestamp()) + ($7::integer * interval '1 millisecond') END,
     lease_owner=NULL, lease_until=NULL
-    WHERE id=$1 AND lease_owner=$2 AND lease_until=$6::timestamptz AND lease_until>NOW()
+    WHERE id=$1 AND lease_owner=$2 AND lease_until=$6::timestamptz AND lease_until>clock_timestamp()
       AND processed_at IS NULL AND dead_lettered_at IS NULL RETURNING id`,
     [id,owner,reason.slice(0,1000),nextAttemptAt.toISOString(),maxAttempts,leaseUntil,retryDelayMs??null]);
   return result.rows.length === 1;
@@ -104,9 +104,9 @@ export async function renewPostgres(
     throw new RangeError("Invalid leaseMs");
   }
   const result = await client.query(`UPDATE outbox_events
-    SET lease_until=GREATEST(lease_until, DATE_TRUNC('milliseconds', NOW()) + ($4::integer * interval '1 millisecond'))
+    SET lease_until=GREATEST(lease_until, DATE_TRUNC('milliseconds', clock_timestamp()) + ($4::integer * interval '1 millisecond'))
     WHERE id=$1 AND lease_owner=$2 AND lease_until=$3::timestamptz
-      AND lease_until>NOW() AND processed_at IS NULL AND dead_lettered_at IS NULL
+      AND lease_until>clock_timestamp() AND processed_at IS NULL AND dead_lettered_at IS NULL
     RETURNING lease_until`, [id, owner, leaseUntil, leaseMs]);
   const value = result.rows[0]?.lease_until;
   return value === undefined ? null :

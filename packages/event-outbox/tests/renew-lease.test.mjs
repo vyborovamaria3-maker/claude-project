@@ -84,6 +84,51 @@ test("PostgreSQL renewal uses DB time and fences original ACK/NACK",{
     })).length,0);
     assert.equal(await ackPostgres(pool,first.id,first.leaseOwner,next),true);
     assert.equal(await renewPostgres(pool,first.id,first.leaseOwner,next,10_000),null);
+
+    // An open transaction must not let an expired lease pass its fencing
+    // check merely because PostgreSQL NOW() is frozen at transaction start.
+    const lateEvents=[
+      {...event,eventKey:"pg:late-ack"},
+      {...event,eventKey:"pg:late-fail"},
+      {...event,eventKey:"pg:late-renew"},
+    ];
+    const lateWriter=await pool.connect();
+    try{
+      await lateWriter.query("BEGIN");
+      for(const item of lateEvents)await emitPostgres(lateWriter,item);
+      await lateWriter.query("COMMIT");
+    }finally{lateWriter.release()}
+    const lateClaims=await claimPostgres(pool,{
+      workerId:"late-fence",batchSize:3,leaseMs:3000,
+    });
+    assert.equal(lateClaims.length,3);
+    const lateTx=await pool.connect();
+    try{
+      await lateTx.query("BEGIN");
+      const clock=(await lateTx.query("SELECT clock_timestamp() AS at")).rows[0]?.at;
+      assert.ok(clock instanceof Date);
+      const remaining=Date.parse(lateClaims[0].leaseUntil)-clock.getTime();
+      assert.ok(remaining>0,"the test transaction must start before lease expiry");
+      await lateTx.query("SELECT pg_sleep($1)",[(remaining+150)/1000]);
+      assert.equal(await ackPostgres(
+        lateTx,lateClaims[0].id,lateClaims[0].leaseOwner,lateClaims[0].leaseUntil,
+      ),false,"late ACK must be fenced using wall-clock time");
+      assert.equal(await failPostgres(
+        lateTx,lateClaims[1].id,lateClaims[1].leaseOwner,lateClaims[1].leaseUntil,
+        "expired",new Date(),
+      ),false,"late NACK must be fenced using wall-clock time");
+      assert.equal(await renewPostgres(
+        lateTx,lateClaims[2].id,lateClaims[2].leaseOwner,lateClaims[2].leaseUntil,10_000,
+      ),null,"an expired lease cannot be resurrected by renewal");
+      await lateTx.query("ROLLBACK");
+    }catch(error){
+      try{await lateTx.query("ROLLBACK")}catch{}
+      throw error;
+    }finally{lateTx.release()}
+    const reclaimed=await claimPostgres(pool,{
+      workerId:"after-expiry",batchSize:3,leaseMs:3000,
+    });
+    assert.equal(reclaimed.length,3,"expired claims must become available to a new worker");
   }finally{
     if(pool)await pool.end();
     try{await admin.query('DROP SCHEMA IF EXISTS "'+schema+'" CASCADE')}catch{}
