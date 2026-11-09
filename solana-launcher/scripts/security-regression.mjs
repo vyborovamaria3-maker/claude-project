@@ -178,6 +178,25 @@ const productionHealthcheck = read("scripts/healthcheck-production.sh");
 assert(productionHealthcheck.includes("/api/internal/health/wallet-summary"), "deployment healthcheck must verify wallet summary readiness");
 assert(productionHealthcheck.includes("x-internal-service-key"), "deployment healthcheck must authenticate the private readiness probe");
 
+const postgresRoleProvisioner = read("scripts/provision-postgres-roles.sql");
+assert(!postgresRoleProvisioner.includes("REASSIGN OWNED"), "role provisioner must never blanket-reassign existing object ownership");
+assert(!/ALTER DATABASE .* OWNER TO/.test(postgresRoleProvisioner), "migrator must not become database owner");
+assert(!postgresRoleProvisioner.includes("ALTER SCHEMA public OWNER"), "schema ownership transfer must remain a reviewed cutover");
+assert(postgresRoleProvisioner.includes("NOBYPASSRLS NOINHERIT"), "all provisioned roles must be non-inheriting and must not bypass RLS");
+assert(!postgresRoleProvisioner.includes("pg_read_all_data"), "backup role must use explicit SELECT grants, not a broad predefined role");
+assert(postgresRoleProvisioner.includes('GRANT SELECT ON ALL TABLES IN SCHEMA public TO :"backup_user"'),
+  "backup role must receive explicit table SELECT grants");
+const migratorOwnershipGuard = read("scripts/check-postgres-migrator-ownership.sql");
+assert(migratorOwnershipGuard.includes("extension_members"), "migrator guard must identify extension-managed objects");
+assert(migratorOwnershipGuard.includes("non_migrator_object_count"), "migrator guard must block legacy-owned application objects");
+assert(migratorOwnershipGuard.includes("\\quit 3"), "migrator ownership guard must fail closed");
+const deployScript = read("scripts/deploy-production.sh");
+assert(deployScript.includes("check-postgres-migrator-ownership.sql"), "production deployment must run the read-only migrator ownership guard");
+assert(deployScript.indexOf('"$BACKUP_SCRIPT"') < deployScript.indexOf("check-postgres-migrator-ownership.sql"),
+  "verified backup must precede the ownership cutover gate");
+assert(deployScript.indexOf("check-postgres-migrator-ownership.sql") < deployScript.indexOf("stop_telegram"),
+  "ownership gate must run before stopping writers");
+
 const telegramTasks = read("telegram-bot/handlers/tasks.ts");
 assert(
   telegramTasks.includes("task.telegram_user_id !== userId"),
