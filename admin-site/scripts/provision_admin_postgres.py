@@ -47,8 +47,8 @@ def _revoke_role_memberships(db: psycopg.Connection[Any], roles: set[str]) -> No
         FROM pg_auth_members AS membership
         JOIN pg_roles AS granted ON granted.oid = membership.roleid
         JOIN pg_roles AS member ON member.oid = membership.member
-        WHERE member.rolname = ANY(%s)
-           OR granted.rolname = ANY(%s)
+        WHERE member.rolname::text = ANY(%s::text[])
+           OR granted.rolname::text = ANY(%s::text[])
         """,
         (list(roles), list(roles)),
     ).fetchall()
@@ -119,12 +119,12 @@ def _assert_public_application_objects_owned(
               )
         )
         SELECT
-            object.schema_name,
-            object.object_name,
-            pg_get_userbyid(object.owner_oid) AS owner_name
-        FROM application_objects AS object
-        WHERE object.schema_name <> 'public'
-           OR object.owner_oid <> (
+            app_object.schema_name,
+            app_object.object_name,
+            pg_get_userbyid(app_object.owner_oid) AS owner_name
+        FROM application_objects AS app_object
+        WHERE app_object.schema_name <> 'public'
+           OR app_object.owner_oid <> (
                SELECT oid FROM pg_roles WHERE rolname = %s
            )
         ORDER BY object.schema_name, object.object_name
