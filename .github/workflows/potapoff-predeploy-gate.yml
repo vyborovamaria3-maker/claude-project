@@ -286,7 +286,8 @@ jobs:
           image="potapoff-backend-predeploy:${{ github.sha }}"
           docker run --rm --entrypoint sh "$image" -ec '
             python -c '\''import importlib.metadata as m; blocked={"setuptools","wheel","jaraco.context"}; installed={d.metadata.get("Name","").lower() for d in m.distributions()}; remaining=sorted(blocked & installed); assert not remaining, remaining'\''
-            if find /usr/local/lib /usr/lib -type d \\( -name "setuptools-*.dist-info" -o -name "setuptools-*.egg-info" \\) -print -quit | grep -q .; then
+            if find /usr/local/lib /usr/lib -type d -name "setuptools-*.dist-info" -print -quit | grep -q . \
+              || find /usr/local/lib /usr/lib -type d -name "setuptools-*.egg-info" -print -quit | grep -q .; then
               echo "Unexpected setuptools metadata remains in the runtime image" >&2
               exit 1
             fi
