@@ -184,7 +184,7 @@ PY
 migrate_admin_state() {
   ADMIN_STATE_MIGRATION_APPLIED=0
   if "${COMPOSE[@]}" run --rm --no-deps admin-db-provisioner sh -c 'test -f "$ADMIN_AUDIT_DB"'; then
-    log "synchronizing SQLite admin state to shared PostgreSQL with the dedicated migration role"
+    log "migrating SQLite admin state to shared PostgreSQL with the dedicated migration role"
     "${COMPOSE[@]}" run --rm --no-deps admin-db-provisioner python scripts/migrate_admin_state_to_postgres.py
     ADMIN_STATE_MIGRATION_APPLIED=1
   else
@@ -229,7 +229,7 @@ deploy() {
       wait_healthy potapoff-admin 120 || true
     elif (( status != 0 && admin_stopped == 1 &&
             admin_cutover_started == 0 && ADMIN_STATE_MIGRATION_APPLIED == 1 )); then
-      log "SQLite-to-PostgreSQL sync completed; previous Admin remains stopped to prevent divergent writes"
+      log "SQLite-to-PostgreSQL migration completed; previous Admin remains stopped to prevent divergent writes"
       log "Operator recovery must roll forward or explicitly restore the captured SQLite snapshot"
     elif (( status != 0 && admin_stopped == 1 && admin_cutover_started == 1 )); then
       log "Admin cutover was started; automatic restart of the previous container is suppressed"
@@ -273,19 +273,6 @@ deploy() {
   chmod 0600 "$backup_dir/admin-state-post-migration.dump" || true
 
   if grep -Eq '^POTAPOFF_INTELLIGENCE_BACKEND=postgres[[:space:]]*
-    log "initializing PostgreSQL intelligence schema"
-    "${COMPOSE[@]}" run --rm intelligence-worker python -m intelligence init-db
-  fi
-
-  log "cutting over admin and intelligence containers"
-  admin_cutover_started=1
-  "${COMPOSE[@]}" up -d admin intelligence-worker
-  wait_healthy potapoff-admin 180
-  wait_healthy potapoff-intelligence 180
-  smoke
-  trap - EXIT
-  log "DEPLOY_OK backup=$backup_dir"
-}
 
 case "$MODE" in
   preflight) preflight ;;
