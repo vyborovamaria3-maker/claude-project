@@ -618,6 +618,7 @@ def assert_runtime_restricted() -> None:
             # application tables; either early gate must reject SET ROLE.
             assert (
                 "ownership" in str(exc).lower()
+                or "set-reachable schema ddl privileges" in str(exc).lower()
                 or "database-level" in str(exc).lower()
                 or "set-reachable database ddl" in str(exc).lower()
                 or "ddl privileges in schema: public" in str(exc).lower()
