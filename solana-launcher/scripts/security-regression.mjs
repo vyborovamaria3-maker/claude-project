@@ -151,6 +151,7 @@ assert(routeAuth.includes("hasValidInternalServiceKey"), "internal X calls need 
 assert(routeAuth.includes("timingSafeEqual"), "internal service credentials must be compared in constant time");
 const proxy = read("proxy.ts");
 assert(proxy.includes('"/api/trade/dev-twitter"'), "X collection must remain in the heavy rate-limit set");
+assert(proxy.includes('"/api/trade/fomo-snapshot"'), "FOMO snapshot must be rate-limited because it invokes X collection internally");
 assert(/pathname === "\/api\/trade\/dev-twitter"[\s\S]*request\.method === "POST"[\s\S]*hasValidInternalServiceKey\(request\)/.test(proxy),
   "only POST /api/trade/dev-twitter may use internal service authentication");
 
