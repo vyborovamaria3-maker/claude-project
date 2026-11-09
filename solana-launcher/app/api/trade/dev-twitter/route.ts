@@ -336,6 +336,13 @@ function persistTwitterStats(
 }
 
 export async function POST(req: NextRequest) {
+  const origin = req.headers.get("origin");
+  if (origin && origin !== req.nextUrl.origin) {
+    return NextResponse.json(
+      { error: "cross_origin_request_rejected", code: "CROSS_ORIGIN_REQUEST" },
+      { status: 403, headers: { "Cache-Control": "no-store" } },
+    );
+  }
   const mint = req.nextUrl.searchParams.get("mint") || "";
   const symbolParam = (req.nextUrl.searchParams.get("symbol") || "")
     .trim()
