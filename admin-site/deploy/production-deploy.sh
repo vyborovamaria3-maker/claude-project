@@ -170,9 +170,9 @@ PY
 }
 
 migrate_admin_state() {
-  if "${COMPOSE[@]}" run --rm --no-deps admin sh -c 'test -f "$ADMIN_AUDIT_DB"'; then
-    log "migrating SQLite admin state to shared PostgreSQL"
-    "${COMPOSE[@]}" run --rm --no-deps admin python scripts/migrate_admin_state_to_postgres.py
+  if "${COMPOSE[@]}" run --rm --no-deps admin-db-provisioner sh -c 'test -f "$ADMIN_AUDIT_DB"'; then
+    log "migrating SQLite admin state to shared PostgreSQL with the dedicated migration role"
+    "${COMPOSE[@]}" run --rm --no-deps admin-db-provisioner python scripts/migrate_admin_state_to_postgres.py
   else
     log "no legacy SQLite admin state found; migration skipped"
   fi
@@ -213,6 +213,11 @@ deploy() {
   wait_healthy potapoff-admin-postgres 120
 
   verify_sources
+
+  # Provision restricted roles and the schema before attempting the SQLite
+  # cutover. The migration itself runs separately with the migrator identity.
+  log "provisioning restricted Admin PostgreSQL roles and schema"
+  "${COMPOSE[@]}" run --rm --no-deps admin-db-provisioner
   migrate_admin_state
 
   log "capturing PostgreSQL backup after migration"

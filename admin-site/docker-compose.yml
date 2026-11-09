@@ -35,7 +35,11 @@ services:
       ADMIN_STATE_MIGRATOR_PASSWORD: ${ADMIN_STATE_MIGRATOR_PASSWORD:?Set ADMIN_STATE_MIGRATOR_PASSWORD in admin-site/.env}
       ADMIN_STATE_BACKUP_USER: ${ADMIN_STATE_BACKUP_USER:-potapoff_admin_backup}
       ADMIN_STATE_BACKUP_PASSWORD: ${ADMIN_STATE_BACKUP_PASSWORD:?Set ADMIN_STATE_BACKUP_PASSWORD in admin-site/.env}
+      ADMIN_AUDIT_DB: /var/lib/potapoff-admin/audit.db
+      ADMIN_PG_SCHEMA_MODE: preprovisioned
     command: ["python", "scripts/provision_admin_postgres.py"]
+    volumes:
+      - admin-state:/var/lib/potapoff-admin
     depends_on:
       admin-postgres:
         condition: service_healthy

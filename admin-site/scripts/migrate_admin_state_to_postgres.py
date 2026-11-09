@@ -35,9 +35,15 @@ def _json_object(value: str | None) -> str:
 
 def main() -> None:
     sqlite_path = os.getenv("ADMIN_AUDIT_DB", "/var/lib/potapoff-admin/audit.db")
-    dsn = os.getenv("ADMIN_STATE_POSTGRES_DSN", "").strip()
+    # State cutover mutates schema metadata and sequence values. Prefer the
+    # dedicated migration identity; the runtime DSN is only a compatibility
+    # fallback for older isolated test harnesses.
+    dsn = (
+        os.getenv("ADMIN_STATE_MIGRATOR_DSN", "").strip()
+        or os.getenv("ADMIN_STATE_POSTGRES_DSN", "").strip()
+    )
     if not dsn:
-        raise SystemExit("ADMIN_STATE_POSTGRES_DSN is required")
+        raise SystemExit("ADMIN_STATE_MIGRATOR_DSN is required")
     if not Path(sqlite_path).is_file():
         raise SystemExit(f"SQLite admin state not found: {sqlite_path}")
 

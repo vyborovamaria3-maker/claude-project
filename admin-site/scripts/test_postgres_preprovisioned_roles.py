@@ -7,7 +7,11 @@ and creates a new temporary database with CI-only non-superuser roles.
 from __future__ import annotations
 
 import os
+import sqlite3
+import subprocess
 import sys
+import tempfile
+import uuid
 from pathlib import Path
 
 import psycopg
@@ -766,6 +770,90 @@ def assert_runtime_restricted() -> None:
     print("ADMIN_PG_PREPROVISIONED_RUNTIME_OK disposable_pg17_only")
 
 
+def assert_sqlite_state_migration_uses_migrator() -> None:
+    """The deploy cutover must use the DDL-capable migrator, never the runtime login."""
+    marker = "migration_ci_" + uuid.uuid4().hex
+    nonce = "revoked_ci_" + uuid.uuid4().hex
+    with tempfile.TemporaryDirectory(prefix="admin-state-migration-") as tmp:
+        sqlite_path = Path(tmp) / "audit.db"
+        with sqlite3.connect(sqlite_path) as source:
+            source.executescript(
+                """
+                CREATE TABLE admin_audit(
+                    id INTEGER PRIMARY KEY, created_at TEXT NOT NULL, username TEXT,
+                    ip_address TEXT, action TEXT NOT NULL, resource TEXT,
+                    success INTEGER NOT NULL, details_json TEXT
+                );
+                CREATE TABLE alerts(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, level TEXT NOT NULL,
+                    title TEXT NOT NULL, message TEXT NOT NULL, source TEXT NOT NULL,
+                    status TEXT NOT NULL, created_at TEXT NOT NULL,
+                    acknowledged_at TEXT, acknowledged_by TEXT
+                );
+                CREATE TABLE revoked_admin_sessions(
+                    nonce TEXT PRIMARY KEY, expires_at INTEGER NOT NULL,
+                    revoked_at TEXT NOT NULL
+                );
+                """
+            )
+            source.execute(
+                "INSERT INTO admin_audit VALUES(41,?,?,?,?,?,?,?)",
+                ("2026-11-09T00:00:00+00:00", "admin", "127.0.0.1", marker, None, 1, '{"source":"ci"}'),
+            )
+            source.execute(
+                "INSERT INTO alerts VALUES(7,'warning',?,'migration fixture','ci','open',?,NULL,NULL)",
+                (marker, "2026-11-09T00:00:00+00:00"),
+            )
+            source.execute(
+                "INSERT INTO revoked_admin_sessions VALUES(?,?,?)",
+                (nonce, 2_000_000_000, "2026-11-09T00:00:00+00:00"),
+            )
+
+        with psycopg.connect(MIGRATE) as db:
+            assert db.execute(
+                "SELECT to_regclass('public.admin_state_migrations')"
+            ).fetchone()[0] is None, "migration marker must be created by the migrator"
+
+        env = os.environ.copy()
+        env.update(
+            {
+                "ADMIN_PG_SCHEMA_MODE": "preprovisioned",
+                "ADMIN_STATE_MIGRATOR_DSN": MIGRATE,
+                # Deliberately provide the runtime DSN too. The script must
+                # select the migrator DSN because it creates DDL and calls setval.
+                "ADMIN_STATE_POSTGRES_DSN": RUNTIME,
+                "ADMIN_AUDIT_DB": str(sqlite_path),
+            }
+        )
+        script = ROOT / "scripts" / "migrate_admin_state_to_postgres.py"
+        command = [sys.executable, str(script)]
+        first = subprocess.run(
+            command, cwd=ROOT, env=env, capture_output=True, text=True, check=True
+        )
+        assert "MIGRATION_OK" in first.stdout, first.stdout
+        second = subprocess.run(
+            command, cwd=ROOT, env=env, capture_output=True, text=True, check=True
+        )
+        assert "already applied" in second.stdout, second.stdout
+
+    with psycopg.connect(RUNTIME) as db:
+        assert db.execute(
+            "SELECT 1 FROM admin_audit WHERE action=%s", (marker,)
+        ).fetchone() is not None
+        assert db.execute(
+            "SELECT 1 FROM alerts WHERE title=%s", (marker,)
+        ).fetchone() is not None
+        assert db.execute(
+            "SELECT 1 FROM revoked_admin_sessions WHERE nonce=%s", (nonce,)
+        ).fetchone() is not None
+        assert db.execute(
+            "SELECT 1 FROM admin_state_migrations "
+            "WHERE migration_key='admin-sqlite-to-postgres-v1'"
+        ).fetchone() is not None
+
+    print("ADMIN_SQLITE_STATE_MIGRATION_OK dedicated_migrator=true runtime_dml_only=true")
+
+
 def assert_full_admin_app_smoke() -> None:
     """The actual FastAPI app and its background-worker lifespan must start."""
     import json
@@ -868,6 +956,7 @@ def main() -> None:
         raise AssertionError("Empty schema was not rejected")
     bootstrap_schema_under_migration_owner()
     assert_runtime_restricted()
+    assert_sqlite_state_migration_uses_migrator()
     assert_full_admin_app_smoke()
 
 
