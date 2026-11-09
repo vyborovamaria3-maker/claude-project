@@ -8,7 +8,7 @@ The Trade Analysis social tab already has a real X collector. The new Twitter re
 /trade/analysis/social
         |
         v
-/api/trade/dev-twitter
+POST /api/trade/dev-twitter
         |
         v
 lib/trade/twitter-scraper.ts
