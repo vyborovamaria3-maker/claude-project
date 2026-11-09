@@ -154,14 +154,14 @@ docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
 
 POSTGRES_BACKUP_PASSWORD=0000000000000000000000000000000000000000000000000000000000000000
 docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
-  -c "CREATE ROLE potapoff_backup LOGIN PASSWORD '$POSTGRES_BACKUP_PASSWORD' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION BYPASSRLS; GRANT CONNECT ON DATABASE potapoff TO potapoff_backup; GRANT pg_read_all_data TO potapoff_backup;" >/dev/null
+  -c "CREATE ROLE potapoff_backup LOGIN PASSWORD '$POSTGRES_BACKUP_PASSWORD' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT; GRANT CONNECT ON DATABASE potapoff TO potapoff_backup; GRANT SELECT ON ALL TABLES IN SCHEMA public TO potapoff_backup; GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO potapoff_backup;" >/dev/null
 
 docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
   -c "CREATE TABLE potapoff_backup_ci_admin_fixture(id bigserial PRIMARY KEY, tag text NOT NULL); INSERT INTO potapoff_backup_ci_admin_fixture(tag) VALUES ('safe-fixture'); CREATE TABLE admin_audit(id bigserial PRIMARY KEY, action text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()); INSERT INTO admin_audit(action) VALUES ('fixture'); CREATE TABLE feature_flags(name text PRIMARY KEY, enabled boolean NOT NULL); INSERT INTO feature_flags VALUES ('ci.fixture',true); CREATE TABLE admin_background_tasks(id text PRIMARY KEY, state text NOT NULL); INSERT INTO admin_background_tasks VALUES ('ci-fixture','queued'); CREATE TABLE admin_security_sessions(nonce text PRIMARY KEY, username text NOT NULL); INSERT INTO admin_security_sessions VALUES ('ci-session','ci');" >/dev/null
 
 ADMIN_STATE_BACKUP_PASSWORD=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
-  -c "CREATE ROLE potapoff_admin_backup LOGIN PASSWORD '$ADMIN_STATE_BACKUP_PASSWORD' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION BYPASSRLS; GRANT CONNECT ON DATABASE potapoff_admin TO potapoff_admin_backup; GRANT pg_read_all_data TO potapoff_admin_backup;" >/dev/null
+  -c "CREATE ROLE potapoff_admin_backup LOGIN PASSWORD '$ADMIN_STATE_BACKUP_PASSWORD' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT; GRANT CONNECT ON DATABASE potapoff_admin TO potapoff_admin_backup; GRANT SELECT ON ALL TABLES IN SCHEMA public TO potapoff_admin_backup; GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO potapoff_admin_backup;" >/dev/null
 
 
 # Exercise the read-only privilege audit as a least-privilege role on
