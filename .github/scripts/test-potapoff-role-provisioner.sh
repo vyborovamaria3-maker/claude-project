@@ -51,6 +51,7 @@ run_psql() {
 # Seed bootstrap-owned legacy objects. The provisioner must not silently
 # transfer any of these objects to the migration role.
 run_psql "$bootstrap_user" "$bootstrap_password" -c "GRANT CREATE ON DATABASE potapoff_ci TO PUBLIC" >/dev/null
+run_psql "$bootstrap_user" "$bootstrap_password" -c "GRANT CREATE ON SCHEMA public TO PUBLIC" >/dev/null
 run_psql "$bootstrap_user" "$bootstrap_password" -c "CREATE TYPE public.legacy_state AS ENUM ('old','new')" >/dev/null
 run_psql "$bootstrap_user" "$bootstrap_password" -c "CREATE TYPE public.legacy_composite AS (payload text)" >/dev/null
 run_psql "$bootstrap_user" "$bootstrap_password" -c "
