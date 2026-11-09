@@ -148,7 +148,13 @@ If the guard blocks, stop. Run the catalog inventory on an isolated restored
 copy, prepare and rehearse a per-object ownership/ACL allowlist and its reverse
 map, then apply it only in a separately approved maintenance window. Never
 bypass the guard, reintroduce `REASSIGN OWNED`, or promote the migration login
-to database owner as a shortcut. The isolated regression
+to database owner as a shortcut. If an earlier version of the
+provisioner already made the migration login database owner, the guard will
+continue to fail because ownership confers database CREATE regardless of a
+REVOKE. Restore database ownership to the approved bootstrap/admin identity
+through a separately reviewed maintenance operation, then rerun the guard. The
+current provisioner intentionally does not change database ownership in either
+direction. The isolated regression
 `.github/scripts/test-potapoff-role-provisioner.sh` proves that provisioning
 leaves legacy owners unchanged, the guard rejects the legacy state, and an
 explicit test-only allowlist makes the guard pass.
