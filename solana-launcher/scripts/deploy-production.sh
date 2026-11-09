@@ -592,6 +592,7 @@ fi
 "${COMPOSE[@]}" exec -T \
   -e "PGPASSWORD=$POSTGRES_BOOTSTRAP_PASSWORD" \
   postgres psql -X -v ON_ERROR_STOP=1 \
+  -v bootstrap_user="$POSTGRES_BOOTSTRAP_USER" \
   -v migrator_user="$POSTGRES_MIGRATOR_USER" \
   -v app_user="$POSTGRES_APP_USER" \
   -v backup_user="$POSTGRES_BACKUP_USER" \
