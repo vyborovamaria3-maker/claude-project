@@ -106,9 +106,6 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      SECURITY_HEADERS_STRICT: "true"
-      SECURITY_RBAC_ENABLED: "true"
-      INTERNAL_ADMIN_API_KEY: ${INTERNAL_ADMIN_API_KEY:?set INTERNAL_ADMIN_API_KEY}
       DATABASE_URL: postgresql://${POSTGRES_APP_USER:-memecoin_app}:${POSTGRES_APP_PASSWORD:?set POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-memecoin}
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
       TELEGRAM_AI_ENABLED: ${TELEGRAM_AI_ENABLED:-false}
