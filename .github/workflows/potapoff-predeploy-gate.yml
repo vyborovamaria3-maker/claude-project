@@ -256,10 +256,31 @@ jobs:
         run: |
           set -Eeuo pipefail
           cat > solana-subscription-service/.env <<'EOF'
+          POSTGRES_DB=solsub
+          POSTGRES_USER=solsub
           POSTGRES_PASSWORD=ci-solsub-bootstrap-password
+          POSTGRES_APP_USER=solsub_app
+          POSTGRES_APP_PASSWORD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          POSTGRES_MIGRATOR_USER=solsub_migrator
+          POSTGRES_MIGRATOR_PASSWORD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
           POSTGRES_READONLY_PASSWORD=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
           REDIS_PASSWORD=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-          NEXT_PUBLIC_API_URL=https://subscription.example.invalid
+          WEB_ORIGIN=https://subscription.example.invalid
+          API_PUBLIC_URL=https://api.subscription.example.invalid
+          WEB_PUBLIC_URL=https://subscription.example.invalid
+          JWT_ACCESS_SECRET=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          JWT_REFRESH_SECRET=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          TELEGRAM_BOT_TOKEN=123456:ci-test-token-placeholder
+          TELEGRAM_BOT_USERNAME=ci_subscription_bot
+          TELEGRAM_WEBHOOK_SECRET=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+          TELEGRAM_WEBAPP_URL=https://subscription.example.invalid
+          SOLANA_CLUSTER=devnet
+          RPC_ENDPOINT=https://api.devnet.solana.com
+          TREASURY_WALLET=11111111111111111111111111111111
+          TREASURY_USDC_TOKEN_ACCOUNT=11111111111111111111111111111111
+          USDC_MINT=4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
+          PAYMENT_CONFIRMATION_COMMITMENT=finalized
+          NEXT_PUBLIC_API_URL=https://api.subscription.example.invalid
           NEXT_PUBLIC_WEB_URL=https://subscription.example.invalid
           NEXT_PUBLIC_TELEGRAM_BOT_USERNAME=ci_subscription_bot
           NEXT_PUBLIC_SOLANA_CLUSTER=devnet
@@ -271,6 +292,10 @@ jobs:
           POSTGRES_USER=memecoin
           POSTGRES_DB=memecoin
           POSTGRES_PASSWORD=ci-memecoin-bootstrap-password
+          POSTGRES_APP_USER=memecoin_app
+          POSTGRES_APP_PASSWORD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          POSTGRES_MIGRATOR_USER=memecoin_migrator
+          POSTGRES_MIGRATOR_PASSWORD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
           POSTGRES_READONLY_PASSWORD=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
           REDIS_PASSWORD=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
           INTERNAL_ADMIN_API_KEY=ci-memecoin-internal-admin-key
