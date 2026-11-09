@@ -62,8 +62,7 @@ WHERE member.rolname IN (:'app_user', :'migrator_user', :'backup_user', :'readon
 -- No blanket REASSIGN OWNED and no automatic database/schema ownership change.
 -- Existing application-object ownership is a separately reviewed allowlist
 -- cutover; deploy-production.sh checks it before running Alembic.
-SELECT format('REVOKE ALL ON DATABASE %I FROM PUBLIC', current_database()) \gexec
-REVOKE ALL ON SCHEMA public FROM PUBLIC;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE, CREATE ON SCHEMA public TO :"migrator_user";
 GRANT USAGE ON SCHEMA public TO :"app_user", :"backup_user", :"readonly_user";
 
