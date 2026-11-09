@@ -1,14 +1,14 @@
-\\set ON_ERROR_STOP on
-\\pset pager off
+\set ON_ERROR_STOP on
+\pset pager off
 
 SELECT EXISTS (
   SELECT 1 FROM pg_roles WHERE rolname = :'migrator_user'
-) AS migrator_exists \\gset
-\\if :migrator_exists
-\\else
-  \\echo 'Migration role is missing; role provisioning must run first'
-  \\quit 3
-\\endif
+) AS migrator_exists \gset
+\if :migrator_exists
+\else
+  \echo 'Migration role is missing; role provisioning must run first'
+  \quit 3
+\endif
 
 -- A schema CREATE grant is not enough to ALTER legacy objects. Require every
 -- non-extension application relation, routine and user-defined type to be
@@ -70,20 +70,20 @@ migrator AS (
 )
 SELECT count(*)::integer AS non_migrator_object_count
 FROM application_objects, migrator
-WHERE application_objects.owner_oid <> migrator.oid \\gset
+WHERE application_objects.owner_oid <> migrator.oid \gset
 
-\\if :non_migrator_object_count
-  \\echo 'Production migration blocked: non-extension application objects are not owned by the migration role.'
-  \\echo 'Run the catalog inventory, review an explicit object-level ownership allowlist, and rehearse forward/rollback on an isolated restore.'
-  \\echo 'This guard is read-only and does not execute REASSIGN OWNED or alter database objects.'
-  \\quit 3
-\\endif
+\if :non_migrator_object_count
+  \echo 'Production migration blocked: non-extension application objects are not owned by the migration role.'
+  \echo 'Run the catalog inventory, review an explicit object-level ownership allowlist, and rehearse forward/rollback on an isolated restore.'
+  \echo 'This guard is read-only and does not execute REASSIGN OWNED or alter database objects.'
+  \quit 3
+\endif
 
-SELECT has_schema_privilege(:'migrator_user', 'public', 'CREATE') AS migrator_can_create \\gset
-\\if :migrator_can_create
-\\else
-  \\echo 'Production migration blocked: migration role lacks CREATE on public schema'
-  \\quit 3
-\\endif
+SELECT has_schema_privilege(:'migrator_user', 'public', 'CREATE') AS migrator_can_create \gset
+\if :migrator_can_create
+\else
+  \echo 'Production migration blocked: migration role lacks CREATE on public schema'
+  \quit 3
+\endif
 
-\\echo 'POSTGRES_MIGRATOR_OWNERSHIP_OK objects=owned schema_create=true'
+\echo 'POSTGRES_MIGRATOR_OWNERSHIP_OK objects=owned schema_create=true'
