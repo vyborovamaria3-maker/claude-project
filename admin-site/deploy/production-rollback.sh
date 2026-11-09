@@ -27,6 +27,8 @@ TARGET_SHA="$(tr -d '[:space:]' < "$BACKUP_DIR/target-git-sha.txt")"
 [[ "$PREVIOUS_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || die "invalid previous git SHA"
 [[ "$TARGET_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || die "invalid target git SHA"
 [[ "$PREVIOUS_SHA" != "$TARGET_SHA" ]] || die "rollback target equals the deployment being rolled out"
+CURRENT_CHECKOUT_SHA="$(git -C "$REPO_DIR" rev-parse --verify HEAD)"
+[[ "$CURRENT_CHECKOUT_SHA" == "$TARGET_SHA" || "$CURRENT_CHECKOUT_SHA" == "$PREVIOUS_SHA" ]] || die "backup does not match the current source checkout"
 
 if [[ -e "$DEPLOYED_SHA_FILE" ]]; then
   [[ -r "$DEPLOYED_SHA_FILE" ]] || die "deployed SHA marker is not readable"

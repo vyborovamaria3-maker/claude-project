@@ -129,8 +129,8 @@ backup_state() {
   current_sha="$(git -C "$REPO_DIR" rev-parse --verify HEAD)"
   previous_sha="$(resolve_previous_deployed_sha "$REPO_DIR" "$DEPLOYED_SHA_FILE" "${PREVIOUS_GIT_SHA:-}")" || die "cannot establish the previously deployed Git SHA"
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  dir="$BACKUP_ROOT/$stamp"
-  install -d -m 0700 "$BACKUP_ROOT" "$dir"
+  install -d -m 0700 "$BACKUP_ROOT"
+  dir="$(mktemp -d "$BACKUP_ROOT/$stamp.XXXXXX")"
   if [[ -n "$previous_sha" ]]; then
     printf "%s\n" "$previous_sha" > "$dir/git-sha.txt"
   fi
