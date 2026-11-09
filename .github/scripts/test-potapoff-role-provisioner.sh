@@ -78,6 +78,41 @@ run_psql "$bootstrap_user" "$bootstrap_password" -c "
 docker cp "$root/solana-launcher/scripts/provision-postgres-roles.sql" "$container:/tmp/provision-postgres-roles.sql" >/dev/null
 docker cp "$root/solana-launcher/scripts/check-postgres-migrator-ownership.sql" "$container:/tmp/check-postgres-migrator-ownership.sql" >/dev/null
 
+# Bootstrap-owned application objects must block provisioning before any
+# password, role attribute, membership or ACL is changed.
+if run_psql "$bootstrap_user" "$bootstrap_password" \
+  -v bootstrap_user="$bootstrap_user" \
+  -v app_user="$app_user" -v app_password="$app_password" \
+  -v migrator_user="$migrator_user" -v migrator_password="$migrator_password" \
+  -v backup_user="$backup_user" -v backup_password="$backup_password" \
+  -v readonly_user="$readonly_user" -v readonly_password="$readonly_password" \
+  -f /tmp/provision-postgres-roles.sql >/dev/null 2>&1; then
+  echo "Role provisioner accepted bootstrap-owned legacy objects" >&2
+  exit 1
+fi
+roles_after_failed_preflight="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
+  "SELECT count(*) FROM pg_roles WHERE rolname IN ('$app_user','$migrator_user','$backup_user','$readonly_user')")"
+[[ "$roles_after_failed_preflight" == "0" ]] || {
+  echo "Failed ownership preflight changed role state: $roles_after_failed_preflight" >&2
+  exit 1
+}
+
+# Disposable, explicit object-level owner allowlist. Production provisioning
+# never performs this transfer; operators must review and rehearse it separately.
+run_psql "$bootstrap_user" "$bootstrap_password" -c "
+  CREATE ROLE $migrator_user NOLOGIN;
+  GRANT CREATE ON SCHEMA public TO $migrator_user;
+  ALTER TABLE public.legacy_records OWNER TO $migrator_user;
+  ALTER TABLE public.alembic_version OWNER TO $migrator_user;
+  ALTER VIEW public.legacy_projection OWNER TO $migrator_user;
+  ALTER SEQUENCE public.legacy_records_id_seq OWNER TO $migrator_user;
+  ALTER FUNCTION public.legacy_label_count() OWNER TO $migrator_user;
+  ALTER FUNCTION public.legacy_security_definer() OWNER TO $migrator_user;
+  ALTER FUNCTION public.legacy_security_definer_second() OWNER TO $migrator_user;
+  ALTER TYPE public.legacy_state OWNER TO $migrator_user;
+  ALTER TYPE public.legacy_composite OWNER TO $migrator_user;
+" >/dev/null
+
 run_psql "$bootstrap_user" "$bootstrap_password" \
   -v bootstrap_user="$bootstrap_user" \
   -v app_user="$app_user" -v app_password="$app_password" \
@@ -136,31 +171,15 @@ docker exec -i "$container" pg_restore --list < "$archive" >/dev/null
 [[ "$(run_psql "$backup_user" "$backup_password" -Atq -c \
   "SELECT pg_has_role(current_user, 'pg_read_all_data', 'MEMBER')")" == "f" ]]
 
-# The deployment guard must block before the reviewed object-level cutover.
-if run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_user" -v migrator_user="$migrator_user" \
+# After the explicit allowlist and role provisioning, the deployment guard
+# should pass without changing any database object.
+run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_user" -v migrator_user="$migrator_user" \
   -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
-  -f /tmp/check-postgres-migrator-ownership.sql >/dev/null 2>&1; then
-  echo "Ownership guard unexpectedly accepted bootstrap-owned legacy objects" >&2
-  exit 1
-fi
+  -f /tmp/check-postgres-migrator-ownership.sql >/dev/null
 
-# Simulate the separately reviewed allowlist from the disposable inventory.
-run_psql "$bootstrap_user" "$bootstrap_password" -c "
-  ALTER TABLE public.legacy_records OWNER TO $migrator_user;
-  ALTER SEQUENCE public.legacy_records_id_seq OWNER TO $migrator_user;
-  ALTER TABLE public.alembic_version OWNER TO $migrator_user;
-  ALTER VIEW public.legacy_projection OWNER TO $migrator_user;
-  ALTER FUNCTION public.legacy_label_count() OWNER TO $migrator_user;
-  ALTER FUNCTION public.legacy_security_definer() OWNER TO $migrator_user;
-  ALTER FUNCTION public.legacy_security_definer_second() OWNER TO $migrator_user;
-  ALTER TYPE public.legacy_state OWNER TO $migrator_user;
-  GRANT EXECUTE ON FUNCTION public.legacy_label_count() TO $app_user;
-  GRANT EXECUTE ON FUNCTION public.legacy_security_definer() TO PUBLIC;
-  GRANT EXECUTE ON FUNCTION public.legacy_security_definer_second() TO PUBLIC;
-" >/dev/null
-
-# All other application objects are now owned by the migrator. The standalone
-# composite type must independently block deployment until its owner is reviewed.
+# A standalone composite type remains independently covered by the ownership gate.
+run_psql "$bootstrap_user" "$bootstrap_password" -c \
+  "ALTER TYPE public.legacy_composite OWNER TO $bootstrap_user" >/dev/null
 if run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_user" -v migrator_user="$migrator_user" \
   -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
   -f /tmp/check-postgres-migrator-ownership.sql >"$scratch/composite-ownership.log" 2>&1; then
@@ -175,6 +194,9 @@ grep -Fq "non-extension application objects are not owned by the migration role"
 run_psql "$bootstrap_user" "$bootstrap_password" -c \
   "ALTER TYPE public.legacy_composite OWNER TO $migrator_user" >/dev/null
 
+# PUBLIC EXECUTE on SECURITY DEFINER code must block the same deployment gate.
+run_psql "$bootstrap_user" "$bootstrap_password" -c \
+  "GRANT EXECUTE ON FUNCTION public.legacy_security_definer() TO PUBLIC" >/dev/null
 if run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_user" -v migrator_user="$migrator_user" \
   -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
   -f /tmp/check-postgres-migrator-ownership.sql >/dev/null 2>&1; then
@@ -183,9 +205,7 @@ if run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstra
 fi
 run_psql "$bootstrap_user" "$bootstrap_password" -c "
   REVOKE ALL ON FUNCTION public.legacy_security_definer() FROM PUBLIC;
-  REVOKE ALL ON FUNCTION public.legacy_security_definer_second() FROM PUBLIC;
   GRANT EXECUTE ON FUNCTION public.legacy_security_definer() TO $app_user;
-  GRANT EXECUTE ON FUNCTION public.legacy_security_definer_second() TO $app_user;
 " >/dev/null
 run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_user" -v migrator_user="$migrator_user" \
   -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
