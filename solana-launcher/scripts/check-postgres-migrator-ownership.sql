@@ -117,11 +117,23 @@ SELECT
   ) AS app_schemas_without_create,
   (
     SELECT count(*)::integer
-    FROM application_schemas s
-    WHERE has_schema_privilege(:'app_user', s.oid, 'CREATE')
-       OR has_schema_privilege(:'backup_user', s.oid, 'CREATE')
-       OR has_schema_privilege(:'readonly_user', s.oid, 'CREATE')
+    FROM pg_namespace s
+    WHERE s.nspname <> 'information_schema'
+      AND s.nspname NOT LIKE 'pg_%'
+      AND (
+        has_schema_privilege(:'app_user', s.oid, 'CREATE')
+        OR has_schema_privilege(:'backup_user', s.oid, 'CREATE')
+        OR has_schema_privilege(:'readonly_user', s.oid, 'CREATE')
+      )
   ) AS restricted_schemas_with_create,
+  (
+    SELECT count(*)::integer
+    FROM pg_namespace s CROSS JOIN migrator m
+    WHERE s.nspname <> 'public'
+      AND s.nspname <> 'information_schema'
+      AND s.nspname NOT LIKE 'pg_%'
+      AND has_schema_privilege(m.rolname, s.oid, 'CREATE')
+  ) AS migrator_nonpublic_schema_create_count,
   (
     SELECT count(*)::integer
     FROM pg_proc p
@@ -158,6 +170,11 @@ SELECT
 
 \if :restricted_schemas_with_create
   \echo 'Production migration blocked: runtime, backup or read-only role has CREATE on an application schema'
+  \quit 3
+\endif
+
+\if :migrator_nonpublic_schema_create_count
+  \echo 'Production migration blocked: migration role has CREATE outside the approved public schema'
   \quit 3
 \endif
 
