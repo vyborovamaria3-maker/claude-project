@@ -127,7 +127,7 @@ def _assert_public_application_objects_owned(
            OR app_object.owner_oid <> (
                SELECT oid FROM pg_roles WHERE rolname = %s
            )
-        ORDER BY object.schema_name, object.object_name
+        ORDER BY app_object.schema_name, app_object.object_name
         """,
         (migrator_user,),
     ).fetchall()
