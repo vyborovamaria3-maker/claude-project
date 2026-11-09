@@ -138,6 +138,8 @@ const walletSummaryRoute = read("app/api/database/wallets/route.ts");
 assert(walletSummaryRoute.includes("getWalletSummaryStatus"), "wallet summary GET must check freshness");
 assert(walletSummaryRoute.includes("status: 409"), "stale wallet summary must fail explicitly");
 assert(!walletSummaryRoute.includes("rebuildWalletSummary("), "wallet summary GET must never rebuild aggregates");
+assert(walletSummaryRoute.includes("cached.sourceSignature === sourceSignature"), "wallet API response cache must invalidate on source revision changes");
+assert(walletSummaryRoute.includes("sourceSignature, payload"), "wallet API cache entries must retain their source revision");
 const migrationImporter = read("scripts/import-migration-xlsx.ts");
 assert(migrationImporter.includes("rebuildWalletSummary(db)"), "XLSX import must rebuild wallet summary after the batch");
 const tradeDb = read("lib/trade/db.ts");
