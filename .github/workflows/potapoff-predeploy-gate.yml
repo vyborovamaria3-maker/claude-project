@@ -198,6 +198,8 @@ jobs:
           POSTGRES_USER: memecoin
           POSTGRES_DB: memecoin
           POSTGRES_PASSWORD: ci-postgres-password
+          POSTGRES_APP_PASSWORD: ci-postgres-app-password
+          POSTGRES_MIGRATOR_PASSWORD: ci-postgres-migrator-password
           POSTGRES_READONLY_PASSWORD: ci-postgres-readonly-password
           REDIS_PASSWORD: ci-redis-password
           INTERNAL_ADMIN_API_KEY: ci-admin-key

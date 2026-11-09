@@ -99,11 +99,13 @@ application_objects AS (
       WHERE e.classid = 'pg_type'::regclass AND e.objid = t.oid
     )
 )
-SELECT EXISTS (
+SELECT CASE WHEN EXISTS (
   SELECT 1 FROM application_objects
   WHERE schema_name <> 'public'
-     OR pg_get_userbyid(owner_oid) IS DISTINCT FROM :'migrator_user'
-) AS has_unprepared_application_owners \gset
+     OR owner_oid IS DISTINCT FROM (
+       SELECT oid FROM pg_roles WHERE rolname = :'migrator_user'
+     )
+) THEN 'true' ELSE 'false' END AS has_unprepared_application_owners \gset
 \if :has_unprepared_application_owners
 \echo 'Provisioning blocked: application objects must be transferred through a separately reviewed object-level allowlist'
 \quit 3

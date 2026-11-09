@@ -83,13 +83,28 @@ test_role_set() {
       "$container" /bin/sh /provision/run-readonly-role-provisioner.sh
   }
 
-  # A legacy/bootstrap-owned application table must block provisioning before
-  # any role is created or changed. Ownership is prepared only by this explicit
-  # disposable-fixture allowlist, never by the production provisioner.
-  if run_provisioner >/dev/null 2>&1; then
+  # Verify the fixture really contains a bootstrap-owned application table,
+  # then require the provisioner to fail specifically at the ownership gate.
+  local source_probe_owner provisioner_log
+  source_probe_owner="$(run_psql "$database" postgres "$bootstrap_password" -Atq -c \
+    "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.source_probe'::regclass")"
+  [[ "$source_probe_owner" == "postgres" ]] || {
+    echo "$database fixture source_probe owner is unexpected: $source_probe_owner" >&2
+    return 1
+  }
+  provisioner_log="$(mktemp)"
+  if run_provisioner >"$provisioner_log" 2>&1; then
+    rm -f "$provisioner_log"
     echo "$database accepted a bootstrap-owned application object" >&2
     return 1
   fi
+  if ! grep -Fq 'object-level allowlist' "$provisioner_log"; then
+    cat "$provisioner_log" >&2
+    rm -f "$provisioner_log"
+    echo "$database provisioner failed before the ownership guard" >&2
+    return 1
+  fi
+  rm -f "$provisioner_log"
   [[ "$(run_psql "$database" postgres "$bootstrap_password" -Atq -c \
     "SELECT count(*) FROM pg_roles WHERE rolname IN ('$app_user','$migrator_user','$readonly_user')")" == "0" ]] || {
     echo "$database changed restricted roles after failed ownership preflight" >&2
