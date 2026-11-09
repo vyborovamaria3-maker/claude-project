@@ -23,6 +23,96 @@ FROM (VALUES (:'app_user'), (:'migrator_user'), (:'readonly_user')) AS roles(rol
 \quit 3
 \endif
 
+SELECT COALESCE((
+  SELECT pg_get_userbyid(datdba) = :'bootstrap_user'
+  FROM pg_database WHERE datname = current_database()
+), false) AS bootstrap_owns_database \gset
+\if :bootstrap_owns_database
+\else
+\echo 'Provisioning blocked: database owner must remain the configured bootstrap identity'
+\quit 3
+\endif
+
+SELECT EXISTS (
+  SELECT 1
+  FROM pg_auth_members membership
+  JOIN pg_roles granted_role ON granted_role.oid = membership.roleid
+  JOIN pg_roles member_role ON member_role.oid = membership.member
+  WHERE granted_role.rolname IN (:'app_user', :'migrator_user', :'readonly_user')
+     OR member_role.rolname IN (:'app_user', :'migrator_user', :'readonly_user')
+) AS has_restricted_role_memberships \gset
+\if :has_restricted_role_memberships
+\echo 'Provisioning blocked: restricted role membership requires explicit operator review'
+\quit 3
+\endif
+
+-- Existing application objects must already have a reviewed migration owner.
+-- This is a read-only gate: never REASSIGN OWNED or ALTER object owners here.
+WITH extension_members AS (
+  SELECT classid, objid FROM pg_depend WHERE deptype = 'e'
+),
+application_objects AS (
+  SELECT n.nspname AS schema_name, c.relowner AS owner_oid
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname <> 'information_schema'
+    AND n.nspname NOT LIKE 'pg_%'
+    AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
+    AND NOT EXISTS (
+      SELECT 1 FROM extension_members e
+      WHERE e.classid = 'pg_class'::regclass AND e.objid = c.oid
+    )
+  UNION ALL
+  SELECT n.nspname, p.proowner
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname <> 'information_schema'
+    AND n.nspname NOT LIKE 'pg_%'
+    AND NOT EXISTS (
+      SELECT 1 FROM extension_members e
+      WHERE e.classid = 'pg_proc'::regclass AND e.objid = p.oid
+    )
+  UNION ALL
+  SELECT n.nspname, t.typowner
+  FROM pg_type t
+  JOIN pg_namespace n ON n.oid = t.typnamespace
+  WHERE n.nspname <> 'information_schema'
+    AND n.nspname NOT LIKE 'pg_%'
+    AND t.typtype IN ('b', 'c', 'd', 'e', 'm', 'p', 'r')
+    AND NOT EXISTS (
+      SELECT 1 FROM extension_members e
+      WHERE e.classid = 'pg_type'::regclass AND e.objid = t.oid
+    )
+)
+SELECT EXISTS (
+  SELECT 1 FROM application_objects
+  WHERE schema_name <> 'public'
+     OR pg_get_userbyid(owner_oid) IS DISTINCT FROM :'migrator_user'
+) AS has_unprepared_application_owners \gset
+\if :has_unprepared_application_owners
+\echo 'Provisioning blocked: application objects must be transferred through a separately reviewed object-level allowlist'
+\quit 3
+\endif
+
+SELECT EXISTS (
+  SELECT 1
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) acl
+  WHERE n.nspname = 'public'
+    AND p.prosecdef
+    AND acl.grantee = 0
+    AND acl.privilege_type = 'EXECUTE'
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_depend e
+      WHERE e.classid = 'pg_proc'::regclass AND e.objid = p.oid AND e.deptype = 'e'
+    )
+) AS has_public_security_definer_execute \gset
+\if :has_public_security_definer_execute
+\echo 'Provisioning blocked: SECURITY DEFINER function is executable by PUBLIC'
+\quit 3
+\endif
+
 BEGIN;
 
 SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user') AS app_role_exists \gset
@@ -58,16 +148,6 @@ CREATE ROLE :"readonly_user"
   WITH LOGIN PASSWORD :'readonly_password'
   NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
 \endif
-
--- Keep the restricted identities from inheriting or switching into any role.
-SELECT format('REVOKE %I FROM %I', parent_role.rolname, member_role.rolname)
-FROM pg_auth_members membership
-JOIN pg_roles parent_role ON parent_role.oid = membership.roleid
-JOIN pg_roles member_role ON member_role.oid = membership.member
-WHERE member_role.rolname IN (:'app_user', :'migrator_user', :'readonly_user') \gexec
-
--- The read-only role must never own application objects.
-REASSIGN OWNED BY :"readonly_user" TO :"bootstrap_user";
 
 REVOKE ALL PRIVILEGES ON DATABASE :"current_db" FROM :"app_user", :"migrator_user", :"readonly_user";
 REVOKE ALL PRIVILEGES ON SCHEMA public FROM :"app_user", :"migrator_user", :"readonly_user";
