@@ -172,7 +172,7 @@ def provision_test_cluster() -> None:
         # The migration identity is created explicitly by the isolated test
         # allowlist step; production provisioning must not create or mutate it
         # before every existing object owner has passed preflight.
-        bootstrap.execute("CREATE ROLE admin_ci_migration NOLOGIN")
+        bootstrap.execute("CREATE ROLE admin_ci_migration NOLOGIN NOINHERIT")
         bootstrap.execute(
             "GRANT CREATE ON SCHEMA public TO admin_ci_migration"
         )
