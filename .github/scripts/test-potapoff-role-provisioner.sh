@@ -107,11 +107,13 @@ done
   "SELECT has_database_privilege('$migrator_user', current_database(), 'CREATE')")" == "f" ]]
 [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
   "SELECT has_schema_privilege('$migrator_user', 'public', 'CREATE')")" == "t" ]]
+[[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
+  "SELECT count(*) FROM pg_namespace n WHERE n.nspname <> 'public' AND n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg_%' AND has_schema_privilege('$migrator_user', n.oid, 'CREATE')")" == "0" ]]
 for role in "$app_user" "$backup_user" "$readonly_user"; do
   [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
     "SELECT has_database_privilege('$role', current_database(), 'CREATE')")" == "f" ]]
   [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
-    "SELECT has_schema_privilege('$role', 'public', 'CREATE')")" == "f" ]]
+    "SELECT count(*) FROM pg_namespace n WHERE n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg_%' AND has_schema_privilege('$role', n.oid, 'CREATE')")" == "0" ]]
 done
 [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
   "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.legacy_records'::regclass")" == "$bootstrap_user" ]]
