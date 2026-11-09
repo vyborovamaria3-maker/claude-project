@@ -49,8 +49,7 @@ test_role_set() {
   docker cp "$repo_root/$sql_path" "$container:/provision/readonly-role.sql" >/dev/null
   docker cp "$repo_root/$entrypoint_path" "$container:/provision/run-readonly-role-provisioner.sh" >/dev/null
 
-  # The role provisioner is deliberately idempotent.
-  for _ in 1 2; do
+  run_provisioner() {
     docker exec \
       -e PGHOST=127.0.0.1 \
       -e PGPORT=5432 \
@@ -63,8 +62,27 @@ test_role_set() {
       -e POSTGRES_MIGRATOR_PASSWORD="$migrator_password" \
       -e POSTGRES_READONLY_USER="$readonly_user" \
       -e POSTGRES_READONLY_PASSWORD="$readonly_password" \
-      "$container" /bin/sh /provision/run-readonly-role-provisioner.sh >/dev/null
-  done
+      "$container" /bin/sh /provision/run-readonly-role-provisioner.sh
+  }
+
+  # A legacy/bootstrap-owned application table must block provisioning before
+  # any role is created or changed. Ownership is prepared only by this explicit
+  # disposable-fixture allowlist, never by the production provisioner.
+  if run_provisioner >/dev/null 2>&1; then
+    echo "$database accepted a bootstrap-owned application object" >&2
+    return 1
+  fi
+  [[ "$(run_psql "$database" postgres "$bootstrap_password" -Atq -c \
+    "SELECT count(*) FROM pg_roles WHERE rolname IN ('$app_user','$migrator_user','$readonly_user')")" == "0" ]] || {
+    echo "$database changed restricted roles after failed ownership preflight" >&2
+    return 1
+  }
+  run_psql "$database" postgres "$bootstrap_password" -c \
+    "CREATE ROLE $migrator_user NOLOGIN; GRANT CREATE ON SCHEMA public TO $migrator_user; ALTER TABLE source_probe OWNER TO $migrator_user" >/dev/null
+
+  # The role provisioner is deliberately idempotent after explicit ownership
+  # preparation; both runs must preserve the existing migration owner.
+  for _ in 1 2; do run_provisioner >/dev/null; done
 
   # The shell entrypoint must fail closed if invoked with any restricted login.
   for restricted_user in "$app_user" "$migrator_user" "$readonly_user"; do
@@ -128,7 +146,7 @@ test_role_set() {
       return 1
     }
     memberships="$(run_psql "$database" postgres "$bootstrap_password" -Atq -c \
-      "SELECT count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.member WHERE r.rolname='$role'")"
+      "SELECT count(*) FROM pg_auth_members m JOIN pg_roles member_role ON member_role.oid=m.member JOIN pg_roles granted_role ON granted_role.oid=m.roleid WHERE member_role.rolname='$role' OR granted_role.rolname='$role'")"
     [[ "$memberships" == "0" ]] || {
       echo "$role still has role memberships: $memberships" >&2
       return 1
