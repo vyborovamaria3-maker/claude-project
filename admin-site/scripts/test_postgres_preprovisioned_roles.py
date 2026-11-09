@@ -149,6 +149,30 @@ def assert_runtime_restricted() -> None:
     os.environ["ADMIN_PG_SCHEMA_MODE"] = "preprovisioned"
     verify_preprovisioned_schema(RUNTIME)
 
+    # Membership in a table-owner role must be rejected even when that role
+    # has no schema CREATE grant. This exercises the object-owner check rather
+    # than the separate SET-reachable schema privilege gate.
+    with psycopg.connect(FIXTURE) as bootstrap:
+        bootstrap.execute("CREATE ROLE admin_ci_table_owner NOLOGIN")
+        bootstrap.execute("ALTER TABLE public.feature_flags OWNER TO admin_ci_table_owner")
+        bootstrap.execute(
+            "GRANT admin_ci_table_owner TO admin_ci_runtime "
+            "WITH INHERIT FALSE, SET TRUE"
+        )
+    try:
+        try:
+            verify_preprovisioned_schema(RUNTIME)
+        except RuntimeError as exc:
+            assert "ownership/rls gate failed for feature_flags" in str(exc).lower(), str(exc)
+        else:
+            raise AssertionError("SET-able table-owner membership was accepted")
+    finally:
+        with psycopg.connect(FIXTURE) as bootstrap:
+            bootstrap.execute("REVOKE admin_ci_table_owner FROM admin_ci_runtime")
+            bootstrap.execute("ALTER TABLE public.feature_flags OWNER TO admin_ci_migration")
+            bootstrap.execute("DROP ROLE admin_ci_table_owner")
+    verify_preprovisioned_schema(RUNTIME)
+
     # A mistaken audit UPDATE grant must fail startup verification as well.
     with psycopg.connect(MIGRATE) as db:
         db.execute("GRANT UPDATE ON TABLE public.admin_audit TO admin_ci_runtime")
