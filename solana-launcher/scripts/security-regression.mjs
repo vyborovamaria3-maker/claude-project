@@ -144,6 +144,9 @@ assert(walletSummaryRoute.includes("cached.sourceSignature === sourceSignature")
 assert(walletSummaryRoute.includes("sourceSignature, payload"), "wallet API cache entries must retain their source revision");
 const migrationImporter = read("scripts/import-migration-xlsx.ts");
 assert(migrationImporter.includes("rebuildWalletSummary(db)"), "XLSX import must rebuild wallet summary after the batch");
+const databaseMerge = read("scripts/merge-db.cjs");
+assert(databaseMerge.includes("const { getDb }"), "database merge must initialize source revision triggers");
+assert(databaseMerge.includes("rebuildWalletSummary(db)"), "database merge must refresh the materialized wallet summary");
 const tradeDb = read("lib/trade/db.ts");
 assert(tradeDb.includes("busy_timeout = 5000"), "SQLite connection must configure a busy timeout");
 assert(tradeDb.indexOf("busy_timeout = 5000") < tradeDb.indexOf("journal_mode = WAL"), "SQLite busy timeout must be set before WAL negotiation");
