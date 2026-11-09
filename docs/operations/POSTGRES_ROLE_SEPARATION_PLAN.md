@@ -1,8 +1,8 @@
 # PostgreSQL role separation — staged plan (P0, NOT DEPLOYED)
 
-**Status:** design and disposable CI rehearsal only. This is NOT a production grant migration.
+**Status:** design, deployment wiring and disposable CI rehearsal only. No production role or ownership migration has been executed. This is NOT evidence of a completed production cutover.
 **Scope:** POTAPoff product PostgreSQL 16, Control Center PostgreSQL 17.
-**Tracking:** #172 (physical inventory/recovery), #170 (main protection); PR #212 (recovery integration).
+**Tracking:** #172 (physical inventory/recovery), #170 (main protection); PR #212 (recovery integration), PR #215 (deployment guard and isolated role-provisioner rehearsal).
 **2026-11-01 baseline:** product Compose uses `POSTGRES_USER=potapoff` and the backend,
 Celery worker/beat, discovery daemon and optional Telegram monitor connect as
 `potapoff`. Admin Compose uses `POSTGRES_USER=potapoff_admin` and the Admin
@@ -113,6 +113,45 @@ Record actual restore point and reconciliation of writes around the window.
 Do not mark P0 complete until actual production login isolation, schema
 ownership, audited grants, independent backup scheduling, off-host copies,
 successful *real* isolated restore and measured RPO/RTO are all evidenced.
+
+## PR #215 deployment wiring — still not a live cutover
+
+The POTAPoff product deployment now has a dedicated role provisioner and a
+fail-closed ownership preflight. These are code paths and disposable CI
+rehearsals only; they have **not** been run against a production database.
+
+`solana-launcher/scripts/provision-postgres-roles.sql`:
+
+- runs only as the configured bootstrap superuser and rejects identity reuse;
+- creates/refreshes app, migrator, backup and read-only logins as
+  `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT`;
+- removes stale role memberships from those restricted identities;
+- grants app DML, backup/read-only explicit SELECT, and migrator CREATE on
+  `public`, with matching default privileges for future migration objects;
+- revokes PUBLIC database and schema access;
+- keeps backup/read-only transactions read-only;
+- does **not** run `REASSIGN OWNED`, change database ownership, or change
+  schema ownership. The backup role is not granted `pg_read_all_data` and
+  cannot bypass RLS. A dump that cannot see all rows because of RLS must fail
+  and be investigated rather than silently omit data.
+
+The provisioner is intentionally not an ownership migration. The deploy
+sequence creates/refreshes roles so the dedicated backup login is available,
+takes and verifies the backup, then runs
+`solana-launcher/scripts/check-postgres-migrator-ownership.sql` **before
+stopping writers or invoking Alembic**. The guard is read-only and blocks if
+any non-extension application relation, routine or user-defined domain/enum/
+range type is not owned by the migration login, or if the migration login
+lacks CREATE on `public`.
+
+If the guard blocks, stop. Run the catalog inventory on an isolated restored
+copy, prepare and rehearse a per-object ownership/ACL allowlist and its reverse
+map, then apply it only in a separately approved maintenance window. Never
+bypass the guard, reintroduce `REASSIGN OWNED`, or promote the migration login
+to database owner as a shortcut. The isolated regression
+`.github/scripts/test-potapoff-role-provisioner.sh` proves that provisioning
+leaves legacy owners unchanged, the guard rejects the legacy state, and an
+explicit test-only allowlist makes the guard pass.
 
 ## Narrow automated rehearsal in PR #212
 
