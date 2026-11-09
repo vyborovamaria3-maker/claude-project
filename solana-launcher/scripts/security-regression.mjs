@@ -144,6 +144,30 @@ const tradeDb = read("lib/trade/db.ts");
 assert(tradeDb.includes("busy_timeout = 5000"), "SQLite connection must configure a busy timeout");
 assert(tradeDb.includes("initializedDb"), "SQLite schema initialization must be cached per process");
 
+const routeAuth = read("lib/routeAuth.ts");
+assert(routeAuth.includes("hasValidInternalServiceKey"), "internal X calls need a dedicated service auth check");
+assert(routeAuth.includes("timingSafeEqual"), "internal service credentials must be compared in constant time");
+const proxy = read("proxy.ts");
+assert(proxy.includes('"/api/trade/dev-twitter"'), "X collection must remain in the heavy rate-limit set");
+assert(/pathname === "\/api\/trade\/dev-twitter"[\\s\\S]*request\.method === "POST"[\\s\\S]*hasValidInternalServiceKey\(request\)/.test(proxy),
+  "only POST /api/trade/dev-twitter may use internal service authentication");
+
+const socialClient = read("backend/app/services/social_intelligence.py");
+assert(socialClient.includes('"x-internal-service-key"'), "FastAPI social client must authenticate internal collection");
+const twitterBridgeClient = read("backend/app/cli/twitter_scrape_bridge.py");
+assert(twitterBridgeClient.includes('"x-internal-service-key"'), "Twitter discovery bridge must authenticate internal collection");
+const productionCompose = read("docker-compose.production.yml");
+for (const serviceName of ["backend", "celery-worker", "twitter-discovery", "frontend"]) {
+  const serviceStart = productionCompose.indexOf("\\n  " + serviceName + ":\\n");
+  assert.notEqual(serviceStart, -1, "missing production service " + serviceName);
+  const serviceBody = productionCompose.slice(serviceStart);
+  const nextService = serviceBody.slice(1).search(/\\n  [a-zA-Z0-9_-]+:\\n/);
+  const block = nextService < 0 ? serviceBody : serviceBody.slice(0, nextService + 1);
+  assert(block.includes("INTERNAL_SERVICE_API_KEY"), serviceName + " must receive server-only internal key");
+}
+assert(read(".env.example").includes("INTERNAL_SERVICE_API_KEY="), "deployment env example must document internal service key");
+assert(read("scripts/deploy-production.sh").includes("key=INTERNAL_SERVICE_API_KEY"), "deployment must generate/validate internal service key");
+
 const telegramTasks = read("telegram-bot/handlers/tasks.ts");
 assert(
   telegramTasks.includes("task.telegram_user_id !== userId"),
