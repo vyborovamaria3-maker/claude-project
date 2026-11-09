@@ -79,6 +79,50 @@ WHERE application_objects.owner_oid <> migrator.oid \gset
   \quit 3
 \endif
 
+SELECT has_database_privilege(:'migrator_user', current_database(), 'CREATE') AS migrator_can_create_database \gset
+\if :migrator_can_create_database
+  \echo 'Production migration blocked: migration role must not have database CREATE'
+  \quit 3
+\endif
+
+SELECT count(*)::integer AS app_schemas_without_create
+FROM pg_namespace n
+WHERE n.nspname <> 'information_schema'
+  AND n.nspname NOT LIKE 'pg_%'
+  AND (
+    EXISTS (
+      SELECT 1 FROM pg_class c
+      WHERE c.relnamespace = n.oid
+        AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_depend d
+          WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e'
+        )
+    )
+    OR EXISTS (
+      SELECT 1 FROM pg_proc p
+      WHERE p.pronamespace = n.oid
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_depend d
+          WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e'
+        )
+    )
+    OR EXISTS (
+      SELECT 1 FROM pg_type t
+      WHERE t.typnamespace = n.oid
+        AND t.typtype IN ('d', 'e', 'r', 'm')
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_depend d
+          WHERE d.classid = 'pg_type'::regclass AND d.objid = t.oid AND d.deptype = 'e'
+        )
+    )
+  )
+  AND NOT has_schema_privilege(:'migrator_user', n.oid, 'CREATE') \gset
+
+\if :app_schemas_without_create
+  \echo 'Production migration blocked: migration role lacks CREATE on an application schema'
+  \quit 3
+\endif
 SELECT has_schema_privilege(:'migrator_user', 'public', 'CREATE') AS migrator_can_create \gset
 \if :migrator_can_create
 \else
