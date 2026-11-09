@@ -137,7 +137,7 @@ test_role_set() {
 
   # New migration functions must not inherit PUBLIC EXECUTE; explicit grants remain possible.
   run_psql "$database" "$migrator_user" "$migrator_password" -c \
-    "CREATE FUNCTION public.migration_private_fn() RETURNS integer LANGUAGE sql AS \\$\\$ SELECT 7 \\$\\$" >/dev/null
+    "CREATE FUNCTION public.migration_private_fn() RETURNS integer LANGUAGE sql AS \$\$ SELECT 7 \$\$" >/dev/null
   local function_password
   for restricted_user in "$app_user" "$readonly_user"; do
     case "$restricted_user" in
