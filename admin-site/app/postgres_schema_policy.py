@@ -229,7 +229,7 @@ def verify_preprovisioned_schema(dsn: str) -> None:
             # CREATE on public and at the database level.
             cur.execute(
                 "SELECT n.nspname, has_schema_privilege(current_user,n.oid,'CREATE'), "
-                "pg_has_role(n.nspowner,'MEMBER') "
+                "pg_has_role(current_user,n.nspowner,'MEMBER') "
                 "FROM pg_namespace n WHERE n.nspname <> 'information_schema' "
                 "AND n.nspname NOT LIKE 'pg_%'"
             )
@@ -263,7 +263,7 @@ def verify_preprovisioned_schema(dsn: str) -> None:
                 "SELECT has_database_privilege(current_user, current_database(), 'CONNECT'), "
                 "has_database_privilege(current_user, current_database(), 'CREATE'), "
                 "has_database_privilege(current_user, current_database(), 'TEMPORARY'), "
-                "pg_has_role(d.datdba, 'MEMBER') "
+                "pg_has_role(current_user, d.datdba, 'MEMBER') "
                 "FROM pg_database d WHERE d.datname=current_database()"
             )
             database_rights = cur.fetchone()
@@ -274,7 +274,7 @@ def verify_preprovisioned_schema(dsn: str) -> None:
 
             cur.execute(
                 "SELECT c.relname, c.relkind, "
-                "pg_get_userbyid(c.relowner), pg_has_role(c.relowner, 'MEMBER'), "
+                "pg_get_userbyid(c.relowner), pg_has_role(current_user, c.relowner, 'MEMBER'), "
                 "c.relrowsecurity, c.relforcerowsecurity, "
                 "has_table_privilege(current_user, c.oid, 'SELECT'), "
                 "has_table_privilege(current_user, c.oid, 'INSERT'), "
@@ -419,7 +419,7 @@ def verify_preprovisioned_schema(dsn: str) -> None:
 
             cur.execute(
                 "SELECT c.relname, pg_get_userbyid(c.relowner), "
-                "pg_has_role(c.relowner,'MEMBER'), "
+                "pg_has_role(current_user,c.relowner,'MEMBER'), "
                 "has_sequence_privilege(current_user,c.oid,'USAGE'), "
                 "has_sequence_privilege(current_user,c.oid,'UPDATE') "
                 "FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
