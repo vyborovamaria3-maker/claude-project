@@ -1,5 +1,5 @@
 // data-tag: api.trade.dev_twitter
-// GET /api/trade/dev-twitter?symbol=...&mint=...
+// POST /api/trade/dev-twitter?symbol=...&mint=... (collection and persistence)
 // X collector contract separates risk-universe statistics from display filters.
 
 import { NextRequest, NextResponse } from "next/server";
@@ -335,7 +335,7 @@ function persistTwitterStats(
   tx();
 }
 
-export async function GET(req: NextRequest) {
+export async function POST(req: NextRequest) {
   const mint = req.nextUrl.searchParams.get("mint") || "";
   const symbolParam = (req.nextUrl.searchParams.get("symbol") || "")
     .trim()
@@ -716,3 +716,11 @@ export async function GET(req: NextRequest) {
 }
 
 const HOUR_MS = 60 * 60 * 1000;
+
+/** Collection is state-changing and must never be triggered by a safe HTTP GET. */
+export async function GET() {
+  return NextResponse.json(
+    { error: "Method Not Allowed. Use POST to start X collection.", code: "METHOD_NOT_ALLOWED" },
+    { status: 405, headers: { Allow: "POST", "Cache-Control": "no-store" } },
+  );
+}
