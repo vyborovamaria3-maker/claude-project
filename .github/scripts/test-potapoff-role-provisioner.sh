@@ -51,6 +51,7 @@ run_psql() {
 # Seed bootstrap-owned legacy objects. The provisioner must not silently
 # transfer any of these objects to the migration role.
 run_psql "$bootstrap_user" "$bootstrap_password" -c "CREATE TYPE public.legacy_state AS ENUM ('old','new')" >/dev/null
+run_psql "$bootstrap_user" "$bootstrap_password" -c "CREATE TYPE public.legacy_composite AS (payload text)" >/dev/null
 run_psql "$bootstrap_user" "$bootstrap_password" -c "
   CREATE TABLE public.legacy_records (
     id bigserial PRIMARY KEY,
@@ -157,6 +158,22 @@ run_psql "$bootstrap_user" "$bootstrap_password" -c "
   GRANT EXECUTE ON FUNCTION public.legacy_security_definer() TO PUBLIC;
   GRANT EXECUTE ON FUNCTION public.legacy_security_definer_second() TO PUBLIC;
 " >/dev/null
+
+# All other application objects are now owned by the migrator. The standalone
+# composite type must independently block deployment until its owner is reviewed.
+if run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_user" -v migrator_user="$migrator_user" \
+  -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
+  -f /tmp/check-postgres-migrator-ownership.sql >"$scratch/composite-ownership.log" 2>&1; then
+  echo "Ownership guard unexpectedly accepted a bootstrap-owned composite type" >&2
+  exit 1
+fi
+grep -Fq "non-extension application objects are not owned by the migration role" "$scratch/composite-ownership.log" || {
+  cat "$scratch/composite-ownership.log" >&2
+  echo "Ownership guard failed for the wrong reason; composite-type ownership was not detected" >&2
+  exit 1
+}
+run_psql "$bootstrap_user" "$bootstrap_password" -c \
+  "ALTER TYPE public.legacy_composite OWNER TO $migrator_user" >/dev/null
 
 if run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_user" -v migrator_user="$migrator_user" \
   -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \

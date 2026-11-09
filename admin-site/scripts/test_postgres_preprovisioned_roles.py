@@ -80,6 +80,9 @@ def provision_test_cluster() -> None:
             "CREATE TYPE public.bootstrap_owned_state AS ENUM ('legacy', 'current')"
         )
         db.execute(
+            "CREATE TYPE public.bootstrap_owned_composite AS (payload text)"
+        )
+        db.execute(
             "CREATE TABLE public.bootstrap_owned_legacy "
             "(id bigint PRIMARY KEY, payload text NOT NULL, state public.bootstrap_owned_state)"
         )
@@ -114,6 +117,7 @@ def provision_test_cluster() -> None:
         provision()
     except RuntimeError as exc:
         assert "ownership preflight" in str(exc).lower(), str(exc)
+        assert "bootstrap_owned_composite" in str(exc), str(exc)
     else:
         raise AssertionError("Provisioner accepted bootstrap-owned application objects")
 
@@ -161,6 +165,21 @@ def provision_test_cluster() -> None:
         )
         bootstrap.execute(
             "GRANT EXECUTE ON FUNCTION public.bootstrap_owned_legacy_definer() TO PUBLIC"
+        )
+
+    # The standalone composite type remains bootstrap-owned after the explicit
+    # allowlist above; provisioning must continue to fail closed on that type.
+    try:
+        provision()
+    except RuntimeError as exc:
+        assert "ownership preflight" in str(exc).lower(), str(exc)
+        assert "bootstrap_owned_composite" in str(exc), str(exc)
+    else:
+        raise AssertionError("Provisioner accepted a bootstrap-owned composite type")
+
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+        bootstrap.execute(
+            "ALTER TYPE public.bootstrap_owned_composite OWNER TO admin_ci_migration"
         )
 
     # Even after owners are prepared, PUBLIC execution of a SECURITY DEFINER
@@ -220,9 +239,17 @@ def provision_test_cluster() -> None:
             WHERE oid='public.bootstrap_owned_state'::regtype
             """
         ).fetchone()[0]
+        composite_type_owner = db.execute(
+            """
+            SELECT pg_get_userbyid(typowner)
+            FROM pg_type
+            WHERE oid='public.bootstrap_owned_composite'::regtype
+            """
+        ).fetchone()[0]
     assert set(owners.values()) == {"admin_ci_migration"}, owners
     assert function_owner == "admin_ci_migration", function_owner
     assert type_owner == "admin_ci_migration", type_owner
+    assert composite_type_owner == "admin_ci_migration", composite_type_owner
 
     with psycopg.connect(BACKUP) as db:
         flags = db.execute(

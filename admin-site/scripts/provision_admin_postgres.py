@@ -112,7 +112,8 @@ def _assert_public_application_objects_owned(
             JOIN pg_namespace AS n ON n.oid = t.typnamespace
             WHERE n.nspname <> 'information_schema'
               AND n.nspname NOT LIKE 'pg_%'
-              AND t.typtype IN ('d', 'e', 'r', 'm')
+              -- Include user-defined base, composite, domain, enum, range, multirange and pseudo-types.
+              AND t.typtype IN ('b', 'c', 'd', 'e', 'm', 'p', 'r')
               AND NOT EXISTS (
                   SELECT 1 FROM extension_members AS e
                   WHERE e.classid = 'pg_type'::regclass AND e.objid = t.oid
