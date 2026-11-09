@@ -100,6 +100,50 @@ assert(
 );
 assert(devForensics.includes("forwardedAuthHeaders"), "authenticated internal trade calls must forward auth");
 
+const devTwitter = read("app/api/trade/dev-twitter/route.ts");
+assert(devTwitter.includes("export async function POST(req: NextRequest)"), "X collection must use POST");
+const devTwitterGet = devTwitter.slice(devTwitter.indexOf("export async function GET()"));
+assert(devTwitterGet.includes("status: 405"), "X collection GET must reject state-changing requests");
+assert(!/scrapeTwitter|persistTwitterStats|getDb\\(/.test(devTwitterGet), "X collection GET must not scrape or persist");
+
+assert(devForensics.includes("export async function POST(req: NextRequest)"), "developer forensics refresh must use POST");
+const devForensicsGet = devForensics.slice(devForensics.indexOf("export async function GET()"));
+assert(devForensicsGet.includes("status: 405"), "developer forensics GET must reject refresh requests");
+assert(!/upsertDevTokenVolume|fetch\\(/.test(devForensicsGet), "developer forensics GET must not mutate or fetch external data");
+assert(devForensics.includes('method: "POST"'), "internal X collection must use POST");
+
+const fomoSnapshot = read("app/api/trade/fomo-snapshot/route.ts");
+assert(fomoSnapshot.includes("POST as getTwitterStats"), "FOMO snapshot must invoke X collection through POST");
+assert(fomoSnapshot.includes('method: "POST"'), "FOMO snapshot internal request must use POST");
+
+for (const relativePath of [
+  "components/trade/LiveIntelligencePanel.tsx",
+  "components/trade/SocialIntelligencePanel.tsx",
+  "components/trade/DevForensicsPanel.tsx",
+  "components/chart/tabs/DevForensicsTab.tsx",
+]) {
+  const source = read(relativePath);
+  assert(source.includes('method: "POST"'), relativePath + " must use POST for state-changing collection");
+}
+
+const socialIntelligenceClient = read("backend/app/services/social_intelligence.py");
+assert(socialIntelligenceClient.includes("client.post("), "FastAPI social intelligence must call X collection with POST");
+const twitterBridge = read("backend/app/cli/twitter_scrape_bridge.py");
+assert(twitterBridge.includes("client.post(url)"), "Twitter scrape bridge must call X collection with POST");
+const liveBacktest = read("scripts/social-ai-live-backtest.ps1");
+assert(liveBacktest.includes("$xForced = Post-Json"), "live X Playwright test must use POST");
+assert(liveBacktest.includes("$xAuto = Post-Json"), "live X auto test must use POST");
+
+const walletSummaryRoute = read("app/api/database/wallets/route.ts");
+assert(walletSummaryRoute.includes("getWalletSummaryStatus"), "wallet summary GET must check freshness");
+assert(walletSummaryRoute.includes("status: 409"), "stale wallet summary must fail explicitly");
+assert(!walletSummaryRoute.includes("rebuildWalletSummary("), "wallet summary GET must never rebuild aggregates");
+const migrationImporter = read("scripts/import-migration-xlsx.ts");
+assert(migrationImporter.includes("rebuildWalletSummary(db)"), "XLSX import must rebuild wallet summary after the batch");
+const tradeDb = read("lib/trade/db.ts");
+assert(tradeDb.includes("busy_timeout = 5000"), "SQLite connection must configure a busy timeout");
+assert(tradeDb.includes("initializedDb"), "SQLite schema initialization must be cached per process");
+
 const telegramTasks = read("telegram-bot/handlers/tasks.ts");
 assert(
   telegramTasks.includes("task.telegram_user_id !== userId"),
