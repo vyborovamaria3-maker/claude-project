@@ -202,8 +202,9 @@ assert(migratorOwnershipGuard.includes("app_schemas_without_create"), "migrator 
 assert(migratorOwnershipGuard.includes("\\quit 3"), "migrator ownership guard must fail closed");
 const deployScript = read("scripts/deploy-production.sh");
 assert(deployScript.includes("check-postgres-migrator-ownership.sql"), "production deployment must run the read-only migrator ownership guard");
+assert(deployScript.includes('< "$DEPLOY_DIR/scripts/check-postgres-migrator-ownership.sql"'), "ownership guard SQL must be streamed from the host into the PostgreSQL container");
 const backupCallIndex = deployScript.indexOf('"$BACKUP_SCRIPT"\n');
-const ownershipGuardCallIndex = deployScript.indexOf('-f "$DEPLOY_DIR/scripts/check-postgres-migrator-ownership.sql"');
+const ownershipGuardCallIndex = deployScript.indexOf('-U "$POSTGRES_BOOTSTRAP_USER" -d potapoff -f -');
 const stopWritersIndex = deployScript.indexOf("stop_telegram", ownershipGuardCallIndex);
 assert(backupCallIndex !== -1 && backupCallIndex < ownershipGuardCallIndex,
   "verified backup must precede the ownership cutover gate");
