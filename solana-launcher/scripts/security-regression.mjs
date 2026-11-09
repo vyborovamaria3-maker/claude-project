@@ -185,6 +185,8 @@ assert(!postgresRoleProvisioner.includes("ALTER SCHEMA public OWNER"), "schema o
 assert(postgresRoleProvisioner.includes("NOBYPASSRLS NOINHERIT"), "all provisioned roles must be non-inheriting and must not bypass RLS");
 assert(postgresRoleProvisioner.includes("REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC"), "new migration functions must not be executable by PUBLIC by default");
 assert(postgresRoleProvisioner.includes("REVOKE CREATE ON SCHEMA public FROM PUBLIC"), "PUBLIC must not create objects in the app schema");
+assert(postgresRoleProvisioner.includes("REVOKE CREATE ON DATABASE %I FROM %I"), "restricted roles must not retain database-level CREATE grants");
+assert(postgresRoleProvisioner.includes("REVOKE CREATE ON SCHEMA %I FROM %I"), "runtime, backup and read-only roles must not retain schema CREATE grants");
 assert(!postgresRoleProvisioner.includes("REVOKE ALL ON DATABASE"), "provisioner must preserve unrelated PUBLIC database ACLs pending inventory");
 assert(!postgresRoleProvisioner.includes("REVOKE ALL ON SCHEMA public"), "provisioner must preserve unrelated schema USAGE grants");
 assert(!postgresRoleProvisioner.includes("pg_read_all_data"), "backup role must use explicit SELECT grants, not a broad predefined role");
