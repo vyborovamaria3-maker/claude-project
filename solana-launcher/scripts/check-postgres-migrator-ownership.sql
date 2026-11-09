@@ -121,7 +121,22 @@ SELECT
     WHERE has_schema_privilege(:'app_user', s.oid, 'CREATE')
        OR has_schema_privilege(:'backup_user', s.oid, 'CREATE')
        OR has_schema_privilege(:'readonly_user', s.oid, 'CREATE')
-  ) AS restricted_schemas_with_create
+  ) AS restricted_schemas_with_create,
+  (
+    SELECT count(*)::integer
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) acl
+    WHERE n.nspname <> 'information_schema'
+      AND n.nspname NOT LIKE 'pg_%'
+      AND p.prosecdef
+      AND acl.grantee = 0
+      AND acl.privilege_type = 'EXECUTE'
+      AND NOT EXISTS (
+        SELECT 1 FROM extension_members e
+        WHERE e.classid = 'pg_proc'::regclass AND e.objid = p.oid
+      )
+  ) AS public_security_definer_count
 \gset
 
 \if :unsupported_application_schema_count
@@ -143,6 +158,11 @@ SELECT
 
 \if :restricted_schemas_with_create
   \echo 'Production migration blocked: runtime, backup or read-only role has CREATE on an application schema'
+  \quit 3
+\endif
+
+\if :public_security_definer_count
+  \echo 'Production migration blocked: SECURITY DEFINER function is executable by PUBLIC; review and grant execution explicitly'
   \quit 3
 \endif
 
