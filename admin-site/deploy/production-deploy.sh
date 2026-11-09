@@ -273,6 +273,19 @@ deploy() {
   chmod 0600 "$backup_dir/admin-state-post-migration.dump" || true
 
   if grep -Eq '^POTAPOFF_INTELLIGENCE_BACKEND=postgres[[:space:]]*
+    log "initializing PostgreSQL intelligence schema"
+    "${COMPOSE[@]}" run --rm intelligence-worker python -m intelligence init-db
+  fi
+
+  log "cutting over admin and intelligence containers"
+  admin_cutover_started=1
+  "${COMPOSE[@]}" up -d admin intelligence-worker
+  wait_healthy potapoff-admin 180
+  wait_healthy potapoff-intelligence 180
+  smoke
+  trap - EXIT
+  log "DEPLOY_OK backup=$backup_dir"
+}
 
 case "$MODE" in
   preflight) preflight ;;
