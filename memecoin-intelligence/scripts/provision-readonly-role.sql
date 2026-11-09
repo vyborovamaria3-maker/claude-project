@@ -224,6 +224,8 @@ JOIN pg_namespace AS n ON n.oid = t.typnamespace
 WHERE n.nspname = 'public'
   AND t.typisdefined
   AND t.typtype IN ('b', 'c', 'd', 'e', 'm', 'r')
+  -- PostgreSQL creates array types automatically; their ACL follows the element type.
+  AND t.typelem = 0
   AND NOT EXISTS (
     SELECT 1
     FROM pg_depend AS extension_member
@@ -240,6 +242,10 @@ ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" REVOKE ALL ON TABLES FROM PUB
 ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" REVOKE ALL ON SEQUENCES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
+
+-- Functions otherwise inherit PostgreSQL's global PUBLIC EXECUTE default.
+ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 
 ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" IN SCHEMA public
   REVOKE ALL ON TABLES FROM :"app_user", :"readonly_user";

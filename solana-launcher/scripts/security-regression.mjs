@@ -172,7 +172,7 @@ assert(twitterBridgeClient.includes('"x-internal-service-key"'), "Twitter discov
 assert(twitterBridgeClient.includes('environment in {"production", "prod", "docker"}'), "Twitter CLI must fail closed for all production environment aliases");
 assert(twitterBridgeClient.includes("candidate != configured_internal"), "CLI must not forward the service key to an arbitrary frontend host");
 assert(!twitterBridgeClient.includes("follow_redirects=True"), "CLI must not forward service credentials across redirects");
-const productionCompose = read("docker-compose.production.yml");
+
 for (const serviceName of ["backend", "celery-worker", "twitter-discovery", "frontend"]) {
   const serviceStart = productionCompose.indexOf("\n  " + serviceName + ":\n");
   assert.notEqual(serviceStart, -1, "missing production service " + serviceName);

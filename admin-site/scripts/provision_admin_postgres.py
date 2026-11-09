@@ -381,6 +381,14 @@ def provision_roles(
                 "GRANT SELECT ON SEQUENCES TO {}"
             ).format(sql.Identifier(migrator_user), sql.Identifier(backup_user))
         )
+        # PostgreSQL grants function EXECUTE to PUBLIC globally by default.
+        # A schema-local REVOKE cannot cancel that global ACL, so revoke both scopes.
+        db.execute(
+            sql.SQL(
+                "ALTER DEFAULT PRIVILEGES FOR ROLE {} "
+                "REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC"
+            ).format(sql.Identifier(migrator_user))
+        )
         db.execute(
             sql.SQL(
                 "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public "

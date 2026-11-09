@@ -135,6 +135,29 @@ test_role_set() {
     done
   done
 
+  # New migration functions must not inherit PUBLIC EXECUTE; explicit grants remain possible.
+  run_psql "$database" "$migrator_user" "$migrator_password" -c \
+    "CREATE FUNCTION public.migration_private_fn() RETURNS integer LANGUAGE sql AS \\$\\$ SELECT 7 \\$\\$" >/dev/null
+  local function_password
+  for restricted_user in "$app_user" "$readonly_user"; do
+    case "$restricted_user" in
+      "$app_user") function_password="$app_password" ;;
+      *) function_password="$readonly_password" ;;
+    esac
+    if run_psql "$database" "$restricted_user" "$function_password" -c \
+      "SELECT public.migration_private_fn()" >/dev/null 2>&1; then
+      echo "$restricted_user unexpectedly executed a function without an explicit grant" >&2
+      return 1
+    fi
+  done
+  run_psql "$database" postgres "$bootstrap_password" -c \
+    "GRANT EXECUTE ON FUNCTION public.migration_private_fn() TO $app_user" >/dev/null
+  [[ "$(run_psql "$database" "$app_user" "$app_password" -Atq -c \
+    "SELECT public.migration_private_fn()")" == "7" ]] || {
+    echo "$app_user could not execute its explicitly granted function" >&2
+    return 1
+  }
+
   # The shell entrypoint must fail closed if invoked with any restricted login.
   for restricted_user in "$app_user" "$migrator_user" "$readonly_user"; do
     local restricted_password
