@@ -170,6 +170,13 @@ for (const serviceName of ["backend", "celery-worker", "twitter-discovery", "fro
 assert(read(".env.example").includes("INTERNAL_SERVICE_API_KEY="), "deployment env example must document internal service key");
 assert(read("scripts/deploy-production.sh").includes("key=INTERNAL_SERVICE_API_KEY"), "deployment must generate/validate internal service key");
 assert(!productionCompose.includes("NEXT_PUBLIC_INTERNAL_SERVICE_API_KEY"), "internal service key must never be exposed to browser bundles");
+const walletSummaryHealth = read("app/api/internal/health/wallet-summary/route.ts");
+assert(walletSummaryHealth.includes("hasValidInternalServiceKey"), "wallet summary health must require machine authentication");
+assert(walletSummaryHealth.includes('status: 503'), "stale wallet summary must fail readiness");
+assert(!walletSummaryHealth.includes("database_wallet_summary"), "health endpoint must not expose wallet aggregate rows");
+const productionHealthcheck = read("scripts/healthcheck-production.sh");
+assert(productionHealthcheck.includes("/api/internal/health/wallet-summary"), "deployment healthcheck must verify wallet summary readiness");
+assert(productionHealthcheck.includes("x-internal-service-key"), "deployment healthcheck must authenticate the private readiness probe");
 
 const telegramTasks = read("telegram-bot/handlers/tasks.ts");
 assert(
