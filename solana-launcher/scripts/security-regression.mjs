@@ -171,6 +171,7 @@ for (const serviceName of ["backend", "celery-worker", "twitter-discovery", "fro
 }
 assert(read(".env.example").includes("INTERNAL_SERVICE_API_KEY="), "deployment env example must document internal service key");
 assert(read("scripts/deploy-production.sh").includes("key=INTERNAL_SERVICE_API_KEY"), "deployment must generate/validate internal service key");
+assert(read("scripts/deploy-production.sh").includes('$1 != "INTERNAL_SERVICE_API_KEY"'), "shared .env.runtime must exclude the internal service key");
 assert(!productionCompose.includes("NEXT_PUBLIC_INTERNAL_SERVICE_API_KEY"), "internal service key must never be exposed to browser bundles");
 const walletSummaryHealth = read("app/api/internal/health/wallet-summary/route.ts");
 assert(walletSummaryHealth.includes("hasValidInternalServiceKey"), "wallet summary health must require machine authentication");
