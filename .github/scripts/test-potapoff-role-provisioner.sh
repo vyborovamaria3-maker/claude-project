@@ -116,6 +116,8 @@ run_psql "$bootstrap_user" "$bootstrap_password" -c "
   ALTER FUNCTION public.legacy_security_definer_second() OWNER TO $migrator_user;
   ALTER TYPE public.legacy_state OWNER TO $migrator_user;
   ALTER TYPE public.legacy_composite OWNER TO $migrator_user;
+  GRANT SELECT ON TABLE public.legacy_records TO PUBLIC;
+  GRANT USAGE, SELECT ON SEQUENCE public.legacy_records_id_seq TO PUBLIC;
 " >/dev/null
 
 run_psql "$bootstrap_user" "$bootstrap_password" \
@@ -180,8 +182,25 @@ for role in "$app_user" "$backup_user" "$readonly_user"; do
   [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
     "SELECT count(*) FROM pg_namespace n WHERE n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg_%' AND has_schema_privilege('$role', n.oid, 'CREATE')")" == "0" ]]
 done
+public_object_privileges="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
+  SELECT count(*) FROM (
+    SELECT acl.privilege_type
+    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r',c.relowner))) acl
+    WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f') AND acl.grantee=0
+    UNION ALL
+    SELECT acl.privilege_type
+    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('S',c.relowner))) acl
+    WHERE n.nspname='public' AND c.relkind='S' AND acl.grantee=0
+  ) grants
+")"
+[[ "$public_object_privileges" == "0" ]] || {
+  echo "PUBLIC retains privileges on application tables or sequences: $public_object_privileges" >&2
+  exit 1
+}
 [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
-  "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.legacy_records'::regclass")" == "$bootstrap_user" ]]
+  "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.legacy_records'::regclass")" == "$migrator_user" ]]
 [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
   "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='public'")" == "$original_schema_owner" ]]
 [[ "$(run_psql "$backup_user" "$backup_password" -Atq -c "SHOW default_transaction_read_only")" == "on" ]]

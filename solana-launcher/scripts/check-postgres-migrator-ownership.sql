@@ -226,4 +226,32 @@ SELECT has_schema_privilege(:'migrator_user', 'public', 'CREATE') AS migrator_ca
   \quit 3
 \endif
 
+SELECT EXISTS (
+  SELECT 1
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) acl
+  WHERE n.nspname = 'public'
+    AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+    AND acl.grantee = 0
+) AS has_public_table_privileges \gset
+\if :has_public_table_privileges
+  \echo 'Production migration blocked: PUBLIC retains privileges on application tables or views'
+  \quit 3
+\endif
+
+SELECT EXISTS (
+  SELECT 1
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('S', c.relowner))) acl
+  WHERE n.nspname = 'public'
+    AND c.relkind = 'S'
+    AND acl.grantee = 0
+) AS has_public_sequence_privileges \gset
+\if :has_public_sequence_privileges
+  \echo 'Production migration blocked: PUBLIC retains privileges on application sequences'
+  \quit 3
+\endif
+
 \echo 'POSTGRES_MIGRATOR_OWNERSHIP_OK objects=owned schema_create=true'
