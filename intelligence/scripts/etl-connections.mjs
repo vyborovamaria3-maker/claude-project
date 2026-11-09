@@ -85,6 +85,18 @@ export async function checkDestination(pool,options={}){
   if(options.requireBlockchainRevisions===true && !row.blockchain_revisions){
     throw new Error("destination Intelligence migration 005 required before Blockchain claim");
   }
+  // A legacy inbox identity with no payload fingerprint is not a safe
+  // idempotent duplicate. Consumers must not claim source events until every
+  // legacy row has been verified against its source outbox. The bounded
+  // backfill opts into this one precondition explicitly.
+  if(options.allowLegacyFingerprints!==true){
+    const pending=await pool.query(
+      "SELECT EXISTS (SELECT 1 FROM intelligence_inbox WHERE payload_sha256 IS NULL) AS pending",
+    );
+    if(pending.rows[0]?.pending===true){
+      throw new Error("legacy Intelligence inbox fingerprints pending; run the bounded source-outbox backfill before source claims");
+    }
+  }
 }
 
 export function destinationConnection(env=process.env){
