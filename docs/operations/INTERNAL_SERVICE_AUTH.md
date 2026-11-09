@@ -23,7 +23,7 @@ The proxy still applies the heavy-route rate limit before checking the key. The 
 
 The same key authenticates the read-only deployment probe `GET /api/internal/health/wallet-summary`. That route returns readiness only and does not disclose wallet data.
 
-Backend clients send the key in `x-internal-service-key`. Production clients fail closed if it is missing. The Twitter CLI also refuses to send it to a frontend base URL that differs from the configured internal frontend URL and does not follow redirects.
+Backend clients send the key in `x-internal-service-key`. Production clients fail closed if it is missing. The FastAPI social client and Twitter CLI both refuse to send it to a frontend base URL that differs from the configured internal frontend URL and do not follow redirects.
 
 ## HTTP method policy
 
