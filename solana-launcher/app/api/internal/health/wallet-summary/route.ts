@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  let status;
+  let status: ReturnType<typeof getWalletSummaryStatus>;
   try {
     status = getWalletSummaryStatus(getReadOnlyDb());
   } catch {
