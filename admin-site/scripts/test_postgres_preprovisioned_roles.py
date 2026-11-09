@@ -495,8 +495,14 @@ def assert_runtime_restricted() -> None:
 
     # An application runtime must not be able to create databases/schemas
     # or temporary objects via the database-level ACL.
-    with psycopg.connect(MIGRATE) as db:
+    # Database ACL changes are owned by the bootstrap identity; the migrator
+    # must not have grant option for CREATE/TEMPORARY on the database.
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as db:
         db.execute("GRANT CREATE, TEMPORARY ON DATABASE admin_roles_ci TO admin_ci_runtime")
+        assert db.execute(
+            "SELECT has_database_privilege('admin_ci_runtime', current_database(), 'CREATE'), "
+            "has_database_privilege('admin_ci_runtime', current_database(), 'TEMPORARY')"
+        ).fetchone() == (True, True)
     try:
         verify_preprovisioned_schema(RUNTIME)
     except RuntimeError as exc:
@@ -507,7 +513,7 @@ def assert_runtime_restricted() -> None:
     else:
         raise AssertionError("Database CREATE/TEMP rights were accepted")
     finally:
-        with psycopg.connect(MIGRATE) as db:
+        with psycopg.connect(BOOTSTRAP_ADMIN_DB) as db:
             db.execute("REVOKE CREATE, TEMPORARY ON DATABASE admin_roles_ci FROM admin_ci_runtime")
     verify_preprovisioned_schema(RUNTIME)
 
