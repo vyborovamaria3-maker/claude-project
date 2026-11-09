@@ -12,6 +12,7 @@ const PRIVATE_PRODUCTION_PREFIXES = [
 
 const HEAVY_ROUTE_PREFIXES = [
   "/api/trade/dev-twitter",
+  "/api/trade/fomo-snapshot",
   "/api/trade/analyze",
   "/api/trade/analyze-stream",
   "/api/trade/dev-forensics",
