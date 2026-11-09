@@ -204,6 +204,7 @@ assert(migratorOwnershipGuard.includes("non_migrator_object_count"), "migrator g
 assert(migratorOwnershipGuard.includes("unsupported_application_schema_count"), "non-public application schemas must block until explicitly provisioned");
 assert(migratorOwnershipGuard.includes("public_security_definer_count"), "PUBLIC execution of SECURITY DEFINER routines must block deployment");
 assert(migratorOwnershipGuard.includes("migrator_can_create_database"), "migrator guard must reject database-level CREATE");
+assert(migratorOwnershipGuard.includes("bootstrap_owns_database"), "database owner must remain the configured bootstrap identity");
 assert(migratorOwnershipGuard.includes("app_schemas_without_create"), "migrator guard must verify CREATE on every application schema");
 assert(migratorOwnershipGuard.includes("restricted_database_create_count"), "runtime, backup and read-only roles must not have database CREATE");
 assert(migratorOwnershipGuard.includes("restricted_schemas_with_create"), "runtime, backup and read-only roles must not have application-schema CREATE");
@@ -211,6 +212,7 @@ assert(migratorOwnershipGuard.includes("migrator_nonpublic_schema_create_count")
 assert(migratorOwnershipGuard.includes("\\quit 3"), "migrator ownership guard must fail closed");
 const deployScript = read("scripts/deploy-production.sh");
 assert(deployScript.includes("check-postgres-migrator-ownership.sql"), "production deployment must run the read-only migrator ownership guard");
+assert(deployScript.includes('-v bootstrap_user="$POSTGRES_BOOTSTRAP_USER"'), "deployment must pass the bootstrap identity to the ownership guard");
 assert(deployScript.includes('-v app_user="$POSTGRES_APP_USER"'), "deployment must pass the runtime identity to the ownership guard");
 assert(deployScript.includes('-v backup_user="$POSTGRES_BACKUP_USER"'), "deployment must pass the backup identity to the ownership guard");
 assert(deployScript.includes('-v readonly_user="$POSTGRES_READONLY_USER"'), "deployment must pass the read-only identity to the ownership guard");
