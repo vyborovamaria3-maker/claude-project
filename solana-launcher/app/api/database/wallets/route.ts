@@ -50,6 +50,7 @@ const SORT_SQL: Record<string, string> = {
 
 type CachedResponse = {
   at: number;
+  sourceSignature: string;
   payload: unknown;
 };
 
@@ -198,7 +199,7 @@ export async function GET(req: NextRequest) {
   const sourceSignature = getSourceSignature(db);
   const cacheKey = `${searchParams.toString()}|${sortBy}|${sortDir}`;
   const cached = responseCache.get(cacheKey);
-  if (cached && Date.now() - cached.at < RESPONSE_CACHE_TTL_MS) {
+  if (cached && cached.sourceSignature === sourceSignature && Date.now() - cached.at < RESPONSE_CACHE_TTL_MS) {
     return NextResponse.json(cached.payload, {
       headers: {
         "Cache-Control": `public, max-age=0, s-maxage=${Math.floor(RESPONSE_CACHE_TTL_MS / 1000)}`,
@@ -208,7 +209,7 @@ export async function GET(req: NextRequest) {
   const snapshotEntries = readSnapshot();
   const snapshotHit = snapshotEntries.find((entry) => entry.key === cacheKey && entry.sourceSignature === sourceSignature && Date.now() - entry.at < 5 * 60 * 1000);
   if (snapshotHit) {
-    responseCache.set(cacheKey, { at: snapshotHit.at, payload: snapshotHit.payload });
+    responseCache.set(cacheKey, { at: snapshotHit.at, sourceSignature, payload: snapshotHit.payload });
     return NextResponse.json(snapshotHit.payload, {
       headers: {
         "Cache-Control": "public, max-age=0, s-maxage=300",
@@ -466,7 +467,7 @@ export async function GET(req: NextRequest) {
     filters: { minPnl, minRoi, minWr, minMigrated, minTokens, minReports, search, tag, sortBy, sortDir },
   };
 
-  responseCache.set(cacheKey, { at: Date.now(), payload });
+  responseCache.set(cacheKey, { at: Date.now(), sourceSignature, payload });
   const nextEntries = snapshotEntries.filter((entry) => !(entry.key === cacheKey && entry.sourceSignature === sourceSignature));
   nextEntries.unshift({ key: cacheKey, sourceSignature, at: Date.now(), payload });
   writeSnapshot(nextEntries.slice(0, 40));
