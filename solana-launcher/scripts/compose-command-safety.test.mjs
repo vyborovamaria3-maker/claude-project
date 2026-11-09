@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -27,8 +27,11 @@ const subscriptionApiDockerfile = await readFile(resolve(root, "../solana-subscr
 const backendDockerfile = await readFile(resolve(root, "backend/Dockerfile"), "utf8");
 const subscriptionCompose = await readFile(resolve(root, "../solana-subscription-service/docker-compose.prod.yml"), "utf8");
 const subscriptionReadonlySql = await readFile(resolve(root, "../solana-subscription-service/scripts/provision-readonly-role.sql"), "utf8");
+const subscriptionRoleEntrypointPath = resolve(root, "../solana-subscription-service/scripts/run-readonly-role-provisioner.sh");
+const subscriptionRoleEntrypoint = await readFile(subscriptionRoleEntrypointPath, "utf8");
 const memecoinCompose = await readFile(resolve(root, "../memecoin-intelligence/docker-compose.production.yml"), "utf8");
 const memecoinReadonlySql = await readFile(resolve(root, "../memecoin-intelligence/scripts/provision-readonly-role.sql"), "utf8");
+const memecoinRoleEntrypoint = await readFile(resolve(root, "../memecoin-intelligence/scripts/run-readonly-role-provisioner.sh"), "utf8");
 const fullBacktestWorkflow = await readFile(resolve(root, "../.github/workflows/full-backtest-audit.yml"), "utf8");
 const telegramWorkflow = await readFile(resolve(root, "../.github/workflows/telegram-intelligence-v19-ci.yml"), "utf8");
 const predeployWorkflow = await readFile(resolve(root, "../.github/workflows/potapoff-predeploy-gate.yml"), "utf8");
@@ -158,9 +161,32 @@ test("Admin product data sources use dedicated read-only roles and shared Docker
   }
 });
 
-test("PostgreSQL role provisioners defer PGUSER expansion to the container shell", () => {
-  assert.match(subscriptionCompose, /test "\$\$\{PGUSER\}" != "solsub_readonly"/);
-  assert.match(memecoinCompose, /test "\$\$\{PGUSER\}" != "memecoin_readonly"/);
+test("Subscription and Memecoin provisioners guard bootstrap identity inside the container", () => {
+  assert.equal(subscriptionRoleEntrypoint, memecoinRoleEntrypoint);
+  assert.match(subscriptionRoleEntrypoint, /"\$PGUSER" = "\$POSTGRES_READONLY_USER"/);
+  assert.match(subscriptionRoleEntrypoint, /exec psql -X -v ON_ERROR_STOP=1 -f \/provision\/readonly-role\.sql/);
+  for (const compose of [subscriptionCompose, memecoinCompose]) {
+    assert.match(compose, /run-readonly-role-provisioner\.sh:\/provision\/run-readonly-role-provisioner\.sh:ro/);
+    assert.match(compose, /entrypoint: \["\/bin\/sh", "\/provision\/run-readonly-role-provisioner\.sh"\]/);
+    assert.doesNotMatch(compose, /command:[^\n]*PGUSER/);
+  }
+});
+
+test("read-only role provisioner refuses to bootstrap as its own restricted identity", () => {
+  const result = spawnSync("sh", [subscriptionRoleEntrypointPath], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PGHOST: "127.0.0.1",
+      PGDATABASE: "fixture",
+      PGUSER: "solsub_readonly",
+      PGPASSWORD: "fixture-only",
+      POSTGRES_READONLY_USER: "solsub_readonly",
+      POSTGRES_READONLY_PASSWORD: "fixture-only"
+    }
+  });
+  assert.equal(result.status, 64);
+  assert.match(result.stderr, /Refusing to provision a read-only role/);
 });
 
 test("Telegram bot Docker context excludes deployment environment secrets", () => {
