@@ -74,45 +74,51 @@ SELECT EXISTS (
 
 WITH extension_members AS (
   SELECT classid, objid FROM pg_depend WHERE deptype = 'e'
-),
-application_objects AS (
-  SELECT n.nspname AS schema_name, c.relowner AS owner_oid
-  FROM pg_class c
-  JOIN pg_namespace n ON n.oid = c.relnamespace
-  WHERE n.nspname <> 'information_schema'
-    AND n.nspname NOT LIKE 'pg_%'
-    AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
-    AND NOT EXISTS (
-      SELECT 1 FROM extension_members e
-      WHERE e.classid = 'pg_class'::regclass AND e.objid = c.oid
-    )
-  UNION ALL
-  SELECT n.nspname, p.proowner
-  FROM pg_proc p
-  JOIN pg_namespace n ON n.oid = p.pronamespace
-  WHERE n.nspname <> 'information_schema'
-    AND n.nspname NOT LIKE 'pg_%'
-    AND NOT EXISTS (
-      SELECT 1 FROM extension_members e
-      WHERE e.classid = 'pg_proc'::regclass AND e.objid = p.oid
-    )
-  UNION ALL
-  SELECT n.nspname, t.typowner
-  FROM pg_type t
-  JOIN pg_namespace n ON n.oid = t.typnamespace
-  WHERE n.nspname <> 'information_schema'
-    AND n.nspname NOT LIKE 'pg_%'
-    AND t.typtype IN ('b', 'c', 'd', 'e', 'm', 'p', 'r')
-    AND NOT EXISTS (
-      SELECT 1 FROM extension_members e
-      WHERE e.classid = 'pg_type'::regclass AND e.objid = t.oid
-    )
 )
-SELECT EXISTS (
-  SELECT 1 FROM application_objects
-  WHERE schema_name <> 'public'
-     OR pg_get_userbyid(owner_oid) IS DISTINCT FROM :'migrator_user'
+SELECT (
+  EXISTS (
+    SELECT 1
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname <> 'information_schema'
+      AND n.nspname NOT LIKE 'pg_%'
+      AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
+      AND (n.nspname <> 'public'
+        OR pg_get_userbyid(c.relowner) IS DISTINCT FROM :'migrator_user')
+      AND NOT EXISTS (
+        SELECT 1 FROM extension_members e
+        WHERE e.classid = 'pg_class'::regclass AND e.objid = c.oid
+      )
+  )
+  OR EXISTS (
+    SELECT 1
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname <> 'information_schema'
+      AND n.nspname NOT LIKE 'pg_%'
+      AND (n.nspname <> 'public'
+        OR pg_get_userbyid(p.proowner) IS DISTINCT FROM :'migrator_user')
+      AND NOT EXISTS (
+        SELECT 1 FROM extension_members e
+        WHERE e.classid = 'pg_proc'::regclass AND e.objid = p.oid
+      )
+  )
+  OR EXISTS (
+    SELECT 1
+    FROM pg_type t
+    JOIN pg_namespace n ON n.oid = t.typnamespace
+    WHERE n.nspname <> 'information_schema'
+      AND n.nspname NOT LIKE 'pg_%'
+      AND t.typtype IN ('b', 'c', 'd', 'e', 'm', 'p', 'r')
+      AND (n.nspname <> 'public'
+        OR pg_get_userbyid(t.typowner) IS DISTINCT FROM :'migrator_user')
+      AND NOT EXISTS (
+        SELECT 1 FROM extension_members e
+        WHERE e.classid = 'pg_type'::regclass AND e.objid = t.oid
+      )
+  )
 ) AS has_unprepared_application_owners \gset
+\echo 'Unprepared application object ownership:' :has_unprepared_application_owners
 \if :has_unprepared_application_owners
   \echo 'Role provisioning blocked: application objects require a separately reviewed migration-owner allowlist'
   \quit 3

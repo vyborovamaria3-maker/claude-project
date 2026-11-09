@@ -779,7 +779,7 @@ def assert_runtime_restricted() -> None:
             "GRANT admin_ci_ddl_helper TO admin_ci_runtime "
             "WITH INHERIT FALSE, SET TRUE"
         )
-    with psycopg.connect(MIGRATE) as db:
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as db:
         db.execute("GRANT CREATE ON SCHEMA public TO admin_ci_ddl_helper")
     try:
         with psycopg.connect(RUNTIME) as db:
@@ -797,7 +797,7 @@ def assert_runtime_restricted() -> None:
         else:
             raise AssertionError("SET-only helper CREATE grant was accepted")
     finally:
-        with psycopg.connect(MIGRATE) as db:
+        with psycopg.connect(BOOTSTRAP_ADMIN_DB) as db:
             db.execute("REVOKE CREATE ON SCHEMA public FROM admin_ci_ddl_helper")
         with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
             bootstrap.execute("REVOKE admin_ci_ddl_helper FROM admin_ci_runtime")

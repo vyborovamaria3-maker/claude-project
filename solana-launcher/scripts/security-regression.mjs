@@ -175,7 +175,7 @@ assert(!twitterBridgeClient.includes("follow_redirects=True"), "CLI must not for
 
 for (const serviceName of ["backend", "celery-worker", "twitter-discovery", "frontend"]) {
   const serviceStart = productionCompose.indexOf("\n  " + serviceName + ":\n");
-  assert.ok(serviceStart !== -1, "missing production service " + serviceName);
+  assert(serviceStart !== -1, "missing production service " + serviceName);
   const serviceBody = productionCompose.slice(serviceStart);
   const nextService = serviceBody.slice(1).search(/\n  [a-zA-Z0-9_-]+:\n/);
   const block = nextService < 0 ? serviceBody : serviceBody.slice(0, nextService + 1);

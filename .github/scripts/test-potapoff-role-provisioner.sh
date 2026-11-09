@@ -109,7 +109,7 @@ if run_psql "$bootstrap_user" "$bootstrap_password" \
   -v migrator_user="$migrator_user" -v migrator_password="$migrator_password" \
   -v backup_user="$backup_user" -v backup_password="$backup_password" \
   -v readonly_user="$readonly_user" -v readonly_password="$readonly_password" \
-  -f /tmp/provision-postgres-roles.sql >/dev/null 2>&1; then
+  -f /tmp/provision-postgres-roles.sql; then
   echo "Role provisioner accepted bootstrap-owned legacy objects" >&2
   exit 1
 fi
