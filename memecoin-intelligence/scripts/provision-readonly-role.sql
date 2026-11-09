@@ -1,67 +1,67 @@
 -- Legacy filename retained for compatibility: this provisions app, migrator and read-only roles.
 -- The bootstrap login is supplied by the container-side entrypoint and must not
 -- be any of the restricted identities created below.
-\\set ON_ERROR_STOP on
-\\getenv bootstrap_user PGUSER
-\\getenv app_user POSTGRES_APP_USER
-\\getenv app_password POSTGRES_APP_PASSWORD
-\\getenv migrator_user POSTGRES_MIGRATOR_USER
-\\getenv migrator_password POSTGRES_MIGRATOR_PASSWORD
-\\getenv readonly_user POSTGRES_READONLY_USER
-\\getenv readonly_password POSTGRES_READONLY_PASSWORD
-SELECT current_database() AS current_db \\gset
-SELECT current_user IN (:'app_user', :'migrator_user', :'readonly_user') AS unsafe_bootstrap \\gset
-\\if :unsafe_bootstrap
-\\echo 'Refusing to provision roles while connected as a restricted application role'
-\\quit 3
-\\endif
+\set ON_ERROR_STOP on
+\getenv bootstrap_user PGUSER
+\getenv app_user POSTGRES_APP_USER
+\getenv app_password POSTGRES_APP_PASSWORD
+\getenv migrator_user POSTGRES_MIGRATOR_USER
+\getenv migrator_password POSTGRES_MIGRATOR_PASSWORD
+\getenv readonly_user POSTGRES_READONLY_USER
+\getenv readonly_password POSTGRES_READONLY_PASSWORD
+SELECT current_database() AS current_db \gset
+SELECT current_user IN (:'app_user', :'migrator_user', :'readonly_user') AS unsafe_bootstrap \gset
+\if :unsafe_bootstrap
+\echo 'Refusing to provision roles while connected as a restricted application role'
+\quit 3
+\endif
 SELECT count(DISTINCT role_name)=3 AS unique_role_names
-FROM (VALUES (:'app_user'), (:'migrator_user'), (:'readonly_user')) AS roles(role_name) \\gset
-\\if :unique_role_names
-\\else
-\\echo 'Application, migration and read-only role names must be distinct'
-\\quit 3
-\\endif
-SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user') AS app_role_exists \\gset
-SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'migrator_user') AS migrator_role_exists \\gset
-SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'readonly_user') AS readonly_role_exists \\gset
+FROM (VALUES (:'app_user'), (:'migrator_user'), (:'readonly_user')) AS roles(role_name) \gset
+\if :unique_role_names
+\else
+\echo 'Application, migration and read-only role names must be distinct'
+\quit 3
+\endif
+SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user') AS app_role_exists \gset
+SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'migrator_user') AS migrator_role_exists \gset
+SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'readonly_user') AS readonly_role_exists \gset
 
-\\if :app_role_exists
+\if :app_role_exists
 ALTER ROLE :"app_user"
   WITH LOGIN PASSWORD :'app_password'
   NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
-\\else
+\else
 CREATE ROLE :"app_user"
   WITH LOGIN PASSWORD :'app_password'
   NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
-\\endif
+\endif
 
-\\if :migrator_role_exists
+\if :migrator_role_exists
 ALTER ROLE :"migrator_user"
   WITH LOGIN PASSWORD :'migrator_password'
   NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
-\\else
+\else
 CREATE ROLE :"migrator_user"
   WITH LOGIN PASSWORD :'migrator_password'
   NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
-\\endif
+\endif
 
-\\if :readonly_role_exists
+\if :readonly_role_exists
 ALTER ROLE :"readonly_user"
   WITH LOGIN PASSWORD :'readonly_password'
   NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
-\\else
+\else
 CREATE ROLE :"readonly_user"
   WITH LOGIN PASSWORD :'readonly_password'
   NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
-\\endif
+\endif
 
 -- Keep the restricted identities from inheriting or switching into any role.
 SELECT format('REVOKE %I FROM %I', parent_role.rolname, member_role.rolname)
 FROM pg_auth_members membership
 JOIN pg_roles parent_role ON parent_role.oid = membership.roleid
 JOIN pg_roles member_role ON member_role.oid = membership.member
-WHERE member_role.rolname IN (:'app_user', :'migrator_user', :'readonly_user') \\gexec
+WHERE member_role.rolname IN (:'app_user', :'migrator_user', :'readonly_user') \gexec
 
 -- The read-only role must never own application objects.
 REASSIGN OWNED BY :"readonly_user" TO :"bootstrap_user";
