@@ -181,7 +181,7 @@ assert(productionHealthcheck.includes("/api/internal/health/wallet-summary"), "d
 assert(productionHealthcheck.includes("x-internal-service-key"), "deployment healthcheck must authenticate the private readiness probe");
 
 const postgresRoleProvisioner = read("scripts/provision-postgres-roles.sql");
-assert(!/^\\s*REASSIGN\\s+OWNED\\b/m.test(postgresRoleProvisioner), "role provisioner must never blanket-reassign existing object ownership");
+assert(!/^\s*REASSIGN\s+OWNED\b/m.test(postgresRoleProvisioner), "role provisioner must never blanket-reassign existing object ownership");
 assert(!/ALTER DATABASE .* OWNER TO/.test(postgresRoleProvisioner), "migrator must not become database owner");
 assert(!postgresRoleProvisioner.includes("ALTER SCHEMA public OWNER"), "schema ownership transfer must remain a reviewed cutover");
 assert(postgresRoleProvisioner.includes("NOBYPASSRLS NOINHERIT"), "all provisioned roles must be non-inheriting and must not bypass RLS");
@@ -191,7 +191,7 @@ assert(postgresRoleProvisioner.includes("REVOKE CREATE ON DATABASE %I FROM %I"),
 assert(postgresRoleProvisioner.includes("REVOKE CREATE ON SCHEMA %I FROM %I"), "runtime, backup and read-only roles must not retain schema CREATE grants");
 assert(!postgresRoleProvisioner.includes("REVOKE ALL ON DATABASE"), "provisioner must preserve unrelated PUBLIC database ACLs pending inventory");
 assert(!postgresRoleProvisioner.includes("REVOKE ALL ON SCHEMA public"), "provisioner must preserve unrelated schema USAGE grants");
-assert(!/\\bGRANT\\s+pg_read_all_data\\b/i.test(postgresRoleProvisioner), "backup role must use explicit SELECT grants, not a broad predefined role");
+assert(!/\bGRANT\s+pg_read_all_data\b/i.test(postgresRoleProvisioner), "backup role must use explicit SELECT grants, not a broad predefined role");
 assert(postgresRoleProvisioner.includes('GRANT SELECT ON ALL TABLES IN SCHEMA public TO :"backup_user"'),
   "backup role must receive explicit table SELECT grants");
 const migratorOwnershipGuard = read("scripts/check-postgres-migrator-ownership.sql");
