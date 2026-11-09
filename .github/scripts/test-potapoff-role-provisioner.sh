@@ -117,6 +117,13 @@ done
   "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='public'")" == "$bootstrap_user" ]]
 [[ "$(run_psql "$backup_user" "$backup_password" -Atq -c "SHOW default_transaction_read_only")" == "on" ]]
 [[ "$(run_psql "$readonly_user" "$readonly_password" -Atq -c "SHOW default_transaction_read_only")" == "on" ]]
+
+# The dedicated backup login must be able to dump ordinary application data.
+archive="$scratch/potapoff-role-provisioner.dump"
+docker exec -e PGPASSWORD="$backup_password" "$container" \
+  pg_dump -h 127.0.0.1 -U "$backup_user" -d potapoff_ci -Fc > "$archive"
+test -s "$archive"
+docker exec -i "$container" pg_restore --list < "$archive" >/dev/null
 [[ "$(run_psql "$backup_user" "$backup_password" -Atq -c \
   "SELECT pg_has_role(current_user, 'pg_read_all_data', 'MEMBER')")" == "f" ]]
 
