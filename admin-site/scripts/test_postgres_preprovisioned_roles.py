@@ -64,6 +64,18 @@ def require_ci_only() -> None:
         )
 
 
+def assert_failed_preflight_did_not_create_roles() -> None:
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as db:
+        remaining = db.execute(
+            "SELECT rolname FROM pg_roles WHERE rolname = ANY(%s)",
+            (["admin_ci_runtime", "admin_ci_migration", "admin_ci_backup"],),
+        ).fetchall()
+    assert remaining == [], (
+        "failed read-only preflight must not create or mutate provisioned roles",
+        remaining,
+    )
+
+
 def provision_test_cluster() -> None:
     with psycopg.connect(FIXTURE, autocommit=True) as db:
         db.execute("CREATE DATABASE admin_roles_ci OWNER potapoff_admin")
@@ -120,6 +132,7 @@ def provision_test_cluster() -> None:
         assert "bootstrap_owned_composite" in str(exc), str(exc)
     else:
         raise AssertionError("Provisioner accepted bootstrap-owned application objects")
+    assert_failed_preflight_did_not_create_roles()
 
     with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
         assert bootstrap.execute(
@@ -176,6 +189,7 @@ def provision_test_cluster() -> None:
         assert "bootstrap_owned_composite" in str(exc), str(exc)
     else:
         raise AssertionError("Provisioner accepted a bootstrap-owned composite type")
+    assert_failed_preflight_did_not_create_roles()
 
     with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
         bootstrap.execute(
@@ -190,6 +204,7 @@ def provision_test_cluster() -> None:
         assert "security definer" in str(exc).lower(), str(exc)
     else:
         raise AssertionError("Provisioner accepted a PUBLIC-executable SECURITY DEFINER function")
+    assert_failed_preflight_did_not_create_roles()
 
     with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
         bootstrap.execute(
