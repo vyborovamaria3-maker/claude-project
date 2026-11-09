@@ -156,6 +156,8 @@ const socialClient = read("backend/app/services/social_intelligence.py");
 assert(socialClient.includes('"x-internal-service-key"'), "FastAPI social client must authenticate internal collection");
 const twitterBridgeClient = read("backend/app/cli/twitter_scrape_bridge.py");
 assert(twitterBridgeClient.includes('"x-internal-service-key"'), "Twitter discovery bridge must authenticate internal collection");
+assert(twitterBridgeClient.includes("candidate != configured_internal"), "CLI must not forward the service key to an arbitrary frontend host");
+assert(!twitterBridgeClient.includes("follow_redirects=True"), "CLI must not forward service credentials across redirects");
 const productionCompose = read("docker-compose.production.yml");
 for (const serviceName of ["backend", "celery-worker", "twitter-discovery", "frontend"]) {
   const serviceStart = productionCompose.indexOf("\n  " + serviceName + ":\n");
@@ -167,6 +169,7 @@ for (const serviceName of ["backend", "celery-worker", "twitter-discovery", "fro
 }
 assert(read(".env.example").includes("INTERNAL_SERVICE_API_KEY="), "deployment env example must document internal service key");
 assert(read("scripts/deploy-production.sh").includes("key=INTERNAL_SERVICE_API_KEY"), "deployment must generate/validate internal service key");
+assert(!productionCompose.includes("NEXT_PUBLIC_INTERNAL_SERVICE_API_KEY"), "internal service key must never be exposed to browser bundles");
 
 const telegramTasks = read("telegram-bot/handlers/tasks.ts");
 assert(
