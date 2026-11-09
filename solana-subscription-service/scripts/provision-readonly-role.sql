@@ -22,6 +22,9 @@ FROM (VALUES (:'app_user'), (:'migrator_user'), (:'readonly_user')) AS roles(rol
 \echo 'Application, migration and read-only role names must be distinct'
 \quit 3
 \endif
+
+BEGIN;
+
 SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user') AS app_role_exists \gset
 SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'migrator_user') AS migrator_role_exists \gset
 SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'readonly_user') AS readonly_role_exists \gset
@@ -103,3 +106,5 @@ ALTER ROLE :"readonly_user" IN DATABASE :"current_db"
   SET statement_timeout = '15s';
 ALTER ROLE :"readonly_user" IN DATABASE :"current_db"
   SET idle_in_transaction_session_timeout = '15s';
+
+COMMIT;
