@@ -105,7 +105,7 @@ def test_backup_uses_separate_database_backup_login():
 def test_runtime_env_filter_removes_bootstrap_and_migration_secrets():
     deploy = (LAUNCHER_ROOT / "scripts" / "deploy-production.sh").read_text(encoding="utf-8")
     expected_env_filter = (
-        "awk -F= '$1 !~ /^POSTGRES_/ && $1 != \"REDIS_PASSWORD\" { print }' "
+        "awk -F= '$1 !~ /^POSTGRES_/ && $1 != \"REDIS_PASSWORD\" && $1 != \"INTERNAL_SERVICE_API_KEY\" { print }' "
         ".env.server"
     )
     expected_readonly_assignment = (

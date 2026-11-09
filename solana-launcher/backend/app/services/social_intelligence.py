@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import os
+
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from statistics import mean
 from typing import Any
-import os
 
 import httpx
 from sqlalchemy import Select, func, select

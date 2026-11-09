@@ -156,7 +156,6 @@ assert(tradeDb.includes("initializedDb"), "SQLite schema initialization must be 
 assert(tradeDb.includes("getReadOnlyDb"), "SQLite must expose a dedicated read-only connection");
 assert(tradeDb.includes("query_only = ON"), "SQLite read-only connections must reject all writes");
 
-const routeAuth = read("lib/routeAuth.ts");
 assert(routeAuth.includes("hasValidInternalServiceKey"), "internal X calls need a dedicated service auth check");
 assert(routeAuth.includes("timingSafeEqual"), "internal service credentials must be compared in constant time");
 const proxy = read("proxy.ts");

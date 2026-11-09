@@ -48,7 +48,10 @@ def _collector_base(args: argparse.Namespace, settings: object) -> str:
             and os.getenv("INTERNAL_SERVICE_API_KEY", "").strip()
             and candidate != configured_internal
         ):
-            raise ValueError("--frontend-base must match FRONTEND_INTERNAL_URL when the internal service key is enabled")
+            raise ValueError(
+                "--frontend-base must match FRONTEND_INTERNAL_URL when "
+                "the internal service key is enabled"
+            )
         return candidate
     if environment in {"production", "prod", "docker"}:
         return configured_internal

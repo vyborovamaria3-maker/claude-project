@@ -79,7 +79,7 @@ def _assert_public_application_objects_owned(
             FROM pg_class AS c
             JOIN pg_namespace AS n ON n.oid = c.relnamespace
             WHERE n.nspname <> 'information_schema'
-              AND n.nspname NOT LIKE 'pg_%'
+              AND n.nspname NOT LIKE 'pg_%%'
               AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
               AND NOT EXISTS (
                   SELECT 1 FROM extension_members AS e
@@ -96,7 +96,7 @@ def _assert_public_application_objects_owned(
             FROM pg_proc AS p
             JOIN pg_namespace AS n ON n.oid = p.pronamespace
             WHERE n.nspname <> 'information_schema'
-              AND n.nspname NOT LIKE 'pg_%'
+              AND n.nspname NOT LIKE 'pg_%%'
               AND NOT EXISTS (
                   SELECT 1 FROM extension_members AS e
                   WHERE e.classid = 'pg_proc'::regclass AND e.objid = p.oid
@@ -111,7 +111,7 @@ def _assert_public_application_objects_owned(
             FROM pg_type AS t
             JOIN pg_namespace AS n ON n.oid = t.typnamespace
             WHERE n.nspname <> 'information_schema'
-              AND n.nspname NOT LIKE 'pg_%'
+              AND n.nspname NOT LIKE 'pg_%%'
               -- Include user-defined base, composite, domain, enum, range, multirange and pseudo-types.
               AND t.typtype IN ('b', 'c', 'd', 'e', 'm', 'p', 'r')
               AND NOT EXISTS (
