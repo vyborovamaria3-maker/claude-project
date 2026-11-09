@@ -593,8 +593,8 @@ fi
   -e "PGPASSWORD=$POSTGRES_BOOTSTRAP_PASSWORD" \
   postgres psql -X -v ON_ERROR_STOP=1 \
   -v migrator_user="$POSTGRES_MIGRATOR_USER" \
-  -U "$POSTGRES_BOOTSTRAP_USER" -d potapoff \
-  -f "$DEPLOY_DIR/scripts/check-postgres-migrator-ownership.sql" >/dev/null
+  -U "$POSTGRES_BOOTSTRAP_USER" -d potapoff -f - \
+  < "$DEPLOY_DIR/scripts/check-postgres-migrator-ownership.sql"
 
 DEPLOYMENT_STARTED=1
 printf '%s\n' "$PREVIOUS_TAG" > .previous-image-tag
