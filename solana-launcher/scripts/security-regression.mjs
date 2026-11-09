@@ -146,6 +146,7 @@ const migrationImporter = read("scripts/import-migration-xlsx.ts");
 assert(migrationImporter.includes("rebuildWalletSummary(db)"), "XLSX import must rebuild wallet summary after the batch");
 const tradeDb = read("lib/trade/db.ts");
 assert(tradeDb.includes("busy_timeout = 5000"), "SQLite connection must configure a busy timeout");
+assert(tradeDb.indexOf("busy_timeout = 5000") < tradeDb.indexOf("journal_mode = WAL"), "SQLite busy timeout must be set before WAL negotiation");
 assert(tradeDb.includes("initializedDb"), "SQLite schema initialization must be cached per process");
 
 const routeAuth = read("lib/routeAuth.ts");
@@ -163,6 +164,7 @@ assert(socialClient.includes("base != configured_internal"), "FastAPI must not f
 assert(socialClient.includes("follow_redirects=False"), "FastAPI must not forward the service key across redirects");
 const twitterBridgeClient = read("backend/app/cli/twitter_scrape_bridge.py");
 assert(twitterBridgeClient.includes('"x-internal-service-key"'), "Twitter discovery bridge must authenticate internal collection");
+assert(twitterBridgeClient.includes('environment in {"production", "prod", "docker"}'), "Twitter CLI must fail closed for all production environment aliases");
 assert(twitterBridgeClient.includes("candidate != configured_internal"), "CLI must not forward the service key to an arbitrary frontend host");
 assert(!twitterBridgeClient.includes("follow_redirects=True"), "CLI must not forward service credentials across redirects");
 const productionCompose = read("docker-compose.production.yml");
