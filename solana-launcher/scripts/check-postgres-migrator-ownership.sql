@@ -10,12 +10,14 @@ SELECT EXISTS (
   \quit 3
 \endif
 
-SELECT count(*)::integer AS missing_restricted_roles
-FROM (VALUES (:'app_user'), (:'backup_user'), (:'readonly_user')) AS restricted(role_name)
-WHERE NOT EXISTS (
-  SELECT 1 FROM pg_roles WHERE rolname = restricted.role_name
-) \gset
-\if :missing_restricted_roles
+SELECT EXISTS (
+  SELECT 1
+  FROM (VALUES (:'app_user'), (:'backup_user'), (:'readonly_user')) AS restricted(role_name)
+  WHERE NOT EXISTS (
+    SELECT 1 FROM pg_roles WHERE rolname = restricted.role_name
+  )
+) AS has_missing_restricted_roles \gset
+\if :has_missing_restricted_roles
   \echo 'Production migration blocked: app, backup or read-only role is missing'
   \quit 3
 \endif
@@ -31,10 +33,12 @@ SELECT COALESCE((
   \quit 3
 \endif
 
-SELECT count(*)::integer AS restricted_database_create_count
-FROM (VALUES (:'app_user'), (:'backup_user'), (:'readonly_user')) AS restricted(role_name)
-WHERE has_database_privilege(restricted.role_name, current_database(), 'CREATE') \gset
-\if :restricted_database_create_count
+SELECT EXISTS (
+  SELECT 1
+  FROM (VALUES (:'app_user'), (:'backup_user'), (:'readonly_user')) AS restricted(role_name)
+  WHERE has_database_privilege(restricted.role_name, current_database(), 'CREATE')
+) AS has_restricted_database_create \gset
+\if :has_restricted_database_create
   \echo 'Production migration blocked: runtime, backup or read-only role has database CREATE'
   \quit 3
 \endif
@@ -111,23 +115,23 @@ application_schemas AS (
   JOIN application_objects o ON o.schema_name = n.nspname
 )
 SELECT
-  (
-    SELECT count(*)::integer
+  EXISTS (
+    SELECT 1
     FROM application_objects o CROSS JOIN migrator m
     WHERE o.owner_oid <> m.oid
-  ) AS non_migrator_object_count,
-  (
-    SELECT count(*)::integer
+  ) AS has_non_migrator_objects,
+  EXISTS (
+    SELECT 1
     FROM application_schemas
     WHERE nspname <> 'public'
-  ) AS unsupported_application_schema_count,
-  (
-    SELECT count(*)::integer
+  ) AS has_unsupported_application_schema,
+  EXISTS (
+    SELECT 1
     FROM application_schemas s CROSS JOIN migrator m
     WHERE NOT has_schema_privilege(m.rolname, s.oid, 'CREATE')
-  ) AS app_schemas_without_create,
-  (
-    SELECT count(*)::integer
+  ) AS has_app_schema_without_create,
+  EXISTS (
+    SELECT 1
     FROM pg_namespace s
     WHERE s.nspname <> 'information_schema'
       AND s.nspname NOT LIKE 'pg_%'
@@ -136,17 +140,17 @@ SELECT
         OR has_schema_privilege(:'backup_user', s.oid, 'CREATE')
         OR has_schema_privilege(:'readonly_user', s.oid, 'CREATE')
       )
-  ) AS restricted_schemas_with_create,
-  (
-    SELECT count(*)::integer
+  ) AS has_restricted_schema_create,
+  EXISTS (
+    SELECT 1
     FROM pg_namespace s CROSS JOIN migrator m
     WHERE s.nspname <> 'public'
       AND s.nspname <> 'information_schema'
       AND s.nspname NOT LIKE 'pg_%'
       AND has_schema_privilege(m.rolname, s.oid, 'CREATE')
-  ) AS migrator_nonpublic_schema_create_count,
-  (
-    SELECT count(*)::integer
+  ) AS has_migrator_nonpublic_schema_create,
+  EXISTS (
+    SELECT 1
     FROM pg_proc p
     JOIN pg_namespace n ON n.oid = p.pronamespace
     CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) acl
@@ -159,37 +163,37 @@ SELECT
         SELECT 1 FROM extension_members e
         WHERE e.classid = 'pg_proc'::regclass AND e.objid = p.oid
       )
-  ) AS public_security_definer_count
+  ) AS has_public_security_definer_execute
 \gset
 
-\if :unsupported_application_schema_count
+\if :has_unsupported_application_schema
   \echo 'Production migration blocked: non-public application schema requires separately reviewed grants and default privileges'
   \quit 3
 \endif
 
-\if :non_migrator_object_count
+\if :has_non_migrator_objects
   \echo 'Production migration blocked: non-extension application objects are not owned by the migration role.'
   \echo 'Run the catalog inventory, review an explicit object-level ownership allowlist, and rehearse forward/rollback on an isolated restore.'
   \echo 'This guard is read-only and does not execute REASSIGN OWNED or alter database objects.'
   \quit 3
 \endif
 
-\if :app_schemas_without_create
+\if :has_app_schema_without_create
   \echo 'Production migration blocked: migration role lacks CREATE on an application schema'
   \quit 3
 \endif
 
-\if :restricted_schemas_with_create
+\if :has_restricted_schema_create
   \echo 'Production migration blocked: runtime, backup or read-only role has CREATE on an application schema'
   \quit 3
 \endif
 
-\if :migrator_nonpublic_schema_create_count
+\if :has_migrator_nonpublic_schema_create
   \echo 'Production migration blocked: migration role has CREATE outside the approved public schema'
   \quit 3
 \endif
 
-\if :public_security_definer_count
+\if :has_public_security_definer_execute
   \echo 'Production migration blocked: SECURITY DEFINER function is executable by PUBLIC; review and grant execution explicitly'
   \quit 3
 \endif
