@@ -129,6 +129,7 @@ docker exec -i "$container" pg_restore --list < "$archive" >/dev/null
 
 # The deployment guard must block before the reviewed object-level cutover.
 if run_psql "$bootstrap_user" "$bootstrap_password" -v migrator_user="$migrator_user" \
+  -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
   -f /tmp/check-postgres-migrator-ownership.sql >/dev/null 2>&1; then
   echo "Ownership guard unexpectedly accepted bootstrap-owned legacy objects" >&2
   exit 1
@@ -146,6 +147,7 @@ run_psql "$bootstrap_user" "$bootstrap_password" -c "
 " >/dev/null
 
 run_psql "$bootstrap_user" "$bootstrap_password" -v migrator_user="$migrator_user" \
+  -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
   -f /tmp/check-postgres-migrator-ownership.sql >/dev/null
 
 # Migration DDL succeeds only after the allowlisted ownership transfer.
