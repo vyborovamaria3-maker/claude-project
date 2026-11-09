@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 import { getDb } from "../../../../lib/trade/db";
+import { getWalletSummaryStatus } from "../../../../lib/trade/wallet-summary";
 import { checkRateLimit, getClientIp } from "../../../../lib/rateLimit";
 
 export const dynamic = "force-dynamic";
@@ -133,83 +134,6 @@ type ParsedTokenRow = {
   last_trade_at: number | null;
 };
 
-function ensureWalletSummary(db: ReturnType<typeof getDb>) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS database_wallet_summary (
-      wallet TEXT PRIMARY KEY,
-      avg_pnl REAL,
-      avg_roi REAL,
-      avg_wr REAL,
-      avg_migrated_pct REAL,
-      avg_fast_trades_pct REAL,
-      avg_total_tokens REAL,
-      avg_migrated_tokens REAL,
-      total_rockets INTEGER,
-      reports INTEGER,
-      source_signature TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_database_wallet_summary_pnl ON database_wallet_summary(avg_pnl DESC);
-    CREATE INDEX IF NOT EXISTS idx_database_wallet_summary_roi ON database_wallet_summary(avg_roi DESC);
-    CREATE INDEX IF NOT EXISTS idx_database_wallet_summary_wr ON database_wallet_summary(avg_wr DESC);
-    CREATE INDEX IF NOT EXISTS idx_database_wallet_summary_migrated ON database_wallet_summary(avg_migrated_pct DESC);
-    CREATE INDEX IF NOT EXISTS idx_database_wallet_summary_reports ON database_wallet_summary(reports DESC);
-    CREATE TABLE IF NOT EXISTS database_wallet_summary_meta (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
-  `);
-
-  const source = db.prepare(`
-    SELECT
-      COALESCE(MAX(rowid), 0) AS max_rowid,
-      (SELECT revision FROM database_source_revisions WHERE name='migration_wallet_rows') AS revision
-    FROM migration_wallet_rows
-  `).get() as { max_rowid: number; revision: number };
-  const sourceSignature = `${source.max_rowid}:${source.revision}`;
-  const stored = db.prepare("SELECT value FROM database_wallet_summary_meta WHERE key = 'source_signature'").get() as { value: string } | undefined;
-  if (stored?.value === sourceSignature) return;
-  const rebuild = db.transaction(() => {
-    db.prepare("DELETE FROM database_wallet_summary").run();
-    db.prepare(`
-      INSERT INTO database_wallet_summary (
-        wallet,
-        avg_pnl,
-        avg_roi,
-        avg_wr,
-        avg_migrated_pct,
-        avg_fast_trades_pct,
-        avg_total_tokens,
-        avg_migrated_tokens,
-        total_rockets,
-        reports,
-        source_signature
-      )
-      SELECT
-        wallet,
-        AVG(pnl) AS avg_pnl,
-        AVG(roi) AS avg_roi,
-        AVG(wr) AS avg_wr,
-        AVG(migrated_pct) AS avg_migrated_pct,
-        AVG(fast_trades_pct) AS avg_fast_trades_pct,
-        AVG(total_tokens) AS avg_total_tokens,
-        AVG(migrated_tokens) AS avg_migrated_tokens,
-        SUM(COALESCE(rockets, 0)) AS total_rockets,
-        COUNT(*) AS reports,
-        ? AS source_signature
-      FROM migration_wallet_rows
-      WHERE wallet IS NOT NULL AND wallet != ''
-      GROUP BY wallet
-    `).run(sourceSignature);
-    db.prepare(`
-      INSERT INTO database_wallet_summary_meta (key, value)
-      VALUES ('source_signature', ?)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    `).run(sourceSignature);
-  });
-
-  rebuild();
-}
-
 function getSourceSignature(db: ReturnType<typeof getDb>) {
   const rows = db.prepare(`
     SELECT
@@ -259,6 +183,19 @@ export async function GET(req: NextRequest) {
   const sortBy = SORTABLE.has(sortByRaw) ? sortByRaw : "avg_pnl";
   const sortExpr = SORT_SQL[sortBy] ?? SORT_SQL.avg_pnl;
   const sortDir = SORT_DIR_ALLOWED.has(sortDirRaw) ? sortDirRaw : "DESC";
+  const db = getDb();
+  const summaryStatus = getWalletSummaryStatus(db);
+  if (!summaryStatus.ready) {
+    return NextResponse.json(
+      {
+        error: "Wallet summary is stale or not initialized. Run npm run wallet-summary:rebuild after importing data.",
+        code: "WALLET_SUMMARY_STALE",
+        summaryStatus,
+      },
+      { status: 409, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+  const sourceSignature = getSourceSignature(db);
   const cacheKey = `${searchParams.toString()}|${sortBy}|${sortDir}`;
   const cached = responseCache.get(cacheKey);
   if (cached && Date.now() - cached.at < RESPONSE_CACHE_TTL_MS) {
@@ -268,10 +205,6 @@ export async function GET(req: NextRequest) {
       },
     });
   }
-
-  const db = getDb();
-  ensureWalletSummary(db);
-  const sourceSignature = getSourceSignature(db);
   const snapshotEntries = readSnapshot();
   const snapshotHit = snapshotEntries.find((entry) => entry.key === cacheKey && entry.sourceSignature === sourceSignature && Date.now() - entry.at < 5 * 60 * 1000);
   if (snapshotHit) {
