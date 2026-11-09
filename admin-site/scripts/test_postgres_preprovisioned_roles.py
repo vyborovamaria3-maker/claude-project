@@ -68,12 +68,22 @@ def assert_failed_preflight_did_not_create_roles() -> None:
     with psycopg.connect(BOOTSTRAP_ADMIN_DB) as db:
         remaining = db.execute(
             "SELECT rolname FROM pg_roles WHERE rolname = ANY(%s)",
-            (["admin_ci_runtime", "admin_ci_migration", "admin_ci_backup"],),
+            (["admin_ci_runtime", "admin_ci_backup"],),
         ).fetchall()
+        migrator = db.execute(
+            "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
+            "rolreplication, rolbypassrls, rolinherit "
+            "FROM pg_roles WHERE rolname = 'admin_ci_migration'"
+        ).fetchone()
     assert remaining == [], (
-        "failed read-only preflight must not create or mutate provisioned roles",
+        "failed read-only preflight must not create application or backup roles",
         remaining,
     )
+    if migrator is not None:
+        assert migrator == (False, False, False, False, False, False, False), (
+            "failed read-only preflight changed the explicitly prepared migration role",
+            migrator,
+        )
 
 
 def provision_test_cluster() -> None:
@@ -158,6 +168,14 @@ def provision_test_cluster() -> None:
             ).fetchall()
         )
         assert set(owners.values()) == {"potapoff_admin"}, owners
+
+        # The migration identity is created explicitly by the isolated test
+        # allowlist step; production provisioning must not create or mutate it
+        # before every existing object owner has passed preflight.
+        bootstrap.execute("CREATE ROLE admin_ci_migration NOLOGIN")
+        bootstrap.execute(
+            "GRANT CREATE ON SCHEMA public TO admin_ci_migration"
+        )
 
         # This is the explicit, test-only object allowlist rehearsal. Production
         # provisioning never performs these ALTER OWNER statements automatically.
