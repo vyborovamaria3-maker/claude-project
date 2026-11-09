@@ -27,7 +27,9 @@ FROM (
              'login=' || r.rolcanlogin::text,
              'replication=' || r.rolreplication::text,
              'bypassrls=' || r.rolbypassrls::text,
-             'connlimit=' || r.rolconnlimit::text
+             'connlimit=' || r.rolconnlimit::text,
+             'validuntil=' || COALESCE(r.rolvaliduntil::text,'<none>'),
+             'config=' || COALESCE(array_to_json(r.rolconfig)::text,'<none>')
            )
       FROM pg_roles r WHERE r.rolname NOT LIKE 'pg_%'
     UNION ALL
@@ -84,6 +86,23 @@ FROM (
                       FROM unnest(p.proacl) AS x) END
       FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
      WHERE n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg_%'
+    UNION ALL
+    SELECT 'type',n.nspname,t.typname,
+           pg_get_userbyid(t.typowner),
+           CASE WHEN t.typacl IS NULL THEN '<default>'
+                WHEN cardinality(t.typacl)=0 THEN '<empty>'
+                ELSE (SELECT string_agg(x::text,',' ORDER BY x::text)
+                      FROM unnest(t.typacl) AS x) END
+      FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace
+     WHERE n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg_%'
+    UNION ALL
+    SELECT 'large-object','',lom.oid::text,
+           pg_get_userbyid(lom.lomowner),
+           CASE WHEN lom.lomacl IS NULL THEN '<default>'
+                WHEN cardinality(lom.lomacl)=0 THEN '<empty>'
+                ELSE (SELECT string_agg(x::text,',' ORDER BY x::text)
+                      FROM unnest(lom.lomacl) AS x) END
+      FROM pg_largeobject_metadata lom
     UNION ALL
     SELECT 'default-acl',COALESCE(n.nspname,'<all>'),d.defaclobjtype::text,
            pg_get_userbyid(d.defaclrole),
