@@ -199,7 +199,7 @@ WHERE n.nspname = 'public'
       AND extension_member.objid = t.oid
       AND extension_member.deptype = 'e'
   )
-\\gexec
+\gexec
 
 -- New objects created by the migration identity automatically grant only the
 -- privileges required by runtime and read-only consumers.
