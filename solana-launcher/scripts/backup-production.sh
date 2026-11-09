@@ -75,12 +75,13 @@ if [[ ! "$POSTGRES_BACKUP_USER" =~ ^[a-z_][a-z0-9_]{0,62}$ || ! "$POSTGRES_BACKU
 fi
 
 docker exec -e "PGPASSWORD=$POSTGRES_BACKUP_PASSWORD" "$POSTGRES_CONTAINER" \
-  pg_dump -h 127.0.0.1 -U "$POSTGRES_BACKUP_USER" -d potapoff --create -Fc \
+  pg_dump -h 127.0.0.1 -U "$POSTGRES_BACKUP_USER" -d potapoff -Fc \
   > "$DEST/postgres.dump"
 
 test -s "$DEST/postgres.dump"
-# --create preserves database owner, ACLs and database-level settings for the
-# role-aware restore rehearsal. CRC/TOC parse detects truncated archives.
+# The custom archive retains database metadata; pg_restore --create in the
+# role-aware rehearsal restores database owner, ACLs and database settings.
+# CRC/TOC parse detects truncated archives.
 docker exec -i "$POSTGRES_CONTAINER" pg_restore --list < "$DEST/postgres.dump" >/dev/null
 # Preserve non-secret global role declarations and an exact catalog fingerprint
 # for full owner/ACL restore in an offline, disconnected container.
@@ -115,7 +116,7 @@ fi
 # The bootstrap login is reserved below for global role metadata and catalog
 # fingerprints, which require elevated catalog visibility.
 docker exec -e "PGPASSWORD=$ADMIN_STATE_BACKUP_PASSWORD" "$ADMIN_POSTGRES_CONTAINER" \
-  pg_dump -h 127.0.0.1 -U "$ADMIN_STATE_BACKUP_USER" -d potapoff_admin --create -Fc \
+  pg_dump -h 127.0.0.1 -U "$ADMIN_STATE_BACKUP_USER" -d potapoff_admin -Fc \
   > "$DEST/admin-postgres.dump"
 
 test -s "$DEST/admin-postgres.dump"
