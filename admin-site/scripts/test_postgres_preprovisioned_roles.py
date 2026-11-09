@@ -756,7 +756,7 @@ def assert_runtime_restricted() -> None:
 
     # Role granted CREATE on an *auxiliary* schema is not DML-only, even
     # when public schema and database-level CREATE are denied.
-    with psycopg.connect(MIGRATE) as db:
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as db:
         db.execute("CREATE SCHEMA auxiliary_ci")
         db.execute("GRANT CREATE ON SCHEMA auxiliary_ci TO admin_ci_runtime")
     try:
@@ -766,7 +766,7 @@ def assert_runtime_restricted() -> None:
     else:
         raise AssertionError("Auxiliary schema CREATE was accepted")
     finally:
-        with psycopg.connect(MIGRATE) as db:
+        with psycopg.connect(BOOTSTRAP_ADMIN_DB) as db:
             db.execute("DROP SCHEMA auxiliary_ci CASCADE")
     verify_preprovisioned_schema(RUNTIME)
 

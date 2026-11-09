@@ -40,6 +40,25 @@ test("ACK only after destination commit",async()=>{
   assert.ok(log.indexOf("release")<log.indexOf("ACK"));
 });
 
+test("delivery remains compatible with migration 010 before migration 018 adds coalescing",async()=>{
+  const log=[];
+  const destination={connect:async()=>({
+    query:async sql=>{
+      log.push(sql);
+      if(sql.includes("to_regclass('analytics_invalidation_queue')"))
+        return {rows:[{ready:true,coalesce_key_ready:false}]};
+      return {rows:sql.includes("RETURNING event_key")?[{event_key:"ok"}]:[]};
+    },
+    release:()=>log.push("release"),
+  })};
+  const source={claim:async()=>[sample()],ack:async()=>true,fail:async()=>true};
+  const result=await runDeliveryBatch(source,destination,
+    {workerId:"worker1",batchSize:1,leaseMs:5000});
+  assert.equal(result.delivered,1);
+  assert.equal(result.failed,0);
+  assert.ok(!log.some(sql=>typeof sql==="string"&&sql.includes("INSERT INTO analytics_invalidation_queue")));
+});
+
 test("rollback before NACK on failed destination write",async()=>{
   const log=[];
   const source={claim:async()=>[sample()],ack:async()=>{log.push("ACK");return true},

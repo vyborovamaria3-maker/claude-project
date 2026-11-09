@@ -85,6 +85,24 @@ docker cp "$root/solana-launcher/scripts/check-postgres-migrator-ownership.sql" 
 
 # Bootstrap-owned application objects must block provisioning before any
 # password, role attribute, membership or ACL is changed.
+legacy_table_owner="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
+  "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.legacy_records'::regclass")"
+[[ "$legacy_table_owner" == "$bootstrap_user" ]] || {
+  echo "Legacy fixture is not bootstrap-owned: $legacy_table_owner" >&2
+  exit 1
+}
+unprepared_public_relations="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
+  SELECT count(*)
+  FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+  WHERE n.nspname='public' AND c.relkind IN ('r','p','S','v','m','f')
+    AND pg_get_userbyid(c.relowner) IS DISTINCT FROM '$migrator_user'
+")"
+[[ "$unprepared_public_relations" -gt 0 ]] || {
+  echo "Legacy fixture does not contain an unprepared public relation" >&2
+  exit 1
+}
+echo "Preflight fixture verified: owner=$legacy_table_owner unprepared_relations=$unprepared_public_relations"
+
 if run_psql "$bootstrap_user" "$bootstrap_password" \
   -v bootstrap_user="$bootstrap_user" \
   -v app_user="$app_user" -v app_password="$app_password" \

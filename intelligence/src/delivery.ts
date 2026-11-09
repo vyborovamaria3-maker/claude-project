@@ -107,8 +107,17 @@ async function queueAffectedTokensForRecalculation(
   if(!["x","tg"].includes(event.sourceSystem))return;
   if(!["tweet_observed","message_observed","message_deleted",
       "token_link_verified","token_links_invalidated"].includes(event.eventKind))return;
-  const present=await tx.query("SELECT to_regclass('analytics_invalidation_queue') IS NOT NULL AS ready");
-  if(present.rows[0]?.ready!==true)return; // Staged migration: old collectors remain backward-compatible.
+  const present=await tx.query(`
+    SELECT to_regclass('analytics_invalidation_queue') IS NOT NULL AS ready,
+      EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid=to_regclass('analytics_invalidation_queue')
+          AND attname='coalesce_key' AND NOT attisdropped
+      ) AS coalesce_key_ready
+  `);
+  // Migration 010 creates the queue; migration 018 adds revision coalescing.
+  // Do not break source delivery during a staged rollout between those versions.
+  if(present.rows[0]?.ready!==true || present.rows[0]?.coalesce_key_ready!==true)return;
   const evidenceRef=body.registryEvent.evidenceRef.sourceId;
   const previous=await tx.query(`SELECT DISTINCT canonical_token_id FROM token_link_observations
     WHERE source_system=$1 AND evidence_source_id=$2 AND state='verified'
