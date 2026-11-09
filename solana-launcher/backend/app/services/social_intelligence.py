@@ -569,15 +569,20 @@ async def refresh_x_for_mint(
     symbol: str | None = None,
 ) -> dict[str, Any]:
     base = backend_frontend_url.rstrip("/")
+    environment = os.getenv("ENVIRONMENT", "").strip().lower()
+    production_mode = environment in {"production", "prod", "docker"}
+    internal_service_key = os.getenv("INTERNAL_SERVICE_API_KEY", "").strip()
+    if production_mode and not internal_service_key:
+        raise RuntimeError("INTERNAL_SERVICE_API_KEY is required for production X collection")
+    configured_internal = os.getenv("FRONTEND_INTERNAL_URL", "http://frontend:3000").strip().rstrip("/")
+    if production_mode and base != configured_internal:
+        raise ValueError("X collection service key may only be sent to FRONTEND_INTERNAL_URL")
+
     params = {"mint": mint_address, "scope": "mentions", "strategy": "auto"}
     if symbol:
         params["symbol"] = symbol
-    internal_service_key = os.getenv("INTERNAL_SERVICE_API_KEY", "").strip()
-    if os.getenv("ENVIRONMENT", "").lower() == "production" and not internal_service_key:
-        raise RuntimeError("INTERNAL_SERVICE_API_KEY is required for production X collection")
-
     headers = {"x-internal-service-key": internal_service_key} if internal_service_key else {}
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
         response = await client.post(
             f"{base}/api/trade/dev-twitter",
             params=params,
