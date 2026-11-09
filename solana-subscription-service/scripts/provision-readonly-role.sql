@@ -150,6 +150,8 @@ CREATE ROLE :"readonly_user"
 \endif
 
 REVOKE ALL PRIVILEGES ON DATABASE :"current_db" FROM :"app_user", :"migrator_user", :"readonly_user";
+-- PUBLIC membership grants apply even to NOINHERIT roles; remove legacy CREATE.
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 REVOKE ALL PRIVILEGES ON SCHEMA public FROM :"app_user", :"migrator_user", :"readonly_user";
 REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM :"app_user", :"migrator_user", :"readonly_user";
 REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM :"app_user", :"migrator_user", :"readonly_user";
