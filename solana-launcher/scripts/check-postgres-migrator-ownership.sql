@@ -35,17 +35,37 @@ SELECT COALESCE((
 
 SELECT EXISTS (
   SELECT 1
+  FROM pg_database d
+  CROSS JOIN LATERAL aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) acl
+  WHERE d.datname = current_database()
+    AND acl.grantee = 0
+    AND acl.privilege_type IN ('CONNECT', 'TEMPORARY')
+) AS has_public_database_access \gset
+\if :has_public_database_access
+  \echo 'Production migration blocked: PUBLIC retains CONNECT or TEMPORARY on the database'
+  \quit 3
+\endif
+
+SELECT EXISTS (
+  SELECT 1
   FROM (VALUES (:'app_user'), (:'backup_user'), (:'readonly_user')) AS restricted(role_name)
   WHERE has_database_privilege(restricted.role_name, current_database(), 'CREATE')
-) AS has_restricted_database_create \gset
-\if :has_restricted_database_create
-  \echo 'Production migration blocked: runtime, backup or read-only role has database CREATE'
+     OR has_database_privilege(restricted.role_name, current_database(), 'TEMPORARY')
+) AS has_restricted_database_privileges \gset
+\if :has_restricted_database_privileges
+  \echo 'Production migration blocked: runtime, backup or read-only role has database CREATE or TEMPORARY'
   \quit 3
 \endif
 
 SELECT has_database_privilege(:'migrator_user', current_database(), 'CREATE') AS migrator_can_create_database \gset
 \if :migrator_can_create_database
   \echo 'Production migration blocked: migration role must not have database CREATE'
+  \quit 3
+\endif
+
+SELECT has_database_privilege(:'migrator_user', current_database(), 'TEMPORARY') AS migrator_can_create_temporary \gset
+\if :migrator_can_create_temporary
+  \echo 'Production migration blocked: migration role must not have database TEMPORARY'
   \quit 3
 \endif
 

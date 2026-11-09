@@ -148,6 +148,26 @@ for role in "$app_user" "$migrator_user" "$backup_user" "$readonly_user"; do
   [[ "$memberships" == "0" ]] || { echo "$role has unexpected role memberships" >&2; exit 1; }
 done
 
+public_database_access="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
+  SELECT EXISTS (
+    SELECT 1 FROM pg_database d
+    CROSS JOIN LATERAL aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) acl
+    WHERE d.datname=current_database()
+      AND acl.grantee=0
+      AND acl.privilege_type IN ('CONNECT','TEMPORARY')
+  )
+")"
+[[ "$public_database_access" == "f" ]] || {
+  echo "PUBLIC retains database CONNECT or TEMPORARY" >&2
+  exit 1
+}
+for role in "$app_user" "$migrator_user" "$backup_user" "$readonly_user"; do
+  [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
+    "SELECT has_database_privilege('$role', current_database(), 'CONNECT')")" == "t" ]]
+  [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
+    "SELECT has_database_privilege('$role', current_database(), 'TEMPORARY')")" == "f" ]]
+done
+
 [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
   "SELECT has_database_privilege('$migrator_user', current_database(), 'CREATE')")" == "f" ]]
 [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
