@@ -125,9 +125,7 @@ def _assert_public_application_objects_owned(
             pg_get_userbyid(app_object.owner_oid) AS owner_name
         FROM application_objects AS app_object
         WHERE app_object.schema_name <> 'public'
-           OR app_object.owner_oid <> (
-               SELECT oid FROM pg_roles WHERE rolname = %s
-           )
+           OR pg_get_userbyid(app_object.owner_oid) IS DISTINCT FROM %s
         ORDER BY app_object.schema_name, app_object.object_name
         """,
         (migrator_user,),
@@ -196,7 +194,7 @@ def provision_roles(
     ):
         _validate_role(name, password)
 
-    with psycopg.connect(bootstrap_dsn, autocommit=True) as db:
+    with psycopg.connect(bootstrap_dsn) as db:
         bootstrap_user, database = db.execute(
             "SELECT current_user, current_database()"
         ).fetchone()
@@ -226,16 +224,18 @@ def provision_roles(
                 "explicit operator-approved change before retrying"
             )
 
-        _ensure_login_role(db, app_user, app_password)
-        _ensure_login_role(db, migrator_user, migrator_password)
-        _ensure_login_role(db, backup_user, backup_password)
-        _revoke_role_memberships(db, roles)
-
-        # This is a read-only ownership preflight, not an ownership migration.
+        # Complete every read-only preflight before changing role attributes,
+        # passwords, memberships or ACLs. The connection uses one transaction,
+        # so any later provisioning error rolls back the complete role cutover.
         # Do not REASSIGN OWNED, ALTER DATABASE OWNER, ALTER SCHEMA OWNER or
         # silently transfer existing application objects here.
         _assert_public_application_objects_owned(db, migrator_user)
         _assert_no_public_security_definer(db)
+
+        _ensure_login_role(db, app_user, app_password)
+        _ensure_login_role(db, migrator_user, migrator_password)
+        _ensure_login_role(db, backup_user, backup_password)
+        _revoke_role_memberships(db, roles)
 
         db.execute(
             sql.SQL(
