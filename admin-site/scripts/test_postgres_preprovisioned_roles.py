@@ -47,6 +47,10 @@ RUNTIME = (
     f"postgresql://admin_ci_runtime:{RUNTIME_PASSWORD}"
     "@127.0.0.1:55434/admin_roles_ci"
 )
+BACKUP = (
+    f"postgresql://admin_ci_backup:{BACKUP_PASSWORD}"
+    "@127.0.0.1:55434/admin_roles_ci"
+)
 
 
 def require_ci_only() -> None:
@@ -64,48 +68,189 @@ def provision_test_cluster() -> None:
     with psycopg.connect(FIXTURE, autocommit=True) as db:
         db.execute("CREATE DATABASE admin_roles_ci OWNER potapoff_admin")
 
-    # Simulate application relations left behind by the former bootstrap owner.
-    # The provisioner must transfer these without attempting to reassign
-    # PostgreSQL's shared/system objects owned by the bootstrap superuser.
     with psycopg.connect(BOOTSTRAP_ADMIN_DB, autocommit=True) as db:
+        original_database_owner = db.execute(
+            "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()"
+        ).fetchone()[0]
+        original_schema_owner = db.execute(
+            "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='public'"
+        ).fetchone()[0]
+        assert original_database_owner == "potapoff_admin"
+        db.execute(
+            "CREATE TYPE public.bootstrap_owned_state AS ENUM ('legacy', 'current')"
+        )
         db.execute(
             "CREATE TABLE public.bootstrap_owned_legacy "
-            "(id bigint PRIMARY KEY, payload text NOT NULL)"
+            "(id bigint PRIMARY KEY, payload text NOT NULL, state public.bootstrap_owned_state)"
         )
+        db.execute("INSERT INTO public.bootstrap_owned_legacy VALUES (1, 'legacy-row', 'legacy')")
         db.execute("CREATE SEQUENCE public.bootstrap_owned_legacy_seq")
+        db.execute(
+            "CREATE VIEW public.bootstrap_owned_legacy_view "
+            "AS SELECT id, payload FROM public.bootstrap_owned_legacy"
+        )
+        db.execute(
+            "CREATE FUNCTION public.bootstrap_owned_legacy_definer() RETURNS bigint "
+            "LANGUAGE sql SECURITY DEFINER AS 'SELECT count(*) FROM public.bootstrap_owned_legacy'"
+        )
+        db.execute(
+            "REVOKE ALL ON FUNCTION public.bootstrap_owned_legacy_definer() FROM PUBLIC"
+        )
 
-    # Exercise the same role-provisioning path used by the production Compose
-    # one-shot service, including ownership transfer and database ACL closure.
-    provision_roles(
-        bootstrap_dsn=BOOTSTRAP_ADMIN_DB,
-        app_user="admin_ci_runtime",
-        app_password=RUNTIME_PASSWORD,
-        migrator_user="admin_ci_migration",
-        migrator_password=MIGRATOR_PASSWORD,
-        backup_user="admin_ci_backup",
-        backup_password=BACKUP_PASSWORD,
-    )
+    def provision() -> None:
+        provision_roles(
+            bootstrap_dsn=BOOTSTRAP_ADMIN_DB,
+            app_user="admin_ci_runtime",
+            app_password=RUNTIME_PASSWORD,
+            migrator_user="admin_ci_migration",
+            migrator_password=MIGRATOR_PASSWORD,
+            backup_user="admin_ci_backup",
+            backup_password=BACKUP_PASSWORD,
+        )
+
+    # Existing bootstrap-owned objects must block provisioning. The
+    # provisioner must not silently transfer any database/schema/object owner.
+    try:
+        provision()
+    except RuntimeError as exc:
+        assert "ownership preflight" in str(exc).lower(), str(exc)
+    else:
+        raise AssertionError("Provisioner accepted bootstrap-owned application objects")
+
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+        assert bootstrap.execute(
+            "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()"
+        ).fetchone()[0] == original_database_owner
+        assert bootstrap.execute(
+            "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='public'"
+        ).fetchone()[0] == original_schema_owner
+        owners = dict(
+            bootstrap.execute(
+                """
+                SELECT c.relname, owner_role.rolname
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid=c.relnamespace
+                JOIN pg_roles owner_role ON owner_role.oid=c.relowner
+                WHERE n.nspname='public'
+                  AND c.relname IN (
+                    'bootstrap_owned_legacy',
+                    'bootstrap_owned_legacy_seq',
+                    'bootstrap_owned_legacy_view'
+                  )
+                """
+            ).fetchall()
+        )
+        assert set(owners.values()) == {"potapoff_admin"}, owners
+
+        # This is the explicit, test-only object allowlist rehearsal. Production
+        # provisioning never performs these ALTER OWNER statements automatically.
+        bootstrap.execute(
+            "ALTER TABLE public.bootstrap_owned_legacy OWNER TO admin_ci_migration"
+        )
+        bootstrap.execute(
+            "ALTER SEQUENCE public.bootstrap_owned_legacy_seq OWNER TO admin_ci_migration"
+        )
+        bootstrap.execute(
+            "ALTER VIEW public.bootstrap_owned_legacy_view OWNER TO admin_ci_migration"
+        )
+        bootstrap.execute(
+            "ALTER FUNCTION public.bootstrap_owned_legacy_definer() OWNER TO admin_ci_migration"
+        )
+        bootstrap.execute(
+            "ALTER TYPE public.bootstrap_owned_state OWNER TO admin_ci_migration"
+        )
+        bootstrap.execute(
+            "GRANT EXECUTE ON FUNCTION public.bootstrap_owned_legacy_definer() TO PUBLIC"
+        )
+
+    # Even after owners are prepared, PUBLIC execution of a SECURITY DEFINER
+    # routine is an independent blocker.
+    try:
+        provision()
+    except RuntimeError as exc:
+        assert "security definer" in str(exc).lower(), str(exc)
+    else:
+        raise AssertionError("Provisioner accepted a PUBLIC-executable SECURITY DEFINER function")
+
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+        bootstrap.execute(
+            "REVOKE ALL ON FUNCTION public.bootstrap_owned_legacy_definer() FROM PUBLIC"
+        )
+
+    provision()
+
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+        database_owner = bootstrap.execute(
+            "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()"
+        ).fetchone()[0]
+        schema_owner = bootstrap.execute(
+            "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='public'"
+        ).fetchone()[0]
+        assert database_owner == original_database_owner, database_owner
+        assert schema_owner == original_schema_owner, schema_owner
 
     with psycopg.connect(MIGRATE) as db:
         owners = dict(
             db.execute(
                 """
                 SELECT c.relname, owner_role.rolname
-                FROM pg_class AS c
-                JOIN pg_namespace AS n ON n.oid = c.relnamespace
-                JOIN pg_roles AS owner_role ON owner_role.oid = c.relowner
-                WHERE n.nspname = 'public'
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid=c.relnamespace
+                JOIN pg_roles owner_role ON owner_role.oid=c.relowner
+                WHERE n.nspname='public'
                   AND c.relname IN (
-                      'bootstrap_owned_legacy',
-                      'bootstrap_owned_legacy_seq'
+                    'bootstrap_owned_legacy',
+                    'bootstrap_owned_legacy_seq',
+                    'bootstrap_owned_legacy_view'
                   )
                 """
             ).fetchall()
         )
-    assert owners == {
-        "bootstrap_owned_legacy": "admin_ci_migration",
-        "bootstrap_owned_legacy_seq": "admin_ci_migration",
-    }, f"Bootstrap-owned application relations were not transferred: {owners}"
+        function_owner = db.execute(
+            """
+            SELECT pg_get_userbyid(proowner)
+            FROM pg_proc
+            WHERE oid='public.bootstrap_owned_legacy_definer()'::regprocedure
+            """
+        ).fetchone()[0]
+        type_owner = db.execute(
+            """
+            SELECT pg_get_userbyid(typowner)
+            FROM pg_type
+            WHERE oid='public.bootstrap_owned_state'::regtype
+            """
+        ).fetchone()[0]
+    assert set(owners.values()) == {"admin_ci_migration"}, owners
+    assert function_owner == "admin_ci_migration", function_owner
+    assert type_owner == "admin_ci_migration", type_owner
+
+    with psycopg.connect(BACKUP) as db:
+        flags = db.execute(
+            "SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls "
+            "FROM pg_roles WHERE rolname=current_user"
+        ).fetchone()
+        assert flags == (False, False, False, False, False), flags
+        assert db.execute(
+            "SELECT pg_has_role(current_user, 'pg_read_all_data', 'MEMBER')"
+        ).fetchone()[0] is False
+        assert db.execute(
+            "SELECT has_database_privilege(current_user,current_database(),'CREATE'), "
+            "has_schema_privilege(current_user,'public','CREATE')"
+        ).fetchone() == (False, False)
+        assert db.execute("SHOW default_transaction_read_only").fetchone()[0] == "on"
+        assert db.execute(
+            "SELECT payload FROM public.bootstrap_owned_legacy WHERE id=1"
+        ).fetchone()[0] == "legacy-row"
+        db.execute("SET default_transaction_read_only=off")
+        try:
+            with db.transaction():
+                db.execute(
+                    "UPDATE public.bootstrap_owned_legacy SET payload='backup-must-not-write'"
+                )
+        except InsufficientPrivilege:
+            pass
+        else:
+            raise AssertionError("Admin backup role unexpectedly wrote application data")
 
 
 def schema_objects(dsn: str) -> tuple[tuple[str, str, str], ...]:
@@ -126,7 +271,18 @@ def bootstrap_schema_under_migration_owner() -> None:
         runtime_dsn=RUNTIME,
         app_user="admin_ci_runtime",
         migrator_user="admin_ci_migration",
+        backup_user="admin_ci_backup",
     )
+    with psycopg.connect(BACKUP) as db:
+        assert db.execute("SELECT count(*) FROM public.admin_audit").fetchone()[0] == 0
+        db.execute("SET default_transaction_read_only=off")
+        try:
+            with db.transaction():
+                db.execute("DELETE FROM public.admin_audit")
+        except InsufficientPrivilege:
+            pass
+        else:
+            raise AssertionError("Admin backup role unexpectedly deleted audit rows")
 
 
 def assert_runtime_restricted() -> None:
@@ -149,10 +305,29 @@ def assert_runtime_restricted() -> None:
     os.environ["ADMIN_PG_SCHEMA_MODE"] = "preprovisioned"
     verify_preprovisioned_schema(RUNTIME)
 
+    # Runtime startup must reject a SECURITY DEFINER routine that remains
+    # executable by PUBLIC, even if the rest of the schema ACLs are correct.
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+        bootstrap.execute(
+            "CREATE FUNCTION public.admin_ci_public_definer() RETURNS integer "
+            "LANGUAGE sql SECURITY DEFINER AS 'SELECT 1'"
+        )
+    try:
+        try:
+            verify_preprovisioned_schema(RUNTIME)
+        except RuntimeError as exc:
+            assert "security definer" in str(exc).lower(), str(exc)
+        else:
+            raise AssertionError("PUBLIC-executable SECURITY DEFINER function was accepted")
+    finally:
+        with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+            bootstrap.execute("DROP FUNCTION public.admin_ci_public_definer()")
+    verify_preprovisioned_schema(RUNTIME)
+
     # Membership in a table-owner role must be rejected even when that role
     # has no schema CREATE grant. This exercises the object-owner check rather
     # than the separate SET-reachable schema privilege gate.
-    with psycopg.connect(FIXTURE) as bootstrap:
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
         bootstrap.execute("CREATE ROLE admin_ci_table_owner NOLOGIN")
         bootstrap.execute("GRANT CREATE ON SCHEMA public TO admin_ci_table_owner")
         bootstrap.execute("ALTER TABLE public.feature_flags OWNER TO admin_ci_table_owner")
@@ -169,7 +344,7 @@ def assert_runtime_restricted() -> None:
         else:
             raise AssertionError("SET-able table-owner membership was accepted")
     finally:
-        with psycopg.connect(FIXTURE) as bootstrap:
+        with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
             bootstrap.execute("REVOKE admin_ci_table_owner FROM admin_ci_runtime")
             bootstrap.execute("ALTER TABLE public.feature_flags OWNER TO admin_ci_migration")
             bootstrap.execute("DROP ROLE admin_ci_table_owner")
@@ -254,7 +429,7 @@ def assert_runtime_restricted() -> None:
 
     # Dangerous predefined memberships are not visible in the role's
     # NOSUPERUSER flags; do not let a runtime login SET ROLE into one.
-    with psycopg.connect(FIXTURE) as bootstrap:
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
         bootstrap.execute(
             "GRANT pg_execute_server_program TO admin_ci_runtime "
             "WITH INHERIT FALSE, SET TRUE"
@@ -267,13 +442,13 @@ def assert_runtime_restricted() -> None:
         else:
             raise AssertionError("Dangerous PostgreSQL predefined-role membership was accepted")
     finally:
-        with psycopg.connect(FIXTURE) as bootstrap:
+        with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
             bootstrap.execute("REVOKE pg_execute_server_program FROM admin_ci_runtime")
     verify_preprovisioned_schema(RUNTIME)
 
     # Custom role attributes are also dangerous through SET ROLE even
     # when the role owns no application schema or table.
-    with psycopg.connect(FIXTURE) as bootstrap:
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
         bootstrap.execute("CREATE ROLE admin_ci_privileged_helper NOLOGIN CREATEROLE")
         bootstrap.execute(
             "GRANT admin_ci_privileged_helper TO admin_ci_runtime "
@@ -290,7 +465,7 @@ def assert_runtime_restricted() -> None:
         else:
             raise AssertionError("SET-only CREATEROLE membership was accepted")
     finally:
-        with psycopg.connect(FIXTURE) as bootstrap:
+        with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
             bootstrap.execute("REVOKE admin_ci_privileged_helper FROM admin_ci_runtime")
             bootstrap.execute("DROP ROLE admin_ci_privileged_helper")
     verify_preprovisioned_schema(RUNTIME)
@@ -298,7 +473,7 @@ def assert_runtime_restricted() -> None:
     # A runtime account can be a non-INHERITING member of the schema-owner
     # role while retaining SET ROLE. Such an account can still become the
     # migration owner for DDL; startup verification must fail closed.
-    with psycopg.connect(FIXTURE) as bootstrap:
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
         bootstrap.execute(
             "GRANT admin_ci_migration TO admin_ci_runtime "
             "WITH INHERIT FALSE, SET TRUE"
@@ -324,7 +499,7 @@ def assert_runtime_restricted() -> None:
         else:
             raise AssertionError("SET-only migration-role membership was not rejected")
     finally:
-        with psycopg.connect(FIXTURE) as bootstrap:
+        with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
             bootstrap.execute("REVOKE admin_ci_migration FROM admin_ci_runtime")
     verify_preprovisioned_schema(RUNTIME)
 
@@ -471,7 +646,7 @@ def assert_runtime_restricted() -> None:
     # SET-able helper role has CREATE, while the runtime login itself does
     # not and neither role owns the application tables. Owner-only scans miss
     # this precise privilege escalation through SET ROLE.
-    with psycopg.connect(FIXTURE) as bootstrap:
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
         bootstrap.execute("CREATE ROLE admin_ci_ddl_helper NOLOGIN")
         bootstrap.execute(
             "GRANT admin_ci_ddl_helper TO admin_ci_runtime "
@@ -497,7 +672,7 @@ def assert_runtime_restricted() -> None:
     finally:
         with psycopg.connect(MIGRATE) as db:
             db.execute("REVOKE CREATE ON SCHEMA public FROM admin_ci_ddl_helper")
-        with psycopg.connect(FIXTURE) as bootstrap:
+        with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
             bootstrap.execute("REVOKE admin_ci_ddl_helper FROM admin_ci_runtime")
             bootstrap.execute("DROP ROLE admin_ci_ddl_helper")
     verify_preprovisioned_schema(RUNTIME)
