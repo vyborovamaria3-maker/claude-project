@@ -66,6 +66,8 @@ run_psql "$bootstrap_user" "$bootstrap_password" -c "
   CREATE FUNCTION public.legacy_label_count() RETURNS bigint
     LANGUAGE sql STABLE AS \$\$ SELECT count(*) FROM public.legacy_records \$\$;
   REVOKE ALL ON FUNCTION public.legacy_label_count() FROM PUBLIC;
+  CREATE FUNCTION public.legacy_security_definer() RETURNS integer
+    LANGUAGE sql SECURITY DEFINER AS \$\$ SELECT 1 \$\$;
 " >/dev/null
 
 docker cp "$root/solana-launcher/scripts/provision-postgres-roles.sql" "$container:/tmp/provision-postgres-roles.sql" >/dev/null
@@ -142,10 +144,21 @@ run_psql "$bootstrap_user" "$bootstrap_password" -c "
   ALTER TABLE public.alembic_version OWNER TO $migrator_user;
   ALTER VIEW public.legacy_projection OWNER TO $migrator_user;
   ALTER FUNCTION public.legacy_label_count() OWNER TO $migrator_user;
+  ALTER FUNCTION public.legacy_security_definer() OWNER TO $migrator_user;
   ALTER TYPE public.legacy_state OWNER TO $migrator_user;
   GRANT EXECUTE ON FUNCTION public.legacy_label_count() TO $app_user;
 " >/dev/null
 
+if run_psql "$bootstrap_user" "$bootstrap_password" -v migrator_user="$migrator_user" \
+  -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
+  -f /tmp/check-postgres-migrator-ownership.sql >/dev/null 2>&1; then
+  echo "Ownership guard unexpectedly accepted a PUBLIC-executable SECURITY DEFINER function" >&2
+  exit 1
+fi
+run_psql "$bootstrap_user" "$bootstrap_password" -c "
+  REVOKE ALL ON FUNCTION public.legacy_security_definer() FROM PUBLIC;
+  GRANT EXECUTE ON FUNCTION public.legacy_security_definer() TO $app_user;
+" >/dev/null
 run_psql "$bootstrap_user" "$bootstrap_password" -v migrator_user="$migrator_user" \
   -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
   -f /tmp/check-postgres-migrator-ownership.sql >/dev/null
@@ -188,6 +201,13 @@ run_psql "$app_user" "$app_password" -c "
 
 [[ "$(run_psql "$app_user" "$app_password" -Atq -c \
   "SELECT public.legacy_label_count()")" == "1" ]]
+[[ "$(run_psql "$app_user" "$app_password" -Atq -c \
+  "SELECT public.legacy_security_definer()")" == "1" ]]
+if run_psql "$backup_user" "$backup_password" -c \
+  "SELECT public.legacy_security_definer()" >/dev/null 2>&1; then
+  echo "Backup role unexpectedly executed a SECURITY DEFINER function" >&2
+  exit 1
+fi
 if run_psql "$backup_user" "$backup_password" -c \
   "SELECT public.legacy_label_count()" >/dev/null 2>&1; then
   echo "Backup role unexpectedly executed an application function" >&2
