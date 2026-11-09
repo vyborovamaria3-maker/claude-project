@@ -10,6 +10,7 @@ BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/potapoff-admin}"
 EXPECTED_ORIGIN="${EXPECTED_ORIGIN:-https://admin.potapoff.fun}"
 EXPECTED_COMMIT="${EXPECTED_COMMIT:-}"
 COMPOSE=(docker compose --project-directory "$ADMIN_DIR" -f "$ADMIN_DIR/docker-compose.yml")
+ADMIN_STATE_MIGRATION_APPLIED=0
 
 log() { printf '[deploy] %s\n' "$*"; }
 die() { printf '[deploy] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -135,11 +136,22 @@ backup_state() {
   done
   docker inspect potapoff-admin > "$dir/potapoff-admin.inspect.json" 2>/dev/null || true
   docker inspect potapoff-intelligence > "$dir/potapoff-intelligence.inspect.json" 2>/dev/null || true
-  if docker inspect potapoff-admin >/dev/null 2>&1; then
-    docker cp potapoff-admin:/var/lib/potapoff-admin/audit.db "$dir/audit.db" 2>/dev/null || true
-  fi
   printf '%s\n' "$dir" > "$BACKUP_ROOT/LATEST"
   log "backup created: $dir"
+}
+
+backup_legacy_admin_state() {
+  local backup_dir
+  backup_dir="$(cat "$BACKUP_ROOT/LATEST")"
+  if "${COMPOSE[@]}" run --rm --no-deps admin-db-provisioner sh -c 'test -f "$ADMIN_AUDIT_DB"'; then
+    log "capturing a consistent SQLite audit snapshot after Admin writes are stopped"
+    "${COMPOSE[@]}" run --rm --no-deps admin-db-provisioner \
+      python scripts/backup_admin_state_sqlite.py > "$backup_dir/audit.db"
+    [[ -s "$backup_dir/audit.db" ]] || die "SQLite admin state backup is empty"
+    chmod 0600 "$backup_dir/audit.db"
+  else
+    log "no legacy SQLite admin state found; backup skipped"
+  fi
 }
 
 verify_sources() {
@@ -170,9 +182,11 @@ PY
 }
 
 migrate_admin_state() {
+  ADMIN_STATE_MIGRATION_APPLIED=0
   if "${COMPOSE[@]}" run --rm --no-deps admin-db-provisioner sh -c 'test -f "$ADMIN_AUDIT_DB"'; then
-    log "migrating SQLite admin state to shared PostgreSQL with the dedicated migration role"
+    log "synchronizing SQLite admin state to shared PostgreSQL with the dedicated migration role"
     "${COMPOSE[@]}" run --rm --no-deps admin-db-provisioner python scripts/migrate_admin_state_to_postgres.py
+    ADMIN_STATE_MIGRATION_APPLIED=1
   else
     log "no legacy SQLite admin state found; migration skipped"
   fi
@@ -204,6 +218,24 @@ deploy() {
   preflight
   backup_state
 
+  local admin_was_running=0 admin_stopped=0 admin_cutover_started=0
+  restore_previous_admin_on_failure() {
+    local status="$1"
+    trap - EXIT
+    if (( status != 0 && admin_was_running == 1 && admin_stopped == 1 &&
+          admin_cutover_started == 0 && ADMIN_STATE_MIGRATION_APPLIED == 0 )); then
+      log "deployment failed before SQLite cutover; restarting the previous Admin container"
+      docker start potapoff-admin >/dev/null 2>&1 || true
+      wait_healthy potapoff-admin 120 || true
+    elif (( status != 0 && admin_stopped == 1 &&
+            admin_cutover_started == 0 && ADMIN_STATE_MIGRATION_APPLIED == 1 )); then
+      log "SQLite-to-PostgreSQL sync completed; previous Admin remains stopped to prevent divergent writes"
+      log "Operator recovery must roll forward or explicitly restore the captured SQLite snapshot"
+    fi
+    exit "$status"
+  }
+  trap 'restore_previous_admin_on_failure "$?"' EXIT
+
   docker network inspect potapoff-shared >/dev/null 2>&1 || docker network create potapoff-shared >/dev/null
   log "building immutable runtime images"
   "${COMPOSE[@]}" build --pull admin intelligence-worker
@@ -213,6 +245,17 @@ deploy() {
   wait_healthy potapoff-admin-postgres 120
 
   verify_sources
+
+  # Freeze the legacy SQLite writer before taking the final snapshot and
+  # migrating it. This prevents audit/revocation rows being committed after
+  # the migration snapshot but before the Admin container cutover.
+  if [[ "$(docker inspect -f '{{.State.Running}}' potapoff-admin 2>/dev/null || true)" == "true" ]]; then
+    admin_was_running=1
+    admin_stopped=1
+    log "stopping the previous Admin container to freeze legacy SQLite writes"
+    "${COMPOSE[@]}" stop --timeout 30 admin
+  fi
+  backup_legacy_admin_state
 
   # Provision restricted roles and the schema before attempting the SQLite
   # cutover. The migration itself runs separately with the migrator identity.
@@ -226,16 +269,26 @@ deploy() {
   "${COMPOSE[@]}" exec -T admin-postgres pg_dump -U potapoff_admin -d potapoff_admin -Fc > "$backup_dir/admin-state-post-migration.dump"
   chmod 0600 "$backup_dir/admin-state-post-migration.dump" || true
 
-  if grep -Eq '^POTAPOFF_INTELLIGENCE_BACKEND=postgres[[:space:]]*$' "$ADMIN_DIR/.env.intelligence"; then
+  if grep -Eq '^POTAPOFF_INTELLIGENCE_BACKEND=postgres[[:space:]]*
+
+case "$MODE" in
+  preflight) preflight ;;
+  deploy) deploy ;;
+  smoke) smoke ;;
+  *) die "usage: $0 {preflight|deploy|smoke}" ;;
+esac
+ "$ADMIN_DIR/.env.intelligence"; then
     log "initializing PostgreSQL intelligence schema"
     "${COMPOSE[@]}" run --rm intelligence-worker python -m intelligence init-db
   fi
 
   log "cutting over admin and intelligence containers"
+  admin_cutover_started=1
   "${COMPOSE[@]}" up -d admin intelligence-worker
   wait_healthy potapoff-admin 180
   wait_healthy potapoff-intelligence 180
   smoke
+  trap - EXIT
   log "DEPLOY_OK backup=$backup_dir"
 }
 

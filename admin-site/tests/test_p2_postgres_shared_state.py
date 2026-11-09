@@ -205,9 +205,21 @@ class PostgresSharedStateTests(unittest.TestCase):
                     "WHERE migration_key='admin-sqlite-to-postgres-v1'"
                 )
             first = subprocess.run([sys.executable, str(script)], cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=True)
+            self.assertIn("MIGRATION_OK already_applied=false", first.stdout)
+
+            second_nonce = uuid.uuid4().hex
+            with sqlite3.connect(path) as source:
+                source.execute(
+                    "INSERT INTO admin_audit(created_at,username,action,success,details_json) VALUES(?,?,?,?,?)",
+                    ("2026-08-16T09:01:00+00:00", "admin", f"migration_second_{suffix}", 1, '{"ok":true}'),
+                )
+                source.execute(
+                    "INSERT INTO revoked_admin_sessions VALUES(?,?,?)",
+                    (second_nonce, now + 900, "2026-08-16T09:01:00+00:00"),
+                )
+
             second = subprocess.run([sys.executable, str(script)], cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=True)
-            self.assertIn("MIGRATION_OK", first.stdout)
-            self.assertIn("already applied", second.stdout)
+            self.assertIn("MIGRATION_OK already_applied=true", second.stdout)
 
         control = PostgresControlStore(DSN)
         self.assertTrue(any(row["name"] == f"migration.{suffix}" and row["enabled"] for row in control.flags()))
@@ -215,6 +227,12 @@ class PostgresSharedStateTests(unittest.TestCase):
         self.assertTrue(any(row["key"] == f"mig_{suffix}" for row in profiles.list("telegram")))
         security = PostgresAdminSessionStore(DSN, ip_binding=lambda _request: "", ua_binding=lambda _request: "")
         self.assertTrue(security.is_revoked(nonce))
+        self.assertTrue(security.is_revoked(second_nonce))
+        with psycopg.connect(DSN, connect_timeout=5) as db:
+            self.assertIsNotNone(db.execute(
+                "SELECT 1 FROM admin_audit WHERE action=%s",
+                (f"migration_second_{suffix}",),
+            ).fetchone())
 
 
 if __name__ == "__main__":

@@ -830,11 +830,24 @@ def assert_sqlite_state_migration_uses_migrator() -> None:
         first = subprocess.run(
             command, cwd=ROOT, env=env, capture_output=True, text=True, check=True
         )
-        assert "MIGRATION_OK" in first.stdout, first.stdout
+        assert "MIGRATION_OK already_applied=false" in first.stdout, first.stdout
+
+        second_marker = marker + "_second"
+        second_nonce = "revoked_ci_" + uuid.uuid4().hex
+        with sqlite3.connect(sqlite_path) as source:
+            source.execute(
+                "INSERT INTO admin_audit VALUES(42,?,?,?,?,?,?,?)",
+                ("2026-11-09T00:01:00+00:00", "admin", "127.0.0.1", second_marker, None, 1, '{"source":"ci-second"}'),
+            )
+            source.execute(
+                "INSERT INTO revoked_admin_sessions VALUES(?,?,?)",
+                (second_nonce, 2_000_000_000, "2026-11-09T00:01:00+00:00"),
+            )
+
         second = subprocess.run(
             command, cwd=ROOT, env=env, capture_output=True, text=True, check=True
         )
-        assert "already applied" in second.stdout, second.stdout
+        assert "MIGRATION_OK already_applied=true" in second.stdout, second.stdout
 
     with psycopg.connect(RUNTIME) as db:
         assert db.execute(
@@ -845,6 +858,12 @@ def assert_sqlite_state_migration_uses_migrator() -> None:
         ).fetchone() is not None
         assert db.execute(
             "SELECT 1 FROM revoked_admin_sessions WHERE nonce=%s", (nonce,)
+        ).fetchone() is not None
+        assert db.execute(
+            "SELECT 1 FROM admin_audit WHERE action=%s", (second_marker,)
+        ).fetchone() is not None
+        assert db.execute(
+            "SELECT 1 FROM revoked_admin_sessions WHERE nonce=%s", (second_nonce,)
         ).fetchone() is not None
         assert db.execute(
             "SELECT 1 FROM admin_state_migrations "

@@ -55,6 +55,9 @@ def main() -> None:
 
     with contextlib.closing(sqlite3.connect(sqlite_path)) as source:
         source.row_factory = sqlite3.Row
+        # Pin one consistent SQLite read snapshot across every table. The deploy
+        # also stops the legacy Admin writer before this process starts.
+        source.execute("BEGIN")
         with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=5) as target, target.cursor() as cur:
             cur.execute(
                 """CREATE TABLE IF NOT EXISTS admin_state_migrations(
@@ -63,11 +66,13 @@ def main() -> None:
                 )"""
             )
             cur.execute("SELECT 1 FROM admin_state_migrations WHERE migration_key=%s", (MIGRATION_KEY,))
-            if cur.fetchone():
-                print(f"SKIP {MIGRATION_KEY}: already applied")
-                return
+            already_applied = cur.fetchone() is not None
 
-            counts: dict[str, int] = {}
+            # Re-sync on every deploy. Upserts keep mutable settings current,
+            # append-only audit/revocation rows are conflict-safe, and a prior
+            # successful migration must not hide writes made by a legacy app
+            # that was restarted after an interrupted cutover.
+            counts: dict[str, int] = {};
 
             if _table_exists(source, "feature_flags"):
                 rows = source.execute("SELECT name,enabled,description,updated_by,updated_at FROM feature_flags").fetchall()
@@ -150,9 +155,18 @@ def main() -> None:
                     )
                 counts["revoked_admin_sessions"] = len(rows)
 
-            cur.execute("INSERT INTO admin_state_migrations(migration_key) VALUES(%s)", (MIGRATION_KEY,))
+            cur.execute(
+                "INSERT INTO admin_state_migrations(migration_key) VALUES(%s) "
+                "ON CONFLICT(migration_key) DO NOTHING",
+                (MIGRATION_KEY,),
+            )
 
-    print("MIGRATION_OK " + " ".join(f"{name}={count}" for name, count in sorted(counts.items())))
+    print(
+        "MIGRATION_OK already_applied="
+        + str(already_applied).lower()
+        + " "
+        + " ".join(f"{name}={count}" for name, count in sorted(counts.items()))
+    )
     print("Active security sessions were intentionally not migrated; MFA/re-auth will be requested again.")
 
 
