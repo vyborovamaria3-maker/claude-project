@@ -79,6 +79,21 @@ WHERE application_objects.owner_oid <> migrator.oid \gset
   \quit 3
 \endif
 
+SELECT count(*)::integer AS missing_restricted_roles
+FROM (VALUES (:'app_user'), (:'backup_user'), (:'readonly_user')) AS restricted(role_name)
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = restricted.role_name) \\gset
+\if :missing_restricted_roles
+  \echo 'Production migration blocked: app, backup or read-only role is missing'
+  \quit 3
+\endif
+
+SELECT count(*)::integer AS restricted_database_create_count
+FROM (VALUES (:'app_user'), (:'backup_user'), (:'readonly_user')) AS restricted(role_name)
+WHERE has_database_privilege(restricted.role_name, current_database(), 'CREATE') \\gset
+\if :restricted_database_create_count
+  \echo 'Production migration blocked: runtime, backup or read-only role has database CREATE'
+  \quit 3
+\endif
 SELECT has_database_privilege(:'migrator_user', current_database(), 'CREATE') AS migrator_can_create_database \gset
 \if :migrator_can_create_database
   \echo 'Production migration blocked: migration role must not have database CREATE'
@@ -123,6 +138,51 @@ WHERE n.nspname <> 'information_schema'
   \echo 'Production migration blocked: migration role lacks CREATE on an application schema'
   \quit 3
 \endif
+WITH application_schemas AS (
+  SELECT DISTINCT n.oid
+  FROM pg_namespace n
+  WHERE n.nspname <> 'information_schema'
+    AND n.nspname NOT LIKE 'pg_%'
+    AND (
+      EXISTS (
+        SELECT 1 FROM pg_class c
+        WHERE c.relnamespace = n.oid
+          AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
+          AND NOT EXISTS (
+            SELECT 1 FROM pg_depend d
+            WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e'
+          )
+      )
+      OR EXISTS (
+        SELECT 1 FROM pg_proc p
+        WHERE p.pronamespace = n.oid
+          AND NOT EXISTS (
+            SELECT 1 FROM pg_depend d
+            WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e'
+          )
+      )
+      OR EXISTS (
+        SELECT 1 FROM pg_type t
+        WHERE t.typnamespace = n.oid
+          AND t.typtype IN ('d', 'e', 'r', 'm')
+          AND NOT EXISTS (
+            SELECT 1 FROM pg_depend d
+            WHERE d.classid = 'pg_type'::regclass AND d.objid = t.oid AND d.deptype = 'e'
+          )
+      )
+    )
+)
+SELECT count(*)::integer AS restricted_schemas_with_create
+FROM application_schemas n
+WHERE has_schema_privilege(:'app_user', n.oid, 'CREATE')
+   OR has_schema_privilege(:'backup_user', n.oid, 'CREATE')
+   OR has_schema_privilege(:'readonly_user', n.oid, 'CREATE') \gset
+
+\if :restricted_schemas_with_create
+  \echo 'Production migration blocked: runtime, backup or read-only role has CREATE on an application schema'
+  \quit 3
+\endif
+
 SELECT has_schema_privilege(:'migrator_user', 'public', 'CREATE') AS migrator_can_create \gset
 \if :migrator_can_create
 \else
