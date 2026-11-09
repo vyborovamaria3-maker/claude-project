@@ -28,6 +28,10 @@ services:
       PGDATABASE: ${POSTGRES_DB:-solsub}
       PGUSER: ${POSTGRES_USER:-solsub}
       PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-solsub_app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}
+      POSTGRES_MIGRATOR_USER: ${POSTGRES_MIGRATOR_USER:-solsub_migrator}
+      POSTGRES_MIGRATOR_PASSWORD: ${POSTGRES_MIGRATOR_PASSWORD:?POSTGRES_MIGRATOR_PASSWORD is required}
       POSTGRES_READONLY_USER: solsub_readonly
       POSTGRES_READONLY_PASSWORD: ${POSTGRES_READONLY_PASSWORD:?POSTGRES_READONLY_PASSWORD is required}
     volumes:
@@ -37,6 +41,23 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  migrator:
+    profiles: ["migrate"]
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: migrator
+    restart: "no"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_MIGRATOR_USER:-solsub_migrator}:${POSTGRES_MIGRATOR_PASSWORD:?POSTGRES_MIGRATOR_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-solsub}?schema=public
+    command: ["sh", "-c", "npm run prisma:deploy -w @solsub/api && npm run prisma:seed -w @solsub/api"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      postgres-readonly-provisioner:
+        condition: service_completed_successfully
 
   redis:
     image: redis:7-alpine
@@ -57,13 +78,32 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:-solsub}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-solsub}?schema=public
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
-    command: sh -c "npm run prisma:deploy -w @solsub/api && npm run prisma:seed -w @solsub/api && npm run start -w @solsub/api"
+      APP_NAME: ${APP_NAME:-SolSub}
+      PORT: "4000"
+      WEB_ORIGIN: ${WEB_ORIGIN:?WEB_ORIGIN is required}
+      API_PUBLIC_URL: ${API_PUBLIC_URL:?API_PUBLIC_URL is required}
+      WEB_PUBLIC_URL: ${WEB_PUBLIC_URL:?WEB_PUBLIC_URL is required}
+      DATABASE_URL: postgresql://${POSTGRES_APP_USER:-solsub_app}:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-solsub}?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
+      ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-900}
+      REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-2592000}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
+      COOKIE_SECURE: "true"
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:?TELEGRAM_BOT_USERNAME is required}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:?TELEGRAM_WEBHOOK_SECRET is required}
+      TELEGRAM_WEBAPP_URL: ${TELEGRAM_WEBAPP_URL:?TELEGRAM_WEBAPP_URL is required}
+      SOLANA_CLUSTER: ${SOLANA_CLUSTER:?SOLANA_CLUSTER is required}
+      RPC_ENDPOINT: ${RPC_ENDPOINT:?RPC_ENDPOINT is required}
+      TREASURY_WALLET: ${TREASURY_WALLET:?TREASURY_WALLET is required}
+      TREASURY_USDC_TOKEN_ACCOUNT: ${TREASURY_USDC_TOKEN_ACCOUNT:?TREASURY_USDC_TOKEN_ACCOUNT is required}
+      USDC_MINT: ${USDC_MINT:?USDC_MINT is required}
+      PAYMENT_CONFIRMATION_COMMITMENT: ${PAYMENT_CONFIRMATION_COMMITMENT:-finalized}
+      HELIUS_WEBHOOK_AUTH_TOKEN: ${HELIUS_WEBHOOK_AUTH_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -78,17 +118,22 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?NEXT_PUBLIC_API_URL is required}
+        NEXT_PUBLIC_WEB_URL: ${NEXT_PUBLIC_WEB_URL:?NEXT_PUBLIC_WEB_URL is required}
+        NEXT_PUBLIC_TELEGRAM_BOT_USERNAME: ${NEXT_PUBLIC_TELEGRAM_BOT_USERNAME:?NEXT_PUBLIC_TELEGRAM_BOT_USERNAME is required}
+        NEXT_PUBLIC_SOLANA_CLUSTER: ${NEXT_PUBLIC_SOLANA_CLUSTER:?NEXT_PUBLIC_SOLANA_CLUSTER is required}
+        NEXT_PUBLIC_RPC_ENDPOINT: ${NEXT_PUBLIC_RPC_ENDPOINT:?NEXT_PUBLIC_RPC_ENDPOINT is required}
+        NEXT_PUBLIC_TREASURY_WALLET: ${NEXT_PUBLIC_TREASURY_WALLET:?NEXT_PUBLIC_TREASURY_WALLET is required}
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
       NODE_ENV: production
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
-      NEXT_PUBLIC_WEB_URL: ${NEXT_PUBLIC_WEB_URL}
-      NEXT_PUBLIC_TELEGRAM_BOT_USERNAME: ${NEXT_PUBLIC_TELEGRAM_BOT_USERNAME}
-      NEXT_PUBLIC_SOLANA_CLUSTER: ${NEXT_PUBLIC_SOLANA_CLUSTER}
-      NEXT_PUBLIC_RPC_ENDPOINT: ${NEXT_PUBLIC_RPC_ENDPOINT}
-      NEXT_PUBLIC_TREASURY_WALLET: ${NEXT_PUBLIC_TREASURY_WALLET}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?NEXT_PUBLIC_API_URL is required}
+      NEXT_PUBLIC_WEB_URL: ${NEXT_PUBLIC_WEB_URL:?NEXT_PUBLIC_WEB_URL is required}
+      NEXT_PUBLIC_TELEGRAM_BOT_USERNAME: ${NEXT_PUBLIC_TELEGRAM_BOT_USERNAME:?NEXT_PUBLIC_TELEGRAM_BOT_USERNAME is required}
+      NEXT_PUBLIC_SOLANA_CLUSTER: ${NEXT_PUBLIC_SOLANA_CLUSTER:?NEXT_PUBLIC_SOLANA_CLUSTER is required}
+      NEXT_PUBLIC_RPC_ENDPOINT: ${NEXT_PUBLIC_RPC_ENDPOINT:?NEXT_PUBLIC_RPC_ENDPOINT is required}
+      NEXT_PUBLIC_TREASURY_WALLET: ${NEXT_PUBLIC_TREASURY_WALLET:?NEXT_PUBLIC_TREASURY_WALLET is required}
     depends_on:
       - api
     expose:
@@ -99,17 +144,16 @@ services:
       context: .
       dockerfile: apps/bot/Dockerfile
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:-solsub}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-solsub}?schema=public
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      DATABASE_URL: postgresql://${POSTGRES_APP_USER:-solsub_app}:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-solsub}?schema=public
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
+      TELEGRAM_WEBAPP_URL: ${TELEGRAM_WEBAPP_URL:?TELEGRAM_WEBAPP_URL is required}
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
+      postgres-readonly-provisioner:
+        condition: service_completed_successfully
 
 volumes:
   postgres_data:
