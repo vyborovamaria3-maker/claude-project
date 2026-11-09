@@ -1,4 +1,4 @@
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+-- PostgreSQL 16 provides gen_random_uuid() in core; no extension install privilege is required.
 
 CREATE TABLE IF NOT EXISTS tokens (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
