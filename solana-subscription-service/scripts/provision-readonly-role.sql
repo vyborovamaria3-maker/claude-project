@@ -1,3 +1,6 @@
+-- Legacy filename retained for compatibility: this provisions app, migrator and read-only roles.
+-- The bootstrap login is supplied by the container-side entrypoint and must not
+-- be any of the restricted identities created below.
 \\set ON_ERROR_STOP on
 \\getenv bootstrap_user PGUSER
 \\getenv app_user POSTGRES_APP_USER
