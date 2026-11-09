@@ -252,6 +252,18 @@ if run_psql "$backup_user" "$backup_password" -c \
   exit 1
 fi
 
+# Seed stale memberships and unsafe attributes as if an earlier deployment
+# had granted broad roles. The idempotent provisioner must remove both inbound
+# and outbound memberships and reset all restricted role flags.
+run_psql "$bootstrap_user" "$bootstrap_password" -c "
+  CREATE ROLE potapoff_legacy_parent NOLOGIN;
+  GRANT potapoff_legacy_parent TO $app_user;
+  GRANT $backup_user TO potapoff_legacy_parent;
+  GRANT pg_read_all_data TO $backup_user;
+  ALTER ROLE $app_user WITH INHERIT CREATEDB;
+  ALTER ROLE $backup_user WITH BYPASSRLS;
+" >/dev/null
+
 # Re-running provisioning must preserve the manual allowlist transfer and the
 # restricted role boundaries.
 run_psql "$bootstrap_user" "$bootstrap_password" \
@@ -263,5 +275,28 @@ run_psql "$bootstrap_user" "$bootstrap_password" \
   -f /tmp/provision-postgres-roles.sql >/dev/null
 [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
   "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.legacy_records'::regclass")" == "$migrator_user" ]]
+
+for role in "$app_user" "$migrator_user" "$backup_user" "$readonly_user"; do
+  flags="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
+    SELECT rolsuper::text || '|' || rolcreatedb::text || '|' ||
+           rolcreaterole::text || '|' || rolreplication::text || '|' ||
+           rolbypassrls::text || '|' || rolinherit::text
+    FROM pg_roles WHERE rolname='$role'
+  ")"
+  [[ "$flags" == "false|false|false|false|false|false" ]] || {
+    echo "$role retained unsafe role attributes after re-provisioning: $flags" >&2
+    exit 1
+  }
+  memberships="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
+    SELECT count(*) FROM pg_auth_members m
+    JOIN pg_roles member ON member.oid=m.member
+    JOIN pg_roles granted ON granted.oid=m.roleid
+    WHERE member.rolname='$role' OR granted.rolname='$role'
+  ")"
+  [[ "$memberships" == "0" ]] || {
+    echo "$role retained stale role memberships after re-provisioning" >&2
+    exit 1
+  }
+done
 
 echo "POTAPOFF_ROLE_PROVISIONER_REHEARSAL_OK no_blanket_reassign=true backup_no_bypassrls=true ownership_guard=true"
