@@ -28,6 +28,7 @@ const subscriptionWebDockerfile = await readFile(resolve(root, "../solana-subscr
 const subscriptionDockerignore = await readFile(resolve(root, "../solana-subscription-service/.dockerignore"), "utf8");
 const backendDockerfile = await readFile(resolve(root, "backend/Dockerfile"), "utf8");
 const subscriptionCompose = await readFile(resolve(root, "../solana-subscription-service/docker-compose.prod.yml"), "utf8");
+const subscriptionDevCompose = await readFile(resolve(root, "../solana-subscription-service/docker-compose.yml"), "utf8");
 const subscriptionReadonlySql = await readFile(resolve(root, "../solana-subscription-service/scripts/provision-readonly-role.sql"), "utf8");
 const subscriptionRoleEntrypointPath = resolve(root, "../solana-subscription-service/scripts/run-readonly-role-provisioner.sh");
 const subscriptionRoleEntrypoint = await readFile(subscriptionRoleEntrypointPath, "utf8");
@@ -255,6 +256,16 @@ test("read-only role provisioner refuses a restricted bootstrap identity", () =>
   });
   assert.equal(result.status, 64);
   assert.match(result.stderr, /Refusing to provision roles while connected as a restricted role/);
+});
+
+test("SolSub development web and bot do not inherit the complete secret-bearing .env file", () => {
+  const web = serviceSection(subscriptionDevCompose, "web");
+  const bot = serviceSection(subscriptionDevCompose, "bot");
+  assert.doesNotMatch(web, /env_file:|DATABASE_URL|TELEGRAM_BOT_TOKEN|JWT_|POSTGRES_/);
+  assert.match(web, /NEXT_PUBLIC_API_URL/);
+  assert.doesNotMatch(bot, /env_file:|JWT_|POSTGRES_PASSWORD|POSTGRES_MIGRATOR_PASSWORD/);
+  assert.match(bot, /DATABASE_URL/);
+  assert.match(bot, /TELEGRAM_BOT_TOKEN/);
 });
 
 test("Telegram bot Docker context excludes deployment environment secrets", () => {
