@@ -34,7 +34,7 @@ services:
       - ./scripts/provision-readonly-role.sql:/provision/readonly-role.sql:ro
     entrypoint: ["/bin/sh", "-ec"]
     command: >-
-      test "$PGUSER" != "solsub_readonly"
+      test "${PGUSER}" != "solsub_readonly"
       && exec psql -X -v ON_ERROR_STOP=1 -f /provision/readonly-role.sql
     depends_on:
       postgres:
