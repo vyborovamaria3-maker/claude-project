@@ -70,7 +70,7 @@ async def run(args: argparse.Namespace, *, run_id: int | None = None) -> dict[st
     timeout = httpx.Timeout(max(5.0, float(args.timeout)), connect=10.0)
     await try_heartbeat_twitter_crawler_run(run_id, phase="collect")
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        response = await client.get(url)
+        response = await client.post(url)
         response.raise_for_status()
         payload = response.json()
     if not isinstance(payload, dict):
