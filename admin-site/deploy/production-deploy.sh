@@ -231,6 +231,9 @@ deploy() {
             admin_cutover_started == 0 && ADMIN_STATE_MIGRATION_APPLIED == 1 )); then
       log "SQLite-to-PostgreSQL sync completed; previous Admin remains stopped to prevent divergent writes"
       log "Operator recovery must roll forward or explicitly restore the captured SQLite snapshot"
+    elif (( status != 0 && admin_stopped == 1 && admin_cutover_started == 1 )); then
+      log "Admin cutover was started; automatic restart of the previous container is suppressed"
+      log "Inspect the new Admin health and use the documented rollback procedure if needed"
     fi
     exit "$status"
   }

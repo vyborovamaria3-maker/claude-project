@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import sqlite3
@@ -33,6 +34,37 @@ def _json_object(value: str | None) -> str:
     return json.dumps(parsed if isinstance(parsed, dict) else {}, ensure_ascii=False, default=str)
 
 
+def _sqlite_state_fingerprint(source: sqlite3.Connection) -> str:
+    """Hash the logical source rows so a stale legacy DB cannot overwrite PG state."""
+    digest = hashlib.sha256()
+    tables = (
+        ("feature_flags", "name"),
+        ("alerts", "id"),
+        ("analysis_parameter_overrides", "domain,key"),
+        ("admin_audit", "id"),
+        ("revoked_admin_sessions", "nonce"),
+    )
+    for table, ordering in tables:
+        if not _table_exists(source, table):
+            digest.update(f"{table}:absent\n".encode("utf-8"))
+            continue
+        columns = [
+            str(row["name"])
+            for row in source.execute(f"PRAGMA table_info({table})").fetchall()
+        ]
+        digest.update(
+            json.dumps([table, columns], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        )
+        digest.update(b"\n")
+        for row in source.execute(f"SELECT * FROM {table} ORDER BY {ordering}"):
+            values = [row[column] for column in columns]
+            digest.update(
+                json.dumps(values, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")
+            )
+            digest.update(b"\n")
+    return digest.hexdigest()
+
+
 def main() -> None:
     sqlite_path = os.getenv("ADMIN_AUDIT_DB", "/var/lib/potapoff-admin/audit.db")
     # State cutover mutates schema metadata and sequence values. Prefer the
@@ -58,20 +90,37 @@ def main() -> None:
         # Pin one consistent SQLite read snapshot across every table. The deploy
         # also stops the legacy Admin writer before this process starts.
         source.execute("BEGIN")
+        source_fingerprint = _sqlite_state_fingerprint(source)
         with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=5) as target, target.cursor() as cur:
             cur.execute(
                 """CREATE TABLE IF NOT EXISTS admin_state_migrations(
                     migration_key TEXT PRIMARY KEY,
-                    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    applied_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    source_fingerprint TEXT
                 )"""
             )
-            cur.execute("SELECT 1 FROM admin_state_migrations WHERE migration_key=%s", (MIGRATION_KEY,))
-            already_applied = cur.fetchone() is not None
+            cur.execute(
+                "ALTER TABLE admin_state_migrations "
+                "ADD COLUMN IF NOT EXISTS source_fingerprint TEXT"
+            )
+            cur.execute(
+                "SELECT source_fingerprint FROM admin_state_migrations WHERE migration_key=%s",
+                (MIGRATION_KEY,),
+            )
+            previous = cur.fetchone()
+            if previous:
+                previous_fingerprint = previous["source_fingerprint"]
+                if previous_fingerprint is None:
+                    raise SystemExit(
+                        "Existing SQLite migration marker lacks a source fingerprint; operator reconciliation required"
+                    )
+                if previous_fingerprint != source_fingerprint:
+                    raise SystemExit(
+                        "SQLite admin state changed after PostgreSQL cutover; refusing automatic re-migration"
+                    )
+                print(f"SKIP {MIGRATION_KEY}: source fingerprint unchanged")
+                return
 
-            # Re-sync on every deploy. Upserts keep mutable settings current,
-            # append-only audit/revocation rows are conflict-safe, and a prior
-            # successful migration must not hide writes made by a legacy app
-            # that was restarted after an interrupted cutover.
             counts: dict[str, int] = {};
 
             if _table_exists(source, "feature_flags"):
@@ -156,17 +205,12 @@ def main() -> None:
                 counts["revoked_admin_sessions"] = len(rows)
 
             cur.execute(
-                "INSERT INTO admin_state_migrations(migration_key) VALUES(%s) "
-                "ON CONFLICT(migration_key) DO NOTHING",
-                (MIGRATION_KEY,),
+                "INSERT INTO admin_state_migrations(migration_key,source_fingerprint) "
+                "VALUES(%s,%s) ON CONFLICT(migration_key) DO NOTHING",
+                (MIGRATION_KEY, source_fingerprint),
             )
 
-    print(
-        "MIGRATION_OK already_applied="
-        + str(already_applied).lower()
-        + " "
-        + " ".join(f"{name}={count}" for name, count in sorted(counts.items()))
-    )
+    print("MIGRATION_OK " + " ".join(f"{name}={count}" for name, count in sorted(counts.items())))
     print("Active security sessions were intentionally not migrated; MFA/re-auth will be requested again.")
 
 
