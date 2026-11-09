@@ -50,6 +50,13 @@ if [[ "$KOL_INTERNAL_KEY" == "$BACKEND_API_KEY" ]]; then
 fi
 export KOL_INTERNAL_KEY
 
+INTERNAL_SERVICE_API_KEY="$(resolve_env_value INTERNAL_SERVICE_API_KEY)"
+if [[ ! "$INTERNAL_SERVICE_API_KEY" =~ ^[A-Fa-f0-9]{64}$ ]]; then
+  echo "INTERNAL_SERVICE_API_KEY must be a 64-character hexadecimal secret" >&2
+  exit 1
+fi
+export INTERNAL_SERVICE_API_KEY
+
 SOLANA_TRACKER_API_KEY="$(resolve_env_value SOLANA_TRACKER_API_KEY)"
 SOLANA_TRACKER_API_BASE="$(resolve_env_value SOLANA_TRACKER_API_BASE)"
 KOL_TRADE_SYNC_INTERVAL_SECONDS="$(resolve_env_value KOL_TRADE_SYNC_INTERVAL_SECONDS)"
@@ -222,6 +229,9 @@ for attempt in $(seq 1 45); do
   endpoints_ok=0
   build_info="$(curl -fsS http://127.0.0.1/api/build-info 2>/dev/null || true)"
   miniapp_config="$(curl -fsS http://127.0.0.1/api/miniapp/config 2>/dev/null || true)"
+  wallet_summary_status="$(curl --connect-timeout 3 --max-time 8 -sS -o /dev/null -w '%{http_code}' \
+    -H "x-internal-service-key: $INTERNAL_SERVICE_API_KEY" \
+    http://127.0.0.1/api/internal/health/wallet-summary 2>/dev/null || true)"
   admin_ok=0
   if curl --connect-timeout 3 --max-time 8 -fsS -H 'Host: admin.potapoff.fun' http://127.0.0.1/ >/dev/null 2>&1; then
     admin_ok=1
@@ -238,6 +248,7 @@ for attempt in $(seq 1 45); do
     && curl -fsS http://127.0.0.1/trade/analysis >/dev/null \
     && curl -fsS http://127.0.0.1/trade/analysis/social >/dev/null \
     && curl -fsS http://127.0.0.1/fastapi/health >/dev/null \
+    && [[ "$wallet_summary_status" == "200" ]] \
     && printf '%s' "$miniapp_config" | grep -Fq '"monthlyPriceSol"' \
     && [[ "$admin_ok" -eq 1 ]] \
     && [[ "$telegram_ok" -eq 1 ]] \
@@ -264,7 +275,7 @@ for attempt in $(seq 1 45); do
       else
         kol_ingestion="disabled"
       fi
-      echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok miniapp_config=ok twitter_discovery=$discovery_status twitter_settings=$twitter_settings_status frontend_build=verified celery_beat=ok kol_ingestion=$kol_ingestion"
+      echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok wallet_summary=$wallet_summary_status miniapp_config=ok twitter_discovery=$discovery_status twitter_settings=$twitter_settings_status frontend_build=verified celery_beat=ok kol_ingestion=$kol_ingestion"
       exit 0
     fi
   fi
@@ -275,6 +286,7 @@ echo "HEALTHCHECK_FAILED image_tag=$IMAGE_TAG" >&2
 echo "Bad services: ${bad_services:-unknown}" >&2
 echo "Build info: ${build_info:-unavailable}" >&2
 echo "Mini App config: ${miniapp_config:-unavailable}" >&2
+echo "Wallet summary health: ${wallet_summary_status:-unavailable}" >&2
 "${COMPOSE[@]}" ps || true
 "${COMPOSE[@]}" logs --tail 120 postgres redis rabbitmq backend celery-worker celery-beat twitter-discovery frontend nginx prometheus || true
 if telegram_intelligence_enabled; then
