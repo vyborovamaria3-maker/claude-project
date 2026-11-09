@@ -71,10 +71,13 @@ def test_production_database_runtime_uses_restricted_role_and_migrations_use_sep
     assert ".env.server" not in postgres
     assert "postgres-role-provisioner" in backend
     assert 'DATABASE_URL="$MIGRATOR_DATABASE_URL"' in deploy
-    assert "REASSIGN OWNED BY" in role_sql
+    assert "No blanket REASSIGN OWNED" in role_sql
+    assert not __import__("re").search(r"^\\s*REASSIGN\\s+OWNED\\b", role_sql, __import__("re").MULTILINE)
+    assert "NOBYPASSRLS NOINHERIT" in role_sql
     assert "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES" in role_sql
     assert "ALTER DEFAULT PRIVILEGES FOR ROLE" in role_sql
-    assert "pg_read_all_data" in role_sql
+    assert "GRANT SELECT ON ALL TABLES IN SCHEMA public TO :" in role_sql
+    assert "pg_read_all_data" not in role_sql
 
 
 def test_production_redis_is_password_protected_and_isolated_from_public_frontend():
