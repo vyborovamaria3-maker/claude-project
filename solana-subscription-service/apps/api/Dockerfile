@@ -15,6 +15,12 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build -w @solsub/shared && npm run build -w @solsub/api
 
+# Migration-only image retains the Prisma CLI and tsx from devDependencies.
+# The API runner below deliberately excludes npm and never applies migrations.
+FROM build AS migrator
+ENV NODE_ENV=production
+USER node
+
 FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
