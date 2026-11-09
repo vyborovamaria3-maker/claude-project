@@ -7,6 +7,7 @@ import * as XLSX from "xlsx";
 import {
   getCreatorForMint,
 } from "../lib/trade/dev";
+import { rebuildWalletSummary } from "../lib/trade/wallet-summary";
 import {
   getDb,
   persistDevWallet,
@@ -876,8 +877,11 @@ async function main() {
     console.log(JSON.stringify(result));
   }
 
+  const walletSummary = rebuildWalletSummary(db);
+
   console.log(JSON.stringify({
     importedFiles: results.length,
+    walletSummary,
     totalTokenRows: results.reduce((sum, row) => sum + row.tokenRows, 0),
     totalWalletRows: results.reduce((sum, row) => sum + row.walletRows, 0),
     resolvedCreators: results.reduce((sum, row) => sum + row.resolvedCreators, 0),
