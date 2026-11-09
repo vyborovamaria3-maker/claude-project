@@ -6,8 +6,10 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ADMIN_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 REPO_DIR="$(cd -- "$ADMIN_DIR/.." && pwd)"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/potapoff-admin}"
+DEPLOYED_SHA_FILE="${DEPLOYED_SHA_FILE:-$BACKUP_ROOT/DEPLOYED_GIT_SHA}"
 BACKUP_DIR="${1:-}"
 COMPOSE=(docker compose --project-directory "$ADMIN_DIR" -f "$ADMIN_DIR/docker-compose.yml")
+source "$SCRIPT_DIR/deployed-sha.sh"
 
 log() { printf '[rollback] %s\n' "$*"; }
 die() { printf '[rollback] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -17,10 +19,23 @@ if [[ -z "$BACKUP_DIR" ]]; then
   BACKUP_DIR="$(cat "$BACKUP_ROOT/LATEST")"
 fi
 [[ -d "$BACKUP_DIR" ]] || die "backup directory not found: $BACKUP_DIR"
-[[ -f "$BACKUP_DIR/git-sha.txt" ]] || die "backup is missing git-sha.txt"
+[[ -f "$BACKUP_DIR/git-sha.txt" ]] || die "backup is missing the previously deployed git-sha.txt; this backup has no verified rollback target"
+[[ -f "$BACKUP_DIR/target-git-sha.txt" ]] || die "backup is missing target-git-sha.txt; refusing ambiguous legacy rollback metadata"
 
 PREVIOUS_SHA="$(tr -d '[:space:]' < "$BACKUP_DIR/git-sha.txt")"
+TARGET_SHA="$(tr -d '[:space:]' < "$BACKUP_DIR/target-git-sha.txt")"
 [[ "$PREVIOUS_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || die "invalid previous git SHA"
+[[ "$TARGET_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || die "invalid target git SHA"
+[[ "$PREVIOUS_SHA" != "$TARGET_SHA" ]] || die "rollback target equals the deployment being rolled out"
+
+if [[ -e "$DEPLOYED_SHA_FILE" ]]; then
+  [[ -r "$DEPLOYED_SHA_FILE" ]] || die "deployed SHA marker is not readable"
+  CURRENT_DEPLOYED_SHA="$(tr -d '[:space:]' < "$DEPLOYED_SHA_FILE")"
+  [[ "$CURRENT_DEPLOYED_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || die "deployed SHA marker is invalid"
+  [[ "$CURRENT_DEPLOYED_SHA" == "$TARGET_SHA" || "$CURRENT_DEPLOYED_SHA" == "$PREVIOUS_SHA" ]] || die "backup does not match the currently recorded deployment"
+else
+  log "deployed SHA marker is absent; relying on the explicit previous/target SHA pair in this backup"
+fi
 
 log "rolling application code back to $PREVIOUS_SHA"
 git -C "$REPO_DIR" fetch --all --prune
@@ -73,4 +88,6 @@ if [[ "${RESTORE_SQLITE_STATE:-0}" == "1" && -f "$BACKUP_DIR/audit.db" ]]; then
 fi
 
 "${COMPOSE[@]}" ps
+DEPLOYED_SHA="$(write_deployed_sha "$REPO_DIR" "$DEPLOYED_SHA_FILE")" || die "could not persist the rolled-back Git SHA"
+log "recorded successfully deployed commit=$DEPLOYED_SHA"
 log "ROLLBACK_OK previous_sha=$PREVIOUS_SHA backup=$BACKUP_DIR"

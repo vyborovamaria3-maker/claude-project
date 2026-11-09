@@ -11,6 +11,7 @@ on:
       - "solana-subscription-service/**"
       - ".github/scripts/test-readonly-source-roles.sh"
       - ".github/scripts/test-potapoff-role-provisioner.sh"
+      - ".github/scripts/test-admin-deploy-sha.sh"
       - ".github/workflows/potapoff-predeploy-gate.yml"
       - ".github/workflows/potapoff-production.yml"
       - ".github/workflows/potapoff-release-images.yml"
@@ -215,7 +216,7 @@ jobs:
           while IFS= read -r -d '' file; do
             echo "BASH_N $file"
             bash -n "$file"
-          done < <(find solana-launcher/scripts -type f -name '*.sh' -print0)
+          done < <(find solana-launcher/scripts admin-site/deploy -type f -name '*.sh' -print0)
       - name: Set up Node for Compose command safety regression
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
@@ -308,6 +309,8 @@ jobs:
         run: bash .github/scripts/test-readonly-source-roles.sh
       - name: Rehearse POTAPoff least-privilege roles and explicit ownership guard
         run: bash .github/scripts/test-potapoff-role-provisioner.sh
+      - name: Verify Admin deploy rollback SHA tracking
+        run: bash .github/scripts/test-admin-deploy-sha.sh
       - name: Build backend production image
         run: docker build --pull -t potapoff-backend-predeploy:${{ github.sha }} solana-launcher/backend
       - name: Verify backend runtime excludes build-only Python tooling

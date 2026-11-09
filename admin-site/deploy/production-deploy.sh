@@ -7,9 +7,11 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ADMIN_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 REPO_DIR="$(cd -- "$ADMIN_DIR/.." && pwd)"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/potapoff-admin}"
+DEPLOYED_SHA_FILE="${DEPLOYED_SHA_FILE:-$BACKUP_ROOT/DEPLOYED_GIT_SHA}"
 EXPECTED_ORIGIN="${EXPECTED_ORIGIN:-https://admin.potapoff.fun}"
 EXPECTED_COMMIT="${EXPECTED_COMMIT:-}"
 COMPOSE=(docker compose --project-directory "$ADMIN_DIR" -f "$ADMIN_DIR/docker-compose.yml")
+source "$SCRIPT_DIR/deployed-sha.sh"
 ADMIN_STATE_MIGRATION_APPLIED=0
 
 log() { printf '[deploy] %s\n' "$*"; }
@@ -123,11 +125,16 @@ preflight() {
 }
 
 backup_state() {
-  local stamp dir
+  local stamp dir current_sha previous_sha
+  current_sha="$(git -C "$REPO_DIR" rev-parse --verify HEAD)"
+  previous_sha="$(resolve_previous_deployed_sha "$REPO_DIR" "$DEPLOYED_SHA_FILE" "${PREVIOUS_GIT_SHA:-}")" || die "cannot establish the previously deployed Git SHA"
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   dir="$BACKUP_ROOT/$stamp"
   install -d -m 0700 "$BACKUP_ROOT" "$dir"
-  git -C "$REPO_DIR" rev-parse HEAD > "$dir/git-sha.txt"
+  if [[ -n "$previous_sha" ]]; then
+    printf "%s\n" "$previous_sha" > "$dir/git-sha.txt"
+  fi
+  printf "%s\n" "$current_sha" > "$dir/target-git-sha.txt"
   for file in .env .env.runtime .env.intelligence sources.json logs.json; do
     if [[ -f "$ADMIN_DIR/$file" ]]; then
       cp -a "$ADMIN_DIR/$file" "$dir/$file"
@@ -283,6 +290,9 @@ deploy() {
   wait_healthy potapoff-admin 180
   wait_healthy potapoff-intelligence 180
   smoke
+  local deployed_sha
+  deployed_sha="$(write_deployed_sha "$REPO_DIR" "$DEPLOYED_SHA_FILE")" || die "could not persist the successfully deployed Git SHA"
+  log "recorded successfully deployed commit=$deployed_sha"
   trap - EXIT
   log "DEPLOY_OK backup=$backup_dir"
 }

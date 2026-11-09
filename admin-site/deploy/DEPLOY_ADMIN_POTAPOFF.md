@@ -194,12 +194,40 @@ Then verify in a browser:
 - audit log records login/logout/export events;
 - source failures do not expose credentials or DSNs.
 
-## 10. Rollback
+## 10. Deploy version tracking and rollback
+
+The deploy script tracks the last successfully deployed commit in
+`/var/backups/potapoff-admin/DEPLOYED_GIT_SHA`. Each deployment backup records
+the previous successful commit in `git-sha.txt` and the target checkout in
+`target-git-sha.txt`. The marker is updated only after Admin, Intelligence and
+the deployment smoke checks succeed.
+
+For the first upgrade of an existing server that predates this marker, supply
+the full commit SHA that is currently deployed:
 
 ```bash
-git checkout <previous-good-commit>
-docker compose build
-docker compose up -d
+PREVIOUS_GIT_SHA=<currently-deployed-40-character-commit> bash deploy/production-deploy.sh deploy
 ```
+
+The script verifies that this commit exists locally. If a previous deployment
+exists but its SHA is unknown, deployment stops instead of recording the new
+checkout as the rollback target. Subsequent deployments use the marker
+automatically:
+
+```bash
+bash deploy/production-deploy.sh deploy
+```
+
+To roll back a failed or completed deployment, use the backup created for that
+deployment:
+
+```bash
+bash deploy/production-rollback.sh /var/backups/potapoff-admin/<deployment-backup>
+```
+
+Rollback requires distinct, valid previous and target SHAs. It restores the
+previous commit and updates the marker only after the health check succeeds.
+Legacy backups without both SHA files are rejected because they cannot prove
+which commit was actually deployed.
 
 Keep `admin-state` and `intelligence-state` volumes unless intentionally resetting durable state.
