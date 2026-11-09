@@ -97,10 +97,28 @@ test_role_set() {
   }
   run_psql "$database" postgres "$bootstrap_password" -c \
     "CREATE ROLE $migrator_user NOLOGIN; GRANT CREATE ON SCHEMA public TO $migrator_user; ALTER TABLE source_probe OWNER TO $migrator_user" >/dev/null
+  # Existing application types may have had PUBLIC USAGE revoked. The
+  # provisioner must grant the exact type to runtime and read-only roles.
+  run_psql "$database" postgres "$bootstrap_password" -c \
+    "CREATE TYPE public.source_status AS ENUM ('new', 'complete'); ALTER TYPE public.source_status OWNER TO $migrator_user; REVOKE USAGE ON TYPE public.source_status FROM PUBLIC" >/dev/null
 
   # The role provisioner is deliberately idempotent after explicit ownership
   # preparation; both runs must preserve the existing migration owner.
   for _ in 1 2; do run_provisioner >/dev/null; done
+
+  # ALTER DEFAULT PRIVILEGES must also grant USAGE on future types created by
+  # the migration role, without depending on PUBLIC's default type privileges.
+  run_psql "$database" "$migrator_user" "$migrator_password" -c \
+    "CREATE TYPE public.migration_probe_status AS ENUM ('pending', 'complete'); REVOKE USAGE ON TYPE public.migration_probe_status FROM PUBLIC" >/dev/null
+  for role in "$app_user" "$readonly_user"; do
+    for type_name in source_status migration_probe_status; do
+      [[ "$(run_psql "$database" postgres "$bootstrap_password" -Atq -c \
+        "SELECT has_type_privilege('$role', 'public.$type_name', 'USAGE')")" == "t" ]] || {
+        echo "$role lacks USAGE on public.$type_name" >&2
+        return 1
+      }
+    done
+  done
 
   # The shell entrypoint must fail closed if invoked with any restricted login.
   for restricted_user in "$app_user" "$migrator_user" "$readonly_user"; do
