@@ -115,7 +115,7 @@ ensure_runtime_database_credentials() {
     return 1
   fi
   tmp="$(mktemp)"
-  awk -F= '$1 !~ /^POSTGRES_/ && $1 != "REDIS_PASSWORD" { print }' .env.server > "$tmp"
+  awk -F= '$1 !~ /^POSTGRES_/ && $1 != "REDIS_PASSWORD" && $1 != "INTERNAL_SERVICE_API_KEY" { print }' .env.server > "$tmp"
   chmod 600 "$tmp"
   mv "$tmp" .env.runtime
   set_env_value "$ADMIN_ENV_FILE" POTAPOFF_DB_READONLY_PASSWORD "$POSTGRES_READONLY_PASSWORD"
