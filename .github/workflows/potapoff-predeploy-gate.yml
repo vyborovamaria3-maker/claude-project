@@ -10,6 +10,7 @@ on:
       - "memecoin-intelligence/**"
       - "solana-subscription-service/**"
       - ".github/scripts/test-readonly-source-roles.sh"
+      - ".github/scripts/test-potapoff-role-provisioner.sh"
       - ".github/workflows/potapoff-predeploy-gate.yml"
       - ".github/workflows/potapoff-production.yml"
       - ".github/workflows/potapoff-release-images.yml"
