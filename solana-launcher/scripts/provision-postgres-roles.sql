@@ -81,11 +81,11 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 -- Keep DDL out of runtime, backup and read-only identities even if stale
 -- explicit grants existed before this provisioner was introduced.
 SELECT format('REVOKE CREATE ON DATABASE %I FROM %I', current_database(), role_name)
-FROM (VALUES (:'app_user'), (:'migrator_user'), (:'backup_user'), (:'readonly_user')) AS roles(role_name) \\gexec
+FROM (VALUES (:'app_user'), (:'migrator_user'), (:'backup_user'), (:'readonly_user')) AS roles(role_name) \gexec
 SELECT format('REVOKE CREATE ON SCHEMA %I FROM %I', n.nspname, role_name)
 FROM pg_namespace n
 CROSS JOIN (VALUES (:'app_user'), (:'backup_user'), (:'readonly_user')) AS roles(role_name)
-WHERE n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg_%' \\gexec
+WHERE n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg_%' \gexec
 GRANT USAGE, CREATE ON SCHEMA public TO :"migrator_user";
 GRANT USAGE ON SCHEMA public TO :"app_user", :"backup_user", :"readonly_user";
 
