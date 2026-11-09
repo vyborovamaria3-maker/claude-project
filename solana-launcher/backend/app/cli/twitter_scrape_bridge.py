@@ -79,7 +79,8 @@ async def run(args: argparse.Namespace, *, run_id: int | None = None) -> dict[st
     timeout = httpx.Timeout(max(5.0, float(args.timeout)), connect=10.0)
     await try_heartbeat_twitter_crawler_run(run_id, phase="collect")
     internal_service_key = os.getenv("INTERNAL_SERVICE_API_KEY", "").strip()
-    if os.getenv("ENVIRONMENT", "").lower() == "production" and not internal_service_key:
+    environment = os.getenv("ENVIRONMENT", "").strip().lower()
+    if environment in {"production", "prod", "docker"} and not internal_service_key:
         raise RuntimeError("INTERNAL_SERVICE_API_KEY is required for production X collection")
 
     headers = {"x-internal-service-key": internal_service_key} if internal_service_key else {}
