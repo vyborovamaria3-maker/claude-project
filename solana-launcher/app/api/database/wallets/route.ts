@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
-import { getDb } from "../../../../lib/trade/db";
+import { getReadOnlyDb } from "../../../../lib/trade/db";
 import { getWalletSummaryStatus } from "../../../../lib/trade/wallet-summary";
 import { checkRateLimit, getClientIp } from "../../../../lib/rateLimit";
 
@@ -135,7 +135,7 @@ type ParsedTokenRow = {
   last_trade_at: number | null;
 };
 
-function getSourceSignature(db: ReturnType<typeof getDb>) {
+function getSourceSignature(db: ReturnType<typeof getReadOnlyDb>) {
   const rows = db.prepare(`
     SELECT
       (SELECT COALESCE(MAX(rowid), 0) FROM migration_wallet_rows) AS migration_wallet_rows,
@@ -184,7 +184,15 @@ export async function GET(req: NextRequest) {
   const sortBy = SORTABLE.has(sortByRaw) ? sortByRaw : "avg_pnl";
   const sortExpr = SORT_SQL[sortBy] ?? SORT_SQL.avg_pnl;
   const sortDir = SORT_DIR_ALLOWED.has(sortDirRaw) ? sortDirRaw : "DESC";
-  const db = getDb();
+  let db: ReturnType<typeof getReadOnlyDb>;
+  try {
+    db = getReadOnlyDb();
+  } catch {
+    return NextResponse.json(
+      { error: "Wallet database is unavailable", code: "DATABASE_UNAVAILABLE" },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    );
+  }
   const summaryStatus = getWalletSummaryStatus(db);
   if (!summaryStatus.ready) {
     return NextResponse.json(
