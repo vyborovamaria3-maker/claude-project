@@ -237,6 +237,7 @@ jobs:
           KOL_INTERNAL_KEY=ci-kol-internal-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm
           SUBSCRIPTION_INTERNAL_KEY=ci-subscription-internal-abcdefghijklmnopqrstuvwxyz
           SUBSCRIPTION_ADMIN_KEY=ci-subscription-admin-abcdefghijklmnopqrstuvwxyz
+          INTERNAL_SERVICE_API_KEY=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
           TELEGRAM_BOT_TOKEN=ci-compose-bot-token
           TELEGRAM_WEBHOOK_URL=https://example.invalid/api/telegram/webhook
           TELEGRAM_WEBHOOK_SECRET=ci-webhook-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm
