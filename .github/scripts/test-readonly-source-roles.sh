@@ -12,7 +12,7 @@ readonly_password="ci-readonly-password"
 for provisioner in \
   "$repo_root/memecoin-intelligence/scripts/provision-readonly-role.sql" \
   "$repo_root/solana-subscription-service/scripts/provision-readonly-role.sql"; do
-  if grep -Eiq '^[[:space:]]*REASSIGN[[:space:]]+OWNED\\b|GRANT[[:space:]]+pg_read_all_data|[[:space:]]BYPASSRLS([;[:space:]]|$)' "$provisioner"; then
+  if grep -Eiq '^[[:space:]]*REASSIGN[[:space:]]+OWNED([[:space:]]|$)|GRANT[[:space:]]+pg_read_all_data|[[:space:]]BYPASSRLS([;[:space:]]|$)' "$provisioner"; then
     echo "Unsafe automatic ownership or broad read/bypass grant in $provisioner" >&2
     exit 1
   fi
