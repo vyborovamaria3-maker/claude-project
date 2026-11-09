@@ -31,6 +31,20 @@ SELECT (
   \quit 3
 \endif
 
+SELECT (
+  :'app_password' <> :'migrator_password'
+  AND :'app_password' <> :'backup_password'
+  AND :'app_password' <> :'readonly_password'
+  AND :'migrator_password' <> :'backup_password'
+  AND :'migrator_password' <> :'readonly_password'
+  AND :'backup_password' <> :'readonly_password'
+) AS passwords_distinct \gset
+\if :passwords_distinct
+\else
+  \echo 'App, migrator, backup and read-only passwords must be distinct'
+  \quit 3
+\endif
+
 BEGIN;
 
 -- Dedicated application, migration, backup and read-only roles. None inherits
@@ -57,7 +71,8 @@ SELECT format('REVOKE %I FROM %I', granted.rolname, member.rolname)
 FROM pg_auth_members m
 JOIN pg_roles granted ON granted.oid = m.roleid
 JOIN pg_roles member ON member.oid = m.member
-WHERE member.rolname IN (:'app_user', :'migrator_user', :'backup_user', :'readonly_user') \gexec
+WHERE member.rolname IN (:'app_user', :'migrator_user', :'backup_user', :'readonly_user')
+   OR granted.rolname IN (:'app_user', :'migrator_user', :'backup_user', :'readonly_user') \gexec
 
 -- No blanket REASSIGN OWNED and no automatic database/schema ownership change.
 -- Existing application-object ownership is a separately reviewed allowlist
