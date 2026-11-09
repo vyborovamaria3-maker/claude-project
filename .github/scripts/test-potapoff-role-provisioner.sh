@@ -154,7 +154,7 @@ public_database_access="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq 
     CROSS JOIN LATERAL aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) acl
     WHERE d.datname=current_database()
       AND acl.grantee=0
-      AND acl.privilege_type IN ('CONNECT','TEMPORARY')
+      AND acl.privilege_type IN ('CONNECT','CREATE','TEMPORARY')
   )
 ")"
 [[ "$public_database_access" == "f" ]] || {

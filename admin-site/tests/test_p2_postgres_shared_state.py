@@ -218,5 +218,43 @@ class PostgresSharedStateTests(unittest.TestCase):
         self.assertTrue(security.is_revoked(nonce))
 
 
+class AdminSQLiteSnapshotTests(unittest.TestCase):
+    def test_backup_script_captures_committed_wal_pages(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="admin-sqlite-snapshot-") as tmp:
+            source_path = Path(tmp) / "audit.db"
+            source = sqlite3.connect(source_path)
+            try:
+                source.execute("PRAGMA journal_mode=WAL")
+                source.execute("CREATE TABLE audit_rows(id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
+                source.execute("INSERT INTO audit_rows VALUES(1,'committed-in-wal')")
+                source.commit()
+                self.assertTrue(Path(str(source_path) + "-wal").exists())
+
+                env = os.environ.copy()
+                env["ADMIN_AUDIT_DB"] = str(source_path)
+                script = ADMIN_ROOT / "scripts" / "backup_admin_state_sqlite.py"
+                result = subprocess.run(
+                    [sys.executable, str(script)],
+                    cwd=ADMIN_ROOT,
+                    env=env,
+                    capture_output=True,
+                    check=True,
+                )
+                self.assertTrue(result.stdout.startswith(b"SQLite format 3"))
+                snapshot_path = Path(tmp) / "snapshot.db"
+                snapshot_path.write_bytes(result.stdout)
+                with sqlite3.connect(snapshot_path) as snapshot:
+                    self.assertEqual(
+                        snapshot.execute("PRAGMA integrity_check").fetchone()[0],
+                        "ok",
+                    )
+                    self.assertEqual(
+                        snapshot.execute("SELECT value FROM audit_rows WHERE id=1").fetchone()[0],
+                        "committed-in-wal",
+                    )
+            finally:
+                source.close()
+
+
 if __name__ == "__main__":
     unittest.main()

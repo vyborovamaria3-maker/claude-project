@@ -39,7 +39,7 @@ SELECT EXISTS (
   CROSS JOIN LATERAL aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) acl
   WHERE d.datname = current_database()
     AND acl.grantee = 0
-    AND acl.privilege_type IN ('CONNECT', 'TEMPORARY')
+    AND acl.privilege_type IN ('CONNECT', 'CREATE', 'TEMPORARY')
 ) AS has_public_database_access \gset
 \if :has_public_database_access
   \echo 'Production migration blocked: PUBLIC retains CONNECT or TEMPORARY on the database'
