@@ -86,6 +86,22 @@ test_role_set() {
     fi
   done
 
+  # Exercise the real Memecoin SQL migration chain as the unprivileged
+  # migrator. PostgreSQL 16 provides gen_random_uuid() in core, so no
+  # database-level CREATE privilege or extension installation is required.
+  if [[ "$database" == "memecoin_role_ci" ]]; then
+    run_psql "$database" "$migrator_user" "$migrator_password" -c \
+      "CREATE TABLE schema_migrations(filename text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())" >/dev/null
+    for migration in "$repo_root"/memecoin-intelligence/db/migrations/*.sql; do
+      filename="$(basename "$migration")"
+      docker cp "$migration" "$container:/tmp/$filename" >/dev/null
+      run_psql "$database" "$migrator_user" "$migrator_password" -1 -f "/tmp/$filename" >/dev/null
+      run_psql "$database" "$migrator_user" "$migrator_password" -c \
+        "INSERT INTO schema_migrations(filename) VALUES ('$filename')" >/dev/null
+    done
+    [[ "$(run_psql "$database" "$migrator_user" "$migrator_password" -Atq -c "SELECT gen_random_uuid() IS NOT NULL")" == "t" ]]
+  fi
+
   # Runtime has DML on existing objects but no schema/role administration.
   [[ "$(run_psql "$database" "$app_user" "$app_password" -Atq -c "SELECT value FROM source_probe WHERE id=1")" == "visible" ]]
   run_psql "$database" "$app_user" "$app_password" -c \
