@@ -380,6 +380,7 @@ export default function DevForensicsTab({ mint }: Props) {
       params.append("mint", mint);
       
       const res = await fetch(`/api/trade/dev-forensics?${params.toString()}`, {
+        method: "POST",
         cache: "no-store",
         signal: AbortSignal.timeout(45000),
       });
