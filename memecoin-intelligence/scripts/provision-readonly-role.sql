@@ -48,6 +48,21 @@ SELECT EXISTS (
 
 -- Existing application objects must already have a reviewed migration owner.
 -- This is a read-only gate: never REASSIGN OWNED or ALTER object owners here.
+SELECT EXISTS (
+  SELECT 1
+  FROM pg_namespace n
+  CROSS JOIN LATERAL aclexplode(COALESCE(n.nspacl, acldefault('n', n.nspowner))) acl
+  WHERE n.nspname <> 'public'
+    AND n.nspname <> 'information_schema'
+    AND n.nspname NOT LIKE 'pg_%'
+    AND acl.grantee = 0
+    AND acl.privilege_type = 'CREATE'
+) AS has_public_nonpublic_schema_create \gset
+\if :has_public_nonpublic_schema_create
+  \echo 'Role provisioning blocked: PUBLIC CREATE on a non-public schema requires explicit operator review'
+  \quit 3
+\endif
+
 WITH extension_members AS (
   SELECT classid, objid FROM pg_depend WHERE deptype = 'e'
 ),
