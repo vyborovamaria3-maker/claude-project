@@ -42,11 +42,11 @@ const telegramWorkflow = await readFile(resolve(root, "../.github/workflows/tele
 const predeployWorkflow = await readFile(resolve(root, "../.github/workflows/potapoff-predeploy-gate.yml"), "utf8");
 
 function serviceSection(compose, name) {
-  const marker = "\\n  " + name + ":\\n";
+  const marker = "\n  " + name + ":\n";
   const start = compose.indexOf(marker);
   assert.notEqual(start, -1, "missing Compose service " + name);
   const body = compose.slice(start + marker.length);
-  const nextService = body.search(/\\n  [a-zA-Z0-9_-]+:\\n/);
+  const nextService = body.search(/\n  [a-zA-Z0-9_-]+:\n/);
   return nextService < 0 ? body : body.slice(0, nextService);
 }
 
