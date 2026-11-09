@@ -305,6 +305,8 @@ jobs:
           docker compose --env-file memecoin-intelligence/.env -f memecoin-intelligence/docker-compose.production.yml config --quiet
       - name: Exercise PostgreSQL read-only source role provisioners
         run: bash .github/scripts/test-readonly-source-roles.sh
+      - name: Rehearse POTAPoff least-privilege roles and explicit ownership guard
+        run: bash .github/scripts/test-potapoff-role-provisioner.sh
       - name: Build backend production image
         run: docker build --pull -t potapoff-backend-predeploy:${{ github.sha }} solana-launcher/backend
       - name: Verify backend runtime excludes build-only Python tooling
