@@ -572,7 +572,7 @@ async def refresh_x_for_mint(
     if symbol:
         params["symbol"] = symbol
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(f"{base}/api/trade/dev-twitter", params=params)
+        response = await client.post(f"{base}/api/trade/dev-twitter", params=params)
         response.raise_for_status()
         data = response.json()
     tweets = []
