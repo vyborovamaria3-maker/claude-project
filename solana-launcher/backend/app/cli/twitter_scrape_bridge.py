@@ -84,7 +84,7 @@ async def run(args: argparse.Namespace, *, run_id: int | None = None) -> dict[st
         raise RuntimeError("INTERNAL_SERVICE_API_KEY is required for production X collection")
 
     headers = {"x-internal-service-key": internal_service_key} if internal_service_key else {}
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
         response = await client.post(url, headers=headers)
         response.raise_for_status()
         payload = response.json()
