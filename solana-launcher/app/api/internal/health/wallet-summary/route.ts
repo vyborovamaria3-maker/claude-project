@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "../../../../../lib/trade/db";
+import { getReadOnlyDb } from "../../../../../lib/trade/db";
 import { getWalletSummaryStatus } from "../../../../../lib/trade/wallet-summary";
 import { hasValidInternalServiceKey } from "../../../../../lib/routeAuth";
 
@@ -18,7 +18,15 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const status = getWalletSummaryStatus(getDb());
+  let status;
+  try {
+    status = getWalletSummaryStatus(getReadOnlyDb());
+  } catch {
+    return NextResponse.json(
+      { ok: false, walletSummary: "unavailable" },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    );
+  }
   if (!status.ready) {
     return NextResponse.json(
       { ok: false, walletSummary: "stale", reason: status.reason },
