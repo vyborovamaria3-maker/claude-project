@@ -4,6 +4,7 @@ from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from statistics import mean
 from typing import Any
+import os
 
 import httpx
 from sqlalchemy import Select, func, select
@@ -571,8 +572,17 @@ async def refresh_x_for_mint(
     params = {"mint": mint_address, "scope": "mentions", "strategy": "auto"}
     if symbol:
         params["symbol"] = symbol
+    internal_service_key = os.getenv("INTERNAL_SERVICE_API_KEY", "").strip()
+    if os.getenv("ENVIRONMENT", "").lower() == "production" and not internal_service_key:
+        raise RuntimeError("INTERNAL_SERVICE_API_KEY is required for production X collection")
+
+    headers = {"x-internal-service-key": internal_service_key} if internal_service_key else {}
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(f"{base}/api/trade/dev-twitter", params=params)
+        response = await client.post(
+            f"{base}/api/trade/dev-twitter",
+            params=params,
+            headers=headers,
+        )
         response.raise_for_status()
         data = response.json()
     tweets = []
