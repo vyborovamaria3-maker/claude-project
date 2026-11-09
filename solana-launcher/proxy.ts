@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireProdAuth } from "@/lib/routeAuth";
+import { hasValidInternalServiceKey, requireProdAuth } from "@/lib/routeAuth";
 
 const PAID_ROUTE_PREFIXES = [
   "/api/trade",
@@ -11,6 +11,7 @@ const PRIVATE_PRODUCTION_PREFIXES = [
 ];
 
 const HEAVY_ROUTE_PREFIXES = [
+  "/api/trade/dev-twitter",
   "/api/trade/analyze",
   "/api/trade/analyze-stream",
   "/api/trade/dev-forensics",
@@ -168,8 +169,13 @@ export async function proxy(request: NextRequest) {
   if (heavyLimitError) return applyCsp(heavyLimitError, csp);
 
   if (matchesPrefix(pathname, PAID_ROUTE_PREFIXES)) {
-    const authError = await requireProdAuth(request);
-    if (authError) return applyCsp(authError, csp);
+    const internalXCollection = pathname === "/api/trade/dev-twitter"
+      && request.method === "POST"
+      && hasValidInternalServiceKey(request);
+    if (!internalXCollection) {
+      const authError = await requireProdAuth(request);
+      if (authError) return applyCsp(authError, csp);
+    }
   }
 
   const requestHeaders = new Headers(request.headers);
