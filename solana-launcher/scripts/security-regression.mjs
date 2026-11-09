@@ -210,6 +210,12 @@ assert(backupCallIndex !== -1 && backupCallIndex < ownershipGuardCallIndex,
 assert(ownershipGuardCallIndex !== -1 && stopWritersIndex !== -1 && ownershipGuardCallIndex < stopWritersIndex,
   "ownership gate must run before stopping writers");
 
+const potapoffRoleRehearsal = read("../.github/scripts/test-potapoff-role-provisioner.sh");
+assert(potapoffRoleRehearsal.includes("--network none"), "PostgreSQL role rehearsal must use an isolated container network");
+assert(potapoffRoleRehearsal.includes("pg_dump"), "role rehearsal must verify the dedicated backup login can dump data");
+const predeployWorkflow = read("../.github/workflows/potapoff-predeploy-gate.yml");
+assert(predeployWorkflow.includes("test-potapoff-role-provisioner.sh"), "POTAPoff predeploy CI must run the role provisioner rehearsal");
+
 const telegramTasks = read("telegram-bot/handlers/tasks.ts");
 assert(
   telegramTasks.includes("task.telegram_user_id !== userId"),
