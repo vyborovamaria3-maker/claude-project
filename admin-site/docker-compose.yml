@@ -28,7 +28,8 @@ services:
     environment:
       ADMIN_STATE_BOOTSTRAP_DSN: postgresql://potapoff_admin:${ADMIN_STATE_DB_PASSWORD:?Set ADMIN_STATE_DB_PASSWORD in admin-site/.env}@admin-postgres:5432/potapoff_admin
       ADMIN_STATE_MIGRATOR_DSN: postgresql://${ADMIN_STATE_MIGRATOR_USER:-potapoff_admin_migrator}:${ADMIN_STATE_MIGRATOR_PASSWORD:?Set ADMIN_STATE_MIGRATOR_PASSWORD in admin-site/.env}@admin-postgres:5432/potapoff_admin
-      ADMIN_STATE_RUNTIME_DSN: postgresql://${ADMIN_STATE_APP_USER:-potapoff_admin_app}:${ADMIN_STATE_APP_PASSWORD:?Set ADMIN_STATE_APP_PASSWORD in admin-site/.env}@admin-postgres:5432/potapoff_admin
+      # Verify the exact identity/password used by the long-running Admin service.
+      ADMIN_STATE_RUNTIME_DSN: postgresql://${ADMIN_STATE_RUNTIME_USER:-potapoff_admin_app}:${ADMIN_STATE_RUNTIME_PASSWORD:?Set ADMIN_STATE_RUNTIME_PASSWORD in admin-site/.env}@admin-postgres:5432/potapoff_admin
       ADMIN_STATE_APP_USER: ${ADMIN_STATE_APP_USER:-potapoff_admin_app}
       ADMIN_STATE_APP_PASSWORD: ${ADMIN_STATE_APP_PASSWORD:?Set ADMIN_STATE_APP_PASSWORD in admin-site/.env}
       ADMIN_STATE_MIGRATOR_USER: ${ADMIN_STATE_MIGRATOR_USER:-potapoff_admin_migrator}
