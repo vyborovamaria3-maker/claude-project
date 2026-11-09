@@ -13,3 +13,6 @@ compose-start.out.log
 compose-start.err.log
 .git
 .cache
+.env
+.env.*
+!.env.example
