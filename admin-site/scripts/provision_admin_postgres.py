@@ -143,6 +143,29 @@ def _assert_public_application_objects_owned(
         )
 
 
+def _assert_no_public_nonpublic_schema_create(db: psycopg.Connection[Any]) -> None:
+    row = db.execute(
+        """
+        SELECT n.nspname
+        FROM pg_namespace AS n
+        CROSS JOIN LATERAL aclexplode(
+            COALESCE(n.nspacl, acldefault('n', n.nspowner))
+        ) AS acl
+        WHERE n.nspname <> 'public'
+          AND n.nspname <> 'information_schema'
+          AND n.nspname NOT LIKE 'pg_%'
+          AND acl.grantee = 0
+          AND acl.privilege_type = 'CREATE'
+        LIMIT 1
+        """
+    ).fetchone()
+    if row is not None:
+        raise RuntimeError(
+            "Admin PostgreSQL provisioning blocked: PUBLIC retains CREATE on "
+            f"non-public schema {row[0]}; review its ACL before role provisioning"
+        )
+
+
 def _assert_no_public_security_definer(db: psycopg.Connection[Any]) -> None:
     row = db.execute(
         """
@@ -230,6 +253,7 @@ def provision_roles(
         # Do not REASSIGN OWNED, ALTER DATABASE OWNER, ALTER SCHEMA OWNER or
         # silently transfer existing application objects here.
         _assert_public_application_objects_owned(db, migrator_user)
+        _assert_no_public_nonpublic_schema_create(db)
         _assert_no_public_security_definer(db)
 
         _ensure_login_role(db, app_user, app_password)
