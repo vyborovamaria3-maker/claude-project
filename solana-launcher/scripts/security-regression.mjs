@@ -192,7 +192,7 @@ assert(migratorOwnershipGuard.includes("non_migrator_object_count"), "migrator g
 assert(migratorOwnershipGuard.includes("\\quit 3"), "migrator ownership guard must fail closed");
 const deployScript = read("scripts/deploy-production.sh");
 assert(deployScript.includes("check-postgres-migrator-ownership.sql"), "production deployment must run the read-only migrator ownership guard");
-const backupCallIndex = deployScript.indexOf('"$BACKUP_SCRIPT"\\n');
+const backupCallIndex = deployScript.indexOf('"$BACKUP_SCRIPT"\n');
 const ownershipGuardCallIndex = deployScript.indexOf('-f "$DEPLOY_DIR/scripts/check-postgres-migrator-ownership.sql"');
 const stopWritersIndex = deployScript.indexOf("stop_telegram", ownershipGuardCallIndex);
 assert(backupCallIndex !== -1 && backupCallIndex < ownershipGuardCallIndex,
