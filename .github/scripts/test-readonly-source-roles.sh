@@ -10,7 +10,17 @@ trap cleanup EXIT
 docker run -d --name "$container" -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD="$bootstrap_password" -e POSTGRES_DB=postgres postgres:16-alpine >/dev/null
 ready=false
 for _ in $(seq 1 60); do
-  if docker exec "$container" pg_isready -U postgres -d postgres >/dev/null 2>&1; then ready=true; break; fi
+  # The official postgres image starts a temporary Unix-socket-only server
+  # during initdb. A socket pg_isready can therefore succeed immediately
+  # before that server is stopped. Wait for init completion AND verify that
+  # the final TCP listener can execute a real query before using the DB.
+  if docker logs "$container" 2>&1 | grep -Fq 'PostgreSQL init process complete; ready for start up.'; then
+    if docker exec -e PGHOST=127.0.0.1 -e PGUSER=postgres -e PGPASSWORD="$bootstrap_password" "$container" \
+      psql -X -v ON_ERROR_STOP=1 -d postgres -Atq -c 'SELECT 1' 2>/dev/null | grep -qx '1'; then
+      ready=true
+      break
+    fi
+  fi
   sleep 1
 done
 if [[ "$ready" != true ]]; then docker logs "$container"; echo "Temporary PostgreSQL did not become ready" >&2; exit 1; fi
