@@ -198,6 +198,7 @@ const migratorOwnershipGuard = read("scripts/check-postgres-migrator-ownership.s
 assert(migratorOwnershipGuard.includes("extension_members"), "migrator guard must identify extension-managed objects");
 assert(migratorOwnershipGuard.includes("non_migrator_object_count"), "migrator guard must block legacy-owned application objects");
 assert(migratorOwnershipGuard.includes("unsupported_application_schema_count"), "non-public application schemas must block until explicitly provisioned");
+assert(migratorOwnershipGuard.includes("public_security_definer_count"), "PUBLIC execution of SECURITY DEFINER routines must block deployment");
 assert(migratorOwnershipGuard.includes("migrator_can_create_database"), "migrator guard must reject database-level CREATE");
 assert(migratorOwnershipGuard.includes("app_schemas_without_create"), "migrator guard must verify CREATE on every application schema");
 assert(migratorOwnershipGuard.includes("restricted_database_create_count"), "runtime, backup and read-only roles must not have database CREATE");
