@@ -138,6 +138,8 @@ assert(liveBacktest.includes("$xAuto = Post-Json"), "live X auto test must use P
 
 const walletSummaryRoute = read("app/api/database/wallets/route.ts");
 assert(walletSummaryRoute.includes("getWalletSummaryStatus"), "wallet summary GET must check freshness");
+assert(walletSummaryRoute.includes("getReadOnlyDb"), "wallet summary GET must use the query-only SQLite connection");
+assert(!walletSummaryRoute.includes("getDb()"), "wallet summary GET must not open the write-capable SQLite connection");
 assert(walletSummaryRoute.includes("status: 409"), "stale wallet summary must fail explicitly");
 assert(!walletSummaryRoute.includes("rebuildWalletSummary("), "wallet summary GET must never rebuild aggregates");
 assert(walletSummaryRoute.includes("cached.sourceSignature === sourceSignature"), "wallet API response cache must invalidate on source revision changes");
@@ -151,6 +153,8 @@ const tradeDb = read("lib/trade/db.ts");
 assert(tradeDb.includes("busy_timeout = 5000"), "SQLite connection must configure a busy timeout");
 assert(tradeDb.indexOf("busy_timeout = 5000") < tradeDb.indexOf("journal_mode = WAL"), "SQLite busy timeout must be set before WAL negotiation");
 assert(tradeDb.includes("initializedDb"), "SQLite schema initialization must be cached per process");
+assert(tradeDb.includes("getReadOnlyDb"), "SQLite must expose a dedicated read-only connection");
+assert(tradeDb.includes("query_only = ON"), "SQLite read-only connections must reject all writes");
 
 const routeAuth = read("lib/routeAuth.ts");
 assert(routeAuth.includes("hasValidInternalServiceKey"), "internal X calls need a dedicated service auth check");
@@ -185,6 +189,7 @@ assert(read("scripts/deploy-production.sh").includes('$1 != "INTERNAL_SERVICE_AP
 assert(!productionCompose.includes("NEXT_PUBLIC_INTERNAL_SERVICE_API_KEY"), "internal service key must never be exposed to browser bundles");
 const walletSummaryHealth = read("app/api/internal/health/wallet-summary/route.ts");
 assert(walletSummaryHealth.includes("hasValidInternalServiceKey"), "wallet summary health must require machine authentication");
+assert(walletSummaryHealth.includes("getReadOnlyDb"), "wallet summary readiness must use the query-only SQLite connection");
 assert(walletSummaryHealth.includes('status: 503'), "stale wallet summary must fail readiness");
 assert(!walletSummaryHealth.includes("database_wallet_summary"), "health endpoint must not expose wallet aggregate rows");
 const productionHealthcheck = read("scripts/healthcheck-production.sh");
