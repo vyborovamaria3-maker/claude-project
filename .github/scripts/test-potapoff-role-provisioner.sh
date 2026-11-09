@@ -118,6 +118,10 @@ run_psql "$bootstrap_user" "$bootstrap_password" -c "
   ALTER TYPE public.legacy_composite OWNER TO $migrator_user;
   GRANT SELECT ON TABLE public.legacy_records TO PUBLIC;
   GRANT USAGE, SELECT ON SEQUENCE public.legacy_records_id_seq TO PUBLIC;
+  ALTER DEFAULT PRIVILEGES FOR ROLE $migrator_user GRANT INSERT, UPDATE, DELETE ON TABLES TO PUBLIC;
+  ALTER DEFAULT PRIVILEGES FOR ROLE $migrator_user IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO PUBLIC;
+  ALTER DEFAULT PRIVILEGES FOR ROLE $migrator_user GRANT USAGE, UPDATE ON SEQUENCES TO PUBLIC;
+  ALTER DEFAULT PRIVILEGES FOR ROLE $migrator_user IN SCHEMA public GRANT USAGE, UPDATE ON SEQUENCES TO PUBLIC;
 " >/dev/null
 
 run_psql "$bootstrap_user" "$bootstrap_password" \
@@ -258,8 +262,8 @@ run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_u
 # Migration DDL succeeds only after the allowlisted ownership transfer.
 run_psql "$migrator_user" "$migrator_password" -c "
   ALTER TABLE public.legacy_records ADD COLUMN note text;
-  CREATE TABLE public.migration_created(id integer PRIMARY KEY, label text);
-  INSERT INTO public.migration_created VALUES (1, 'migration');
+  CREATE TABLE public.migration_created(id bigserial PRIMARY KEY, label text);
+  INSERT INTO public.migration_created(label) VALUES ('migration');
 " >/dev/null
 
 # New migration-created functions must not inherit PostgreSQL's default PUBLIC EXECUTE.
@@ -281,10 +285,13 @@ run_psql "$bootstrap_user" "$bootstrap_password" -c \
 [[ "$(run_psql "$app_user" "$app_password" -Atq -c "SELECT public.migration_private_fn()")" == "7" ]]
 
 # Runtime DML and backup/read-only SELECT are allowed on migration-created data.
+[[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "SELECT has_table_privilege('$readonly_user','public.migration_created','INSERT')::text")" == "false" ]]
+[[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "SELECT has_sequence_privilege('$readonly_user','public.migration_created_id_seq','USAGE')::text || '|' || has_sequence_privilege('$readonly_user','public.migration_created_id_seq','UPDATE')::text")" == "false|false" ]]
+[[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "SELECT has_sequence_privilege('$app_user','public.migration_created_id_seq','USAGE')::text")" == "true" ]]
 run_psql "$app_user" "$app_password" -c "
-  INSERT INTO public.migration_created VALUES (2, 'runtime');
-  UPDATE public.migration_created SET label='updated' WHERE id=2;
-  DELETE FROM public.migration_created WHERE id=2;
+  INSERT INTO public.migration_created(label) VALUES ('runtime');
+  UPDATE public.migration_created SET label='updated' WHERE label='runtime';
+  DELETE FROM public.migration_created WHERE label='updated';
 " >/dev/null
 [[ "$(run_psql "$backup_user" "$backup_password" -Atq -c \
   "SELECT label FROM public.migration_created WHERE id=1")" == "migration" ]]

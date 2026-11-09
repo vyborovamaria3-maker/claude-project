@@ -166,11 +166,29 @@ CREATE ROLE :"readonly_user"
 
 REVOKE ALL PRIVILEGES ON DATABASE :"current_db" FROM :"app_user", :"migrator_user", :"readonly_user";
 -- PUBLIC membership grants apply even to NOINHERIT roles; remove legacy CREATE.
-REVOKE CREATE ON DATABASE :"current_db" FROM PUBLIC;
+REVOKE CONNECT, CREATE, TEMPORARY ON DATABASE :"current_db" FROM PUBLIC;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 REVOKE ALL PRIVILEGES ON SCHEMA public FROM :"app_user", :"migrator_user", :"readonly_user";
 REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM :"app_user", :"migrator_user", :"readonly_user";
 REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM :"app_user", :"migrator_user", :"readonly_user";
+
+-- Keep restricted logins out of auxiliary schemas, including empty extension schemas.
+SELECT format('REVOKE CREATE ON SCHEMA %I FROM %I', n.nspname, role_name)
+FROM pg_namespace AS n
+CROSS JOIN (VALUES (:'app_user'), (:'readonly_user')) AS roles(role_name)
+WHERE n.nspname <> 'information_schema'
+  AND n.nspname NOT LIKE 'pg_%'
+\gexec
+SELECT format('REVOKE CREATE ON SCHEMA %I FROM %I', n.nspname, :'migrator_user')
+FROM pg_namespace AS n
+WHERE n.nspname <> 'public'
+  AND n.nspname <> 'information_schema'
+  AND n.nspname NOT LIKE 'pg_%'
+\gexec
+
+-- Existing PUBLIC grants must not give a read-only login effective write access.
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC;
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
 
 GRANT CONNECT ON DATABASE :"current_db" TO :"app_user", :"migrator_user", :"readonly_user";
 GRANT USAGE ON SCHEMA public TO :"app_user", :"readonly_user";
@@ -203,6 +221,12 @@ WHERE n.nspname = 'public'
 
 -- New objects created by the migration identity automatically grant only the
 -- privileges required by runtime and read-only consumers.
+-- Remove global and schema-local legacy defaults before granting role-specific access.
+ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" REVOKE ALL ON TABLES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" REVOKE ALL ON SEQUENCES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
+
 ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" IN SCHEMA public
   REVOKE ALL ON TABLES FROM :"app_user", :"readonly_user";
 ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" IN SCHEMA public

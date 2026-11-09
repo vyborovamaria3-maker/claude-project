@@ -61,7 +61,7 @@ test_role_set() {
   run_psql "$database" postgres "$bootstrap_password" -c \
     "GRANT CREATE ON DATABASE $database TO PUBLIC; GRANT CREATE ON SCHEMA public TO PUBLIC" >/dev/null
   run_psql "$database" postgres "$bootstrap_password" -c \
-    "CREATE TABLE source_probe (id integer PRIMARY KEY, value text); INSERT INTO source_probe VALUES (1, 'visible');" >/dev/null
+    "CREATE TABLE source_probe (id integer PRIMARY KEY, value text); INSERT INTO source_probe VALUES (1, 'visible'); GRANT INSERT, UPDATE, DELETE ON TABLE public.source_probe TO PUBLIC" >/dev/null
 
   docker exec "$container" mkdir -p /provision
   docker cp "$repo_root/$sql_path" "$container:/provision/readonly-role.sql" >/dev/null
@@ -96,7 +96,7 @@ test_role_set() {
     return 1
   }
   run_psql "$database" postgres "$bootstrap_password" -c \
-    "CREATE ROLE $migrator_user NOLOGIN; GRANT CREATE ON SCHEMA public TO $migrator_user; ALTER TABLE source_probe OWNER TO $migrator_user" >/dev/null
+    "CREATE ROLE $app_user NOLOGIN; CREATE ROLE $migrator_user NOLOGIN; CREATE ROLE $readonly_user NOLOGIN; CREATE SCHEMA source_role_aux; GRANT CREATE ON SCHEMA source_role_aux TO $app_user, $migrator_user, $readonly_user; GRANT CREATE ON SCHEMA public TO $migrator_user; ALTER TABLE source_probe OWNER TO $migrator_user; CREATE SEQUENCE public.source_probe_seq; ALTER SEQUENCE public.source_probe_seq OWNER TO $migrator_user; GRANT USAGE, SELECT, UPDATE ON SEQUENCE public.source_probe_seq TO PUBLIC; ALTER DEFAULT PRIVILEGES FOR ROLE $migrator_user GRANT INSERT, UPDATE, DELETE ON TABLES TO PUBLIC; ALTER DEFAULT PRIVILEGES FOR ROLE $migrator_user IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO PUBLIC; ALTER DEFAULT PRIVILEGES FOR ROLE $migrator_user GRANT USAGE, UPDATE ON SEQUENCES TO PUBLIC; ALTER DEFAULT PRIVILEGES FOR ROLE $migrator_user IN SCHEMA public GRANT USAGE, UPDATE ON SEQUENCES TO PUBLIC" >/dev/null
   # Existing application types may have had PUBLIC USAGE revoked. The
   # provisioner must grant the exact type to runtime and read-only roles.
   run_psql "$database" postgres "$bootstrap_password" -c \
@@ -175,9 +175,9 @@ test_role_set() {
   # Only the migration identity can create/alter schema objects. Default
   # privileges must grant runtime DML and read-only SELECT on new objects.
   run_psql "$database" "$migrator_user" "$migrator_password" -c \
-    "CREATE TABLE migration_probe(id integer PRIMARY KEY, value text); INSERT INTO migration_probe VALUES (1,'migration'); ALTER TABLE migration_probe ADD COLUMN note text" >/dev/null
+    "CREATE TABLE migration_probe(id bigserial PRIMARY KEY, value text); INSERT INTO migration_probe(value) VALUES ('migration'); ALTER TABLE migration_probe ADD COLUMN note text" >/dev/null
   run_psql "$database" "$app_user" "$app_password" -c \
-    "INSERT INTO migration_probe(id,value) VALUES (2,'runtime'); UPDATE migration_probe SET note='ok' WHERE id=2; DELETE FROM migration_probe WHERE id=2" >/dev/null
+    "INSERT INTO migration_probe(value) VALUES ('runtime'); UPDATE migration_probe SET note='ok' WHERE value='runtime'; DELETE FROM migration_probe WHERE value='runtime'" >/dev/null
   [[ "$(run_psql "$database" "$readonly_user" "$readonly_password" -Atq -c "SELECT value FROM migration_probe WHERE id=1")" == "migration" ]]
 
   for role in "$app_user" "$migrator_user" "$readonly_user"; do
@@ -208,6 +208,10 @@ test_role_set() {
     else
       [[ "$schema_create" == "false" ]] || { echo "$role unexpectedly has schema CREATE" >&2; return 1; }
     fi
+    [[ "$(run_psql "$database" postgres "$bootstrap_password" -Atq -c "SELECT has_schema_privilege('$role', 'source_role_aux', 'CREATE')::text")" == "false" ]] || {
+      echo "$role unexpectedly has CREATE on source_role_aux" >&2
+      return 1
+    }
     local role_password
     case "$role" in
       "$app_user") role_password="$app_password" ;;
@@ -224,6 +228,11 @@ test_role_set() {
   local readonly_writes
   readonly_writes="$(run_psql "$database" postgres "$bootstrap_password" -Atq -c \
     "SELECT has_table_privilege('$readonly_user','source_probe','INSERT')::text || '|' || has_table_privilege('$readonly_user','source_probe','UPDATE')::text || '|' || has_table_privilege('$readonly_user','source_probe','DELETE')::text || '|' || has_table_privilege('$readonly_user','source_probe','TRUNCATE')::text || '|' || has_table_privilege('$readonly_user','migration_probe','INSERT')::text || '|' || has_table_privilege('$readonly_user','migration_probe','UPDATE')::text || '|' || has_table_privilege('$readonly_user','migration_probe','DELETE')::text || '|' || has_table_privilege('$readonly_user','migration_probe','TRUNCATE')::text")"
+  readonly_sequence_writes="$(run_psql "$database" postgres "$bootstrap_password" -Atq -c "SELECT has_sequence_privilege('$readonly_user','public.source_probe_seq','USAGE')::text || '|' || has_sequence_privilege('$readonly_user','public.source_probe_seq','UPDATE')::text || '|' || has_sequence_privilege('$readonly_user','public.migration_probe_id_seq','USAGE')::text || '|' || has_sequence_privilege('$readonly_user','public.migration_probe_id_seq','UPDATE')::text")"
+  [[ "$readonly_sequence_writes" == "false|false|false|false" ]] || {
+    echo "$readonly_user has sequence write/use privileges: $readonly_sequence_writes" >&2
+    return 1
+  }
   [[ "$readonly_writes" == "false|false|false|false|false|false|false|false" ]] || {
     echo "$readonly_user has write privileges: $readonly_writes" >&2
     return 1
