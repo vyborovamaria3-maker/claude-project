@@ -16,7 +16,9 @@ require("ts-node").register({
   },
 });
 
-const { getWalletSummaryStatus, rebuildWalletSummary } = require("../lib/trade/wallet-summary.ts");
+const fs = require("node:fs");
+const path = require("node:path");
+const { getWalletSummaryStatus, rebuildWalletSummary, parseWalletPageSize, parseWalletPageOffset } = require("../lib/trade/wallet-summary.ts");
 const db = new Database(":memory:");
 
 try {
@@ -44,6 +46,17 @@ try {
   `);
 
   assert.equal(getWalletSummaryStatus(db).ready, false, "summary must start uninitialized");
+  assert.equal(parseWalletPageSize("-1"), 1, "negative page sizes must not disable SQLite LIMIT");
+  assert.equal(parseWalletPageSize("0"), 1, "zero page size must be clamped");
+  assert.equal(parseWalletPageSize("9999"), 500, "page size must respect its maximum");
+  assert.equal(parseWalletPageSize("invalid"), 100, "invalid page size must use the default");
+  assert.equal(parseWalletPageOffset("-1"), 0, "negative offsets must be rejected");
+  assert.equal(parseWalletPageOffset("1000000"), 100000, "offset must respect its maximum");
+
+  const walletRoute = fs.readFileSync(path.join(__dirname, "../app/api/database/wallets/route.ts"), "utf8");
+  assert.match(walletRoute, /chain_win_rate: "token_rollup\.chain_win_rate"/);
+  assert.match(walletRoute, /bundle_rows: "token_rollup\.bundle_rows"/);
+  assert.match(walletRoute, /MAX_RESPONSE_CACHE_ENTRIES = 100/);
 
   const first = rebuildWalletSummary(db);
   assert.equal(first.rebuilt, true);

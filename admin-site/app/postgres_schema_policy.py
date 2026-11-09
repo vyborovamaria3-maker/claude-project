@@ -194,16 +194,22 @@ def verify_preprovisioned_schema(dsn: str) -> None:
             # LOGIN flags alone do not show inherited or SET-able powerful
             # predefined roles. Neither path is acceptable for an Admin DML
             # identity, particularly pg_execute_server_program.
+            # Reject every predefined PostgreSQL role, not only the five data
+            # access roles listed in older policy checks. Roles such as
+            # pg_signal_backend and pg_monitor are still outside a DML-only
+            # Admin runtime's authority.
             cur.execute(
-                "SELECT pg_has_role(current_user, 'pg_read_all_data', 'MEMBER'), "
-                "pg_has_role(current_user, 'pg_write_all_data', 'MEMBER'), "
-                "pg_has_role(current_user, 'pg_read_server_files', 'MEMBER'), "
-                "pg_has_role(current_user, 'pg_write_server_files', 'MEMBER'), "
-                "pg_has_role(current_user, 'pg_execute_server_program', 'MEMBER')"
+                "SELECT r.rolname FROM pg_roles AS r "
+                "WHERE left(r.rolname, 3) = 'pg_' "
+                "AND pg_has_role(current_user, r.oid, 'MEMBER') "
+                "LIMIT 1"
             )
-            powerful_memberships = cur.fetchone()
-            if not powerful_memberships or any(powerful_memberships):
-                raise RuntimeError("Admin runtime has unsafe PostgreSQL predefined-role membership")
+            predefined_membership = cur.fetchone()
+            if predefined_membership:
+                raise RuntimeError(
+                    "Admin runtime has unsafe PostgreSQL predefined-role membership: "
+                    f"{predefined_membership[0]}"
+                )
             # Role attributes such as CREATEROLE, CREATEDB, REPLICATION and
             # BYPASSRLS are not ordinary table grants. A custom NOLOGIN role
             # can still confer them when the runtime identity may SET ROLE.

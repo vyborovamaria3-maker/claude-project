@@ -545,6 +545,27 @@ def assert_runtime_restricted() -> None:
             bootstrap.execute("REVOKE pg_execute_server_program FROM admin_ci_runtime")
     verify_preprovisioned_schema(RUNTIME)
 
+    # Predefined roles with no dangerous rolsuper/CREATEDB flags still grant
+    # server-level capabilities such as terminating sessions or reading
+    # monitoring data. The DML-only runtime must not inherit any pg_* role.
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+        bootstrap.execute(
+            "GRANT pg_signal_backend TO admin_ci_runtime "
+            "WITH INHERIT FALSE, SET TRUE"
+        )
+    try:
+        try:
+            verify_preprovisioned_schema(RUNTIME)
+        except RuntimeError as exc:
+            assert "predefined-role membership" in str(exc).lower(), str(exc)
+            assert "pg_signal_backend" in str(exc).lower(), str(exc)
+        else:
+            raise AssertionError("pg_signal_backend membership was accepted")
+    finally:
+        with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+            bootstrap.execute("REVOKE pg_signal_backend FROM admin_ci_runtime")
+    verify_preprovisioned_schema(RUNTIME)
+
     # Custom role attributes are also dangerous through SET ROLE even
     # when the role owns no application schema or table.
     with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:

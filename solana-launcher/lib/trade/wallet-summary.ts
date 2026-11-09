@@ -7,6 +7,22 @@ export type WalletSummaryStatus = {
   storedSignature: string | null;
 };
 
+export function parseWalletPageSize(raw: string | null): number {
+  const value = raw?.trim() ?? "";
+  if (!/^-?\d+$/.test(value)) return 100;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) return 100;
+  return Math.max(1, Math.min(parsed, 500));
+}
+
+export function parseWalletPageOffset(raw: string | null): number {
+  const value = raw?.trim() ?? "";
+  if (!/^\d+$/.test(value)) return 0;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) return 0;
+  return Math.min(parsed, 100_000);
+}
+
 function currentSourceSignature(db: Database.Database): string {
   const source = db.prepare(`
     SELECT

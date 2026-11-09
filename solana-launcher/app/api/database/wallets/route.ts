@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 import { getReadOnlyDb } from "../../../../lib/trade/db";
-import { getWalletSummaryStatus } from "../../../../lib/trade/wallet-summary";
+import {
+  getWalletSummaryStatus,
+  parseWalletPageOffset,
+  parseWalletPageSize,
+} from "../../../../lib/trade/wallet-summary";
 import { checkRateLimit, getClientIp } from "../../../../lib/rateLimit";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +14,7 @@ export const dynamic = "force-dynamic";
 const RATE_LIMIT_MAX = 60;
 const RATE_LIMIT_WINDOW = 60;
 const RESPONSE_CACHE_TTL_MS = 15_000;
+const MAX_RESPONSE_CACHE_ENTRIES = 100;
 const SNAPSHOT_PATH = path.join(process.cwd(), "data", "database-wallets.response-cache.json");
 
 const SORTABLE = new Set([
@@ -42,8 +47,8 @@ const SORT_SQL: Record<string, string> = {
   total_pnl_sol: "ws.total_pnl_sol",
   total_volume_sol: "ws.total_volume_sol",
   tokens_traded: "ws.tokens_traded",
-  chain_win_rate: "m.avg_pnl",
-  bundle_rows: "m.avg_pnl",
+  chain_win_rate: "token_rollup.chain_win_rate",
+  bundle_rows: "token_rollup.bundle_rows",
   total_rockets: "m.total_rockets",
   reports: "m.reports",
 };
@@ -55,6 +60,19 @@ type CachedResponse = {
 };
 
 const responseCache = new Map<string, CachedResponse>();
+
+function cacheResponse(key: string, entry: CachedResponse): void {
+  const now = Date.now();
+  for (const [existingKey, existing] of responseCache) {
+    if (now - existing.at >= RESPONSE_CACHE_TTL_MS) responseCache.delete(existingKey);
+  }
+  if (!responseCache.has(key) && responseCache.size >= MAX_RESPONSE_CACHE_ENTRIES) {
+    const oldestKey = responseCache.keys().next().value;
+    if (oldestKey !== undefined) responseCache.delete(oldestKey);
+  }
+  responseCache.delete(key);
+  responseCache.set(key, entry);
+}
 
 type SnapshotEntry = {
   key: string;
@@ -75,7 +93,13 @@ function readSnapshot(): SnapshotEntry[] {
 
 function writeSnapshot(entries: SnapshotEntry[]) {
   fs.mkdirSync(path.dirname(SNAPSHOT_PATH), { recursive: true });
-  fs.writeFileSync(SNAPSHOT_PATH, JSON.stringify(entries));
+  const temporaryPath = `${SNAPSHOT_PATH}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, JSON.stringify(entries), { encoding: "utf8", mode: 0o600, flag: "wx" });
+    fs.renameSync(temporaryPath, SNAPSHOT_PATH);
+  } finally {
+    try { fs.unlinkSync(temporaryPath); } catch { /* already renamed or unavailable */ }
+  }
 }
 
 type WalletRow = {
@@ -177,10 +201,16 @@ export async function GET(req: NextRequest) {
   const minReports = parseFloat(searchParams.get("minReports") || "");
   const search = (searchParams.get("search") || "").trim();
   const tag = (searchParams.get("tag") || "").trim();
+  if (search.length > 128 || tag.length > 64) {
+    return NextResponse.json(
+      { error: "Search and tag filters exceed the supported length." },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
+    );
+  }
   const sortByRaw = (searchParams.get("sortBy") || "avg_pnl").trim();
   const sortDirRaw = (searchParams.get("sortDir") || "desc").trim().toUpperCase();
-  const limit = Math.min(parseInt(searchParams.get("limit") || "100", 10) || 100, 500);
-  const offset = Math.max(parseInt(searchParams.get("offset") || "0", 10) || 0, 0);
+  const limit = parseWalletPageSize(searchParams.get("limit"));
+  const offset = parseWalletPageOffset(searchParams.get("offset"));
   const sortBy = SORTABLE.has(sortByRaw) ? sortByRaw : "avg_pnl";
   const sortExpr = SORT_SQL[sortBy] ?? SORT_SQL.avg_pnl;
   const sortDir = SORT_DIR_ALLOWED.has(sortDirRaw) ? sortDirRaw : "DESC";
@@ -217,7 +247,7 @@ export async function GET(req: NextRequest) {
   const snapshotEntries = readSnapshot();
   const snapshotHit = snapshotEntries.find((entry) => entry.key === cacheKey && entry.sourceSignature === sourceSignature && Date.now() - entry.at < 5 * 60 * 1000);
   if (snapshotHit) {
-    responseCache.set(cacheKey, { at: snapshotHit.at, sourceSignature, payload: snapshotHit.payload });
+    cacheResponse(cacheKey, { at: snapshotHit.at, sourceSignature, payload: snapshotHit.payload });
     return NextResponse.json(snapshotHit.payload, {
       headers: {
         "Cache-Control": "public, max-age=0, s-maxage=300",
@@ -280,10 +310,10 @@ export async function GET(req: NextRequest) {
       ws.total_sells,
       ws.first_seen,
       ws.last_updated_at,
-      NULL AS chain_win_rate,
+      token_rollup.chain_win_rate AS chain_win_rate,
       NULL AS fresh_rate,
       NULL AS wash_rate,
-      NULL AS bundle_rows,
+      token_rollup.bundle_rows AS bundle_rows,
       NULL AS positive_token_rows,
       NULL AS wallet_token_rows,
       NULL AS wallet_tokens_updated_at,
@@ -291,8 +321,16 @@ export async function GET(req: NextRequest) {
     FROM database_wallet_summary m
     LEFT JOIN wallet_stats ws ON ws.address = m.wallet
     LEFT JOIN wallet_tags wt ON wt.wallet = m.wallet
+    LEFT JOIN (
+      SELECT
+        address,
+        AVG(CASE WHEN pnl_sol > 0 THEN 1.0 ELSE 0.0 END) AS chain_win_rate,
+        SUM(CASE WHEN bundle_id IS NOT NULL THEN 1 ELSE 0 END) AS bundle_rows
+      FROM wallet_token_stats
+      GROUP BY address
+    ) token_rollup ON token_rollup.address = m.wallet
     ${whereSql}
-    GROUP BY m.wallet
+    GROUP BY m.wallet, token_rollup.chain_win_rate, token_rollup.bundle_rows
     ORDER BY (${sortExpr} IS NULL) ASC, ${sortExpr} ${sortDir}
     LIMIT ? OFFSET ?
   `).all(...params, limit, offset) as WalletRow[];
@@ -475,10 +513,14 @@ export async function GET(req: NextRequest) {
     filters: { minPnl, minRoi, minWr, minMigrated, minTokens, minReports, search, tag, sortBy, sortDir },
   };
 
-  responseCache.set(cacheKey, { at: Date.now(), sourceSignature, payload });
+  cacheResponse(cacheKey, { at: Date.now(), sourceSignature, payload });
   const nextEntries = snapshotEntries.filter((entry) => !(entry.key === cacheKey && entry.sourceSignature === sourceSignature));
   nextEntries.unshift({ key: cacheKey, sourceSignature, at: Date.now(), payload });
-  writeSnapshot(nextEntries.slice(0, 40));
+  try {
+    writeSnapshot(nextEntries.slice(0, 40));
+  } catch {
+    // The on-disk snapshot is an optional cache; it must not fail a valid read.
+  }
 
   return NextResponse.json(payload, {
     headers: {
