@@ -272,6 +272,25 @@ def verify_preprovisioned_schema(dsn: str) -> None:
             if database_rights != (True, False, False, False):
                 raise RuntimeError("Admin runtime has unsafe database-level privileges")
 
+            # A PUBLIC EXECUTE grant on SECURITY DEFINER code is an execution
+            # boundary bypass even when table/schema ACLs are otherwise narrow.
+            cur.execute(
+                "SELECT p.oid::regprocedure::text FROM pg_proc p "
+                "JOIN pg_namespace n ON n.oid=p.pronamespace "
+                "CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f',p.proowner))) acl "
+                "WHERE n.nspname='public' AND p.prosecdef "
+                "AND acl.grantee=0 AND acl.privilege_type='EXECUTE' "
+                "AND NOT EXISTS (SELECT 1 FROM pg_depend e "
+                "WHERE e.classid='pg_proc'::regclass AND e.objid=p.oid AND e.deptype='e') "
+                "LIMIT 1"
+            )
+            public_security_definer = cur.fetchone()
+            if public_security_definer:
+                raise RuntimeError(
+                    "Admin runtime has PUBLIC EXECUTE on SECURITY DEFINER function: "
+                    f"{public_security_definer[0]}"
+                )
+
             cur.execute(
                 "SELECT c.relname, c.relkind, "
                 "pg_get_userbyid(c.relowner), pg_has_role(current_user, c.relowner, 'MEMBER'), "
