@@ -48,6 +48,9 @@ run_psql() {
     psql -X -v ON_ERROR_STOP=1 -d potapoff_ci "$@"
 }
 
+original_schema_owner="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
+  "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='public'")"
+
 # Seed bootstrap-owned legacy objects. The provisioner must not silently
 # transfer any of these objects to the migration role.
 run_psql "$bootstrap_user" "$bootstrap_password" -c "GRANT CREATE ON DATABASE potapoff_ci TO PUBLIC" >/dev/null
@@ -160,7 +163,7 @@ done
 [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
   "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.legacy_records'::regclass")" == "$bootstrap_user" ]]
 [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
-  "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='public'")" == "$bootstrap_user" ]]
+  "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='public'")" == "$original_schema_owner" ]]
 [[ "$(run_psql "$backup_user" "$backup_password" -Atq -c "SHOW default_transaction_read_only")" == "on" ]]
 [[ "$(run_psql "$readonly_user" "$readonly_password" -Atq -c "SHOW default_transaction_read_only")" == "on" ]]
 
