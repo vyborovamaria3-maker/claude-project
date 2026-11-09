@@ -127,8 +127,8 @@ rehearsals only; they have **not** been run against a production database.
   `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT`;
 - removes stale role memberships from those restricted identities;
 - grants app DML, backup/read-only explicit SELECT, and migrator CREATE on
-  `public`, with matching default privileges for future migration objects;
-- revokes PUBLIC database and schema access;
+  `public`, with matching default privileges for future migration objects; it also revokes default PUBLIC EXECUTE on newly created functions, which require explicit application grants;
+- revokes only CREATE on the application `public` schema from PUBLIC, while preserving existing database CONNECT/TEMP and schema USAGE ACLs pending the reviewed inventory;
 - keeps backup/read-only transactions read-only;
 - does **not** run `REASSIGN OWNED`, change database ownership, or change
   schema ownership. The backup role is not granted `pg_read_all_data` and
