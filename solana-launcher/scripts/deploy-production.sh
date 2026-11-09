@@ -25,6 +25,7 @@ test -r backend.env
 test -r "$COMPOSE_FILE"
 test -r "$BACKUP_SCRIPT"
 test -r "$HEALTH_SCRIPT"
+test -r "$DEPLOY_DIR/scripts/check-postgres-migrator-ownership.sql"
 test -r "$PROMETHEUS_CONFIG"
 test -r "$ADMIN_COMPOSE_FILE"
 test -r "$ADMIN_ENV_FILE"
@@ -572,10 +573,29 @@ export ADMIN_IMAGE_TAG="$NEW_TAG"
 "${ADMIN_COMPOSE[@]}" config --quiet
 "${ADMIN_COMPOSE[@]}" run --rm admin-db-provisioner
 
-# Provision least-privilege roles before backup and migration; runtime services
-# never receive the bootstrap or migration credentials.
+# Create/refresh least-privilege roles and object grants. This provisioner
+# deliberately does NOT transfer existing ownership; the backup role must exist
+# before the verified backup, and the read-only ownership guard runs afterwards.
 "${COMPOSE[@]}" run --rm postgres-role-provisioner
 "$BACKUP_SCRIPT"
+
+# Fail before stopping writers or running Alembic if any existing application
+# object still has a legacy owner. Ownership transfer is a separate, reviewed
+# allowlist operation rehearsed on an isolated restore; never use REASSIGN OWNED.
+POSTGRES_BOOTSTRAP_USER="$(resolve_env_value POSTGRES_USER)"
+POSTGRES_BOOTSTRAP_USER="${POSTGRES_BOOTSTRAP_USER:-potapoff}"
+POSTGRES_BOOTSTRAP_PASSWORD="$(resolve_env_value POSTGRES_PASSWORD)"
+if [[ -z "$POSTGRES_BOOTSTRAP_PASSWORD" ]]; then
+  echo "POSTGRES_PASSWORD is required for the read-only migrator ownership guard" >&2
+  exit 1
+fi
+"${COMPOSE[@]}" exec -T \
+  -e "PGPASSWORD=$POSTGRES_BOOTSTRAP_PASSWORD" \
+  postgres psql -X -v ON_ERROR_STOP=1 \
+  -v migrator_user="$POSTGRES_MIGRATOR_USER" \
+  -U "$POSTGRES_BOOTSTRAP_USER" -d potapoff \
+  -f "$DEPLOY_DIR/scripts/check-postgres-migrator-ownership.sql" >/dev/null
+
 DEPLOYMENT_STARTED=1
 printf '%s\n' "$PREVIOUS_TAG" > .previous-image-tag
 printf '%s\n' "$NEW_TAG" > .current-image-tag
