@@ -68,6 +68,52 @@ application_objects AS (
 migrator AS (
   SELECT oid FROM pg_roles WHERE rolname = :'migrator_user'
 )
+WITH extension_members AS (
+  SELECT classid, objid FROM pg_depend WHERE deptype = 'e'
+),
+unsupported_application_schemas AS (
+  SELECT n.oid, n.nspname
+  FROM pg_namespace n
+  WHERE n.nspname <> 'public'
+    AND n.nspname <> 'information_schema'
+    AND n.nspname NOT LIKE 'pg_%'
+    AND (
+      EXISTS (
+        SELECT 1 FROM pg_class c
+        WHERE c.relnamespace = n.oid
+          AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
+          AND NOT EXISTS (
+            SELECT 1 FROM extension_members e
+            WHERE e.classid = 'pg_class'::regclass AND e.objid = c.oid
+          )
+      )
+      OR EXISTS (
+        SELECT 1 FROM pg_proc p
+        WHERE p.pronamespace = n.oid
+          AND NOT EXISTS (
+            SELECT 1 FROM extension_members e
+            WHERE e.classid = 'pg_proc'::regclass AND e.objid = p.oid
+          )
+      )
+      OR EXISTS (
+        SELECT 1 FROM pg_type t
+        WHERE t.typnamespace = n.oid
+          AND t.typtype IN ('d', 'e', 'r', 'm')
+          AND NOT EXISTS (
+            SELECT 1 FROM extension_members e
+            WHERE e.classid = 'pg_type'::regclass AND e.objid = t.oid
+          )
+      )
+    )
+)
+SELECT count(*)::integer AS unsupported_application_schema_count
+FROM unsupported_application_schemas \\gset
+
+\\if :unsupported_application_schema_count
+  \\echo 'Production migration blocked: non-public application schema requires separately reviewed grants and default privileges'
+  \\quit 3
+\\endif
+
 SELECT count(*)::integer AS non_migrator_object_count
 FROM application_objects, migrator
 WHERE application_objects.owner_oid <> migrator.oid \gset
