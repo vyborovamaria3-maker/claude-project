@@ -94,7 +94,9 @@ for role in "$app_user" "$migrator_user" "$backup_user" "$readonly_user"; do
   }
   memberships="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
     SELECT count(*) FROM pg_auth_members m
-    JOIN pg_roles r ON r.oid=m.member WHERE r.rolname='$role'
+    JOIN pg_roles member ON member.oid=m.member
+    JOIN pg_roles granted ON granted.oid=m.roleid
+    WHERE member.rolname='$role' OR granted.rolname='$role'
   ")"
   [[ "$memberships" == "0" ]] || { echo "$role has unexpected role memberships" >&2; exit 1; }
 done
@@ -168,6 +170,14 @@ run_psql "$app_user" "$app_password" -c "
   "SELECT label FROM public.migration_created WHERE id=1")" == "migration" ]]
 [[ "$(run_psql "$readonly_user" "$readonly_password" -Atq -c \
   "SELECT label FROM public.migration_created WHERE id=1")" == "migration" ]]
+
+[[ "$(run_psql "$app_user" "$app_password" -Atq -c \
+  "SELECT public.legacy_label_count()")" == "1" ]]
+if run_psql "$backup_user" "$backup_password" -c \
+  "SELECT public.legacy_label_count()" >/dev/null 2>&1; then
+  echo "Backup role unexpectedly executed an application function" >&2
+  exit 1
+fi
 
 for role in "$app_user" "$backup_user" "$readonly_user"; do
   case "$role" in
