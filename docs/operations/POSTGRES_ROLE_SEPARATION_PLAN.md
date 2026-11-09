@@ -135,7 +135,7 @@ rehearsals only; they have **not** been run against a production database.
   cannot bypass RLS. A dump that cannot see all rows because of RLS must fail
   and be investigated rather than silently omit data.
 
-The provisioner is intentionally not an ownership migration. The deploy
+The provisioner is intentionally not an ownership migration. Its automatic object grants and default privileges are scoped to `public`; a non-public schema containing non-extension application objects is blocked by the guard until its grants/default privileges are separately reviewed and provisioned. The deploy
 sequence creates/refreshes roles so the dedicated backup login is available,
 takes and verifies the backup, then runs
 `solana-launcher/scripts/check-postgres-migrator-ownership.sql` **before
