@@ -17,6 +17,18 @@ SQLITE_CONTAINER_TMP=""
 INTELLIGENCE_CONTAINER=""
 INTELLIGENCE_SQLITE_CONTAINER_TMP=""
 
+# Keep database passwords out of docker's argv/process list. The password is
+# read from stdin inside the container and exported only to the child process.
+docker_exec_with_pgpassword() {
+  local container="$1" password="$2"
+  shift 2
+  printf '%s\n' "$password" | docker exec -i "$container" sh -c '
+    IFS= read -r PGPASSWORD || exit 1
+    export PGPASSWORD
+    exec "$@"
+  ' sh "$@"
+}
+
 install -d -m 0700 "$BACKUP_ROOT"
 chmod 0700 "$BACKUP_ROOT"
 # Never expose a partial backup under a successful timestamp. A failed dump
@@ -74,7 +86,7 @@ if [[ ! "$POSTGRES_BACKUP_USER" =~ ^[a-z_][a-z0-9_]{0,62}$ || ! "$POSTGRES_BACKU
   exit 1
 fi
 
-docker exec -e "PGPASSWORD=$POSTGRES_BACKUP_PASSWORD" "$POSTGRES_CONTAINER" \
+docker_exec_with_pgpassword "$POSTGRES_CONTAINER" "$POSTGRES_BACKUP_PASSWORD" \
   pg_dump -h 127.0.0.1 -U "$POSTGRES_BACKUP_USER" -d potapoff -Fc \
   > "$DEST/postgres.dump"
 
@@ -115,7 +127,7 @@ fi
 # Data dumps use the dedicated read-only backup login over authenticated TCP.
 # The bootstrap login is reserved below for global role metadata and catalog
 # fingerprints, which require elevated catalog visibility.
-docker exec -e "PGPASSWORD=$ADMIN_STATE_BACKUP_PASSWORD" "$ADMIN_POSTGRES_CONTAINER" \
+docker_exec_with_pgpassword "$ADMIN_POSTGRES_CONTAINER" "$ADMIN_STATE_BACKUP_PASSWORD" \
   pg_dump -h 127.0.0.1 -U "$ADMIN_STATE_BACKUP_USER" -d potapoff_admin -Fc \
   > "$DEST/admin-postgres.dump"
 
