@@ -24,17 +24,31 @@ const backupScript = await readFile(resolve(root, "scripts/backup-production.sh"
 const dockerignore = await readFile(resolve(root, ".dockerignore"), "utf8");
 const telegramDockerfile = await readFile(resolve(root, "Dockerfile.telegram-bot"), "utf8");
 const subscriptionApiDockerfile = await readFile(resolve(root, "../solana-subscription-service/apps/api/Dockerfile"), "utf8");
+const subscriptionWebDockerfile = await readFile(resolve(root, "../solana-subscription-service/apps/web/Dockerfile"), "utf8");
+const subscriptionDockerignore = await readFile(resolve(root, "../solana-subscription-service/.dockerignore"), "utf8");
 const backendDockerfile = await readFile(resolve(root, "backend/Dockerfile"), "utf8");
 const subscriptionCompose = await readFile(resolve(root, "../solana-subscription-service/docker-compose.prod.yml"), "utf8");
 const subscriptionReadonlySql = await readFile(resolve(root, "../solana-subscription-service/scripts/provision-readonly-role.sql"), "utf8");
 const subscriptionRoleEntrypointPath = resolve(root, "../solana-subscription-service/scripts/run-readonly-role-provisioner.sh");
 const subscriptionRoleEntrypoint = await readFile(subscriptionRoleEntrypointPath, "utf8");
 const memecoinCompose = await readFile(resolve(root, "../memecoin-intelligence/docker-compose.production.yml"), "utf8");
+const memecoinDockerfile = await readFile(resolve(root, "../memecoin-intelligence/Dockerfile.production"), "utf8");
+const memecoinDockerignore = await readFile(resolve(root, "../memecoin-intelligence/.dockerignore"), "utf8");
+const sourceRoleRehearsal = await readFile(resolve(root, "../.github/scripts/test-readonly-source-roles.sh"), "utf8");
 const memecoinReadonlySql = await readFile(resolve(root, "../memecoin-intelligence/scripts/provision-readonly-role.sql"), "utf8");
 const memecoinRoleEntrypoint = await readFile(resolve(root, "../memecoin-intelligence/scripts/run-readonly-role-provisioner.sh"), "utf8");
 const fullBacktestWorkflow = await readFile(resolve(root, "../.github/workflows/full-backtest-audit.yml"), "utf8");
 const telegramWorkflow = await readFile(resolve(root, "../.github/workflows/telegram-intelligence-v19-ci.yml"), "utf8");
 const predeployWorkflow = await readFile(resolve(root, "../.github/workflows/potapoff-predeploy-gate.yml"), "utf8");
+
+function serviceSection(compose, name) {
+  const marker = "\\n  " + name + ":\\n";
+  const start = compose.indexOf(marker);
+  assert.notEqual(start, -1, "missing Compose service " + name);
+  const body = compose.slice(start + marker.length);
+  const nextService = body.search(/\\n  [a-zA-Z0-9_-]+:\\n/);
+  return nextService < 0 ? body : body.slice(0, nextService);
+}
 
 test("ordinary Compose down never removes named volumes", () => {
   assert.equal(pkg.scripts["compose:down"], "docker compose down");
@@ -161,18 +175,68 @@ test("Admin product data sources use dedicated read-only roles and shared Docker
   }
 });
 
-test("Subscription and Memecoin provisioners guard bootstrap identity inside the container", () => {
+test("Memecoin production runtime uses app credentials and a separate migration image", () => {
+  const api = serviceSection(memecoinCompose, "api");
+  const worker = serviceSection(memecoinCompose, "worker");
+  const migrator = serviceSection(memecoinCompose, "migrator");
+  for (const runtime of [api, worker]) {
+    assert.match(runtime, /DATABASE_URL: postgresql:\/\/\$\{POSTGRES_APP_USER/);
+    assert.doesNotMatch(runtime, /POSTGRES_PASSWORD|POSTGRES_MIGRATOR_PASSWORD/);
+  }
+  assert.match(migrator, /profiles: \["migrate"\]/);
+  assert.match(migrator, /target: migrator/);
+  assert.match(migrator, /POSTGRES_MIGRATOR_USER/);
+  assert.match(memecoinDockerfile, /FROM build AS migrator/);
+  assert.match(memecoinDockerfile, /FROM build AS runtime-deps/);
+  assert.match(memecoinDockerignore, /^\.env$/m);
+  assert.match(memecoinDockerignore, /^\.env\.\*$/m);
+  assert.match(memecoinDockerignore, /^!\.env\.example$/m);
+});
+
+test("SolSub API, bot and web receive only their required runtime credentials", () => {
+  const api = serviceSection(subscriptionCompose, "api");
+  const web = serviceSection(subscriptionCompose, "web");
+  const bot = serviceSection(subscriptionCompose, "bot");
+  const migrator = serviceSection(subscriptionCompose, "migrator");
+  assert.match(api, /DATABASE_URL: postgresql:\/\/\$\{POSTGRES_APP_USER/);
+  assert.doesNotMatch(api, /env_file:|POSTGRES_PASSWORD|POSTGRES_MIGRATOR_PASSWORD/);
+  assert.match(bot, /DATABASE_URL: postgresql:\/\/\$\{POSTGRES_APP_USER/);
+  assert.doesNotMatch(bot, /env_file:|POSTGRES_PASSWORD|POSTGRES_MIGRATOR_PASSWORD|JWT_ACCESS_SECRET/);
+  assert.doesNotMatch(web, /env_file:|DATABASE_URL|TELEGRAM_BOT_TOKEN|JWT_ACCESS_SECRET|POSTGRES_/);
+  assert.match(migrator, /profiles: \["migrate"\]/);
+  assert.match(migrator, /target: migrator/);
+  assert.match(migrator, /POSTGRES_MIGRATOR_USER/);
+  assert.match(subscriptionApiDockerfile, /FROM build AS migrator/);
+  const apiRunner = subscriptionApiDockerfile.split(/^FROM node:22-alpine AS runner$/m)[1];
+  assert.ok(apiRunner);
+  assert.match(apiRunner, /CMD \["node", "apps\/api\/dist\/apps\/api\/src\/server\.js"\]/);
+  assert.doesNotMatch(apiRunner, /npm run/);
+  assert.match(subscriptionWebDockerfile, /ARG NEXT_PUBLIC_API_URL/);
+  assert.match(subscriptionDockerignore, /^\.env$/m);
+  assert.match(subscriptionDockerignore, /^\.env\.\*$/m);
+  assert.match(subscriptionDockerignore, /^!\.env\.example$/m);
+});
+
+test("Subscription and Memecoin provisioners guard every restricted identity inside the container", () => {
   assert.equal(subscriptionRoleEntrypoint, memecoinRoleEntrypoint);
+  for (const role of ["POSTGRES_APP_USER", "POSTGRES_MIGRATOR_USER", "POSTGRES_READONLY_USER"]) {
+    assert.ok(subscriptionRoleEntrypoint.includes(role));
+  }
+  assert.match(subscriptionRoleEntrypoint, /"\$PGUSER" = "\$POSTGRES_APP_USER"/);
+  assert.match(subscriptionRoleEntrypoint, /"\$PGUSER" = "\$POSTGRES_MIGRATOR_USER"/);
   assert.match(subscriptionRoleEntrypoint, /"\$PGUSER" = "\$POSTGRES_READONLY_USER"/);
   assert.match(subscriptionRoleEntrypoint, /exec psql -X -v ON_ERROR_STOP=1 -f \/provision\/readonly-role\.sql/);
   for (const compose of [subscriptionCompose, memecoinCompose]) {
-    assert.match(compose, /run-readonly-role-provisioner\.sh:\/provision\/run-readonly-role-provisioner\.sh:ro/);
-    assert.match(compose, /entrypoint: \["\/bin\/sh", "\/provision\/run-readonly-role-provisioner\.sh"\]/);
-    assert.doesNotMatch(compose, /command:[^\n]*PGUSER/);
+    const provisioner = serviceSection(compose, "postgres-readonly-provisioner");
+    assert.match(provisioner, /run-readonly-role-provisioner\.sh:\/provision\/run-readonly-role-provisioner\.sh:ro/);
+    assert.match(provisioner, /entrypoint: \["\/bin\/sh", "\/provision\/run-readonly-role-provisioner\.sh"\]/);
+    assert.doesNotMatch(provisioner, /command:/);
   }
+  assert.match(sourceRoleRehearsal, /test_role_set "solsub_role_ci"/);
+  assert.match(sourceRoleRehearsal, /test_role_set "memecoin_role_ci"/);
 });
 
-test("read-only role provisioner refuses to bootstrap as its own restricted identity", () => {
+test("read-only role provisioner refuses a restricted bootstrap identity", () => {
   const result = spawnSync("sh", [subscriptionRoleEntrypointPath], {
     encoding: "utf8",
     env: {
@@ -181,12 +245,16 @@ test("read-only role provisioner refuses to bootstrap as its own restricted iden
       PGDATABASE: "fixture",
       PGUSER: "solsub_readonly",
       PGPASSWORD: "fixture-only",
+      POSTGRES_APP_USER: "solsub_app",
+      POSTGRES_APP_PASSWORD: "fixture-only",
+      POSTGRES_MIGRATOR_USER: "solsub_migrator",
+      POSTGRES_MIGRATOR_PASSWORD: "fixture-only",
       POSTGRES_READONLY_USER: "solsub_readonly",
       POSTGRES_READONLY_PASSWORD: "fixture-only"
     }
   });
   assert.equal(result.status, 64);
-  assert.match(result.stderr, /Refusing to provision a read-only role/);
+  assert.match(result.stderr, /Refusing to provision roles while connected as a restricted role/);
 });
 
 test("Telegram bot Docker context excludes deployment environment secrets", () => {
