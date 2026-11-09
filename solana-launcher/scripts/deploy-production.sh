@@ -77,6 +77,19 @@ ensure_runtime_database_credentials() {
     export "$key=$value"
   done
 
+  key=INTERNAL_SERVICE_API_KEY
+  value="$(resolve_env_value "$key")"
+  if [[ -z "$value" ]]; then
+    value="$(openssl rand -hex 32)"
+    echo "Generated $key"
+  fi
+  if [[ ! "$value" =~ ^[A-Fa-f0-9]{64}$ ]]; then
+    echo "$key must be a 64-character hexadecimal secret" >&2
+    return 1
+  fi
+  set_env_value .env.server "$key" "$value"
+  export "$key=$value"
+
   for key in POSTGRES_APP_USER POSTGRES_MIGRATOR_USER POSTGRES_BACKUP_USER POSTGRES_READONLY_USER; do
     value="$(resolve_env_value "$key")"
     if [[ -z "$value" ]]; then
