@@ -104,12 +104,12 @@ const devTwitter = read("app/api/trade/dev-twitter/route.ts");
 assert(devTwitter.includes("export async function POST(req: NextRequest)"), "X collection must use POST");
 const devTwitterGet = devTwitter.slice(devTwitter.indexOf("export async function GET()"));
 assert(devTwitterGet.includes("status: 405"), "X collection GET must reject state-changing requests");
-assert(!/scrapeTwitter|persistTwitterStats|getDb\\(/.test(devTwitterGet), "X collection GET must not scrape or persist");
+assert(!/scrapeTwitter|persistTwitterStats|getDb\(/.test(devTwitterGet), "X collection GET must not scrape or persist");
 
 assert(devForensics.includes("export async function POST(req: NextRequest)"), "developer forensics refresh must use POST");
 const devForensicsGet = devForensics.slice(devForensics.indexOf("export async function GET()"));
 assert(devForensicsGet.includes("status: 405"), "developer forensics GET must reject refresh requests");
-assert(!/upsertDevTokenVolume|fetch\\(/.test(devForensicsGet), "developer forensics GET must not mutate or fetch external data");
+assert(!/upsertDevTokenVolume|fetch\(/.test(devForensicsGet), "developer forensics GET must not mutate or fetch external data");
 assert(devForensics.includes('method: "POST"'), "internal X collection must use POST");
 
 const fomoSnapshot = read("app/api/trade/fomo-snapshot/route.ts");
@@ -129,7 +129,7 @@ for (const relativePath of [
 const socialIntelligenceClient = read("backend/app/services/social_intelligence.py");
 assert(socialIntelligenceClient.includes("client.post("), "FastAPI social intelligence must call X collection with POST");
 const twitterBridge = read("backend/app/cli/twitter_scrape_bridge.py");
-assert(twitterBridge.includes("client.post(url)"), "Twitter scrape bridge must call X collection with POST");
+assert(twitterBridge.includes("client.post(url, headers=headers)"), "Twitter scrape bridge must call X collection with POST");
 const liveBacktest = read("scripts/social-ai-live-backtest.ps1");
 assert(liveBacktest.includes("$xForced = Post-Json"), "live X Playwright test must use POST");
 assert(liveBacktest.includes("$xAuto = Post-Json"), "live X auto test must use POST");
