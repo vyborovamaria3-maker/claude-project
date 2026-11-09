@@ -81,7 +81,7 @@ WHERE application_objects.owner_oid <> migrator.oid \gset
 
 SELECT count(*)::integer AS missing_restricted_roles
 FROM (VALUES (:'app_user'), (:'backup_user'), (:'readonly_user')) AS restricted(role_name)
-WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = restricted.role_name) \\gset
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = restricted.role_name) \gset
 \if :missing_restricted_roles
   \echo 'Production migration blocked: app, backup or read-only role is missing'
   \quit 3
@@ -89,7 +89,7 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = restricted.role_name) \
 
 SELECT count(*)::integer AS restricted_database_create_count
 FROM (VALUES (:'app_user'), (:'backup_user'), (:'readonly_user')) AS restricted(role_name)
-WHERE has_database_privilege(restricted.role_name, current_database(), 'CREATE') \\gset
+WHERE has_database_privilege(restricted.role_name, current_database(), 'CREATE') \gset
 \if :restricted_database_create_count
   \echo 'Production migration blocked: runtime, backup or read-only role has database CREATE'
   \quit 3
