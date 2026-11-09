@@ -141,8 +141,10 @@ takes and verifies the backup, then runs
 `solana-launcher/scripts/check-postgres-migrator-ownership.sql` **before
 stopping writers or invoking Alembic**. The guard is read-only and blocks if
 any non-extension application relation, routine or user-defined domain/enum/
-range type is not owned by the migration login, or if the migration login
-lacks CREATE on `public`.
+range type is not owned by the migration login, if the migration login
+lacks CREATE on `public`, or if a non-extension `SECURITY DEFINER` routine
+remains executable by PUBLIC. Existing function ACLs therefore require an
+explicit review and grants to the application login where execution is needed.
 
 If the guard blocks, stop. Run the catalog inventory on an isolated restored
 copy, prepare and rehearse a per-object ownership/ACL allowlist and its reverse
