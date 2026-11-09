@@ -272,15 +272,7 @@ deploy() {
   "${COMPOSE[@]}" exec -T admin-postgres pg_dump -U potapoff_admin -d potapoff_admin -Fc > "$backup_dir/admin-state-post-migration.dump"
   chmod 0600 "$backup_dir/admin-state-post-migration.dump" || true
 
-  if grep -Eq '^POTAPOFF_INTELLIGENCE_BACKEND=postgres[[:space:]]*
-
-case "$MODE" in
-  preflight) preflight ;;
-  deploy) deploy ;;
-  smoke) smoke ;;
-  *) die "usage: $0 {preflight|deploy|smoke}" ;;
-esac
- "$ADMIN_DIR/.env.intelligence"; then
+  if grep -Eq '^POTAPOFF_INTELLIGENCE_BACKEND=postgres[[:space:]]*$' "$ADMIN_DIR/.env.intelligence"; then
     log "initializing PostgreSQL intelligence schema"
     "${COMPOSE[@]}" run --rm intelligence-worker python -m intelligence init-db
   fi
