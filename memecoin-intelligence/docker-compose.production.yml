@@ -32,8 +32,8 @@ services:
       POSTGRES_READONLY_PASSWORD: ${POSTGRES_READONLY_PASSWORD:?set POSTGRES_READONLY_PASSWORD}
     volumes:
       - ./scripts/provision-readonly-role.sql:/provision/readonly-role.sql:ro
-    entrypoint: ["/bin/sh", "-ec"]
-    command: 'test "${PGUSER}" != "memecoin_readonly" && exec psql -X -v ON_ERROR_STOP=1 -f /provision/readonly-role.sql'
+      - ./scripts/run-readonly-role-provisioner.sh:/provision/run-readonly-role-provisioner.sh:ro
+    entrypoint: ["/bin/sh", "/provision/run-readonly-role-provisioner.sh"]
     depends_on:
       postgres:
         condition: service_healthy
