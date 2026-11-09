@@ -124,7 +124,7 @@ When the dedicated worker is enabled, keep `TG_AUTOSTART=false` on the FastAPI s
 - `social_events`
 - `social_relations`
 
-`social_events` is the common timeline. Telegram token mentions are mirrored there, and X events can be refreshed from the existing `/api/trade/dev-twitter` analyzer or ingested internally.
+`social_events` is the common timeline. Telegram token mentions are mirrored there, and X events can be refreshed through the state-changing `POST /api/trade/dev-twitter` analyzer or ingested internally.
 
 ## Calls and scores
 
