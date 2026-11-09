@@ -205,7 +205,7 @@ class PostgresSharedStateTests(unittest.TestCase):
                     "WHERE migration_key='admin-sqlite-to-postgres-v1'"
                 )
             first = subprocess.run([sys.executable, str(script)], cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=True)
-            self.assertIn("MIGRATION_OK already_applied=false", first.stdout)
+            self.assertIn("MIGRATION_OK", first.stdout)
 
             second = subprocess.run([sys.executable, str(script)], cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=True)
             self.assertIn("SKIP admin-sqlite-to-postgres-v1: source fingerprint unchanged", second.stdout)

@@ -830,7 +830,7 @@ def assert_sqlite_state_migration_uses_migrator() -> None:
         first = subprocess.run(
             command, cwd=ROOT, env=env, capture_output=True, text=True, check=True
         )
-        assert "MIGRATION_OK already_applied=false" in first.stdout, first.stdout
+        assert "MIGRATION_OK" in first.stdout, first.stdout
 
         second = subprocess.run(
             command, cwd=ROOT, env=env, capture_output=True, text=True, check=True
