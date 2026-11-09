@@ -10,7 +10,11 @@ SELECT COALESCE((
 \if :bootstrap_is_superuser
 \else
   \echo 'Role provisioning requires the configured bootstrap superuser'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 SELECT (
@@ -28,7 +32,11 @@ SELECT (
 \if :role_names_distinct
 \else
   \echo 'Bootstrap, app, migrator, backup and read-only identities must be distinct'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 SELECT (
@@ -42,7 +50,11 @@ SELECT (
 \if :passwords_distinct
 \else
   \echo 'App, migrator, backup and read-only passwords must be distinct'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 -- All deployment preconditions that can be checked without writes must
@@ -54,7 +66,11 @@ SELECT COALESCE((
 \if :bootstrap_owns_database
 \else
   \echo 'Role provisioning blocked: database owner must remain the configured bootstrap identity'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 SELECT EXISTS (
@@ -69,7 +85,11 @@ SELECT EXISTS (
 ) AS has_public_nonpublic_schema_create \gset
 \if :has_public_nonpublic_schema_create
   \echo 'Role provisioning blocked: PUBLIC CREATE on a non-public schema requires explicit operator review'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 WITH extension_members AS (
@@ -121,7 +141,11 @@ SELECT (
 \echo 'Unprepared application object ownership:' :has_unprepared_application_owners
 \if :has_unprepared_application_owners
   \echo 'Role provisioning blocked: application objects require a separately reviewed migration-owner allowlist'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 SELECT EXISTS (
@@ -141,7 +165,11 @@ SELECT EXISTS (
 ) AS has_public_security_definer_execute \gset
 \if :has_public_security_definer_execute
   \echo 'Role provisioning blocked: SECURITY DEFINER function is executable by PUBLIC'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 SELECT EXISTS (
@@ -150,7 +178,11 @@ SELECT EXISTS (
 ) AS has_unprepared_large_objects \gset
 \if :has_unprepared_large_objects
   \echo 'Role provisioning blocked: large objects require a separately reviewed migration-owner allowlist'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 BEGIN;

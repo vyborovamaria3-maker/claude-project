@@ -13,14 +13,22 @@ SELECT current_database() AS current_db \gset
 SELECT current_user IN (:'app_user', :'migrator_user', :'readonly_user') AS unsafe_bootstrap \gset
 \if :unsafe_bootstrap
 \echo 'Refusing to provision roles while connected as a restricted application role'
-\quit 3
+DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 SELECT count(DISTINCT role_name)=3 AS unique_role_names
 FROM (VALUES (:'app_user'), (:'migrator_user'), (:'readonly_user')) AS roles(role_name) \gset
 \if :unique_role_names
 \else
 \echo 'Application, migration and read-only role names must be distinct'
-\quit 3
+DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 SELECT COALESCE((
@@ -30,7 +38,11 @@ SELECT COALESCE((
 \if :bootstrap_owns_database
 \else
 \echo 'Provisioning blocked: database owner must remain the configured bootstrap identity'
-\quit 3
+DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 SELECT EXISTS (
@@ -43,7 +55,11 @@ SELECT EXISTS (
 ) AS has_restricted_role_memberships \gset
 \if :has_restricted_role_memberships
 \echo 'Provisioning blocked: restricted role membership requires explicit operator review'
-\quit 3
+DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 -- Existing application objects must already have a reviewed migration owner.
@@ -60,7 +76,11 @@ SELECT EXISTS (
 ) AS has_public_nonpublic_schema_create \gset
 \if :has_public_nonpublic_schema_create
   \echo 'Role provisioning blocked: PUBLIC CREATE on a non-public schema requires explicit operator review'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 SELECT set_config('app.provision_migrator_user', :'migrator_user', false);
@@ -139,7 +159,11 @@ SELECT EXISTS (
 ) AS has_public_security_definer_execute \gset
 \if :has_public_security_definer_execute
 \echo 'Provisioning blocked: SECURITY DEFINER function is executable by PUBLIC'
-\quit 3
+DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 BEGIN;

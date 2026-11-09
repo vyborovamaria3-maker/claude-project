@@ -7,7 +7,11 @@ SELECT EXISTS (
 \if :migrator_exists
 \else
   \echo 'Migration role is missing; role provisioning must run first'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 SELECT EXISTS (
@@ -19,7 +23,11 @@ SELECT EXISTS (
 ) AS has_missing_restricted_roles \gset
 \if :has_missing_restricted_roles
   \echo 'Production migration blocked: app, backup or read-only role is missing'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 SELECT COALESCE((
@@ -30,7 +38,11 @@ SELECT COALESCE((
 \if :bootstrap_owns_database
 \else
   \echo 'Production migration blocked: database owner differs from the configured bootstrap identity'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 SELECT EXISTS (
@@ -43,7 +55,11 @@ SELECT EXISTS (
 ) AS has_public_database_access \gset
 \if :has_public_database_access
   \echo 'Production migration blocked: PUBLIC retains CONNECT or TEMPORARY on the database'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 SELECT EXISTS (
@@ -54,19 +70,31 @@ SELECT EXISTS (
 ) AS has_restricted_database_privileges \gset
 \if :has_restricted_database_privileges
   \echo 'Production migration blocked: runtime, backup or read-only role has database CREATE or TEMPORARY'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 SELECT has_database_privilege(:'migrator_user', current_database(), 'CREATE') AS migrator_can_create_database \gset
 \if :migrator_can_create_database
   \echo 'Production migration blocked: migration role must not have database CREATE'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 SELECT has_database_privilege(:'migrator_user', current_database(), 'TEMPORARY') AS migrator_can_create_temporary \gset
 \if :migrator_can_create_temporary
   \echo 'Production migration blocked: migration role must not have database TEMPORARY'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 -- The automated grant/default-privilege model currently covers public only.
@@ -189,41 +217,69 @@ SELECT
 
 \if :has_unsupported_application_schema
   \echo 'Production migration blocked: non-public application schema requires separately reviewed grants and default privileges'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 \if :has_non_migrator_objects
   \echo 'Production migration blocked: non-extension application objects are not owned by the migration role.'
   \echo 'Run the catalog inventory, review an explicit object-level ownership allowlist, and rehearse forward/rollback on an isolated restore.'
   \echo 'This guard is read-only and does not execute REASSIGN OWNED or alter database objects.'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 \if :has_app_schema_without_create
   \echo 'Production migration blocked: migration role lacks CREATE on an application schema'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 \if :has_restricted_schema_create
   \echo 'Production migration blocked: runtime, backup or read-only role has CREATE on an application schema'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 \if :has_migrator_nonpublic_schema_create
   \echo 'Production migration blocked: migration role has CREATE outside the approved public schema'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 \if :has_public_security_definer_execute
   \echo 'Production migration blocked: SECURITY DEFINER function is executable by PUBLIC; review and grant execution explicitly'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 SELECT has_schema_privilege(:'migrator_user', 'public', 'CREATE') AS migrator_can_create \gset
 \if :migrator_can_create
 \else
   \echo 'Production migration blocked: migration role lacks CREATE on public schema'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 SELECT EXISTS (
@@ -237,7 +293,11 @@ SELECT EXISTS (
 ) AS has_public_table_privileges \gset
 \if :has_public_table_privileges
   \echo 'Production migration blocked: PUBLIC retains privileges on application tables or views'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 SELECT EXISTS (
@@ -251,7 +311,11 @@ SELECT EXISTS (
 ) AS has_public_sequence_privileges \gset
 \if :has_public_sequence_privileges
   \echo 'Production migration blocked: PUBLIC retains privileges on application sequences'
-  \quit 3
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 \echo 'POSTGRES_MIGRATOR_OWNERSHIP_OK objects=owned schema_create=true'
