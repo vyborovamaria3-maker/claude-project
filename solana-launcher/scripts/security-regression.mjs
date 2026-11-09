@@ -102,11 +102,13 @@ assert(devForensics.includes("forwardedAuthHeaders"), "authenticated internal tr
 
 const devTwitter = read("app/api/trade/dev-twitter/route.ts");
 assert(devTwitter.includes("export async function POST(req: NextRequest)"), "X collection must use POST");
+assert(devTwitter.includes("cross_origin_request_rejected"), "X collection POST must reject cross-origin browser requests");
 const devTwitterGet = devTwitter.slice(devTwitter.indexOf("export async function GET()"));
 assert(devTwitterGet.includes("status: 405"), "X collection GET must reject state-changing requests");
 assert(!/scrapeTwitter|persistTwitterStats|getDb\(/.test(devTwitterGet), "X collection GET must not scrape or persist");
 
 assert(devForensics.includes("export async function POST(req: NextRequest)"), "developer forensics refresh must use POST");
+assert(devForensics.includes("cross_origin_request_rejected"), "developer forensics POST must reject cross-origin browser requests");
 const devForensicsGet = devForensics.slice(devForensics.indexOf("export async function GET()"));
 assert(devForensicsGet.includes("status: 405"), "developer forensics GET must reject refresh requests");
 assert(!/upsertDevTokenVolume|fetch\(/.test(devForensicsGet), "developer forensics GET must not mutate or fetch external data");
