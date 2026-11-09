@@ -181,7 +181,25 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO :"app_use
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO :"app_user", :"migrator_user";
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO :"readonly_user";
 GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO :"readonly_user";
-GRANT USAGE ON ALL TYPES IN SCHEMA public TO :"app_user", :"migrator_user", :"readonly_user";
+-- PostgreSQL 16 supports USAGE on one named TYPE, but not ALL TYPES IN SCHEMA.
+-- Enumerate application types so existing objects receive the same least-privilege grant.
+SELECT format(
+  'GRANT USAGE ON TYPE %I.%I TO %I, %I',
+  n.nspname, t.typname, :'app_user', :'readonly_user'
+)
+FROM pg_type AS t
+JOIN pg_namespace AS n ON n.oid = t.typnamespace
+WHERE n.nspname = 'public'
+  AND t.typisdefined
+  AND t.typtype IN ('b', 'c', 'd', 'e', 'm', 'r')
+  AND NOT EXISTS (
+    SELECT 1
+    FROM pg_depend AS extension_member
+    WHERE extension_member.classid = 'pg_type'::regclass
+      AND extension_member.objid = t.oid
+      AND extension_member.deptype = 'e'
+  )
+\\gexec
 
 -- New objects created by the migration identity automatically grant only the
 -- privileges required by runtime and read-only consumers.
