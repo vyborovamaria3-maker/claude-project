@@ -164,7 +164,7 @@ docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1
 ADMIN_STATE_BACKUP_PASSWORD=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
   -c "CREATE ROLE potapoff_admin_backup LOGIN PASSWORD '$ADMIN_STATE_BACKUP_PASSWORD' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT; GRANT CONNECT ON DATABASE potapoff_admin TO potapoff_admin_backup; GRANT USAGE ON SCHEMA public TO potapoff_admin_backup; ALTER ROLE potapoff_admin_backup SET default_transaction_read_only=on; GRANT SELECT ON ALL TABLES IN SCHEMA public TO potapoff_admin_backup; GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO potapoff_admin_backup;" >/dev/null
-docker exec "$admin" psql -U potapop_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
+docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
   -c "CREATE TYPE public.admin_backup_fixture_state AS ENUM ('queued','done'); REVOKE USAGE ON TYPE public.admin_backup_fixture_state FROM PUBLIC; GRANT USAGE ON TYPE public.admin_backup_fixture_state TO potapoff_admin_backup;" >/dev/null
 
 
