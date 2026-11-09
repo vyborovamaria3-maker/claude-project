@@ -133,6 +133,20 @@ test_role_set() {
       echo "$role still has role memberships: $memberships" >&2
       return 1
     }
+    local database_create schema_create
+    database_create="$(run_psql "$database" postgres "$bootstrap_password" -Atq -c \
+      "SELECT has_database_privilege('$role', current_database(), 'CREATE')::text")"
+    [[ "$database_create" == "false" ]] || {
+      echo "$role unexpectedly has database CREATE privilege" >&2
+      return 1
+    }
+    schema_create="$(run_psql "$database" postgres "$bootstrap_password" -Atq -c \
+      "SELECT has_schema_privilege('$role', 'public', 'CREATE')::text")"
+    if [[ "$role" == "$migrator_user" ]]; then
+      [[ "$schema_create" == "true" ]] || { echo "$role lacks schema CREATE" >&2; return 1; }
+    else
+      [[ "$schema_create" == "false" ]] || { echo "$role unexpectedly has schema CREATE" >&2; return 1; }
+    fi
     local role_password
     case "$role" in
       "$app_user") role_password="$app_password" ;;
