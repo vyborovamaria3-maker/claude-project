@@ -45,9 +45,97 @@ SELECT (
   \quit 3
 \endif
 
+-- All deployment preconditions that can be checked without writes must
+-- pass before changing passwords, role flags, memberships or ACLs.
+SELECT COALESCE((
+  SELECT pg_get_userbyid(datdba) = :'bootstrap_user'
+  FROM pg_database WHERE datname = current_database()
+), false) AS bootstrap_owns_database \gset
+\if :bootstrap_owns_database
+\else
+  \echo 'Role provisioning blocked: database owner must remain the configured bootstrap identity'
+  \quit 3
+\endif
+
+WITH extension_members AS (
+  SELECT classid, objid FROM pg_depend WHERE deptype = 'e'
+),
+application_objects AS (
+  SELECT n.nspname AS schema_name, c.relowner AS owner_oid
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname <> 'information_schema'
+    AND n.nspname NOT LIKE 'pg_%'
+    AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
+    AND NOT EXISTS (
+      SELECT 1 FROM extension_members e
+      WHERE e.classid = 'pg_class'::regclass AND e.objid = c.oid
+    )
+  UNION ALL
+  SELECT n.nspname, p.proowner
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname <> 'information_schema'
+    AND n.nspname NOT LIKE 'pg_%'
+    AND NOT EXISTS (
+      SELECT 1 FROM extension_members e
+      WHERE e.classid = 'pg_proc'::regclass AND e.objid = p.oid
+    )
+  UNION ALL
+  SELECT n.nspname, t.typowner
+  FROM pg_type t
+  JOIN pg_namespace n ON n.oid = t.typnamespace
+  WHERE n.nspname <> 'information_schema'
+    AND n.nspname NOT LIKE 'pg_%'
+    AND t.typtype IN ('b', 'c', 'd', 'e', 'm', 'p', 'r')
+    AND NOT EXISTS (
+      SELECT 1 FROM extension_members e
+      WHERE e.classid = 'pg_type'::regclass AND e.objid = t.oid
+    )
+)
+SELECT EXISTS (
+  SELECT 1 FROM application_objects
+  WHERE schema_name <> 'public'
+     OR pg_get_userbyid(owner_oid) IS DISTINCT FROM :'migrator_user'
+) AS has_unprepared_application_owners \gset
+\if :has_unprepared_application_owners
+  \echo 'Role provisioning blocked: application objects require a separately reviewed migration-owner allowlist'
+  \quit 3
+\endif
+
+SELECT EXISTS (
+  SELECT 1
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) acl
+  WHERE n.nspname <> 'information_schema'
+    AND n.nspname NOT LIKE 'pg_%'
+    AND p.prosecdef
+    AND acl.grantee = 0
+    AND acl.privilege_type = 'EXECUTE'
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_depend e
+      WHERE e.classid = 'pg_proc'::regclass AND e.objid = p.oid AND e.deptype = 'e'
+    )
+) AS has_public_security_definer_execute \gset
+\if :has_public_security_definer_execute
+  \echo 'Role provisioning blocked: SECURITY DEFINER function is executable by PUBLIC'
+  \quit 3
+\endif
+
+SELECT EXISTS (
+  SELECT 1 FROM pg_largeobject_metadata lom
+  WHERE pg_get_userbyid(lom.lomowner) IS DISTINCT FROM :'migrator_user'
+) AS has_unprepared_large_objects \gset
+\if :has_unprepared_large_objects
+  \echo 'Role provisioning blocked: large objects require a separately reviewed migration-owner allowlist'
+  \quit 3
+\endif
+
 BEGIN;
 
 -- Dedicated application, migration, backup and read-only roles. None inherits
+-- privileges from another role; backup is not allowed to bypass row security. None inherits
 -- privileges from another role; backup is not allowed to bypass row security.
 SELECT format('CREATE ROLE %I WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT', :'app_user', :'app_password')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user') \gexec
