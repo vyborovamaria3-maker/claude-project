@@ -161,7 +161,7 @@ for (const serviceName of ["backend", "celery-worker", "twitter-discovery", "fro
   const serviceStart = productionCompose.indexOf("\n  " + serviceName + ":\n");
   assert.notEqual(serviceStart, -1, "missing production service " + serviceName);
   const serviceBody = productionCompose.slice(serviceStart);
-  const nextService = serviceBody.slice(1).search(/\n  [a-zA-Z0-9_-]+:\\n/);
+  const nextService = serviceBody.slice(1).search(/\n  [a-zA-Z0-9_-]+:\n/);
   const block = nextService < 0 ? serviceBody : serviceBody.slice(0, nextService + 1);
   assert(block.includes("INTERNAL_SERVICE_API_KEY"), serviceName + " must receive server-only internal key");
 }
