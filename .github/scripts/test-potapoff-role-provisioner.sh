@@ -65,6 +65,7 @@ run_psql "$bootstrap_user" "$bootstrap_password" -c "
   CREATE VIEW public.legacy_projection AS SELECT id, label FROM public.legacy_records;
   CREATE FUNCTION public.legacy_label_count() RETURNS bigint
     LANGUAGE sql STABLE AS \$\$ SELECT count(*) FROM public.legacy_records \$\$;
+  REVOKE ALL ON FUNCTION public.legacy_label_count() FROM PUBLIC;
 " >/dev/null
 
 docker cp "$root/solana-launcher/scripts/provision-postgres-roles.sql" "$container:/tmp/provision-postgres-roles.sql" >/dev/null
@@ -126,6 +127,7 @@ run_psql "$bootstrap_user" "$bootstrap_password" -c "
   ALTER VIEW public.legacy_projection OWNER TO $migrator_user;
   ALTER FUNCTION public.legacy_label_count() OWNER TO $migrator_user;
   ALTER TYPE public.legacy_state OWNER TO $migrator_user;
+  GRANT EXECUTE ON FUNCTION public.legacy_label_count() TO $app_user;
 " >/dev/null
 
 run_psql "$bootstrap_user" "$bootstrap_password" -v migrator_user="$migrator_user" \
@@ -137,6 +139,24 @@ run_psql "$migrator_user" "$migrator_password" -c "
   CREATE TABLE public.migration_created(id integer PRIMARY KEY, label text);
   INSERT INTO public.migration_created VALUES (1, 'migration');
 " >/dev/null
+
+# New migration-created functions must not inherit PostgreSQL's default PUBLIC EXECUTE.
+run_psql "$migrator_user" "$migrator_password" -c \
+  "CREATE FUNCTION public.migration_private_fn() RETURNS integer LANGUAGE sql AS \\$\\$ SELECT 7 \\$\\$" >/dev/null
+for role in "$app_user" "$backup_user" "$readonly_user"; do
+  case "$role" in
+    "$app_user") role_password="$app_password" ;;
+    "$backup_user") role_password="$backup_password" ;;
+    *) role_password="$readonly_password" ;;
+  esac
+  if run_psql "$role" "$role_password" -c "SELECT public.migration_private_fn()" >/dev/null 2>&1; then
+    echo "$role unexpectedly executed a function without an explicit grant" >&2
+    exit 1
+  fi
+done
+run_psql "$bootstrap_user" "$bootstrap_password" -c \
+  "GRANT EXECUTE ON FUNCTION public.migration_private_fn() TO $app_user" >/dev/null
+[[ "$(run_psql "$app_user" "$app_password" -Atq -c "SELECT public.migration_private_fn()")" == "7" ]]
 
 # Runtime DML and backup/read-only SELECT are allowed on migration-created data.
 run_psql "$app_user" "$app_password" -c "
