@@ -59,7 +59,7 @@ test_role_set() {
   # Simulate a legacy database upgraded from a PostgreSQL version where
   # PUBLIC still had CREATE on the public schema.
   run_psql "$database" postgres "$bootstrap_password" -c \
-    "GRANT CREATE ON SCHEMA public TO PUBLIC" >/dev/null
+    "GRANT CREATE ON DATABASE $database TO PUBLIC; GRANT CREATE ON SCHEMA public TO PUBLIC" >/dev/null
   run_psql "$database" postgres "$bootstrap_password" -c \
     "CREATE TABLE source_probe (id integer PRIMARY KEY, value text); INSERT INTO source_probe VALUES (1, 'visible');" >/dev/null
 
