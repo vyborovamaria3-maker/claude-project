@@ -107,7 +107,7 @@ unsupported_application_schemas AS (
     )
 )
 SELECT count(*)::integer AS unsupported_application_schema_count
-FROM unsupported_application_schemas \\gset
+FROM unsupported_application_schemas \gset
 
 \\if :unsupported_application_schema_count
   \\echo 'Production migration blocked: non-public application schema requires separately reviewed grants and default privileges'
