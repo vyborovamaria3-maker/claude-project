@@ -39,11 +39,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _collector_base(args: argparse.Namespace, settings: object) -> str:
     explicit = args.frontend_base.strip()
-    if explicit:
-        return explicit.rstrip("/")
     environment = str(getattr(settings, "environment", "development")).strip().lower()
+    configured_internal = str(getattr(settings, "frontend_internal_url", "http://frontend:3000")).rstrip("/")
+    if explicit:
+        candidate = explicit.rstrip("/")
+        if (
+            environment in {"production", "prod", "docker"}
+            and os.getenv("INTERNAL_SERVICE_API_KEY", "").strip()
+            and candidate != configured_internal
+        ):
+            raise ValueError("--frontend-base must match FRONTEND_INTERNAL_URL when the internal service key is enabled")
+        return candidate
     if environment in {"production", "prod", "docker"}:
-        return str(getattr(settings, "frontend_internal_url", "http://frontend:3000")).rstrip("/")
+        return configured_internal
     return "http://localhost:3000"
 
 
@@ -75,7 +83,7 @@ async def run(args: argparse.Namespace, *, run_id: int | None = None) -> dict[st
         raise RuntimeError("INTERNAL_SERVICE_API_KEY is required for production X collection")
 
     headers = {"x-internal-service-key": internal_service_key} if internal_service_key else {}
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(url, headers=headers)
         response.raise_for_status()
         payload = response.json()
