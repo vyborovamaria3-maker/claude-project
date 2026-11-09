@@ -154,7 +154,9 @@ def assert_runtime_restricted() -> None:
     # than the separate SET-reachable schema privilege gate.
     with psycopg.connect(FIXTURE) as bootstrap:
         bootstrap.execute("CREATE ROLE admin_ci_table_owner NOLOGIN")
+        bootstrap.execute("GRANT CREATE ON SCHEMA public TO admin_ci_table_owner")
         bootstrap.execute("ALTER TABLE public.feature_flags OWNER TO admin_ci_table_owner")
+        bootstrap.execute("REVOKE CREATE ON SCHEMA public FROM admin_ci_table_owner")
         bootstrap.execute(
             "GRANT admin_ci_table_owner TO admin_ci_runtime "
             "WITH INHERIT FALSE, SET TRUE"
