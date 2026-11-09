@@ -324,6 +324,32 @@ def assert_runtime_restricted() -> None:
             bootstrap.execute("DROP FUNCTION public.admin_ci_public_definer()")
     verify_preprovisioned_schema(RUNTIME)
 
+    # Migrator-created functions must not inherit PostgreSQL's default PUBLIC EXECUTE.
+    with psycopg.connect(MIGRATE) as migration:
+        migration.execute(
+            "CREATE FUNCTION public.admin_ci_private_function() RETURNS integer "
+            "LANGUAGE sql AS 'SELECT 7'"
+        )
+        public_execute = migration.execute(
+            "SELECT EXISTS ("
+            "SELECT 1 FROM pg_proc p "
+            "CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f',p.proowner))) acl "
+            "WHERE p.oid='public.admin_ci_private_function()'::regprocedure "
+            "AND acl.grantee=0 AND acl.privilege_type='EXECUTE')"
+        ).fetchone()[0]
+        assert public_execute is False, "Migrator-created function retained PUBLIC EXECUTE"
+    for restricted_dsn in (RUNTIME, BACKUP):
+        with psycopg.connect(restricted_dsn) as restricted:
+            try:
+                restricted.execute("SELECT public.admin_ci_private_function()")
+            except InsufficientPrivilege:
+                pass
+            else:
+                raise AssertionError("Restricted identity executed an ungranted function")
+    with psycopg.connect(MIGRATE) as migration:
+        migration.execute("DROP FUNCTION public.admin_ci_private_function()")
+    verify_preprovisioned_schema(RUNTIME)
+
     # Membership in a table-owner role must be rejected even when that role
     # has no schema CREATE grant. This exercises the object-owner check rather
     # than the separate SET-reachable schema privilege gate.
