@@ -20,7 +20,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-docker run -d --name "$container" \
+docker run -d --network none --pids-limit 256 --name "$container" \
   -e POSTGRES_USER="$bootstrap_user" \
   -e POSTGRES_PASSWORD="$bootstrap_password" \
   -e POSTGRES_DB=potapoff_ci \
@@ -105,6 +105,12 @@ done
   "SELECT has_database_privilege('$migrator_user', current_database(), 'CREATE')")" == "f" ]]
 [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
   "SELECT has_schema_privilege('$migrator_user', 'public', 'CREATE')")" == "t" ]]
+for role in "$app_user" "$backup_user" "$readonly_user"; do
+  [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
+    "SELECT has_database_privilege('$role', current_database(), 'CREATE')")" == "f" ]]
+  [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
+    "SELECT has_schema_privilege('$role', 'public', 'CREATE')")" == "f" ]]
+done
 [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
   "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.legacy_records'::regclass")" == "$bootstrap_user" ]]
 [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
