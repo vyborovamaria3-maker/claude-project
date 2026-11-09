@@ -114,7 +114,10 @@ async function main() {
   try {
     if (source.kind === "pg") await checkPgOutbox(source.connection);
     destination = destinationConnection();
-    await checkDestination(destination, { requireBlockchainRevisions: options.source === "blockchain" });
+    await checkDestination(destination, {
+      requireBlockchainRevisions: options.source === "blockchain",
+      allowLegacyFingerprints: true,
+    });
     const result = await backfillPending({
       source, destination, sourceName: options.source, limit: options.limit, execute: options.execute,
     });
