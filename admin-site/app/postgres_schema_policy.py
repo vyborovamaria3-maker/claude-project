@@ -278,22 +278,6 @@ def verify_preprovisioned_schema(dsn: str) -> None:
             if database_rights != (True, False, False, False):
                 raise RuntimeError("Admin runtime has unsafe database-level privileges")
 
-            # The provisioner removes every role membership. Even a SET-only
-            # helper can grant UPDATE on append-only audit rows without DDL.
-            cur.execute(
-                "SELECT granted_role.rolname FROM pg_auth_members m "
-                "JOIN pg_roles member_role ON member_role.oid=m.member "
-                "JOIN pg_roles granted_role ON granted_role.oid=m.roleid "
-                "WHERE member_role.rolname=current_user "
-                "ORDER BY granted_role.rolname LIMIT 1"
-            )
-            unexpected_membership = cur.fetchone()
-            if unexpected_membership:
-                raise RuntimeError(
-                    "Admin runtime must not have PostgreSQL role memberships, including SET ROLE: "
-                    f"{unexpected_membership[0]}"
-                )
-
             # A PUBLIC EXECUTE grant on SECURITY DEFINER code is an execution
             # boundary bypass even when table/schema ACLs are otherwise narrow.
             cur.execute(
@@ -491,3 +475,20 @@ def verify_preprovisioned_schema(dsn: str) -> None:
                 for _, owner, member_of_owner, can_use, can_update in seqs.values()
             ):
                 raise RuntimeError("Admin runtime sequence/ownership privilege gate failed")
+
+            # All narrower SET-reachable privilege checks run first so startup
+            # reports the specific violated contract. This final gate also rejects
+            # memberships that only confer non-DDL rights such as audit UPDATE.
+            cur.execute(
+                "SELECT granted_role.rolname FROM pg_auth_members m "
+                "JOIN pg_roles member_role ON member_role.oid=m.member "
+                "JOIN pg_roles granted_role ON granted_role.oid=m.roleid "
+                "WHERE member_role.rolname=current_user "
+                "ORDER BY granted_role.rolname LIMIT 1"
+            )
+            unexpected_membership = cur.fetchone()
+            if unexpected_membership:
+                raise RuntimeError(
+                    "Admin runtime must not have PostgreSQL role memberships, including SET ROLE: "
+                    f"{unexpected_membership[0]}"
+                )
