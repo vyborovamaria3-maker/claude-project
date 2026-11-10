@@ -95,11 +95,34 @@ function extractEnvelope(event: DeliveryEvent): RegistryOutboxPayload {
   return {...raw, registryEvent: registry, timelineEvent: timeline};
 }
 
+/** Preserve delivery on migration 010 installations before 018 adds coalescing. */
+async function queueLegacyAnalyticsInvalidation(
+  tx:PgTransaction,input:Readonly<{
+    canonicalTokenId:string;sourceSystem:"x"|"tg";
+    eventKind:string;eventKey:string;
+    reason:"edit"|"delete"|"link_invalidated"|"backfill";
+  }>,
+):Promise<void> {
+  const result=await tx.query(`INSERT INTO analytics_invalidation_queue
+    (canonical_token_id,source_system,event_kind,event_key,reason)
+    VALUES ($1,$2,$3,$4,$5)
+    ON CONFLICT(canonical_token_id,source_system,event_kind,event_key,reason)
+      DO NOTHING
+    RETURNING invalidation_id`,[
+      input.canonicalTokenId,input.sourceSystem,input.eventKind,input.eventKey,input.reason,
+    ]);
+  if(result.rows.length)
+    await tx.query("INSERT INTO analytics_invalidation_log(invalidation_id,transition) VALUES ($1,'queued')",
+      [result.rows[0]!.invalidation_id]);
+}
+
 /**
  * Optional additive migration 010 hook. Revisions and link retractions enqueue
  * recomputation for previously evidence-linked tokens, but never guess tokens
- * from source content. The queued work is audited; a separate backfill-aware
- * worker must compute/publish the new historical snapshot.
+ * from source content. Before migration 018, events are retained with the
+ * migration-010 event-key uniqueness; after 018 they are coalesced by evidence.
+ * The queued work is audited; a separate backfill-aware worker must publish
+ * the new historical snapshot.
  */
 async function queueAffectedTokensForRecalculation(
   tx:PgTransaction,event:DeliveryEvent,body:RegistryOutboxPayload,
@@ -115,9 +138,11 @@ async function queueAffectedTokensForRecalculation(
           AND attname='coalesce_key' AND NOT attisdropped
       ) AS coalesce_key_ready
   `);
-  // Migration 010 creates the queue; migration 018 adds revision coalescing.
-  // Do not break source delivery during a staged rollout between those versions.
-  if(present.rows[0]?.ready!==true || present.rows[0]?.coalesce_key_ready!==true)return;
+  // Migration 010 is optional. If its queue exists, never ACK a revision
+  // without recording invalidation: use the legacy event-key unique key until
+  // migration 018 adds the coalescing key.
+  if(present.rows[0]?.ready!==true)return;
+  const coalescingReady=present.rows[0]?.coalesce_key_ready===true;
   const evidenceRef=body.registryEvent.evidenceRef.sourceId;
   const previous=await tx.query(`SELECT DISTINCT canonical_token_id FROM token_link_observations
     WHERE source_system=$1 AND evidence_source_id=$2 AND state='verified'
@@ -136,11 +161,20 @@ async function queueAffectedTokensForRecalculation(
   const reason=event.eventKind==="token_links_invalidated"?"link_invalidated":
     event.eventKind==="message_deleted"?"delete":
     event.eventKind==="token_link_verified"?"backfill":"edit";
-  for(const canonicalTokenId of tokens)
-    await queueAnalyticsInvalidation(tx,{
+  for(const canonicalTokenId of tokens) {
+    const invalidation={
       canonicalTokenId,sourceSystem:event.sourceSystem as "x"|"tg",
       eventKind:event.eventKind,eventKey:event.eventKey,coalesceKey:evidenceRef,reason,
-    });
+    };
+    if(coalescingReady) {
+      await queueAnalyticsInvalidation(tx,invalidation);
+    } else {
+      await queueLegacyAnalyticsInvalidation(tx,{
+        canonicalTokenId,sourceSystem:event.sourceSystem as "x"|"tg",
+        eventKind:event.eventKind,eventKey:event.eventKey,reason,
+      });
+    }
+  }
 }
 
 /** Revoke stored social ciphertext in the same destination transaction as a
