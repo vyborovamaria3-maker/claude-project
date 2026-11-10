@@ -276,12 +276,29 @@ assert(frontendDocker.includes("USER potapoff"), "frontend runtime must be non-r
 
 const migrationBootstrap = read("scripts/import-migration-xlsx.cjs");
 assert(
-  migrationBootstrap.includes("if (request === 'xlsx') return safeXlsx"),
+  migrationBootstrap.includes("if (request === 'potapoff-safe-xlsx') return safeXlsx"),
   "migration importer must never load the legacy SheetJS implementation",
 );
 assert(
   migrationBootstrap.includes("./xlsx-safe-package/index.cjs"),
   "migration importer must route xlsx reads to the bounded local reader",
+);
+const safeXlsxPackage = read("scripts/xlsx-safe-package/package.json");
+assert(
+  safeXlsxPackage.includes('"name": "potapoff-safe-xlsx"'),
+  "bounded local spreadsheet reader must not be identified as the vulnerable SheetJS package",
+);
+const telegramDocker = read("Dockerfile.telegram-bot");
+assert(frontendDocker.includes("! command -v npm"), "frontend runtime must not ship npm");
+assert(telegramDocker.includes("! command -v npm"), "Telegram runtime must not ship npm");
+assert(
+  telegramDocker.includes("COPY scripts/bigint-safe-package") &&
+    telegramDocker.includes("COPY scripts/xlsx-safe-package"),
+  "Telegram dependency stage must include local safe packages before npm ci",
+);
+assert(
+  telegramDocker.includes('CMD ["node", "node_modules/ts-node/dist/bin.js", "telegram-bot/index.ts"]'),
+  "Telegram runtime must launch directly through Node without npm",
 );
 
 const directXlsxImport = /(?:from\s+["']xlsx["']|require\(\s*["']xlsx["']\s*\))/;
