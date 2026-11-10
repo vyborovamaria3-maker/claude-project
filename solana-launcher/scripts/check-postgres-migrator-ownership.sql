@@ -323,8 +323,11 @@ SELECT EXISTS (
   FROM pg_class c
   JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname = 'public'
-    AND c.relkind = 'S'
-    AND has_sequence_privilege(:'app_user', c.oid, 'UPDATE')
+    AND CASE
+      WHEN c.relkind = 'S'
+        THEN has_sequence_privilege(:'app_user', c.oid, 'UPDATE')
+      ELSE false
+    END
 ) AS has_runtime_sequence_update \gset
 \if :has_runtime_sequence_update
   \echo 'Production migration blocked: runtime role can UPDATE an application sequence (setval)'
