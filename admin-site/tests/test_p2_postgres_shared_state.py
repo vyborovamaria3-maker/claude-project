@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import psycopg
+from psycopg.conninfo import make_conninfo
 
 ADMIN_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = ADMIN_ROOT.parent
@@ -163,10 +164,21 @@ class PostgresSharedStateTests(unittest.TestCase):
         finally:
             q1.stop(); q2.stop()
 
-    def test_sqlite_migration_is_idempotent_and_preserves_revocations(self) -> None:
+    def test_sqlite_migration_is_idempotent_and_refuses_target_conflicts(self) -> None:
         suffix = uuid.uuid4().hex[:8]
         nonce = uuid.uuid4().hex
         now = int(time.time())
+        schema = "admin_migration_" + uuid.uuid4().hex
+        with psycopg.connect(DSN, autocommit=True) as admin:
+            admin.execute(f'CREATE SCHEMA "{schema}"')
+        test_dsn = make_conninfo(DSN, options=f"-c search_path={schema}")
+
+        def drop_schema() -> None:
+            with psycopg.connect(DSN, autocommit=True) as admin:
+                admin.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+        self.addCleanup(drop_schema)
+
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "admin.db"
             db = sqlite3.connect(path)
@@ -192,30 +204,72 @@ class PostgresSharedStateTests(unittest.TestCase):
                 db.close()
 
             env = os.environ.copy()
-            env.update({"ADMIN_AUDIT_DB": str(path), "ADMIN_STATE_POSTGRES_DSN": DSN})
+            env.update({
+                "ADMIN_AUDIT_DB": str(path),
+                "ADMIN_STATE_MIGRATOR_DSN": test_dsn,
+                "ADMIN_STATE_APP_USER": os.getenv("ADMIN_STATE_APP_USER", "potapoff_admin_app"),
+            })
             script = ADMIN_ROOT / "scripts" / "migrate_admin_state_to_postgres.py"
-            with psycopg.connect(DSN, connect_timeout=5) as db:
-                db.execute(
-                    "CREATE TABLE IF NOT EXISTS admin_state_migrations("
-                    "migration_key TEXT PRIMARY KEY, "
-                    "applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
-                )
-                db.execute(
-                    "DELETE FROM admin_state_migrations "
-                    "WHERE migration_key='admin-sqlite-to-postgres-v1'"
-                )
-            first = subprocess.run([sys.executable, str(script)], cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=True)
+            first = subprocess.run(
+                [sys.executable, str(script)], cwd=REPO_ROOT, env=env,
+                capture_output=True, text=True, check=True,
+            )
             self.assertIn("MIGRATION_OK", first.stdout)
 
-            second = subprocess.run([sys.executable, str(script)], cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=True)
+            second = subprocess.run(
+                [sys.executable, str(script)], cwd=REPO_ROOT, env=env,
+                capture_output=True, text=True, check=True,
+            )
             self.assertIn("SKIP admin-sqlite-to-postgres-v1: source fingerprint unchanged", second.stdout)
 
-        control = PostgresControlStore(DSN)
-        self.assertTrue(any(row["name"] == f"migration.{suffix}" and row["enabled"] for row in control.flags()))
-        profiles = PostgresLiveAnalysisProfileStore(DSN)
+            # Removing the marker must not turn a stale SQLite snapshot into an
+            # overwrite path. The target row remains authoritative on conflict.
+            with psycopg.connect(test_dsn) as target:
+                target.execute(
+                    "DELETE FROM admin_state_migrations WHERE migration_key='admin-sqlite-to-postgres-v1'"
+                )
+            with sqlite3.connect(path) as source:
+                source.execute(
+                    "UPDATE feature_flags SET enabled=0,description='stale overwrite' WHERE name=?",
+                    (f"migration.{suffix}",),
+                )
+
+            conflict = subprocess.run(
+                [sys.executable, str(script)], cwd=REPO_ROOT, env=env,
+                capture_output=True, text=True,
+            )
+            self.assertNotEqual(conflict.returncode, 0)
+            self.assertIn("PostgreSQL target conflict in feature_flags", conflict.stderr)
+
+        control = PostgresControlStore(test_dsn)
+        flag = next(row for row in control.flags() if row["name"] == f"migration.{suffix}")
+        self.assertTrue(flag["enabled"])
+        self.assertEqual(flag["description"], "migrated")
+
+        profiles = PostgresLiveAnalysisProfileStore(test_dsn)
         self.assertTrue(any(row["key"] == f"mig_{suffix}" for row in profiles.list("telegram")))
-        security = PostgresAdminSessionStore(DSN, ip_binding=lambda _request: "", ua_binding=lambda _request: "")
+        security = PostgresAdminSessionStore(test_dsn, ip_binding=lambda _request: "", ua_binding=lambda _request: "")
         self.assertTrue(security.is_revoked(nonce))
+
+        app_user = os.getenv("ADMIN_STATE_APP_USER", "potapoff_admin_app")
+        with psycopg.connect(test_dsn) as target:
+            role_exists = target.execute(
+                "SELECT 1 FROM pg_roles WHERE rolname=%s", (app_user,)
+            ).fetchone()
+            if role_exists:
+                can_read_migration_marker = target.execute(
+                    "SELECT has_table_privilege(%s, 'admin_state_migrations', 'SELECT')",
+                    (app_user,),
+                ).fetchone()[0]
+                self.assertFalse(can_read_migration_marker)
+            self.assertEqual(
+                target.execute(
+                    "SELECT count(*) FROM admin_state_migrations "
+                    "WHERE migration_key='admin-sqlite-to-postgres-v1'"
+                ).fetchone()[0],
+                0,
+                "a rejected conflicting migration must not leave a success marker",
+            )
 
 
 class AdminSQLiteSnapshotTests(unittest.TestCase):
