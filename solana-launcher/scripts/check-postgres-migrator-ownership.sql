@@ -328,11 +328,11 @@ SELECT EXISTS (
 ) AS has_runtime_sequence_update \gset
 \if :has_runtime_sequence_update
   \echo 'Production migration blocked: runtime role can UPDATE an application sequence (setval)'
-  DO $
+  DO $seqcheck$
 BEGIN
   RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
 END
-$;
+$seqcheck$;
 \endif
 
 SELECT EXISTS (
@@ -349,11 +349,11 @@ SELECT EXISTS (
 ) AS has_unsafe_future_sequence_update \gset
 \if :has_unsafe_future_sequence_update
   \echo 'Production migration blocked: PUBLIC or runtime role has default sequence UPDATE/setval privilege'
-  DO $
+  DO $seqcheck$
 BEGIN
   RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
 END
-$;
+$seqcheck$;
 \endif
 
 \echo 'POSTGRES_MIGRATOR_OWNERSHIP_OK objects=owned schema_create=true'
