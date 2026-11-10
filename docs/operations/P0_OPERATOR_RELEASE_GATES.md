@@ -262,3 +262,29 @@ The source-level restore rehearsal is synthetic. Before closing #172, an operato
 - #175: no live X account, Telegram session, Solana RPC or publishing action was used. Dedicated test identities, permitted source scope, capped provider budget and explicit approval remain required.
 
 **Decision: HOLD.** Do not merge, deploy, migrate production databases, rotate credentials, demote bootstrap roles, or claim live recovery until the required CI, independent review and operator gates above are complete.
+
+## 2026-11-10 follow-up — PR #215 review corrections
+
+The latest reviewed PR #215 code snapshot is
+`c11b10e5f1d0f8215d947ad3ff961ffc6b1c41b0` (407 commits ahead of current
+`main`, 0 behind; 234 changed files). The following code-level corrections
+were committed for CI validation:
+
+- Admin SQLite-to-PostgreSQL migration locks the destination tables, rejects
+  key collisions rather than overwriting existing PostgreSQL state, and
+  revokes runtime access to the migration ledger.
+- Product runtime PostgreSQL grants no longer include sequence UPDATE /
+  `setval()`; regression coverage checks existing and newly-created sequences.
+- Intelligence delivery records invalidations against the migration-010
+  event-key uniqueness contract when migration 018 coalescing is not yet
+  installed. It no longer silently skips an available legacy queue before
+  ACK. The staged behavior is documented in `DATA_CONTRACTS.md`.
+
+Exact-head CI was still running when this status was recorded: 31 PR-triggered
+workflow runs, 23 queued, 7 pending and 1 conditionally skipped. No failure
+was reported, but no completed green verdict is claimed. The independent
+review, effective main protection, real off-host encrypted restore, measured
+RPO/RTO and live-source/production cutover gates remain outstanding.
+
+**Decision: HOLD.** These code corrections do not authorize merge, production
+deployment, production migrations, role cutover or credential changes.
