@@ -288,10 +288,11 @@ class PostgresSharedStateTests(unittest.TestCase):
 
         with psycopg.connect(test_dsn) as target:
             migrator_flags = target.execute(
-                "SELECT rolsuper, rolcreatedb, rolcreaterole FROM pg_roles WHERE rolname=%s",
+                "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolinherit, rolbypassrls "
+                "FROM pg_roles WHERE rolname=%s",
                 (migrator_user,),
             ).fetchone()
-            self.assertEqual(migrator_flags, (False, False, False))
+            self.assertEqual(migrator_flags, (True, False, False, False, False, False))
             migration_owner = target.execute(
                 "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='admin_state_migrations'::regclass"
             ).fetchone()[0]
