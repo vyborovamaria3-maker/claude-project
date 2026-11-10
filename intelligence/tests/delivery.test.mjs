@@ -101,6 +101,8 @@ test("delivery tolerates a partially-added coalesce column without losing legacy
   const legacyInsert=log.find(sql=>typeof sql==="string"&&sql.includes("INSERT INTO analytics_invalidation_queue"));
   assert.ok(legacyInsert);
   assert.ok(legacyInsert.includes("coalesce_key"));
+  assert.ok(legacyInsert.includes("VALUES ($1,$2,$3,$4,$5,$4)"),
+    "partial migration must use event_key as the temporary coalesce key");
   assert.ok(legacyInsert.includes("ON CONFLICT(canonical_token_id,source_system,event_kind,event_key,reason)"));
   assert.deepEqual(queueArgs,[
     tokenId,"tg","message_observed","tg:-10022:42:v1","edit",
