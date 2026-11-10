@@ -267,6 +267,11 @@ class PostgresSharedStateTests(unittest.TestCase):
                 "SELECT 1 FROM pg_roles WHERE rolname=%s", (app_user,)
             ).fetchone()
             if role_exists:
+                app_can_read_feature_flags = target.execute(
+                    "SELECT has_table_privilege(%s, 'feature_flags', 'SELECT')",
+                    (app_user,),
+                ).fetchone()[0]
+                self.assertTrue(app_can_read_feature_flags, "test default ACL must grant runtime access to application tables")
                 migration_marker_privileges = target.execute(
                     "SELECT has_table_privilege(%s, 'admin_state_migrations', 'SELECT'), "
                     "has_table_privilege(%s, 'admin_state_migrations', 'INSERT'), "
