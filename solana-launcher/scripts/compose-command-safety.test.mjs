@@ -269,7 +269,10 @@ test("SolSub development web and bot do not inherit the complete secret-bearing 
 });
 
 test("Telegram bot Docker context excludes deployment environment secrets", () => {
-  assert.match(telegramDockerfile, /COPY --chown=node:node \. \./);
+  // The full source context is used only by the builder; the runner receives compiled output.
+  assert.match(telegramDockerfile, /^COPY \. \.$/m);
+  assert.match(telegramDockerfile, /COPY --from=builder --chown=node:node \/app\/dist \.\/dist/);
+  assert.doesNotMatch(telegramDockerfile, /COPY --chown=node:node \. \./);
   assert.match(dockerignore, /^backend\.env\*/m);
   assert.match(dockerignore, /^\*\.env$/m);
   assert.match(dockerignore, /^\*\.env\.\*/m);
