@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import psycopg
+from psycopg import sql
 from psycopg.rows import dict_row
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,6 +66,35 @@ def _sqlite_state_fingerprint(source: sqlite3.Connection) -> str:
     return digest.hexdigest()
 
 
+def _assert_no_target_key_conflicts(
+    cur: psycopg.Cursor,
+    source: sqlite3.Connection,
+    table: str,
+    key_columns: tuple[str, ...],
+    order_by: str,
+) -> None:
+    """Fail closed rather than overwriting independently-created PostgreSQL state."""
+    if not _table_exists(source, table):
+        return
+    where = sql.SQL(" AND ").join(
+        sql.SQL("{} = %s").format(sql.Identifier(column))
+        for column in key_columns
+    )
+    query = sql.SQL("SELECT 1 FROM {} WHERE {} LIMIT 1").format(
+        sql.Identifier(table), where
+    )
+    selected = ", ".join(key_columns)
+    for _row in source.execute(
+        f"SELECT {selected} FROM {table} ORDER BY {order_by}"
+    ):
+        cur.execute(query, tuple(_row[column] for column in key_columns))
+        if cur.fetchone():
+            raise SystemExit(
+                f"PostgreSQL target conflict in {table}; refusing to overwrite "
+                "existing state; operator reconciliation required"
+            )
+
+
 def main() -> None:
     sqlite_path = os.getenv("ADMIN_AUDIT_DB", "/var/lib/potapoff-admin/audit.db")
     # State cutover mutates schema metadata and sequence values. Prefer the
@@ -103,6 +133,25 @@ def main() -> None:
                 "ALTER TABLE admin_state_migrations "
                 "ADD COLUMN IF NOT EXISTS source_fingerprint TEXT"
             )
+            # Freeze all target writers while checking key collisions and copying
+            # the SQLite snapshot. This is a one-time cutover, not a merge tool.
+            cur.execute(
+                "LOCK TABLE feature_flags, alerts, analysis_parameter_overrides, "
+                "admin_audit, revoked_admin_sessions, admin_state_migrations "
+                "IN SHARE ROW EXCLUSIVE MODE"
+            )
+            cur.execute(
+                "REVOKE ALL PRIVILEGES ON TABLE admin_state_migrations FROM PUBLIC"
+            )
+            app_user = os.getenv("ADMIN_STATE_APP_USER", "potapoff_admin_app").strip()
+            if app_user:
+                cur.execute("SELECT 1 FROM pg_roles WHERE rolname=%s", (app_user,))
+                if cur.fetchone():
+                    cur.execute(
+                        sql.SQL(
+                            "REVOKE ALL PRIVILEGES ON TABLE admin_state_migrations FROM {}"
+                        ).format(sql.Identifier(app_user))
+                    )
             cur.execute(
                 "SELECT source_fingerprint FROM admin_state_migrations WHERE migration_key=%s",
                 (MIGRATION_KEY,),
@@ -121,7 +170,18 @@ def main() -> None:
                 print(f"SKIP {MIGRATION_KEY}: source fingerprint unchanged")
                 return
 
-            counts: dict[str, int] = {};
+            # Do not let a stale SQLite snapshot replace state already written
+            # to PostgreSQL. Existing same-key rows require explicit operator
+            # reconciliation, even if they appear superficially identical.
+            for table, keys, ordering in (
+                ("feature_flags", ("name",), "name"),
+                ("alerts", ("id",), "id"),
+                ("analysis_parameter_overrides", ("domain", "key"), "domain,key"),
+                ("admin_audit", ("id",), "id"),
+            ):
+                _assert_no_target_key_conflicts(cur, source, table, keys, ordering)
+
+            counts: dict[str, int] = {}
 
             if _table_exists(source, "feature_flags"):
                 rows = source.execute("SELECT name,enabled,description,updated_by,updated_at FROM feature_flags").fetchall()
@@ -129,8 +189,7 @@ def main() -> None:
                     cur.execute(
                         """INSERT INTO feature_flags(name,enabled,description,updated_by,updated_at)
                            VALUES(%s,%s,%s,%s,%s)
-                           ON CONFLICT(name) DO UPDATE SET enabled=EXCLUDED.enabled,description=EXCLUDED.description,
-                             updated_by=EXCLUDED.updated_by,updated_at=EXCLUDED.updated_at""",
+                           ON CONFLICT(name) DO NOTHING""",
                         (row["name"], bool(row["enabled"]), row["description"], row["updated_by"], row["updated_at"]),
                     )
                 counts["feature_flags"] = len(rows)
@@ -141,9 +200,7 @@ def main() -> None:
                     cur.execute(
                         """INSERT INTO alerts(id,level,title,message,source,status,created_at,acknowledged_at,acknowledged_by)
                            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                           ON CONFLICT(id) DO UPDATE SET level=EXCLUDED.level,title=EXCLUDED.title,message=EXCLUDED.message,
-                             source=EXCLUDED.source,status=EXCLUDED.status,created_at=EXCLUDED.created_at,
-                             acknowledged_at=EXCLUDED.acknowledged_at,acknowledged_by=EXCLUDED.acknowledged_by""",
+                           ON CONFLICT(id) DO NOTHING""",
                         tuple(row[key] for key in ("id", "level", "title", "message", "source", "status", "created_at", "acknowledged_at", "acknowledged_by")),
                     )
                 cur.execute("SELECT setval(pg_get_serial_sequence('alerts','id'), COALESCE(MAX(id),1), COUNT(*)>0) FROM alerts")
@@ -160,10 +217,7 @@ def main() -> None:
                         """INSERT INTO analysis_parameter_overrides(
                              domain,key,enabled,threshold,label,source,value_type,scale,description,custom,deleted,updated_by,updated_at
                            ) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                           ON CONFLICT(domain,key) DO UPDATE SET enabled=EXCLUDED.enabled,threshold=EXCLUDED.threshold,
-                             label=EXCLUDED.label,source=EXCLUDED.source,value_type=EXCLUDED.value_type,scale=EXCLUDED.scale,
-                             description=EXCLUDED.description,custom=EXCLUDED.custom,deleted=EXCLUDED.deleted,
-                             updated_by=EXCLUDED.updated_by,updated_at=EXCLUDED.updated_at""",
+                           ON CONFLICT(domain,key) DO NOTHING""",
                         tuple(row[key] for key in columns),
                     )
                 counts["analysis_parameter_overrides"] = len(rows)
