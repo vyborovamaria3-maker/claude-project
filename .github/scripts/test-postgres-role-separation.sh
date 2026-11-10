@@ -6,6 +6,13 @@ set -euo pipefail
 command -v docker >/dev/null
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 test -s "$root/docs/operations/postgres-role-cutover-inventory.sql"
+role_provisioner="$root/solana-launcher/scripts/provision-postgres-roles.sql"
+if grep -Eq 'GRANT[[:space:]]+USAGE,[[:space:]]*SELECT,[[:space:]]*UPDATE[[:space:]]+ON[[:space:]]+(ALL[[:space:]]+)?SEQUENCES' "$role_provisioner"; then
+  echo 'FAIL: production runtime role still receives sequence UPDATE/setval privilege' >&2
+  exit 1
+fi
+grep -Fq 'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO :"app_user";' "$role_provisioner"
+grep -Fq 'GRANT USAGE, SELECT ON SEQUENCES TO %I' "$role_provisioner"
 scratch="$(mktemp -d)"
 tag="role-rehearsal-${RANDOM}-$$"
 containers=()
@@ -229,6 +236,8 @@ SQL
   # Simulates a failed cutover on the only database this test controls.
   # Do not use REASSIGN OWNED or broad REVOKE on a shared/live database.
   [[ "$(sql "$src" fixture_runtime "SELECT nextval('public.legacy_counter_seq')")" == 100 ]]
+  reject_sql "$src" fixture_runtime \
+    "SELECT setval('public.legacy_counter_seq', 999)" 'runtime setval on existing sequence'
   [[ "$(sql "$src" fixture_runtime "SELECT public.legacy_label_count()")" == 2 ]]
   [[ "$(sql "$src" fixture_backup "SELECT count(*) FROM public.legacy_projection")" == 2 ]]
   reject_sql "$src" fixture_backup \
@@ -311,8 +320,13 @@ SQL
   # Default privileges must apply to tables created AFTER the initial grants.
   sql "$src" fixture_migration \
     "CREATE TABLE public.later_records (id integer PRIMARY KEY, label text)" >/dev/null
+  sql "$src" fixture_migration \
+    "CREATE SEQUENCE public.later_counter_seq START WITH 200" >/dev/null
   sql "$src" fixture_runtime \
     "INSERT INTO public.later_records VALUES (7, 'granted-by-default')" >/dev/null
+  [[ "$(sql "$src" fixture_runtime "SELECT nextval('public.later_counter_seq')")" == 200 ]]
+  reject_sql "$src" fixture_runtime \
+    "SELECT setval('public.later_counter_seq', 999)" 'runtime setval on future default-granted sequence'
   [[ "$(sql "$src" fixture_backup \
     "SELECT label FROM public.later_records WHERE id=7")" == "granted-by-default" ]]
 
