@@ -163,4 +163,6 @@ For an existing destination, apply migration 017_inbox_payload_fingerprint.sql t
 
 checkDestination now fails closed when the inbox fingerprint column is absent. New installations receive the column in migration 001; existing installations require additive migration 017. Migration 007 remains optional where pgvector is not installed.
 
+During a staged rollout where migration 010 is present but migration 018 has not yet added revision coalescing, source delivery writes invalidations using migration 010's event-key uniqueness and audit log. It must not ACK a revision while silently skipping the queue. After migration 018 is applied, delivery uses the evidence-level coalescing key; the legacy path may temporarily retain multiple rows for separate revisions.
+
 The foreground Intelligence supervisor remains opt-in. Its existence does not prove a persistent production service, live source access or automatic restart after host reboot.
