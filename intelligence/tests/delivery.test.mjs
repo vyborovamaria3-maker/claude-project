@@ -40,23 +40,34 @@ test("ACK only after destination commit",async()=>{
   assert.ok(log.indexOf("release")<log.indexOf("ACK"));
 });
 
-test("delivery remains compatible with migration 010 before migration 018 adds coalescing",async()=>{
+test("delivery persists legacy invalidations before migration 018 adds coalescing",async()=>{
   const log=[];
+  const tokenId=registryEvent.entityRefs[0].canonicalId;
   const destination={connect:async()=>({
     query:async sql=>{
       log.push(sql);
       if(sql.includes("to_regclass('analytics_invalidation_queue')"))
         return {rows:[{ready:true,coalesce_key_ready:false}]};
+      if(sql.includes("SELECT DISTINCT canonical_token_id"))
+        return {rows:[{canonical_token_id:tokenId}]};
+      if(sql.includes("INSERT INTO analytics_invalidation_queue"))
+        return {rows:[{invalidation_id:17}]};
       return {rows:sql.includes("RETURNING event_key")?[{event_key:"ok"}]:[]};
     },
     release:()=>log.push("release"),
   })};
-  const source={claim:async()=>[sample()],ack:async()=>true,fail:async()=>true};
+  const source={claim:async()=>[sample()],ack:async()=>{log.push("ACK");return true},
+    fail:async()=>{log.push("FAIL");return true}};
   const result=await runDeliveryBatch(source,destination,
     {workerId:"worker1",batchSize:1,leaseMs:5000});
   assert.equal(result.delivered,1);
   assert.equal(result.failed,0);
-  assert.ok(!log.some(sql=>typeof sql==="string"&&sql.includes("INSERT INTO analytics_invalidation_queue")));
+  const legacyInsert=log.find(sql=>typeof sql==="string"&&sql.includes("INSERT INTO analytics_invalidation_queue"));
+  assert.ok(legacyInsert,"migration-010 queue must receive the event before source ACK");
+  assert.ok(!legacyInsert.includes("coalesce_key"),"legacy schema must not require migration-018 columns");
+  assert.ok(log.some(sql=>typeof sql==="string"&&sql.includes("INSERT INTO analytics_invalidation_log")),
+    "legacy queue insert must retain the audit transition");
+  assert.ok(log.indexOf("COMMIT")<log.indexOf("ACK"));
 });
 
 test("rollback before NACK on failed destination write",async()=>{
