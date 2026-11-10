@@ -83,7 +83,11 @@ run_psql "$bootstrap_user" "$bootstrap_password" -c "
 docker cp "$root/solana-launcher/scripts/provision-postgres-roles.sql" "$container:/tmp/provision-postgres-roles.sql" >/dev/null
 docker cp "$root/solana-launcher/scripts/check-postgres-migrator-ownership.sql" "$container:/tmp/check-postgres-migrator-ownership.sql" >/dev/null
 for sql_file in /tmp/provision-postgres-roles.sql /tmp/check-postgres-migrator-ownership.sql; do
-  if grep -Eq '^[[:space:]]*DO[[:space:]]+\$[[:space:]]*$|^[[:space:]]*\$;[[:space:]]*
+  if grep -Eq '^[[:space:]]*DO[[:space:]]+\$[[:space:]]*$|^[[:space:]]*\$;[[:space:]]*$' "$sql_file"; then
+    echo "Malformed DO dollar-quote delimiter in $sql_file" >&2
+    exit 1
+  fi
+done
 
 # Bootstrap-owned application objects must block provisioning before any
 # password, role attribute, membership or ACL is changed.
@@ -450,31 +454,17 @@ run_psql "$migrator_user" "$migrator_password" -c "
   CREATE TABLE public.reprovisioned_acl_probe(id bigserial PRIMARY KEY, label text);
   CREATE FUNCTION public.reprovisioned_private_fn() RETURNS integer LANGUAGE sql AS 'SELECT 17';
 " >/dev/null
-app_table_acl="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
-  SELECT has_table_privilege('$app_user','public.reprovisioned_acl_probe','SELECT')::text || '|' ||
-         has_table_privilege('$app_user','public.reprovisioned_acl_probe','INSERT')::text || '|' ||
-         has_table_privilege('$app_user','public.reprovisioned_acl_probe','UPDATE')::text || '|' ||
-         has_table_privilege('$app_user','public.reprovisioned_acl_probe','DELETE')::text || '|' ||
-         has_table_privilege('$app_user','public.reprovisioned_acl_probe','TRUNCATE')::text || '|' ||
-         has_table_privilege('$app_user','public.reprovisioned_acl_probe','REFERENCES')::text || '|' ||
-         has_table_privilege('$app_user','public.reprovisioned_acl_probe','TRIGGER')::text
-")"
-[[ "$app_table_acl" == "true|true|true|true|false|false|false" ]] || {
-  echo "Application role retained excessive table privileges: $app_table_acl" >&2
-  exit 1
-}
-app_existing_acl="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
+app_elevated="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
   SELECT has_table_privilege('$app_user','public.legacy_records','TRUNCATE')::text || '|' ||
          has_table_privilege('$app_user','public.legacy_records','REFERENCES')::text || '|' ||
          has_table_privilege('$app_user','public.legacy_records','TRIGGER')::text
 ")"
-[[ "$app_existing_acl" == "false|false|false" ]] || {
-  echo "Application role retained elevated ACLs on an existing table: $app_existing_acl" >&2
+[[ "$app_elevated" == "false|false|false" ]] || {
+  echo "Application role retained elevated ACLs on an existing table: $app_elevated" >&2
   exit 1
 }
 public_relation_acl_count="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
-  SELECT count(*) FROM pg_class c
-  JOIN pg_namespace n ON n.oid=c.relnamespace
+  SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
   CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, '{}'::aclitem[])) acl
   WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f','S') AND acl.grantee=0
 ")"
@@ -484,19 +474,6 @@ public_relation_acl_count="$(run_psql "$bootstrap_user" "$bootstrap_password" -A
 }
 for role in "$backup_user" "$readonly_user"; do
   acl="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
-    SELECT has_table_privilege('$role','public.reprovisioned_acl_probe','SELECT')::text || '|' ||
-           has_table_privilege('$role','public.reprovisioned_acl_probe','INSERT')::text || '|' ||
-           has_table_privilege('$role','public.reprovisioned_acl_probe','UPDATE')::text || '|' ||
-           has_table_privilege('$role','public.reprovisioned_acl_probe','DELETE')::text || '|' ||
-           has_table_privilege('$role','public.reprovisioned_acl_probe','TRUNCATE')::text || '|' ||
-           has_table_privilege('$role','public.reprovisioned_acl_probe','REFERENCES')::text || '|' ||
-           has_table_privilege('$role','public.reprovisioned_acl_probe','TRIGGER')::text
-  ")"
-  [[ "$acl" == "true|false|false|false|false|false|false" ]] || {
-    echo "$role retained write/elevated table ACLs after re-provisioning: $acl" >&2
-    exit 1
-  }
-  existing_acl="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
     SELECT has_table_privilege('$role','public.legacy_records','SELECT')::text || '|' ||
            has_table_privilege('$role','public.legacy_records','INSERT')::text || '|' ||
            has_table_privilege('$role','public.legacy_records','UPDATE')::text || '|' ||
@@ -505,8 +482,17 @@ for role in "$backup_user" "$readonly_user"; do
            has_table_privilege('$role','public.legacy_records','REFERENCES')::text || '|' ||
            has_table_privilege('$role','public.legacy_records','TRIGGER')::text
   ")"
-  [[ "$existing_acl" == "true|false|false|false|false|false|false" ]] || {
-    echo "$role retained unsafe ACLs on an existing table: $existing_acl" >&2
+  [[ "$acl" == "true|false|false|false|false|false|false" ]] || {
+    echo "$role retained unsafe existing-table ACLs: $acl" >&2
+    exit 1
+  }
+  sequence_acl="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
+    SELECT has_sequence_privilege('$role','public.legacy_records_id_seq','USAGE')::text || '|' ||
+           has_sequence_privilege('$role','public.legacy_records_id_seq','SELECT')::text || '|' ||
+           has_sequence_privilege('$role','public.legacy_records_id_seq','UPDATE')::text
+  ")"
+  [[ "$sequence_acl" == "false|true|false" ]] || {
+    echo "$role retained unsafe sequence ACLs: $sequence_acl" >&2
     exit 1
   }
   if [[ "$role" == "$backup_user" ]]; then role_password="$backup_password"; else role_password="$readonly_password"; fi
@@ -514,38 +500,6 @@ for role in "$backup_user" "$readonly_user"; do
     echo "$role bypassed its read-only ACLs by changing default_transaction_read_only" >&2
     exit 1
   fi
-  existing_sequence_acl="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
-    SELECT has_sequence_privilege('$role','public.legacy_records_id_seq','USAGE')::text || '|' ||
-           has_sequence_privilege('$role','public.legacy_records_id_seq','SELECT')::text || '|' ||
-           has_sequence_privilege('$role','public.legacy_records_id_seq','UPDATE')::text
-  ")"
-  [[ "$existing_sequence_acl" == "false|true|false" ]] || {
-    echo "$role retained unsafe ACLs on an existing sequence: $existing_sequence_acl" >&2
-    exit 1
-  }
-done
-app_sequence_acl="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
-  SELECT has_sequence_privilege('$app_user','public.reprovisioned_acl_probe_id_seq','USAGE')::text || '|' ||
-         has_sequence_privilege('$app_user','public.reprovisioned_acl_probe_id_seq','SELECT')::text || '|' ||
-         has_sequence_privilege('$app_user','public.reprovisioned_acl_probe_id_seq','UPDATE')::text
-")"
-[[ "$app_sequence_acl" == "true|true|true" ]] || {
-  echo "Application sequence ACL is incomplete: $app_sequence_acl" >&2
-  exit 1
-}
-for role in "$backup_user" "$readonly_user"; do
-  sequence_acl="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
-    SELECT has_sequence_privilege('$role','public.reprovisioned_acl_probe_id_seq','USAGE')::text || '|' ||
-           has_sequence_privilege('$role','public.reprovisioned_acl_probe_id_seq','SELECT')::text || '|' ||
-           has_sequence_privilege('$role','public.reprovisioned_acl_probe_id_seq','UPDATE')::text
-  ")"
-  [[ "$sequence_acl" == "false|true|false" ]] || {
-    echo "$role retained unsafe sequence ACLs after re-provisioning: $sequence_acl" >&2
-    exit 1
-  }
-done
-for role in "$backup_user" "$readonly_user"; do
-  if [[ "$role" == "$backup_user" ]]; then role_password="$backup_password"; else role_password="$readonly_password"; fi
   for function_name in legacy_label_count legacy_security_definer legacy_security_definer_second; do
     if run_psql "$role" "$role_password" -c "SELECT public.$function_name()" >/dev/null 2>&1; then
       echo "$role retained EXECUTE on application function $function_name" >&2
@@ -553,358 +507,42 @@ for role in "$backup_user" "$readonly_user"; do
     fi
   done
 done
+app_new_table_acl="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
+  SELECT has_table_privilege('$app_user','public.reprovisioned_acl_probe','SELECT')::text || '|' ||
+         has_table_privilege('$app_user','public.reprovisioned_acl_probe','INSERT')::text || '|' ||
+         has_table_privilege('$app_user','public.reprovisioned_acl_probe','UPDATE')::text || '|' ||
+         has_table_privilege('$app_user','public.reprovisioned_acl_probe','DELETE')::text || '|' ||
+         has_table_privilege('$app_user','public.reprovisioned_acl_probe','TRUNCATE')::text
+")"
+[[ "$app_new_table_acl" == "true|true|true|true|false" ]] || {
+  echo "Application default table ACLs are incorrect: $app_new_table_acl" >&2
+  exit 1
+}
+for role in "$backup_user" "$readonly_user"; do
+  new_table_acl="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
+    SELECT has_table_privilege('$role','public.reprovisioned_acl_probe','SELECT')::text || '|' ||
+           has_table_privilege('$role','public.reprovisioned_acl_probe','INSERT')::text || '|' ||
+           has_table_privilege('$role','public.reprovisioned_acl_probe','UPDATE')::text || '|' ||
+           has_table_privilege('$role','public.reprovisioned_acl_probe','DELETE')::text
+  ")"
+  [[ "$new_table_acl" == "true|false|false|false" ]] || {
+    echo "$role default table ACLs are incorrect: $new_table_acl" >&2
+    exit 1
+  }
+  new_sequence_acl="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
+    SELECT has_sequence_privilege('$role','public.reprovisioned_acl_probe_id_seq','USAGE')::text || '|' ||
+           has_sequence_privilege('$role','public.reprovisioned_acl_probe_id_seq','SELECT')::text || '|' ||
+           has_sequence_privilege('$role','public.reprovisioned_acl_probe_id_seq','UPDATE')::text
+  ")"
+  [[ "$new_sequence_acl" == "false|true|false" ]] || {
+    echo "$role default sequence ACLs are incorrect: $new_sequence_acl" >&2
+    exit 1
+  }
+done
 for role in "$app_user" "$backup_user" "$readonly_user"; do
-  if [[ "$role" == "$app_user" ]]; then role_password="$app_password"; elif [[ "$role" == "$backup_user" ]]; then role_password="$backup_password"; else role_password="$readonly_password"; fi
   can_execute="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "SELECT has_function_privilege('$role','public.reprovisioned_private_fn()','EXECUTE')::text")"
   [[ "$can_execute" == "false" ]] || {
     echo "$role inherited default EXECUTE on a new function" >&2
-    exit 1
-  }
-done
-
-echo "POTAPOFF_ROLE_PROVISIONER_REHEARSAL_OK no_blanket_reassign=true backup_no_bypassrls=true ownership_guard=true"
- "$sql_file"; then
-    echo "Malformed DO dollar-quote delimiter in $sql_file" >&2
-    exit 1
-  fi
-done
-
-# Bootstrap-owned application objects must block provisioning before any
-# password, role attribute, membership or ACL is changed.
-legacy_table_owner="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
-  "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.legacy_records'::regclass")"
-[[ "$legacy_table_owner" == "$bootstrap_user" ]] || {
-  echo "Legacy fixture is not bootstrap-owned: $legacy_table_owner" >&2
-  exit 1
-}
-unprepared_public_relations="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
-  SELECT count(*)
-  FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-  WHERE n.nspname='public' AND c.relkind IN ('r','p','S','v','m','f')
-    AND pg_get_userbyid(c.relowner) IS DISTINCT FROM '$migrator_user'
-")"
-[[ "$unprepared_public_relations" -gt 0 ]] || {
-  echo "Legacy fixture does not contain an unprepared public relation" >&2
-  exit 1
-}
-echo "Preflight fixture verified: owner=$legacy_table_owner unprepared_relations=$unprepared_public_relations"
-
-if run_psql "$bootstrap_user" "$bootstrap_password" \
-  -v bootstrap_user="$bootstrap_user" \
-  -v app_user="$app_user" -v app_password="$app_password" \
-  -v migrator_user="$migrator_user" -v migrator_password="$migrator_password" \
-  -v backup_user="$backup_user" -v backup_password="$backup_password" \
-  -v readonly_user="$readonly_user" -v readonly_password="$readonly_password" \
-  -f /tmp/provision-postgres-roles.sql; then
-  echo "Role provisioner accepted bootstrap-owned legacy objects" >&2
-  exit 1
-fi
-roles_after_failed_preflight="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
-  "SELECT count(*) FROM pg_roles WHERE rolname IN ('$app_user','$migrator_user','$backup_user','$readonly_user')")"
-[[ "$roles_after_failed_preflight" == "0" ]] || {
-  echo "Failed ownership preflight changed role state: $roles_after_failed_preflight" >&2
-  exit 1
-}
-
-# Disposable, explicit object-level owner allowlist. Production provisioning
-# never performs this transfer; operators must review and rehearse it separately.
-run_psql "$bootstrap_user" "$bootstrap_password" -c "
-  CREATE ROLE $migrator_user NOLOGIN;
-  GRANT CREATE ON SCHEMA public TO $migrator_user;
-  ALTER TABLE public.legacy_records OWNER TO $migrator_user;
-  ALTER TABLE public.alembic_version OWNER TO $migrator_user;
-  ALTER VIEW public.legacy_projection OWNER TO $migrator_user;
-  ALTER SEQUENCE public.legacy_records_id_seq OWNER TO $migrator_user;
-  ALTER FUNCTION public.legacy_label_count() OWNER TO $migrator_user;
-  ALTER FUNCTION public.legacy_security_definer() OWNER TO $migrator_user;
-  ALTER FUNCTION public.legacy_security_definer_second() OWNER TO $migrator_user;
-  ALTER TYPE public.legacy_state OWNER TO $migrator_user;
-  ALTER TYPE public.legacy_composite OWNER TO $migrator_user;
-  GRANT SELECT ON TABLE public.legacy_records TO PUBLIC;
-  GRANT USAGE, SELECT ON SEQUENCE public.legacy_records_id_seq TO PUBLIC;
-  ALTER DEFAULT PRIVILEGES FOR ROLE $migrator_user GRANT INSERT, UPDATE, DELETE ON TABLES TO PUBLIC;
-  ALTER DEFAULT PRIVILEGES FOR ROLE $migrator_user IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO PUBLIC;
-  ALTER DEFAULT PRIVILEGES FOR ROLE $migrator_user GRANT USAGE, UPDATE ON SEQUENCES TO PUBLIC;
-  ALTER DEFAULT PRIVILEGES FOR ROLE $migrator_user IN SCHEMA public GRANT USAGE, UPDATE ON SEQUENCES TO PUBLIC;
-" >/dev/null
-
-run_psql "$bootstrap_user" "$bootstrap_password" \
-  -v bootstrap_user="$bootstrap_user" \
-  -v app_user="$app_user" -v app_password="$app_password" \
-  -v migrator_user="$migrator_user" -v migrator_password="$migrator_password" \
-  -v backup_user="$backup_user" -v backup_password="$backup_password" \
-  -v readonly_user="$readonly_user" -v readonly_password="$readonly_password" \
-  -f /tmp/provision-postgres-roles.sql >/dev/null
-
-# Provisioning is idempotent and must not make a bootstrap-owned table appear
-# migrator-owned. It grants DML/SELECT only, not database ownership or RLS bypass.
-for role in "$app_user" "$migrator_user" "$backup_user" "$readonly_user"; do
-  flags="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
-    SELECT rolsuper::text || '|' || rolcreatedb::text || '|' ||
-           rolcreaterole::text || '|' || rolreplication::text || '|' ||
-           rolbypassrls::text || '|' || rolinherit::text
-    FROM pg_roles WHERE rolname='$role'
-  ")"
-  [[ "$flags" == "false|false|false|false|false|false" ]] || {
-    echo "$role has unsafe role attributes: $flags" >&2
-    exit 1
-  }
-  memberships="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
-    SELECT count(*) FROM pg_auth_members m
-    JOIN pg_roles member ON member.oid=m.member
-    JOIN pg_roles granted ON granted.oid=m.roleid
-    WHERE member.rolname='$role' OR granted.rolname='$role'
-  ")"
-  [[ "$memberships" == "0" ]] || { echo "$role has unexpected role memberships" >&2; exit 1; }
-done
-
-public_database_access="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
-  SELECT EXISTS (
-    SELECT 1 FROM pg_database d
-    CROSS JOIN LATERAL aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) acl
-    WHERE d.datname=current_database()
-      AND acl.grantee=0
-      AND acl.privilege_type IN ('CONNECT','CREATE','TEMPORARY')
-  )
-")"
-[[ "$public_database_access" == "f" ]] || {
-  echo "PUBLIC retains database CONNECT or TEMPORARY" >&2
-  exit 1
-}
-for role in "$app_user" "$migrator_user" "$backup_user" "$readonly_user"; do
-  [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
-    "SELECT has_database_privilege('$role', current_database(), 'CONNECT')")" == "t" ]]
-  [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
-    "SELECT has_database_privilege('$role', current_database(), 'TEMPORARY')")" == "f" ]]
-done
-
-[[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
-  "SELECT has_database_privilege('$migrator_user', current_database(), 'CREATE')")" == "f" ]]
-[[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
-  "SELECT has_schema_privilege('$migrator_user', 'public', 'CREATE')")" == "t" ]]
-[[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
-  "SELECT count(*) FROM pg_namespace n WHERE n.nspname <> 'public' AND n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg_%' AND has_schema_privilege('$migrator_user', n.oid, 'CREATE')")" == "0" ]]
-for role in "$app_user" "$backup_user" "$readonly_user"; do
-  [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
-    "SELECT has_database_privilege('$role', current_database(), 'CREATE')")" == "f" ]]
-  [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
-    "SELECT count(*) FROM pg_namespace n WHERE n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg_%' AND has_schema_privilege('$role', n.oid, 'CREATE')")" == "0" ]]
-done
-public_object_privileges="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
-  SELECT count(*) FROM (
-    SELECT acl.privilege_type
-    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-    CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r',c.relowner))) acl
-    WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f') AND acl.grantee=0
-    UNION ALL
-    SELECT acl.privilege_type
-    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-    CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('S',c.relowner))) acl
-    WHERE n.nspname='public' AND c.relkind='S' AND acl.grantee=0
-  ) grants
-")"
-[[ "$public_object_privileges" == "0" ]] || {
-  echo "PUBLIC retains privileges on application tables or sequences: $public_object_privileges" >&2
-  exit 1
-}
-[[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
-  "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.legacy_records'::regclass")" == "$migrator_user" ]]
-[[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
-  "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='public'")" == "$original_schema_owner" ]]
-[[ "$(run_psql "$backup_user" "$backup_password" -Atq -c "SHOW default_transaction_read_only")" == "on" ]]
-[[ "$(run_psql "$readonly_user" "$readonly_password" -Atq -c "SHOW default_transaction_read_only")" == "on" ]]
-
-# The dedicated backup login must be able to dump ordinary application data.
-archive="$scratch/potapoff-role-provisioner.dump"
-docker exec -e PGPASSWORD="$backup_password" "$container" \
-  pg_dump -h 127.0.0.1 -U "$backup_user" -d potapoff_ci -Fc > "$archive"
-test -s "$archive"
-docker exec -i "$container" pg_restore --list < "$archive" >/dev/null
-[[ "$(run_psql "$backup_user" "$backup_password" -Atq -c \
-  "SELECT pg_has_role(current_user, 'pg_read_all_data', 'MEMBER')")" == "f" ]]
-
-# After the explicit allowlist and role provisioning, the deployment guard
-# should pass without changing any database object.
-run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_user" -v migrator_user="$migrator_user" \
-  -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
-  -f /tmp/check-postgres-migrator-ownership.sql >/dev/null
-
-# A standalone composite type remains independently covered by the ownership gate.
-run_psql "$bootstrap_user" "$bootstrap_password" -c \
-  "ALTER TYPE public.legacy_composite OWNER TO $bootstrap_user" >/dev/null
-if run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_user" -v migrator_user="$migrator_user" \
-  -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
-  -f /tmp/check-postgres-migrator-ownership.sql >"$scratch/composite-ownership.log" 2>&1; then
-  echo "Ownership guard unexpectedly accepted a bootstrap-owned composite type" >&2
-  exit 1
-fi
-grep -Fq "non-extension application objects are not owned by the migration role" "$scratch/composite-ownership.log" || {
-  cat "$scratch/composite-ownership.log" >&2
-  echo "Ownership guard failed for the wrong reason; composite-type ownership was not detected" >&2
-  exit 1
-}
-run_psql "$bootstrap_user" "$bootstrap_password" -c \
-  "ALTER TYPE public.legacy_composite OWNER TO $migrator_user" >/dev/null
-
-# PUBLIC EXECUTE on SECURITY DEFINER code must block the same deployment gate.
-run_psql "$bootstrap_user" "$bootstrap_password" -c \
-  "GRANT EXECUTE ON FUNCTION public.legacy_security_definer() TO PUBLIC" >/dev/null
-if run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_user" -v migrator_user="$migrator_user" \
-  -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
-  -f /tmp/check-postgres-migrator-ownership.sql >/dev/null 2>&1; then
-  echo "Ownership guard unexpectedly accepted a PUBLIC-executable SECURITY DEFINER function" >&2
-  exit 1
-fi
-run_psql "$bootstrap_user" "$bootstrap_password" -c "
-  REVOKE ALL ON FUNCTION public.legacy_security_definer() FROM PUBLIC;
-  GRANT EXECUTE ON FUNCTION public.legacy_security_definer() TO $app_user;
-" >/dev/null
-run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_user" -v migrator_user="$migrator_user" \
-  -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
-  -f /tmp/check-postgres-migrator-ownership.sql >/dev/null
-
-# Migration DDL succeeds only after the allowlisted ownership transfer.
-run_psql "$migrator_user" "$migrator_password" -c "
-  ALTER TABLE public.legacy_records ADD COLUMN note text;
-  CREATE TABLE public.migration_created(id bigserial PRIMARY KEY, label text);
-  INSERT INTO public.migration_created(label) VALUES ('migration');
-" >/dev/null
-
-# New migration-created functions must not inherit PostgreSQL's default PUBLIC EXECUTE.
-run_psql "$migrator_user" "$migrator_password" -c \
-  "CREATE FUNCTION public.migration_private_fn() RETURNS integer LANGUAGE sql AS \$\$ SELECT 7 \$\$" >/dev/null
-for role in "$app_user" "$backup_user" "$readonly_user"; do
-  case "$role" in
-    "$app_user") role_password="$app_password" ;;
-    "$backup_user") role_password="$backup_password" ;;
-    *) role_password="$readonly_password" ;;
-  esac
-  if run_psql "$role" "$role_password" -c "SELECT public.migration_private_fn()" >/dev/null 2>&1; then
-    echo "$role unexpectedly executed a function without an explicit grant" >&2
-    exit 1
-  fi
-done
-run_psql "$bootstrap_user" "$bootstrap_password" -c \
-  "GRANT EXECUTE ON FUNCTION public.migration_private_fn() TO $app_user" >/dev/null
-[[ "$(run_psql "$app_user" "$app_password" -Atq -c "SELECT public.migration_private_fn()")" == "7" ]]
-
-# Runtime DML and backup/read-only SELECT are allowed on migration-created data.
-[[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "SELECT has_table_privilege('$readonly_user','public.migration_created','INSERT')::text")" == "false" ]]
-[[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "SELECT has_sequence_privilege('$readonly_user','public.migration_created_id_seq','USAGE')::text || '|' || has_sequence_privilege('$readonly_user','public.migration_created_id_seq','UPDATE')::text")" == "false|false" ]]
-[[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "SELECT has_sequence_privilege('$app_user','public.migration_created_id_seq','USAGE')::text")" == "true" ]]
-run_psql "$app_user" "$app_password" -c "
-  INSERT INTO public.migration_created(label) VALUES ('runtime');
-  UPDATE public.migration_created SET label='updated' WHERE label='runtime';
-  DELETE FROM public.migration_created WHERE label='updated';
-" >/dev/null
-[[ "$(run_psql "$backup_user" "$backup_password" -Atq -c \
-  "SELECT label FROM public.migration_created WHERE id=1")" == "migration" ]]
-[[ "$(run_psql "$readonly_user" "$readonly_password" -Atq -c \
-  "SELECT label FROM public.migration_created WHERE id=1")" == "migration" ]]
-
-[[ "$(run_psql "$app_user" "$app_password" -Atq -c \
-  "SELECT public.legacy_label_count()")" == "1" ]]
-[[ "$(run_psql "$app_user" "$app_password" -Atq -c \
-  "SELECT public.legacy_security_definer()")" == "1" ]]
-[[ "$(run_psql "$app_user" "$app_password" -Atq -c \
-  "SELECT public.legacy_security_definer_second()")" == "2" ]]
-if run_psql "$backup_user" "$backup_password" -c \
-  "SELECT public.legacy_security_definer()" >/dev/null 2>&1; then
-  echo "Backup role unexpectedly executed a SECURITY DEFINER function" >&2
-  exit 1
-fi
-if run_psql "$backup_user" "$backup_password" -c \
-  "SELECT public.legacy_security_definer_second()" >/dev/null 2>&1; then
-  echo "Backup role unexpectedly executed a second SECURITY DEFINER function" >&2
-  exit 1
-fi
-if run_psql "$backup_user" "$backup_password" -c \
-  "SELECT public.legacy_label_count()" >/dev/null 2>&1; then
-  echo "Backup role unexpectedly executed an application function" >&2
-  exit 1
-fi
-
-for role in "$app_user" "$backup_user" "$readonly_user"; do
-  case "$role" in
-    "$app_user") role_password="$app_password" ;;
-    "$backup_user") role_password="$backup_password" ;;
-    *) role_password="$readonly_password" ;;
-  esac
-  if run_psql "$role" "$role_password" -c "CREATE TABLE public.must_not_ddl(id integer)" >/dev/null 2>&1; then
-    echo "$role unexpectedly created a table" >&2
-    exit 1
-  fi
-done
-if run_psql "$backup_user" "$backup_password" -c \
-  "INSERT INTO public.migration_created VALUES (3, 'must-not-write')" >/dev/null 2>&1; then
-  echo "Backup role unexpectedly wrote data" >&2
-  exit 1
-fi
-if run_psql "$readonly_user" "$readonly_password" -c \
-  "INSERT INTO public.migration_created VALUES (3, 'must-not-write')" >/dev/null 2>&1; then
-  echo "Read-only role unexpectedly wrote data" >&2
-  exit 1
-fi
-
-# RLS must not be bypassed by the backup login. A pg_dump/row-security-off
-# read of this protected relation fails closed instead of silently omitting rows.
-run_psql "$migrator_user" "$migrator_password" -c "
-  CREATE TABLE public.rls_probe(id integer PRIMARY KEY);
-  ALTER TABLE public.rls_probe ENABLE ROW LEVEL SECURITY;
-  ALTER TABLE public.rls_probe FORCE ROW LEVEL SECURITY;
-  CREATE POLICY deny_select ON public.rls_probe FOR SELECT USING (false);
-  CREATE POLICY allow_insert ON public.rls_probe FOR INSERT WITH CHECK (true);
-  INSERT INTO public.rls_probe VALUES (1);
-" >/dev/null
-if run_psql "$backup_user" "$backup_password" -c \
-  "SET row_security=off; SELECT * FROM public.rls_probe" >/dev/null 2>&1; then
-  echo "Backup role unexpectedly bypassed row-level security" >&2
-  exit 1
-fi
-
-# Seed stale memberships and unsafe attributes as if an earlier deployment
-# had granted broad roles. The idempotent provisioner must remove both inbound
-# and outbound memberships and reset all restricted role flags.
-run_psql "$bootstrap_user" "$bootstrap_password" -c "
-  CREATE ROLE potapoff_legacy_parent NOLOGIN;
-  GRANT potapoff_legacy_parent TO $app_user;
-  GRANT $backup_user TO potapoff_legacy_parent;
-  GRANT pg_read_all_data TO $backup_user;
-  ALTER ROLE $app_user WITH INHERIT CREATEDB;
-  ALTER ROLE $backup_user WITH BYPASSRLS;
-" >/dev/null
-
-# Re-running provisioning must preserve the manual allowlist transfer and the
-# restricted role boundaries.
-run_psql "$bootstrap_user" "$bootstrap_password" \
-  -v bootstrap_user="$bootstrap_user" \
-  -v app_user="$app_user" -v app_password="$app_password" \
-  -v migrator_user="$migrator_user" -v migrator_password="$migrator_password" \
-  -v backup_user="$backup_user" -v backup_password="$backup_password" \
-  -v readonly_user="$readonly_user" -v readonly_password="$readonly_password" \
-  -f /tmp/provision-postgres-roles.sql >/dev/null
-[[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
-  "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.legacy_records'::regclass")" == "$migrator_user" ]]
-
-for role in "$app_user" "$migrator_user" "$backup_user" "$readonly_user"; do
-  flags="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
-    SELECT rolsuper::text || '|' || rolcreatedb::text || '|' ||
-           rolcreaterole::text || '|' || rolreplication::text || '|' ||
-           rolbypassrls::text || '|' || rolinherit::text
-    FROM pg_roles WHERE rolname='$role'
-  ")"
-  [[ "$flags" == "false|false|false|false|false|false" ]] || {
-    echo "$role retained unsafe role attributes after re-provisioning: $flags" >&2
-    exit 1
-  }
-  memberships="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
-    SELECT count(*) FROM pg_auth_members m
-    JOIN pg_roles member ON member.oid=m.member
-    JOIN pg_roles granted ON granted.oid=m.roleid
-    WHERE member.rolname='$role' OR granted.rolname='$role'
-  ")"
-  [[ "$memberships" == "0" ]] || {
-    echo "$role retained stale role memberships after re-provisioning" >&2
     exit 1
   }
 done
