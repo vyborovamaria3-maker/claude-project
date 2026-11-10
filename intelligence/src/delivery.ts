@@ -101,16 +101,26 @@ async function queueLegacyAnalyticsInvalidation(
     canonicalTokenId:string;sourceSystem:"x"|"tg";
     eventKind:string;eventKey:string;
     reason:"edit"|"delete"|"link_invalidated"|"backfill";
+    includeCoalesceKey:boolean;
   }>,
 ):Promise<void> {
-  const result=await tx.query(`INSERT INTO analytics_invalidation_queue
-    (canonical_token_id,source_system,event_kind,event_key,reason)
-    VALUES ($1,$2,$3,$4,$5)
-    ON CONFLICT(canonical_token_id,source_system,event_kind,event_key,reason)
-      DO NOTHING
-    RETURNING invalidation_id`,[
-      input.canonicalTokenId,input.sourceSystem,input.eventKind,input.eventKey,input.reason,
-    ]);
+  const result=input.includeCoalesceKey
+    ? await tx.query(`INSERT INTO analytics_invalidation_queue
+        (canonical_token_id,source_system,event_kind,event_key,reason,coalesce_key)
+        VALUES ($1,$2,$3,$4,$5,$4)
+        ON CONFLICT(canonical_token_id,source_system,event_kind,event_key,reason)
+          DO NOTHING
+        RETURNING invalidation_id`,[
+          input.canonicalTokenId,input.sourceSystem,input.eventKind,input.eventKey,input.reason,
+        ])
+    : await tx.query(`INSERT INTO analytics_invalidation_queue
+        (canonical_token_id,source_system,event_kind,event_key,reason)
+        VALUES ($1,$2,$3,$4,$5)
+        ON CONFLICT(canonical_token_id,source_system,event_kind,event_key,reason)
+          DO NOTHING
+        RETURNING invalidation_id`,[
+          input.canonicalTokenId,input.sourceSystem,input.eventKind,input.eventKey,input.reason,
+        ]);
   if(result.rows.length)
     await tx.query("INSERT INTO analytics_invalidation_log(invalidation_id,transition) VALUES ($1,'queued')",
       [result.rows[0]!.invalidation_id]);
@@ -136,13 +146,36 @@ async function queueAffectedTokensForRecalculation(
         SELECT 1 FROM pg_attribute
         WHERE attrelid=to_regclass('analytics_invalidation_queue')
           AND attname='coalesce_key' AND NOT attisdropped
-      ) AS coalesce_key_ready
+      ) AS coalesce_key_ready,
+      EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid=to_regclass('analytics_invalidation_queue')
+          AND attname='next_attempt_at' AND NOT attisdropped
+      ) AS retry_schedule_ready,
+      EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid=to_regclass('analytics_invalidation_queue')
+          AND attname='next_day' AND NOT attisdropped
+      ) AS cursor_ready,
+      EXISTS (
+        SELECT 1 FROM pg_index i
+        JOIN pg_class idx ON idx.oid=i.indexrelid
+        WHERE i.indrelid=to_regclass('analytics_invalidation_queue')
+          AND idx.relname='uq_analytics_invalidation_coalesced'
+          AND i.indisunique AND i.indisvalid AND i.indisready
+      ) AS coalesce_index_ready
   `);
   // Migration 010 is optional. If its queue exists, never ACK a revision
-  // without recording invalidation: use the legacy event-key unique key until
-  // migration 018 adds the coalescing key.
+  // without recording invalidation. Use the legacy event-key uniqueness until
+  // all 013/018 worker and coalescing structures are ready. A partially-added
+  // NOT NULL coalesce_key is populated with event_key so migration 018 can
+  // still build its unique index without duplicate coalescing keys.
   if(present.rows[0]?.ready!==true)return;
-  const coalescingReady=present.rows[0]?.coalesce_key_ready===true;
+  const coalesceKeyColumn=present.rows[0]?.coalesce_key_ready===true;
+  const coalescingReady=coalesceKeyColumn &&
+    present.rows[0]?.retry_schedule_ready===true &&
+    present.rows[0]?.cursor_ready===true &&
+    present.rows[0]?.coalesce_index_ready===true;
   const evidenceRef=body.registryEvent.evidenceRef.sourceId;
   const previous=await tx.query(`SELECT DISTINCT canonical_token_id FROM token_link_observations
     WHERE source_system=$1 AND evidence_source_id=$2 AND state='verified'
@@ -172,6 +205,7 @@ async function queueAffectedTokensForRecalculation(
       await queueLegacyAnalyticsInvalidation(tx,{
         canonicalTokenId,sourceSystem:event.sourceSystem as "x"|"tg",
         eventKind:event.eventKind,eventKey:event.eventKey,reason,
+        includeCoalesceKey:coalesceKeyColumn,
       });
     }
   }
