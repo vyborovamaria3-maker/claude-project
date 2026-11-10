@@ -223,7 +223,7 @@ assert(migratorOwnershipGuard.includes("has_app_schema_without_create"), "migrat
 assert(migratorOwnershipGuard.includes("has_restricted_database_privileges"), "runtime, backup and read-only roles must not have database CREATE");
 assert(migratorOwnershipGuard.includes("has_restricted_schema_create"), "runtime, backup and read-only roles must not have application-schema CREATE");
 assert(migratorOwnershipGuard.includes("has_migrator_nonpublic_schema_create"), "migration role must not have CREATE outside public schema");
-assert(migratorOwnershipGuard.includes("DO $") && migratorOwnershipGuard.includes("RAISE EXCEPTION"), "migrator ownership guard must fail closed using SQL exceptions");
+assert(migratorOwnershipGuard.includes("DO $$") && migratorOwnershipGuard.includes("RAISE EXCEPTION"), "migrator ownership guard must fail closed using SQL exceptions");
 assert(!/^ *DO +\$ *$/m.test(migratorOwnershipGuard), "migrator ownership guard must use valid dollar-quoted DO blocks");
 assert(!/^ *\$; *$/m.test(migratorOwnershipGuard), "migrator ownership guard must use valid DO block closers");
 assert(postgresRoleProvisioner.includes('REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM :"app_user", :"backup_user", :"readonly_user"'), "role provisioner must clear stale table ACLs before applying grants");
