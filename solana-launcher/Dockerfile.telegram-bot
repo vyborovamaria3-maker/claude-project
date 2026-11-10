@@ -17,6 +17,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
+COPY scripts/bigint-safe-package ./scripts/bigint-safe-package
+COPY scripts/xlsx-safe-package ./scripts/xlsx-safe-package
 
 RUN set -eux; \
     for attempt in 1 2 3; do \
