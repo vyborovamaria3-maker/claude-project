@@ -289,7 +289,7 @@ RPO/RTO and live-source/production cutover gates remain outstanding.
 **Decision: HOLD.** These code corrections do not authorize merge, production
 deployment, production migrations, role cutover or credential changes.
 
-### Latest code snapshot — PR #215 HEAD `9f4d27d2cc8bd3c78b53915ceef5b0d5cf62b392`
+### Latest code/test snapshot — PR #215 HEAD `1e8c74239cfaaa5b26a75dbb3c10b882f24cf2e6`
 
 Subsequent hardening also makes the sequence deployment preflight reject both
 existing runtime `UPDATE` grants and unsafe future sequence default ACLs.
@@ -304,8 +304,9 @@ coalescing index can still be built without duplicate keys. Regression tests
 cover both legacy and partial-schema states.
 
 The Admin migration regression now uses an isolated PostgreSQL schema, seeds
-default runtime grants, proves the migration ledger has no runtime SELECT,
-INSERT, UPDATE or DELETE access, and verifies that a conflicting stale
+default runtime grants, proves the runtime still has access to normal
+application tables but no SELECT, INSERT, UPDATE or DELETE access to the
+migration ledger, and verifies that a conflicting stale
 SQLite snapshot is rejected without changing the PostgreSQL row.
 
 For this exact HEAD, GitHub reports 30 check runs: 29 queued, 1 conditionally
