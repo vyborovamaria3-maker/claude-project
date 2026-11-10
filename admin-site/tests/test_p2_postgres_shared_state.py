@@ -267,11 +267,14 @@ class PostgresSharedStateTests(unittest.TestCase):
                 "SELECT 1 FROM pg_roles WHERE rolname=%s", (app_user,)
             ).fetchone()
             if role_exists:
-                can_read_migration_marker = target.execute(
-                    "SELECT has_table_privilege(%s, 'admin_state_migrations', 'SELECT')",
-                    (app_user,),
-                ).fetchone()[0]
-                self.assertFalse(can_read_migration_marker)
+                migration_marker_privileges = target.execute(
+                    "SELECT has_table_privilege(%s, 'admin_state_migrations', 'SELECT'), "
+                    "has_table_privilege(%s, 'admin_state_migrations', 'INSERT'), "
+                    "has_table_privilege(%s, 'admin_state_migrations', 'UPDATE'), "
+                    "has_table_privilege(%s, 'admin_state_migrations', 'DELETE')",
+                    (app_user, app_user, app_user, app_user),
+                ).fetchone()
+                self.assertEqual(migration_marker_privileges, (False, False, False, False))
             self.assertEqual(
                 target.execute(
                     "SELECT count(*) FROM admin_state_migrations "
