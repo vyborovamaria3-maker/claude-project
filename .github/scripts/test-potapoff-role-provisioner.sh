@@ -249,6 +249,35 @@ run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_u
   -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
   -f /tmp/check-postgres-migrator-ownership.sql >/dev/null
 
+# The production migration guard must reject both an existing runtime
+# setval() grant and a future default-privilege grant before DDL begins.
+run_psql "$bootstrap_user" "$bootstrap_password" -c \
+  "GRANT UPDATE ON SEQUENCE public.legacy_records_id_seq TO $app_user" >/dev/null
+if run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_user" -v migrator_user="$migrator_user" \
+  -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
+  -f /tmp/check-postgres-migrator-ownership.sql >"$scratch/runtime-sequence-update.log" 2>&1; then
+  echo "Ownership guard unexpectedly accepted runtime sequence UPDATE/setval" >&2
+  exit 1
+fi
+grep -Fq "runtime role can UPDATE an application sequence" "$scratch/runtime-sequence-update.log"
+run_psql "$bootstrap_user" "$bootstrap_password" -c \
+  "REVOKE UPDATE ON SEQUENCE public.legacy_records_id_seq FROM $app_user" >/dev/null
+
+run_psql "$bootstrap_user" "$bootstrap_password" -c \
+  "ALTER DEFAULT PRIVILEGES FOR ROLE $migrator_user GRANT UPDATE ON SEQUENCES TO $app_user" >/dev/null
+if run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_user" -v migrator_user="$migrator_user" \
+  -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
+  -f /tmp/check-postgres-migrator-ownership.sql >"$scratch/future-sequence-update.log" 2>&1; then
+  echo "Ownership guard unexpectedly accepted future runtime sequence UPDATE/setval" >&2
+  exit 1
+fi
+grep -Fq "PUBLIC or runtime role has default sequence UPDATE/setval privilege" "$scratch/future-sequence-update.log"
+run_psql "$bootstrap_user" "$bootstrap_password" -c \
+  "ALTER DEFAULT PRIVILEGES FOR ROLE $migrator_user REVOKE UPDATE ON SEQUENCES FROM $app_user" >/dev/null
+run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_user" -v migrator_user="$migrator_user" \
+  -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
+  -f /tmp/check-postgres-migrator-ownership.sql >/dev/null
+
 # A standalone composite type remains independently covered by the ownership gate.
 run_psql "$bootstrap_user" "$bootstrap_password" -c \
   "ALTER TYPE public.legacy_composite OWNER TO $bootstrap_user" >/dev/null
