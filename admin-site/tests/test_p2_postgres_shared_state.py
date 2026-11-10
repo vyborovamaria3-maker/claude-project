@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import psycopg
+from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
 ADMIN_ROOT = Path(__file__).resolve().parents[1]
@@ -169,13 +170,23 @@ class PostgresSharedStateTests(unittest.TestCase):
         nonce = uuid.uuid4().hex
         now = int(time.time())
         schema = "admin_migration_" + uuid.uuid4().hex
+        app_user = "admin_runtime_" + suffix
         with psycopg.connect(DSN, autocommit=True) as admin:
-            admin.execute(f'CREATE SCHEMA "{schema}"')
+            current_user = admin.execute("SELECT current_user").fetchone()[0]
+            admin.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+            admin.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(app_user)))
+            admin.execute(
+                sql.SQL(
+                    "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA {} "
+                    "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {}"
+                ).format(sql.Identifier(current_user), sql.Identifier(schema), sql.Identifier(app_user))
+            )
         test_dsn = make_conninfo(DSN, options=f"-c search_path={schema}")
 
         def drop_schema() -> None:
             with psycopg.connect(DSN, autocommit=True) as admin:
-                admin.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+                admin.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+                admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(app_user)))
 
         self.addCleanup(drop_schema)
 
@@ -207,7 +218,7 @@ class PostgresSharedStateTests(unittest.TestCase):
             env.update({
                 "ADMIN_AUDIT_DB": str(path),
                 "ADMIN_STATE_MIGRATOR_DSN": test_dsn,
-                "ADMIN_STATE_APP_USER": os.getenv("ADMIN_STATE_APP_USER", "potapoff_admin_app"),
+                "ADMIN_STATE_APP_USER": app_user,
             })
             script = ADMIN_ROOT / "scripts" / "migrate_admin_state_to_postgres.py"
             first = subprocess.run(
@@ -251,7 +262,6 @@ class PostgresSharedStateTests(unittest.TestCase):
         security = PostgresAdminSessionStore(test_dsn, ip_binding=lambda _request: "", ua_binding=lambda _request: "")
         self.assertTrue(security.is_revoked(nonce))
 
-        app_user = os.getenv("ADMIN_STATE_APP_USER", "potapoff_admin_app")
         with psycopg.connect(test_dsn) as target:
             role_exists = target.execute(
                 "SELECT 1 FROM pg_roles WHERE rolname=%s", (app_user,)
