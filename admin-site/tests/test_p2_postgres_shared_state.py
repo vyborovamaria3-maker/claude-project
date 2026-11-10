@@ -171,22 +171,46 @@ class PostgresSharedStateTests(unittest.TestCase):
         now = int(time.time())
         schema = "admin_migration_" + uuid.uuid4().hex
         app_user = "admin_runtime_" + suffix
+        migrator_user = "admin_migrator_" + suffix
+        migrator_password = uuid.uuid4().hex + uuid.uuid4().hex
         with psycopg.connect(DSN, autocommit=True) as admin:
-            current_user = admin.execute("SELECT current_user").fetchone()[0]
-            admin.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+            database = admin.execute("SELECT current_database()").fetchone()[0]
+            admin.execute(
+                sql.SQL(
+                    "CREATE ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
+                    "NOINHERIT NOREPLICATION NOBYPASSRLS PASSWORD {}"
+                ).format(sql.Identifier(migrator_user), sql.Literal(migrator_password))
+            )
             admin.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(app_user)))
+            admin.execute(
+                sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
+                    sql.Identifier(database), sql.Identifier(migrator_user)
+                )
+            )
+            admin.execute(
+                sql.SQL("CREATE SCHEMA {} AUTHORIZATION {}").format(
+                    sql.Identifier(schema), sql.Identifier(migrator_user)
+                )
+            )
             admin.execute(
                 sql.SQL(
                     "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA {} "
                     "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {}"
-                ).format(sql.Identifier(current_user), sql.Identifier(schema), sql.Identifier(app_user))
+                ).format(sql.Identifier(migrator_user), sql.Identifier(schema), sql.Identifier(app_user))
             )
         test_dsn = make_conninfo(DSN, options=f"-c search_path={schema}")
+        migrator_dsn = make_conninfo(
+            DSN, user=migrator_user, password=migrator_password,
+            options=f"-c search_path={schema}",
+        )
 
         def drop_schema() -> None:
             with psycopg.connect(DSN, autocommit=True) as admin:
                 admin.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+                admin.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(app_user)))
+                admin.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(migrator_user)))
                 admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(app_user)))
+                admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(migrator_user)))
 
         self.addCleanup(drop_schema)
 
@@ -217,7 +241,7 @@ class PostgresSharedStateTests(unittest.TestCase):
             env = os.environ.copy()
             env.update({
                 "ADMIN_AUDIT_DB": str(path),
-                "ADMIN_STATE_MIGRATOR_DSN": test_dsn,
+                "ADMIN_STATE_MIGRATOR_DSN": migrator_dsn,
                 "ADMIN_STATE_APP_USER": app_user,
             })
             script = ADMIN_ROOT / "scripts" / "migrate_admin_state_to_postgres.py"
@@ -252,34 +276,39 @@ class PostgresSharedStateTests(unittest.TestCase):
             self.assertNotEqual(conflict.returncode, 0)
             self.assertIn("PostgreSQL target conflict in feature_flags", conflict.stderr)
 
-        control = PostgresControlStore(test_dsn)
+        control = PostgresControlStore(migrator_dsn)
         flag = next(row for row in control.flags() if row["name"] == f"migration.{suffix}")
         self.assertTrue(flag["enabled"])
         self.assertEqual(flag["description"], "migrated")
 
-        profiles = PostgresLiveAnalysisProfileStore(test_dsn)
+        profiles = PostgresLiveAnalysisProfileStore(migrator_dsn)
         self.assertTrue(any(row["key"] == f"mig_{suffix}" for row in profiles.list("telegram")))
-        security = PostgresAdminSessionStore(test_dsn, ip_binding=lambda _request: "", ua_binding=lambda _request: "")
+        security = PostgresAdminSessionStore(migrator_dsn, ip_binding=lambda _request: "", ua_binding=lambda _request: "")
         self.assertTrue(security.is_revoked(nonce))
 
         with psycopg.connect(test_dsn) as target:
-            role_exists = target.execute(
-                "SELECT 1 FROM pg_roles WHERE rolname=%s", (app_user,)
+            migrator_flags = target.execute(
+                "SELECT rolsuper, rolcreatedb, rolcreaterole FROM pg_roles WHERE rolname=%s",
+                (migrator_user,),
             ).fetchone()
-            if role_exists:
-                app_can_read_feature_flags = target.execute(
-                    "SELECT has_table_privilege(%s, 'feature_flags', 'SELECT')",
-                    (app_user,),
-                ).fetchone()[0]
-                self.assertTrue(app_can_read_feature_flags, "test default ACL must grant runtime access to application tables")
-                migration_marker_privileges = target.execute(
-                    "SELECT has_table_privilege(%s, 'admin_state_migrations', 'SELECT'), "
-                    "has_table_privilege(%s, 'admin_state_migrations', 'INSERT'), "
-                    "has_table_privilege(%s, 'admin_state_migrations', 'UPDATE'), "
-                    "has_table_privilege(%s, 'admin_state_migrations', 'DELETE')",
-                    (app_user, app_user, app_user, app_user),
-                ).fetchone()
-                self.assertEqual(migration_marker_privileges, (False, False, False, False))
+            self.assertEqual(migrator_flags, (False, False, False))
+            migration_owner = target.execute(
+                "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='admin_state_migrations'::regclass"
+            ).fetchone()[0]
+            self.assertEqual(migration_owner, migrator_user)
+            app_can_read_feature_flags = target.execute(
+                "SELECT has_table_privilege(%s, 'feature_flags', 'SELECT')",
+                (app_user,),
+            ).fetchone()[0]
+            self.assertTrue(app_can_read_feature_flags, "test default ACL must grant runtime access to application tables")
+            migration_marker_privileges = target.execute(
+                "SELECT has_table_privilege(%s, 'admin_state_migrations', 'SELECT'), "
+                "has_table_privilege(%s, 'admin_state_migrations', 'INSERT'), "
+                "has_table_privilege(%s, 'admin_state_migrations', 'UPDATE'), "
+                "has_table_privilege(%s, 'admin_state_migrations', 'DELETE')",
+                (app_user, app_user, app_user, app_user),
+            ).fetchone()
+            self.assertEqual(migration_marker_privileges, (False, False, False, False))
             self.assertEqual(
                 target.execute(
                     "SELECT count(*) FROM admin_state_migrations "
