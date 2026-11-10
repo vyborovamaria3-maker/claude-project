@@ -301,7 +301,10 @@ def provision_roles(
             )
         )
 
-        # Remove stale grants before applying the narrow runtime and backup ACLs.
+        # Remove PUBLIC data access and stale grants before applying the narrow
+        # runtime and backup ACLs.
+        db.execute("REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC")
+        db.execute("REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC")
         db.execute(
             sql.SQL("REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM {}").format(
                 sql.Identifier(app_user)
@@ -322,6 +325,31 @@ def provision_roles(
                 sql.Identifier(backup_user)
             )
         )
+        # Backup is a data-export identity, not an application function caller.
+        # Remove stale direct EXECUTE grants without changing extension-owned routines.
+        function_signatures = db.execute(
+            """
+            SELECT p.oid::regprocedure::text
+            FROM pg_proc p
+            JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'public'
+              AND p.prokind = 'f'
+              AND NOT EXISTS (
+                  SELECT 1 FROM pg_depend e
+                  WHERE e.classid = 'pg_proc'::regclass
+                    AND e.objid = p.oid
+                    AND e.deptype = 'e'
+              )
+            """
+        ).fetchall()
+        for (function_signature,) in function_signatures:
+            db.execute(
+                sql.SQL("REVOKE EXECUTE ON FUNCTION {} FROM {}").format(
+                    sql.SQL(function_signature),
+                    sql.Identifier(backup_user),
+                )
+            )
+
         db.execute(
             sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA public TO {}").format(
                 sql.Identifier(backup_user)
@@ -333,6 +361,36 @@ def provision_roles(
             )
         )
 
+        # Global defaults are additive to schema-local defaults. Reset PUBLIC,
+        # runtime and backup before applying the exact schema-local grants.
+        for object_kind in ("TABLES", "SEQUENCES"):
+            db.execute(
+                sql.SQL(
+                    "ALTER DEFAULT PRIVILEGES FOR ROLE {} REVOKE ALL ON "
+                    + object_kind
+                    + " FROM PUBLIC"
+                ).format(sql.Identifier(migrator_user))
+            )
+            for grantee in (app_user, backup_user):
+                db.execute(
+                    sql.SQL(
+                        "ALTER DEFAULT PRIVILEGES FOR ROLE {} REVOKE ALL ON "
+                        + object_kind
+                        + " FROM {}"
+                    ).format(sql.Identifier(migrator_user), sql.Identifier(grantee))
+                )
+        db.execute(
+            sql.SQL(
+                "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public "
+                "REVOKE ALL ON TABLES FROM PUBLIC"
+            ).format(sql.Identifier(migrator_user))
+        )
+        db.execute(
+            sql.SQL(
+                "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public "
+                "REVOKE ALL ON SEQUENCES FROM PUBLIC"
+            ).format(sql.Identifier(migrator_user))
+        )
         db.execute(
             sql.SQL(
                 "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public "
@@ -381,20 +439,26 @@ def provision_roles(
                 "GRANT SELECT ON SEQUENCES TO {}"
             ).format(sql.Identifier(migrator_user), sql.Identifier(backup_user))
         )
-        # PostgreSQL grants function EXECUTE to PUBLIC globally by default.
-        # A schema-local REVOKE cannot cancel that global ACL, so revoke both scopes.
-        db.execute(
-            sql.SQL(
-                "ALTER DEFAULT PRIVILEGES FOR ROLE {} "
-                "REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC"
-            ).format(sql.Identifier(migrator_user))
-        )
-        db.execute(
-            sql.SQL(
-                "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public "
-                "REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC"
-            ).format(sql.Identifier(migrator_user))
-        )
+        # Function EXECUTE is explicit-only for runtime and backup identities.
+        # Revoke global and schema-local defaults because these ACLs are additive.
+        for scope in ("", "IN SCHEMA public "):
+            for grantee in ("PUBLIC", app_user, backup_user):
+                if grantee == "PUBLIC":
+                    db.execute(
+                        sql.SQL(
+                            "ALTER DEFAULT PRIVILEGES FOR ROLE {} "
+                            + scope
+                            + "REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC"
+                        ).format(sql.Identifier(migrator_user))
+                    )
+                else:
+                    db.execute(
+                        sql.SQL(
+                            "ALTER DEFAULT PRIVILEGES FOR ROLE {} "
+                            + scope
+                            + "REVOKE EXECUTE ON FUNCTIONS FROM {}"
+                        ).format(sql.Identifier(migrator_user), sql.Identifier(grantee))
+                    )
         db.execute(
             sql.SQL(
                 "ALTER ROLE {} SET default_transaction_read_only = on"

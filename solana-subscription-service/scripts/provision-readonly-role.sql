@@ -13,22 +13,22 @@ SELECT current_database() AS current_db \gset
 SELECT current_user IN (:'app_user', :'migrator_user', :'readonly_user') AS unsafe_bootstrap \gset
 \if :unsafe_bootstrap
 \echo 'Refusing to provision roles while connected as a restricted application role'
-DO $
+DO $$
 BEGIN
   RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
 END
-$;
+$$;
 \endif
 SELECT count(DISTINCT role_name)=3 AS unique_role_names
 FROM (VALUES (:'app_user'), (:'migrator_user'), (:'readonly_user')) AS roles(role_name) \gset
 \if :unique_role_names
 \else
 \echo 'Application, migration and read-only role names must be distinct'
-DO $
+DO $$
 BEGIN
   RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
 END
-$;
+$$;
 \endif
 
 SELECT COALESCE((
@@ -38,11 +38,11 @@ SELECT COALESCE((
 \if :bootstrap_owns_database
 \else
 \echo 'Provisioning blocked: database owner must remain the configured bootstrap identity'
-DO $
+DO $$
 BEGIN
   RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
 END
-$;
+$$;
 \endif
 
 SELECT EXISTS (
@@ -55,11 +55,11 @@ SELECT EXISTS (
 ) AS has_restricted_role_memberships \gset
 \if :has_restricted_role_memberships
 \echo 'Provisioning blocked: restricted role membership requires explicit operator review'
-DO $
+DO $$
 BEGIN
   RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
 END
-$;
+$$;
 \endif
 
 -- Existing application objects must already have a reviewed migration owner.
@@ -76,11 +76,11 @@ SELECT EXISTS (
 ) AS has_public_nonpublic_schema_create \gset
 \if :has_public_nonpublic_schema_create
   \echo 'Role provisioning blocked: PUBLIC CREATE on a non-public schema requires explicit operator review'
-  DO $
+  DO $$
 BEGIN
   RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
 END
-$;
+$$;
 \endif
 
 SELECT set_config('app.provision_migrator_user', :'migrator_user', false);
@@ -159,11 +159,11 @@ SELECT EXISTS (
 ) AS has_public_security_definer_execute \gset
 \if :has_public_security_definer_execute
 \echo 'Provisioning blocked: SECURITY DEFINER function is executable by PUBLIC'
-DO $
+DO $$
 BEGIN
   RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
 END
-$;
+$$;
 \endif
 
 BEGIN;
@@ -259,17 +259,32 @@ WHERE n.nspname = 'public'
   )
 \gexec
 
+-- Remove stale direct EXECUTE grants from the read-only identity, including
+-- SECURITY DEFINER routines created before the current ACL policy.
+SELECT format('REVOKE EXECUTE ON FUNCTION %s FROM %I', p.oid::regprocedure, :'readonly_user')
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+  AND p.prokind = 'f'
+  AND NOT EXISTS (
+    SELECT 1 FROM pg_depend e
+    WHERE e.classid = 'pg_proc'::regclass AND e.objid = p.oid AND e.deptype = 'e'
+  ) \gexec
+
 -- New objects created by the migration identity automatically grant only the
 -- privileges required by runtime and read-only consumers.
 -- Remove global and schema-local legacy defaults before granting role-specific access.
 ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" REVOKE ALL ON TABLES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" REVOKE ALL ON TABLES FROM :"app_user", :"readonly_user";
+ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" REVOKE ALL ON SEQUENCES FROM :"app_user", :"readonly_user";
+ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" IN SCHEMA public REVOKE ALL ON SEQUENCES FROM :"app_user", :"readonly_user";
 ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" REVOKE ALL ON SEQUENCES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
 
 -- Functions otherwise inherit PostgreSQL's global PUBLIC EXECUTE default.
-ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
-ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, :"app_user", :"readonly_user";
+ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, :"app_user", :"readonly_user";
 
 ALTER DEFAULT PRIVILEGES FOR ROLE :"migrator_user" IN SCHEMA public
   REVOKE ALL ON TABLES FROM :"app_user", :"readonly_user";

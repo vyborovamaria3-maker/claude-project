@@ -278,6 +278,22 @@ def verify_preprovisioned_schema(dsn: str) -> None:
             if database_rights != (True, False, False, False):
                 raise RuntimeError("Admin runtime has unsafe database-level privileges")
 
+            # The provisioner removes every role membership. Even a SET-only
+            # helper can grant UPDATE on append-only audit rows without DDL.
+            cur.execute(
+                "SELECT granted_role.rolname FROM pg_auth_members m "
+                "JOIN pg_roles member_role ON member_role.oid=m.member "
+                "JOIN pg_roles granted_role ON granted_role.oid=m.roleid "
+                "WHERE member_role.rolname=current_user "
+                "ORDER BY granted_role.rolname LIMIT 1"
+            )
+            unexpected_membership = cur.fetchone()
+            if unexpected_membership:
+                raise RuntimeError(
+                    "Admin runtime must not have PostgreSQL role memberships, including SET ROLE: "
+                    f"{unexpected_membership[0]}"
+                )
+
             # A PUBLIC EXECUTE grant on SECURITY DEFINER code is an execution
             # boundary bypass even when table/schema ACLs are otherwise narrow.
             cur.execute(
@@ -295,6 +311,22 @@ def verify_preprovisioned_schema(dsn: str) -> None:
                 raise RuntimeError(
                     "Admin runtime has PUBLIC EXECUTE on SECURITY DEFINER function: "
                     f"{public_security_definer[0]}"
+                )
+
+            # Existing application relations must not expose data or mutation
+            # privileges through PUBLIC, even when runtime grants are narrow.
+            cur.execute(
+                "SELECT c.relname, acl.privilege_type FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, '{}'::aclitem[])) acl "
+                "WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f','S') "
+                "AND acl.grantee=0 ORDER BY c.relname, acl.privilege_type LIMIT 1"
+            )
+            public_relation_acl = cur.fetchone()
+            if public_relation_acl:
+                raise RuntimeError(
+                    "Admin preprovisioned schema grants relation privileges to PUBLIC: "
+                    f"{public_relation_acl[0]} {public_relation_acl[1]}"
                 )
 
             cur.execute(

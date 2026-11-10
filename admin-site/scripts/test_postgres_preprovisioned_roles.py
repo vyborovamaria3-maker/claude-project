@@ -114,6 +114,8 @@ def provision_test_cluster() -> None:
         )
         db.execute("INSERT INTO public.bootstrap_owned_legacy VALUES (1, 'legacy-row', 'legacy')")
         db.execute("CREATE SEQUENCE public.bootstrap_owned_legacy_seq")
+        db.execute("GRANT SELECT, INSERT ON TABLE public.bootstrap_owned_legacy TO PUBLIC")
+        db.execute("GRANT USAGE, SELECT, UPDATE ON SEQUENCE public.bootstrap_owned_legacy_seq TO PUBLIC")
         db.execute(
             "CREATE VIEW public.bootstrap_owned_legacy_view "
             "AS SELECT id, payload FROM public.bootstrap_owned_legacy"
@@ -234,6 +236,124 @@ def provision_test_cluster() -> None:
         )
 
     provision()
+
+    # Reintroduce stale direct and global/schema-local defaults after roles exist.
+    # A second pass must converge to the exact least-privilege policy.
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+        bootstrap.execute("GRANT TRUNCATE, REFERENCES, TRIGGER ON TABLE public.bootstrap_owned_legacy TO admin_ci_runtime")
+        bootstrap.execute("GRANT INSERT, UPDATE, DELETE, TRUNCATE ON TABLE public.bootstrap_owned_legacy TO admin_ci_backup")
+        bootstrap.execute("GRANT USAGE, UPDATE ON SEQUENCE public.bootstrap_owned_legacy_seq TO admin_ci_backup")
+        bootstrap.execute("GRANT SELECT, INSERT ON TABLE public.bootstrap_owned_legacy TO PUBLIC")
+        bootstrap.execute("GRANT USAGE, UPDATE ON SEQUENCE public.bootstrap_owned_legacy_seq TO PUBLIC")
+        bootstrap.execute("GRANT EXECUTE ON FUNCTION public.bootstrap_owned_legacy_definer() TO admin_ci_backup")
+        for scope in ("", "IN SCHEMA public "):
+            bootstrap.execute(
+                f"ALTER DEFAULT PRIVILEGES FOR ROLE admin_ci_migration {scope}GRANT "
+                "INSERT, UPDATE, DELETE, TRUNCATE ON TABLES TO PUBLIC, admin_ci_runtime, admin_ci_backup"
+            )
+            bootstrap.execute(
+                f"ALTER DEFAULT PRIVILEGES FOR ROLE admin_ci_migration {scope}GRANT "
+                "USAGE, UPDATE ON SEQUENCES TO PUBLIC, admin_ci_runtime, admin_ci_backup"
+            )
+            bootstrap.execute(
+                f"ALTER DEFAULT PRIVILEGES FOR ROLE admin_ci_migration {scope}GRANT "
+                "EXECUTE ON FUNCTIONS TO PUBLIC, admin_ci_runtime, admin_ci_backup"
+            )
+    provision()
+
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+        runtime_acl = bootstrap.execute(
+            "SELECT has_table_privilege('admin_ci_runtime','public.bootstrap_owned_legacy','TRUNCATE'), "
+            "has_table_privilege('admin_ci_runtime','public.bootstrap_owned_legacy','REFERENCES'), "
+            "has_table_privilege('admin_ci_runtime','public.bootstrap_owned_legacy','TRIGGER')"
+        ).fetchone()
+        assert runtime_acl == (False, False, False), runtime_acl
+        backup_acl = bootstrap.execute(
+            "SELECT has_table_privilege('admin_ci_backup','public.bootstrap_owned_legacy','SELECT'), "
+            "has_table_privilege('admin_ci_backup','public.bootstrap_owned_legacy','INSERT'), "
+            "has_table_privilege('admin_ci_backup','public.bootstrap_owned_legacy','UPDATE'), "
+            "has_table_privilege('admin_ci_backup','public.bootstrap_owned_legacy','DELETE'), "
+            "has_table_privilege('admin_ci_backup','public.bootstrap_owned_legacy','TRUNCATE')"
+        ).fetchone()
+        assert backup_acl == (True, False, False, False, False), backup_acl
+        backup_sequence_acl = bootstrap.execute(
+            "SELECT has_sequence_privilege('admin_ci_backup','public.bootstrap_owned_legacy_seq','USAGE'), "
+            "has_sequence_privilege('admin_ci_backup','public.bootstrap_owned_legacy_seq','SELECT'), "
+            "has_sequence_privilege('admin_ci_backup','public.bootstrap_owned_legacy_seq','UPDATE')"
+        ).fetchone()
+        assert backup_sequence_acl == (False, True, False), backup_sequence_acl
+        public_relation_acl_count = bootstrap.execute(
+            "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+            "CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, '{}'::aclitem[])) acl "
+            "WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f','S') AND acl.grantee=0"
+        ).fetchone()[0]
+        assert public_relation_acl_count == 0, public_relation_acl_count
+
+    with psycopg.connect(BACKUP) as backup:
+        try:
+            backup.execute("SELECT public.bootstrap_owned_legacy_definer()")
+        except psycopg.errors.InsufficientPrivilege:
+            pass
+        else:
+            raise AssertionError("Backup role retained EXECUTE on SECURITY DEFINER code")
+
+    # New migration-created objects must inherit only the reviewed grants.
+    with psycopg.connect(MIGRATE) as migration:
+        migration.execute(
+            "CREATE TABLE public.admin_ci_default_acl_probe "
+            "(id bigserial PRIMARY KEY, payload text)"
+        )
+        migration.execute(
+            "CREATE FUNCTION public.admin_ci_default_acl_fn() "
+            "RETURNS integer LANGUAGE sql AS 'SELECT 1'"
+        )
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+        runtime_table_acl = bootstrap.execute(
+            "SELECT has_table_privilege('admin_ci_runtime','public.admin_ci_default_acl_probe','SELECT'), "
+            "has_table_privilege('admin_ci_runtime','public.admin_ci_default_acl_probe','INSERT'), "
+            "has_table_privilege('admin_ci_runtime','public.admin_ci_default_acl_probe','UPDATE'), "
+            "has_table_privilege('admin_ci_runtime','public.admin_ci_default_acl_probe','DELETE'), "
+            "has_table_privilege('admin_ci_runtime','public.admin_ci_default_acl_probe','TRUNCATE')"
+        ).fetchone()
+        assert runtime_table_acl == (True, True, True, True, False), runtime_table_acl
+        backup_table_acl = bootstrap.execute(
+            "SELECT has_table_privilege('admin_ci_backup','public.admin_ci_default_acl_probe','SELECT'), "
+            "has_table_privilege('admin_ci_backup','public.admin_ci_default_acl_probe','INSERT'), "
+            "has_table_privilege('admin_ci_backup','public.admin_ci_default_acl_probe','UPDATE'), "
+            "has_table_privilege('admin_ci_backup','public.admin_ci_default_acl_probe','DELETE'), "
+            "has_table_privilege('admin_ci_backup','public.admin_ci_default_acl_probe','TRUNCATE')"
+        ).fetchone()
+        assert backup_table_acl == (True, False, False, False, False), backup_table_acl
+        runtime_sequence_acl = bootstrap.execute(
+            "SELECT has_sequence_privilege('admin_ci_runtime','public.admin_ci_default_acl_probe_id_seq','USAGE'), "
+            "has_sequence_privilege('admin_ci_runtime','public.admin_ci_default_acl_probe_id_seq','SELECT'), "
+            "has_sequence_privilege('admin_ci_runtime','public.admin_ci_default_acl_probe_id_seq','UPDATE')"
+        ).fetchone()
+        assert runtime_sequence_acl == (True, True, False), runtime_sequence_acl
+        backup_sequence_acl = bootstrap.execute(
+            "SELECT has_sequence_privilege('admin_ci_backup','public.admin_ci_default_acl_probe_id_seq','USAGE'), "
+            "has_sequence_privilege('admin_ci_backup','public.admin_ci_default_acl_probe_id_seq','SELECT'), "
+            "has_sequence_privilege('admin_ci_backup','public.admin_ci_default_acl_probe_id_seq','UPDATE')"
+        ).fetchone()
+        assert backup_sequence_acl == (False, True, False), backup_sequence_acl
+        function_acl = bootstrap.execute(
+            "SELECT has_function_privilege('admin_ci_runtime','public.admin_ci_default_acl_fn()','EXECUTE'), "
+            "has_function_privilege('admin_ci_backup','public.admin_ci_default_acl_fn()','EXECUTE'), "
+            "EXISTS (SELECT 1 FROM pg_proc p "
+            "CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f',p.proowner))) acl "
+            "WHERE p.oid='public.admin_ci_default_acl_fn()'::regprocedure "
+            "AND acl.grantee=0 AND acl.privilege_type='EXECUTE')"
+        ).fetchone()
+        assert function_acl == (False, False, False), function_acl
+        public_relation_acl_count = bootstrap.execute(
+            "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+            "CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, '{}'::aclitem[])) acl "
+            "WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f','S') AND acl.grantee=0"
+        ).fetchone()[0]
+        assert public_relation_acl_count == 0, public_relation_acl_count
+    with psycopg.connect(MIGRATE) as migration:
+        migration.execute("DROP FUNCTION public.admin_ci_default_acl_fn()")
+        migration.execute("DROP TABLE public.admin_ci_default_acl_probe")
 
     with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
         database_owner = bootstrap.execute(
@@ -395,6 +515,20 @@ def assert_runtime_restricted() -> None:
     finally:
         with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
             bootstrap.execute("DROP FUNCTION public.admin_ci_public_definer()")
+    verify_preprovisioned_schema(RUNTIME)
+
+    # Startup must reject PUBLIC access to an existing application relation.
+    with psycopg.connect(MIGRATE) as migration:
+        migration.execute("GRANT SELECT ON TABLE public.feature_flags TO PUBLIC")
+    try:
+        verify_preprovisioned_schema(RUNTIME)
+    except RuntimeError as exc:
+        assert "relation privileges to public" in str(exc).lower(), str(exc)
+    else:
+        raise AssertionError("PUBLIC SELECT on an application relation was accepted")
+    finally:
+        with psycopg.connect(MIGRATE) as migration:
+            migration.execute("REVOKE SELECT ON TABLE public.feature_flags FROM PUBLIC")
     verify_preprovisioned_schema(RUNTIME)
 
     # Migrator-created functions must not inherit PostgreSQL's default PUBLIC EXECUTE.
@@ -628,6 +762,37 @@ def assert_runtime_restricted() -> None:
     finally:
         with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
             bootstrap.execute("REVOKE admin_ci_migration FROM admin_ci_runtime")
+    verify_preprovisioned_schema(RUNTIME)
+
+    # A SET-only helper can mutate append-only audit rows without conferring DDL.
+    # The runtime contract intentionally forbids all role memberships.
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+        bootstrap.execute("CREATE ROLE admin_ci_audit_helper NOLOGIN")
+        bootstrap.execute("GRANT UPDATE ON TABLE public.admin_audit TO admin_ci_audit_helper")
+        bootstrap.execute(
+            "GRANT admin_ci_audit_helper TO admin_ci_runtime "
+            "WITH INHERIT FALSE, SET TRUE"
+        )
+    try:
+        with psycopg.connect(RUNTIME) as runtime:
+            assert runtime.execute(
+                "SELECT has_table_privilege(current_user, 'public.admin_audit', 'UPDATE')"
+            ).fetchone()[0] is False
+            runtime.execute("SET ROLE admin_ci_audit_helper")
+            assert runtime.execute(
+                "SELECT has_table_privilege(current_user, 'public.admin_audit', 'UPDATE')"
+            ).fetchone()[0] is True
+        try:
+            verify_preprovisioned_schema(RUNTIME)
+        except RuntimeError as exc:
+            assert "role memberships" in str(exc).lower(), str(exc)
+        else:
+            raise AssertionError("SET-only audit UPDATE helper membership was accepted")
+    finally:
+        with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+            bootstrap.execute("REVOKE admin_ci_audit_helper FROM admin_ci_runtime")
+            bootstrap.execute("REVOKE UPDATE ON TABLE public.admin_audit FROM admin_ci_audit_helper")
+            bootstrap.execute("DROP ROLE admin_ci_audit_helper")
     verify_preprovisioned_schema(RUNTIME)
 
     before = schema_objects(MIGRATE)

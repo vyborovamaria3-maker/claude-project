@@ -10,11 +10,11 @@ SELECT COALESCE((
 \if :bootstrap_is_superuser
 \else
   \echo 'Role provisioning requires the configured bootstrap superuser'
-  DO $
+  DO $$
 BEGIN
   RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
 END
-$;
+$$;
 \endif
 
 SELECT (
@@ -32,11 +32,11 @@ SELECT (
 \if :role_names_distinct
 \else
   \echo 'Bootstrap, app, migrator, backup and read-only identities must be distinct'
-  DO $
+  DO $$
 BEGIN
   RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
 END
-$;
+$$;
 \endif
 
 SELECT (
@@ -50,11 +50,11 @@ SELECT (
 \if :passwords_distinct
 \else
   \echo 'App, migrator, backup and read-only passwords must be distinct'
-  DO $
+  DO $$
 BEGIN
   RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
 END
-$;
+$$;
 \endif
 
 -- All deployment preconditions that can be checked without writes must
@@ -66,11 +66,11 @@ SELECT COALESCE((
 \if :bootstrap_owns_database
 \else
   \echo 'Role provisioning blocked: database owner must remain the configured bootstrap identity'
-  DO $
+  DO $$
 BEGIN
   RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
 END
-$;
+$$;
 \endif
 
 SELECT EXISTS (
@@ -85,11 +85,11 @@ SELECT EXISTS (
 ) AS has_public_nonpublic_schema_create \gset
 \if :has_public_nonpublic_schema_create
   \echo 'Role provisioning blocked: PUBLIC CREATE on a non-public schema requires explicit operator review'
-  DO $
+  DO $$
 BEGIN
   RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
 END
-$;
+$$;
 \endif
 
 WITH extension_members AS (
@@ -141,11 +141,11 @@ SELECT (
 \echo 'Unprepared application object ownership:' :has_unprepared_application_owners
 \if :has_unprepared_application_owners
   \echo 'Role provisioning blocked: application objects require a separately reviewed migration-owner allowlist'
-  DO $
+  DO $$
 BEGIN
   RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
 END
-$;
+$$;
 \endif
 
 SELECT EXISTS (
@@ -165,11 +165,11 @@ SELECT EXISTS (
 ) AS has_public_security_definer_execute \gset
 \if :has_public_security_definer_execute
   \echo 'Role provisioning blocked: SECURITY DEFINER function is executable by PUBLIC'
-  DO $
+  DO $$
 BEGIN
   RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
 END
-$;
+$$;
 \endif
 
 SELECT EXISTS (
@@ -178,11 +178,11 @@ SELECT EXISTS (
 ) AS has_unprepared_large_objects \gset
 \if :has_unprepared_large_objects
   \echo 'Role provisioning blocked: large objects require a separately reviewed migration-owner allowlist'
-  DO $
+  DO $$
 BEGIN
   RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
 END
-$;
+$$;
 \endif
 
 BEGIN;
@@ -236,15 +236,37 @@ WHERE n.nspname <> 'public'
 GRANT USAGE, CREATE ON SCHEMA public TO :"migrator_user";
 GRANT USAGE ON SCHEMA public TO :"app_user", :"backup_user", :"readonly_user";
 
--- Remove stale PUBLIC data access before applying the explicit role grants.
+-- Reset stale relation ACLs for restricted identities before applying exact grants.
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM :"app_user", :"backup_user", :"readonly_user";
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM :"app_user", :"backup_user", :"readonly_user";
 REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC;
 REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
+
+-- Backup and read-only identities are SELECT-only; remove legacy EXECUTE grants
+-- on application functions, including SECURITY DEFINER routines.
+SELECT format('REVOKE EXECUTE ON FUNCTION %s FROM %I', p.oid::regprocedure, role_name)
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+CROSS JOIN (VALUES (:'backup_user'), (:'readonly_user')) AS roles(role_name)
+WHERE n.nspname = 'public'
+  AND p.prokind = 'f'
+  AND NOT EXISTS (
+    SELECT 1 FROM pg_depend e
+    WHERE e.classid = 'pg_proc'::regclass AND e.objid = p.oid AND e.deptype = 'e'
+  ) \gexec
 
 SELECT format('GRANT CONNECT ON DATABASE %I TO %I, %I, %I, %I', current_database(), :'app_user', :'migrator_user', :'backup_user', :'readonly_user') \gexec
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO :"app_user";
 GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO :"app_user";
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO :"backup_user", :"readonly_user";
 GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO :"backup_user", :"readonly_user";
+
+-- Global and schema-local default ACLs are additive. Reset stale grants
+-- before applying the reviewed role-specific defaults.
+SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I REVOKE ALL ON TABLES FROM %I, %I, %I', :'migrator_user', :'app_user', :'backup_user', :'readonly_user') \gexec
+SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I REVOKE ALL ON SEQUENCES FROM %I, %I, %I', :'migrator_user', :'app_user', :'backup_user', :'readonly_user') \gexec
+SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE ALL ON TABLES FROM %I, %I, %I', :'migrator_user', :'app_user', :'backup_user', :'readonly_user') \gexec
+SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE ALL ON SEQUENCES FROM %I, %I, %I', :'migrator_user', :'app_user', :'backup_user', :'readonly_user') \gexec
 
 SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %I', :'migrator_user', :'app_user') \gexec
 SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO %I', :'migrator_user', :'app_user') \gexec
@@ -256,7 +278,8 @@ SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I REVOKE ALL ON TABLES FROM PU
 SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I REVOKE ALL ON SEQUENCES FROM PUBLIC', :'migrator_user') \gexec
 SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC', :'migrator_user') \gexec
 SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC', :'migrator_user') \gexec
-SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC', :'migrator_user') \gexec
+SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, %I, %I, %I', :'migrator_user', :'app_user', :'backup_user', :'readonly_user') \gexec
+SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, %I, %I, %I', :'migrator_user', :'app_user', :'backup_user', :'readonly_user') \gexec
 
 ALTER ROLE :"backup_user" SET default_transaction_read_only = on;
 ALTER ROLE :"readonly_user" SET default_transaction_read_only = on;

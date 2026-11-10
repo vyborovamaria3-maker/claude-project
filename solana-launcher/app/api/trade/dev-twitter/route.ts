@@ -20,6 +20,21 @@ export const dynamic = "force-dynamic";
 
 const CACHE = new Map<string, { data: TwitterStats; ts: number }>();
 const CACHE_TTL = 5 * 60 * 1000;
+const CACHE_MAX_ENTRIES = 256;
+
+function pruneTwitterStatsCache(now: number): void {
+  for (const [key, entry] of CACHE) {
+    if (now - entry.ts >= CACHE_TTL) CACHE.delete(key);
+  }
+}
+
+function makeTwitterStatsCacheRoom(): void {
+  while (CACHE.size >= CACHE_MAX_ENTRIES) {
+    const oldestKey = CACHE.keys().next().value;
+    if (oldestKey === undefined) break;
+    CACHE.delete(oldestKey);
+  }
+}
 
 export interface TwitterRiskUniverse {
   totalTweets: number;
@@ -422,8 +437,12 @@ export async function POST(req: NextRequest) {
     verifiedOnly ? 1 : 0,
     excludeSuspicious ? 1 : 0,
   ].join(":");
+  const cacheNow = Date.now();
+  pruneTwitterStatsCache(cacheNow);
   const cached = CACHE.get(cacheKey);
-  if (cached && Date.now() - cached.ts < CACHE_TTL) {
+  if (cached && cacheNow - cached.ts < CACHE_TTL) {
+    CACHE.delete(cacheKey);
+    CACHE.set(cacheKey, cached);
     return NextResponse.json({
       ...cached.data,
       performance: {
@@ -523,10 +542,13 @@ export async function POST(req: NextRequest) {
     return !analyzed.isSuspicious && !account?.isBot;
   });
   const filteredTweets = displayEligible.slice(0, limit);
+  // Do not mark an otherwise eligible author excluded merely because the
+  // display sample limit omitted their tweets.
+  const eligibleHandles = new Set(displayEligible.map((tweet) => tweet.authorHandle));
   const excludedHandles = new Set(
-    [...riskHandles].filter((handle) => !filteredTweets.some(
-      (tweet) => tweet.authorHandle === handle,
-    )),
+    excludeSuspicious
+      ? [...riskHandles].filter((handle) => !eligibleHandles.has(handle))
+      : [],
   );
 
   const authorAggregates = new Map<
@@ -718,7 +740,10 @@ export async function POST(req: NextRequest) {
     if (account) riskAccountMap.set(handle, account);
   }
   persistTwitterStats(stats, query, riskTweets, riskAccountMap, excludedHandles);
-  CACHE.set(cacheKey, { data: stats, ts: Date.now() });
+  const cacheStoredAt = Date.now();
+  pruneTwitterStatsCache(cacheStoredAt);
+  makeTwitterStatsCacheRoom();
+  CACHE.set(cacheKey, { data: stats, ts: cacheStoredAt });
   return NextResponse.json(stats);
 }
 
