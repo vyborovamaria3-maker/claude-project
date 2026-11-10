@@ -70,6 +70,44 @@ test("delivery persists legacy invalidations before migration 018 adds coalescin
   assert.ok(log.indexOf("COMMIT")<log.indexOf("ACK"));
 });
 
+test("delivery tolerates a partially-added coalesce column without losing legacy uniqueness",async()=>{
+  const log=[];
+  const tokenId=registryEvent.entityRefs[0].canonicalId;
+  let queueArgs;
+  const destination={connect:async()=>({
+    query:async (sql,params)=>{
+      log.push(sql);
+      if(sql.includes("to_regclass('analytics_invalidation_queue')"))
+        return {rows:[{
+          ready:true,coalesce_key_ready:true,retry_schedule_ready:false,
+          cursor_ready:false,coalesce_index_ready:false,
+        }]};
+      if(sql.includes("SELECT DISTINCT canonical_token_id"))
+        return {rows:[{canonical_token_id:tokenId}]};
+      if(sql.includes("INSERT INTO analytics_invalidation_queue")){
+        queueArgs=params;
+        return {rows:[{invalidation_id:18}]};
+      }
+      return {rows:sql.includes("RETURNING event_key")?[{event_key:"ok"}]:[]};
+    },
+    release:()=>log.push("release"),
+  })};
+  const source={claim:async()=>[sample()],ack:async()=>{log.push("ACK");return true},
+    fail:async()=>{log.push("FAIL");return true}};
+  const result=await runDeliveryBatch(source,destination,
+    {workerId:"worker1",batchSize:1,leaseMs:5000});
+  assert.equal(result.delivered,1);
+  assert.equal(result.failed,0);
+  const legacyInsert=log.find(sql=>typeof sql==="string"&&sql.includes("INSERT INTO analytics_invalidation_queue"));
+  assert.ok(legacyInsert);
+  assert.ok(legacyInsert.includes("coalesce_key"));
+  assert.ok(legacyInsert.includes("ON CONFLICT(canonical_token_id,source_system,event_kind,event_key,reason)"));
+  assert.deepEqual(queueArgs,[
+    tokenId,"tg","message_observed","tg:-10022:42:v1","edit",
+  ]);
+  assert.ok(log.indexOf("COMMIT")<log.indexOf("ACK"));
+});
+
 test("rollback before NACK on failed destination write",async()=>{
   const log=[];
   const source={claim:async()=>[sample()],ack:async()=>{log.push("ACK");return true},
