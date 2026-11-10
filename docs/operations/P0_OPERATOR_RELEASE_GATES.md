@@ -288,3 +288,30 @@ RPO/RTO and live-source/production cutover gates remain outstanding.
 
 **Decision: HOLD.** These code corrections do not authorize merge, production
 deployment, production migrations, role cutover or credential changes.
+
+### Latest code snapshot — PR #215 HEAD `9f4d27d2cc8bd3c78b53915ceef5b0d5cf62b392`
+
+Subsequent hardening also makes the sequence deployment preflight reject both
+existing runtime `UPDATE` grants and unsafe future sequence default ACLs.
+The disposable role-provisioner rehearsal now proves both rejection paths.
+
+Intelligence delivery now requires the coalescing index and the complete
+retry/cursor schema before using migration-018 coalescing. If only the legacy
+queue exists, it records the event with migration-010 uniqueness. If the
+`coalesce_key` column has been added but the rest of migration 018 is not
+ready, it temporarily stores the event key in that column so the unique
+coalescing index can still be built without duplicate keys. Regression tests
+cover both legacy and partial-schema states.
+
+The Admin migration regression now uses an isolated PostgreSQL schema, seeds
+default runtime grants, proves the migration ledger has no runtime SELECT,
+INSERT, UPDATE or DELETE access, and verifies that a conflicting stale
+SQLite snapshot is rejected without changing the PostgreSQL row.
+
+For this exact HEAD, GitHub reports 30 check runs: 29 queued, 1 conditionally
+skipped, 0 completed successes and 0 failures. No test pass is claimed until
+the relevant jobs actually finish. Independent approval, effective main
+protection, real off-host encrypted restore, measured RPO/RTO and live-source
+verification remain outstanding.
+
+**Decision: HOLD.** No merge or production operation is authorized.
