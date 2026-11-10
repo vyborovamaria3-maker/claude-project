@@ -288,6 +288,12 @@ assert(
   safeXlsxPackage.includes('"name": "potapoff-safe-xlsx"'),
   "bounded local spreadsheet reader must not be identified as the vulnerable SheetJS package",
 );
+
+const telegramLock = JSON.parse(read("package-lock.json"));
+assert(telegramLock.packages["node_modules/body-parser"]?.version === "2.4.0", "Telegram dependency lock must use patched body-parser");
+assert(telegramLock.packages["node_modules/follow-redirects"]?.version === "1.16.2", "Telegram dependency lock must use patched follow-redirects");
+assert(telegramLock.packages["node_modules/qs"]?.version === "6.17.1", "body-parser 2.4.0 must resolve a compatible patched qs release");
+
 const telegramDocker = read("Dockerfile.telegram-bot");
 assert(frontendDocker.includes("! command -v npm"), "frontend runtime must not ship npm");
 assert(telegramDocker.includes("! command -v npm"), "Telegram runtime must not ship npm");
@@ -297,7 +303,11 @@ assert(
   "Telegram dependency stage must include local safe packages before npm ci",
 );
 assert(
-  telegramDocker.includes('CMD ["node", "node_modules/ts-node/dist/bin.js", "telegram-bot/index.ts"]'),
+  telegramDocker.includes("npm run bot:build") && telegramDocker.includes("npm prune --omit=dev"),
+  "Telegram image must compile the bot and prune development dependencies",
+);
+assert(
+  telegramDocker.includes('CMD ["node", "dist/telegram-bot/index.js"]'),
   "Telegram runtime must launch directly through Node without npm",
 );
 

@@ -72,7 +72,8 @@
     "campaigns:test": "node --test scripts/token-campaigns.test.mjs",
     "compose:down:volumes": "node scripts/compose-down-volumes.mjs",
     "wallet-summary:rebuild": "node scripts/rebuild-wallet-summary.cjs",
-    "wallet-summary:test": "node scripts/wallet-summary-regression.cjs"
+    "wallet-summary:test": "node scripts/wallet-summary-regression.cjs",
+    "bot:build": "tsc -p telegram-bot/tsconfig.json"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",

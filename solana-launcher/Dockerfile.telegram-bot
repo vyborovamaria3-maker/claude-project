@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim AS dependencies
+FROM node:22-bookworm-slim AS builder
 
 # Keep the image runtime aligned with solana-launcher's engines.node >=22.
 RUN node -e "if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('Telegram bot requires Node.js 22 or newer')"
@@ -33,6 +33,16 @@ RUN set -eux; \
     done; \
     npm rebuild better-sqlite3 --build-from-source
 
+# Compile the bot and its local TypeScript dependencies before removing build-only packages.
+COPY . .
+RUN rm -rf dist && npm run bot:build
+
+# Keep devDependencies out of the image that is shipped and scanned.
+RUN npm prune --omit=dev --legacy-peer-deps \
+    && test ! -e node_modules/figma-mcp \
+    && test ! -e node_modules/ts-node \
+    && test ! -e node_modules/typescript
+
 FROM node:22-bookworm-slim AS runner
 
 WORKDIR /app
@@ -40,14 +50,18 @@ WORKDIR /app
 ENV NODE_ENV=production \
     TELEMETRY_DISABLED=1
 
-COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
-COPY --chown=node:node . .
+COPY --from=builder --chown=node:node /app/node_modules ./node_modules
+COPY --from=builder --chown=node:node /app/dist ./dist
+# bigint-buffer is a local file dependency and remains a symlink in node_modules.
+COPY --from=builder --chown=node:node /app/scripts/bigint-safe-package ./scripts/bigint-safe-package
 
-# The bot starts directly through ts-node; npm/corepack are build-only tooling.
+RUN mkdir -p /app/data && chown -R node:node /app/data
+
+# npm/corepack are build-only tooling and are not needed by the compiled runtime.
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
     /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
     && ! command -v npm \
     && ! command -v npx
 
 USER node
-CMD ["node", "node_modules/ts-node/dist/bin.js", "telegram-bot/index.ts"]
+CMD ["node", "dist/telegram-bot/index.js"]
