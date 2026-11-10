@@ -133,7 +133,7 @@
     "typescript": "^5.5.3",
     "vite": "^8.2.2",
     "vitest": "^5.0.0",
-    "xlsx": "file:./scripts/xlsx-safe-package"
+    "potapoff-safe-xlsx": "file:./scripts/xlsx-safe-package"
   },
   "overrides": {
     "toml": "^5.0.1",

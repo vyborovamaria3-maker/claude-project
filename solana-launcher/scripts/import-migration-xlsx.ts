@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { execFileSync } from "node:child_process";
-import * as XLSX from "xlsx";
+import * as XLSX from "potapoff-safe-xlsx";
 import {
   getCreatorForMint,
 } from "../lib/trade/dev";
