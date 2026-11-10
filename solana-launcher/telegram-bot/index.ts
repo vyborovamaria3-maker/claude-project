@@ -119,7 +119,7 @@ async function startBot() {
 const isCliRun =
   process.env.npm_lifecycle_event === 'bot:dev' ||
   process.env.npm_lifecycle_event === 'bot:start' ||
-  process.argv.some((arg) => /telegram-bot[\\/]+index\\.(?:ts|js)$/.test(arg));
+  process.argv.some((arg) => /telegram-bot[\\/]+index\.(?:ts|js)$/.test(arg));
 
 if (isCliRun) {
   startBot().catch((error) => {
