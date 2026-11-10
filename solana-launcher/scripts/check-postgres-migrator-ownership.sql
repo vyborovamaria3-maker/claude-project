@@ -318,4 +318,42 @@ END
 $$;
 \endif
 
+SELECT EXISTS (
+  SELECT 1
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public'
+    AND c.relkind = 'S'
+    AND has_sequence_privilege(:'app_user', c.oid, 'UPDATE')
+) AS has_runtime_sequence_update \gset
+\if :has_runtime_sequence_update
+  \echo 'Production migration blocked: runtime role can UPDATE an application sequence (setval)'
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
+\endif
+
+SELECT EXISTS (
+  SELECT 1
+  FROM pg_default_acl d
+  CROSS JOIN LATERAL aclexplode(d.defaclacl) acl
+  WHERE d.defaclrole = (SELECT oid FROM pg_roles WHERE rolname = :'migrator_user')
+    AND d.defaclobjtype = 'S'
+    AND acl.privilege_type = 'UPDATE'
+    AND acl.grantee IN (
+      0,
+      (SELECT oid FROM pg_roles WHERE rolname = :'app_user')
+    )
+) AS has_unsafe_future_sequence_update \gset
+\if :has_unsafe_future_sequence_update
+  \echo 'Production migration blocked: PUBLIC or runtime role has default sequence UPDATE/setval privilege'
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
+\endif
+
 \echo 'POSTGRES_MIGRATOR_OWNERSHIP_OK objects=owned schema_create=true'
