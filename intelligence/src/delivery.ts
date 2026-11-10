@@ -191,7 +191,8 @@ async function queueAffectedTokensForRecalculation(
     if(link && typeof link==="object" && typeof (link as Record<string,unknown>).canonicalTokenId==="string")
       tokens.add((link as {canonicalTokenId:string}).canonicalTokenId);
   }
-  const reason=event.eventKind==="token_links_invalidated"?"link_invalidated":
+  const reason: "link_invalidated" | "delete" | "backfill" | "edit" =
+    event.eventKind==="token_links_invalidated"?"link_invalidated":
     event.eventKind==="message_deleted"?"delete":
     event.eventKind==="token_link_verified"?"backfill":"edit";
   for(const canonicalTokenId of tokens) {
