@@ -1,48 +1,31 @@
-# Telegram Mini App - HTTPS Tunnel Setup
-# Run this script to expose local frontend to internet
+# Telegram Mini App development tunnel
+# Exposes the Next.js app that owns /miniapp and /api/miniapp/*.
+$ErrorActionPreference = 'Stop'
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$appDir = Join-Path $repoRoot 'solana-launcher'
 
-Write-Host "==========================================" -ForegroundColor Green
-Write-Host "  Telegram Mini App - HTTPS Tunnel Setup  " -ForegroundColor Green
-Write-Host "==========================================" -ForegroundColor Green
-Write-Host ""
+if (-not (Test-Path (Join-Path $appDir 'package.json'))) {
+    throw "solana-launcher/package.json was not found."
+}
+if (-not (Test-Path (Join-Path $appDir 'node_modules'))) {
+    throw "Install dependencies first: cd solana-launcher; npm ci --legacy-peer-deps"
+}
 
-# Check if frontend is running
-Write-Host "1. Checking if frontend is running on port 5173..." -ForegroundColor Yellow
-$frontendRunning = $false
+$running = $false
 try {
-    $response = Invoke-WebRequest -Uri "http://localhost:5173" -TimeoutSec 2 -UseBasicParsing -ErrorAction SilentlyContinue
-    if ($response.StatusCode -eq 200) {
-        $frontendRunning = $true
-        Write-Host "   ✓ Frontend is already running!" -ForegroundColor Green
-    }
+    $response = Invoke-WebRequest -Uri 'http://127.0.0.1:3000/miniapp' -TimeoutSec 2 -UseBasicParsing
+    $running = $response.StatusCode -ge 200 -and $response.StatusCode -lt 500
 } catch {
-    Write-Host "   ✗ Frontend not running, starting now..." -ForegroundColor Red
+    $running = $false
 }
 
-if (-not $frontendRunning) {
-    Write-Host "   → Starting frontend..." -ForegroundColor Cyan
-    Start-Process -WindowStyle Minimized powershell -ArgumentList "-Command cd frontend; npm run dev"
-    Write-Host "   Waiting 5 seconds for startup..." -ForegroundColor Yellow
-    Start-Sleep -Seconds 5
+if (-not $running) {
+    Write-Host 'Starting Next.js Mini App/API on port 3000...' -ForegroundColor Yellow
+    Start-Process -WindowStyle Minimized -FilePath 'cmd.exe' -WorkingDirectory $appDir -ArgumentList '/c', 'npm run dev'
+    Start-Sleep -Seconds 8
 }
 
-Write-Host ""
-Write-Host "2. Starting HTTPS tunnel..." -ForegroundColor Yellow
-Write-Host "   (This will create a public HTTPS URL)" -ForegroundColor Gray
-Write-Host ""
-Write-Host "   Wait for the URL to appear below..." -ForegroundColor Cyan
-Write-Host "   Copy the https://xxxxx.loca.lt URL" -ForegroundColor Green
-Write-Host ""
-Write-Host "==========================================" -ForegroundColor Magenta
-
-# Change to frontend directory and start localtunnel
-Set-Location frontend
-try {
-    npx localtunnel --port 5173
-} catch {
-    Write-Host "Error starting localtunnel: $_" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "Alternative: Install cloudflared:" -ForegroundColor Yellow
-    Write-Host "   1. Download from https://github.com/cloudflare/cloudflared/releases" -ForegroundColor Cyan
-    Write-Host "   2. Run: cloudflared tunnel --url http://localhost:5173" -ForegroundColor Cyan
-}
+Write-Host 'Starting a public development tunnel to port 3000.' -ForegroundColor Yellow
+Write-Host 'Use test data only. Copy the HTTPS URL and append /miniapp to WEBAPP_URL.' -ForegroundColor Green
+Set-Location $PSScriptRoot
+npx localtunnel --port 3000
