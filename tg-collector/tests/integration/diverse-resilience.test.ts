@@ -23,6 +23,7 @@ test("resilience: four concurrent migration entrypoints preserve a single checks
     "034_mint_layout_attestation.sql",
     "035_unattested_mint_lifecycle.sql",
     "036_promotional_milestone_filter.sql",
+    "037_intelligence_outbox_health_indexes.sql",
   ]);
   assert.ok(rows.every(x=>/^[0-9a-f]{64}$/.test(x.checksum.trim())));
   assert.equal(new Set(rows.map(x=>x.name)).size,rows.length);

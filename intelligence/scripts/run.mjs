@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
 import {
-  sourceConnection, checkPgOutbox, checkDestination, destinationConnection,
+  sourceConnection, checkPgOutbox, checkDestination, destinationConnection, outboxStatus,
 } from "./etl-connections.mjs";
 import { runDeliveryBatch } from "../dist/index.js";
 import { createAiRuntime } from "./ai-runtime.mjs";
@@ -43,47 +43,6 @@ function usage() {
     "Preconditions: source outbox schema, destination 001+002+004; +005 for Blockchain swap revisions",
   ].join("\n");
 }
-async function status(source){
-  const at=new Date().toISOString();
-  let row;
-  if(source.kind==="sqlite"){
-    row=source.connection.prepare(`SELECT
-      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS pending,
-      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
-        AND next_attempt_at<=? AND (lease_until IS NULL OR lease_until<=?)) AS ready,
-      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
-        AND lease_until>?) AS leased,
-      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
-        AND attempts>0 AND next_attempt_at>?) AS retry_delayed,
-      count(*) FILTER (WHERE dead_lettered_at IS NOT NULL) AS dead_letter,
-      min(created_at) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS oldest_pending_at,
-      max(attempts) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS max_attempts
-    FROM outbox_events`).get(at,at,at,at);
-  }else{
-    await checkPgOutbox(source.connection);
-    const result=await source.connection.query(`SELECT
-      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL)::text AS pending,
-      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
-        AND next_attempt_at<=$1::timestamptz
-        AND (lease_until IS NULL OR lease_until<=$1::timestamptz))::text AS ready,
-      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
-        AND lease_until>$1::timestamptz)::text AS leased,
-      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
-        AND attempts>0 AND next_attempt_at>$1::timestamptz)::text AS retry_delayed,
-      count(*) FILTER (WHERE dead_lettered_at IS NOT NULL)::text AS dead_letter,
-      min(created_at) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS oldest_pending_at,
-      max(attempts) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL)::text AS max_attempts
-    FROM outbox_events`,[at]);
-    row=result.rows[0];
-  }
-  return {
-    pending:Number(row.pending),ready:Number(row.ready),
-    leased:Number(row.leased),retryDelayed:Number(row.retry_delayed),
-    deadLetter:Number(row.dead_letter),
-    oldestPendingAt:row.oldest_pending_at===null?null:new Date(row.oldest_pending_at).toISOString(),
-    maxAttempts:row.max_attempts===null?0:Number(row.max_attempts),
-  };
-}
 async function main(){
   const args=argumentsFor(process.argv.slice(2));
   if(args.help){console.log(usage());return;}
@@ -94,7 +53,7 @@ async function main(){
   let destination;
   try{
     if(args.status){
-      console.log(JSON.stringify({source:args.source,mode:"status",...(await status(source))}));
+      console.log(JSON.stringify({source:args.source,mode:"status",...(await outboxStatus(source))}));
       return;
     }
     if(source.kind==="pg")await checkPgOutbox(source.connection);
