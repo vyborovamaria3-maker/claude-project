@@ -38,9 +38,10 @@ Local commands (Node 22+):
   npm install --prefix intelligence --ignore-scripts --no-package-lock
   npm --prefix intelligence run check
 
-Remaining: deployment-safe source migrations and opt-in real data verification,
-backfill, blockchain reconciliation, verified token-link producers,
-AI embeddings/training/outcome labels, secured APIs and operational runbooks.
+Remaining: deployment-safe source migrations and opt-in real-data verification,
+backfill and cross-source reconciliation, authenticated live RPC/witness
+provenance and bounded blockchain coverage, AI embeddings/training/outcome
+labels, production API hardening and operational alert/runbooks.
 
 ## Bounded local ETL CLI (explicit opt-in)
 
@@ -128,9 +129,7 @@ Startup after Windows restart requires explicit process launch. The current
 one-shot CLI can claim more than one event, so its unstarted batch members are
 not heartbeat-protected; keep its batch size small on slow destinations.
 
-Cross-source timeline identity remains blocked by the missing evidence-based
-token-link producer; the synthetic token-linked ARCH-03 integration test
-does not establish real token recognition.
+Source-specific evidence producers now exist: X has a bounded explicit mint-verification CLI, TG has an opt-in Alchemy SPL/Token-2022 resolver, and Blockchain has opt-in provider-parsed swap evidence plus raw-revision events. These paths do not imply that live source events have been produced, delivered, reconciled or fully verified. Blockchain evidence is historical parsed swap evidence; offline witness receipts do not authenticate the RPC server or prove Solana consensus finality. The complete cross-source token timeline remains NOT VERIFIED in live operation; the synthetic token-linked ARCH-03 integration test does not establish real token recognition.
 
 
 ## Cross-platform analytics and API-backed AI
