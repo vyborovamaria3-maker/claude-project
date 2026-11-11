@@ -312,14 +312,14 @@ function loadWalletProfiles(db: ReturnType<typeof getDb>, filters: DatabaseAnaly
   const migrationAggs = db.prepare(
     `SELECT
        wallet,
-       AVG(COALESCE(roi, 0)) AS avgRoi,
-       AVG(COALESCE(pnl, 0)) AS avgPnl,
-       AVG(COALESCE(wr, 0)) AS avgWr,
-       AVG(COALESCE(fast_trades, 0)) AS avgFastTrades,
-       AVG(COALESCE(fast_trades_pct, 0)) AS avgFastTradesPct,
-       AVG(COALESCE(migrated_tokens, 0)) AS avgMigratedTokens,
-       AVG(COALESCE(migrated_pct, 0)) AS avgMigratedPct,
-       AVG(COALESCE(total_tokens, 0)) AS avgTotalTokens,
+       AVG(roi) AS avgRoi,
+       AVG(pnl) AS avgPnl,
+       AVG(wr) AS avgWr,
+       AVG(fast_trades) AS avgFastTrades,
+       AVG(fast_trades_pct) AS avgFastTradesPct,
+       AVG(migrated_tokens) AS avgMigratedTokens,
+       AVG(migrated_pct) AS avgMigratedPct,
+       AVG(total_tokens) AS avgTotalTokens,
        COUNT(*) AS reports
      FROM migration_wallet_rows
      WHERE wallet IS NOT NULL AND wallet != ''
@@ -508,7 +508,8 @@ function loadTokenProfiles(db: ReturnType<typeof getDb>): TokenProfile[] {
       isMigrated: Boolean(token.isMigrated),
       reached300k: Boolean(token.reached300k),
       tokenVolumeSol,
-      tokenVolumeUsd: tokenVolumeSol > 0 ? tokenVolumeSol * 150 : null,
+      // Without a timestamp-aligned SOL/USD price, USD volume is unknown, not SOL volume × a fixed rate.
+      tokenVolumeUsd: null,
       totalUniqueBuyers: agg?.totalUniqueBuyers ?? null,
       totalTrades,
       buyTrades,
