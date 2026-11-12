@@ -58,10 +58,12 @@ test("real PGlite: emission is atomic with source transaction and duplicates are
     assert.equal(await emitXTweetOutbox(conn,tweet,tweet.observedAt),true);
     assert.equal(await emitXTweetOutbox(conn,tweet,tweet.observedAt),true);
     await pg.exec("COMMIT");
-    const rows=(await pg.query<{event_key:string;payload:Record<string,unknown>}>(
-      "SELECT event_key,payload FROM outbox_events")).rows;
+    const rows=(await pg.query<{event_key:string;payload:Record<string,unknown>;created_at:Date}>(
+      "SELECT event_key,payload,created_at FROM outbox_events")).rows;
     assert.equal(rows.length,1);
     assert.equal(rows[0]?.event_key,buildXTweetOutboxEvent(tweet,tweet.observedAt)?.eventKey);
+    assert.ok(rows[0]!.created_at.getTime()>=tweet.observedAt,
+      "source created_at must be stamped at INSERT, after the observedAt value supplied to the producer");
   } finally {
     if(old===undefined) delete process.env.X_INTELLIGENCE_OUTBOX_ENABLED;
     else process.env.X_INTELLIGENCE_OUTBOX_ENABLED=old;
