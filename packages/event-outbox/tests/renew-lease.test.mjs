@@ -71,7 +71,7 @@ test("PostgreSQL renewal uses DB time and fences original ACK/NACK",{
       workerId:"local-supervisor",batchSize:1,leaseMs:2000,
     }))[0];
     assert.ok(first);
-    assert.match(first.createdAt,/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$/,
+    assert.match(first.createdAt,/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
       "PostgreSQL claim must expose source created_at as normalized UTC ISO");
     const next=await renewPostgres(
       pool,first.id,first.leaseOwner,first.leaseUntil,10_000,
