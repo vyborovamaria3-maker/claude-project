@@ -22,6 +22,9 @@ test("Postgres emit never commits independently; duplicate key handled at DB",as
   await emitPostgres({query:async(sql,values)=>{calls.push({sql,values});return{rows:[]}}},E);
   assert.equal(calls.length,1);
   assert.match(calls[0].sql,/ON CONFLICT/);
+  assert.match(calls[0].sql,/created_at/);
+  assert.match(calls[0].sql,/clock_timestamp\(\)/,
+    "PostgreSQL emittedAt must use actual outbox insertion time, not transaction-start NOW()");
   assert.equal(calls[0].values[2],E.eventKey);
   assert.ok(!calls[0].sql.includes("COMMIT"));
 });
