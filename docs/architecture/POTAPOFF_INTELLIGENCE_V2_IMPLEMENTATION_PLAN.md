@@ -254,12 +254,15 @@
 ## 7. Текущий статус работ
 
 - [x] Статически проверены основные shared contracts: canonical IDs, evidence, entity refs, timeline, verified token links.
+- [x] Добавлен исполняемый план [POTAPOFF_INTELLIGENCE_V2_IMPLEMENTATION_PLAN.md](POTAPOFF_INTELLIGENCE_V2_IMPLEMENTATION_PLAN.md).
+- [x] Добавлена спецификация [SHARED_CONTRACTS_V2.md](SHARED_CONTRACTS_V2.md); V1 сохраняется, V2 пока design-only.
 - [x] Проверены базовые outbox/inbox delivery semantics и payload fingerprint/revision migrations.
 - [x] Подтверждено наличие immutable feature versions и as-of snapshot constraints.
 - [x] Подтверждено наличие coverage windows, AI budget tables, temporal validation/preregistration.
 - [x] Зафиксировано архитектурное ограничение: Solana-only; multichain не входит в текущий target.
-- [ ] Формально завершить контрактный gap analysis всех X/TG/Solana producer payloads и schema compatibility matrix.
-- [ ] Реализовать/проверить PI2-010 и PI2-020.
+- [x] Выполнен первичный статический контрактный gap analysis X/TG/Solana producers; обнаружено отсутствие централизованного schema registry и compatibility policy. См. [SHARED_CONTRACTS_V2.md](SHARED_CONTRACTS_V2.md).
+- [ ] Завершить golden fixtures и contract compatibility matrix по каждому producer event kind.
+- [ ] Реализовать PI2-010 и PI2-020 в TypeScript/JSON Schema; текущий результат — архитектурная спецификация, не runtime implementation.
 - [ ] Выполнить pipeline fault matrix и operator DLQ/replay proof.
 - [ ] Превратить coverage в обязательный gate для features/correlations/AI reports.
 - [ ] Реализовать evidence-weighted identity links.
