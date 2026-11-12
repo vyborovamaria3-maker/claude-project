@@ -152,6 +152,59 @@ describe("verifySolanaPayment", () => {
     })).resolves.toBeUndefined();
   });
 
+
+  it("rejects a USDC transfer when transaction token-balance mint differs from configured USDC", async () => {
+    const { PaymentCurrency } = await import("@prisma/client");
+    const { solanaConnection, verifySolanaPayment } = await import("../src/services/solana.service");
+    const treasury = "11111111111111111111111111111111";
+    const mint = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
+    vi.spyOn(solanaConnection, "getSignatureStatus").mockResolvedValue({
+      context: { slot: 1 },
+      value: { slot: 1, confirmations: null, err: null, confirmationStatus: "finalized" }
+    } as never);
+    vi.spyOn(solanaConnection, "getParsedTransaction").mockResolvedValue({
+      meta: {
+        err: null,
+        preTokenBalances: [{ accountIndex: 1, mint, owner: treasury, uiTokenAmount: { amount: "0", decimals: 6, uiAmount: 0, uiAmountString: "0" } }],
+        postTokenBalances: [{ accountIndex: 1, mint: "FakeMint111111111111111111111111111111111", owner: treasury, uiTokenAmount: { amount: "1000000", decimals: 6, uiAmount: 1, uiAmountString: "1" } }]
+      },
+      transaction: { message: { accountKeys: [{ pubkey: { toBase58: () => "11111111111111111111111111111111" } }, { pubkey: { toBase58: () => treasury } }], instructions: [
+        { program: "spl-memo", parsed: "usdc-mint-check" },
+        { program: "spl-token", parsed: { type: "transfer", info: { destination: treasury, amount: "1000000" } } }
+      ] } }
+    } as never);
+
+    await expect(verifySolanaPayment({
+      signature: "B".repeat(88), nonce: "usdc-mint-check", expectedAmount: 1, currency: PaymentCurrency.USDC
+    })).rejects.toMatchObject({ code: "PAYMENT_AMOUNT_MISMATCH" });
+  });
+
+  it("requires the configured treasury owner and six USDC decimals in token-balance evidence", async () => {
+    const { PaymentCurrency } = await import("@prisma/client");
+    const { solanaConnection, verifySolanaPayment } = await import("../src/services/solana.service");
+    const treasury = "11111111111111111111111111111111";
+    const mint = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
+    vi.spyOn(solanaConnection, "getSignatureStatus").mockResolvedValue({
+      context: { slot: 1 },
+      value: { slot: 1, confirmations: null, err: null, confirmationStatus: "finalized" }
+    } as never);
+    vi.spyOn(solanaConnection, "getParsedTransaction").mockResolvedValue({
+      meta: {
+        err: null,
+        preTokenBalances: [{ accountIndex: 1, mint, owner: "WrongOwner111111111111111111111111111111", uiTokenAmount: { amount: "0", decimals: 9, uiAmount: 0, uiAmountString: "0" } }],
+        postTokenBalances: [{ accountIndex: 1, mint, owner: "WrongOwner111111111111111111111111111111", uiTokenAmount: { amount: "1000000", decimals: 9, uiAmount: 1, uiAmountString: "1" } }]
+      },
+      transaction: { message: { accountKeys: [{ pubkey: { toBase58: () => "11111111111111111111111111111111" } }, { pubkey: { toBase58: () => treasury } }], instructions: [
+        { program: "spl-memo", parsed: "usdc-owner-check" },
+        { program: "spl-token", parsed: { type: "transfer", info: { destination: treasury, amount: "1000000" } } }
+      ] } }
+    } as never);
+
+    await expect(verifySolanaPayment({
+      signature: "C".repeat(88), nonce: "usdc-owner-check", expectedAmount: 1, currency: PaymentCurrency.USDC
+    })).rejects.toMatchObject({ code: "PAYMENT_AMOUNT_MISMATCH" });
+  });
+
   it("rejects a parsed transaction whose metadata contains an error", async () => {
     const { PaymentCurrency } = await import("@prisma/client");
     const { solanaConnection, verifySolanaPayment } = await import("../src/services/solana.service");
