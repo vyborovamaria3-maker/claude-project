@@ -5,6 +5,7 @@ on:
     paths:
       - "intelligence/**"
       - "packages/contracts/**"
+      - "intelligence/integration/shared-contracts-v1-compatibility.test.mjs"
       - "packages/event-outbox/**"
       - "packages/ai-gateway/**"
       - "x-collector/scripts/verify-x-token-links.ts"
@@ -82,6 +83,10 @@ jobs:
           npm --prefix x-collector run typecheck
           npm --prefix tg-collector run typecheck
           npm --prefix intelligence run typecheck
+
+      - name: Validate actual V1 source builders against Shared Contracts V2
+        working-directory: tg-collector
+        run: node --import tsx --test ../intelligence/integration/shared-contracts-v1-compatibility.test.mjs
 
       - name: Run Intelligence JavaScript unit and PostgreSQL integration suite
         run: npm --prefix intelligence test
