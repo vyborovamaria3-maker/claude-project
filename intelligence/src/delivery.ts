@@ -1,6 +1,10 @@
 import type { ClaimOptions, ClaimedEvent } from "@claude-project/event-outbox";
 import { setTimeout as sleep } from "node:timers/promises";
-import { buildTimelineEvent, toUtcIso, validateVerifiedTokenLinkEvent, validateTokenLinksInvalidatedEvent, type TimelineEvent } from "@claude-project/contracts";
+import {
+  adaptLegacyOutboxEventToV2, buildTimelineEvent, getSchemaDefinition, toUtcIso,
+  validateEventEnvelopeV2, validateVerifiedTokenLinkEvent, validateTokenLinksInvalidatedEvent,
+  type EventSource, type TimelineEvent,
+} from "@claude-project/contracts";
 import { ingestRegistryEvent, validateRegistryEvent, type PgTransaction, type RegistryEvent } from "./entity-registry.js";
 import { ingestTimelineEvent } from "./timeline.js";
 import { ingestTokenLinkObservation } from "./token-links.js";
@@ -26,7 +30,16 @@ export type DeliveryStats = {
   lostLeases: number;
 };
 
-type DeliveryEvent = Pick<ClaimedEvent,"sourceSystem"|"eventKind"|"eventKey"|"schemaVersion"|"payload">;
+type DeliveryEvent = Pick<ClaimedEvent,"sourceSystem"|"eventKind"|"eventKey"|"schemaVersion"|"payload"> & {
+  /** Present on source outbox claims; omitted only by legacy read-only snapshot callers. */
+  createdAt?: Date | string;
+};
+
+type PreparedDeliveryEvent = Readonly<{
+  event: DeliveryEvent;
+  body: RegistryOutboxPayload;
+  envelopeSha256?: string;
+}>;
 
 export type RegistryOutboxPayload = {
   registryEvent: RegistryEvent;
@@ -93,6 +106,70 @@ function extractEnvelope(event: DeliveryEvent): RegistryOutboxPayload {
     throw new TypeError("Registry and timeline entity references disagree");
   }
   return {...raw, registryEvent: registry, timelineEvent: timeline};
+}
+
+/**
+ * Normalize the source boundary without changing downstream event clocks.
+ * V1 producers retain their legacy inbox fingerprint; registered V1 rows are
+ * validated through the adapter using only the immutable source created_at.
+ * V2 rows carry their complete envelope inside outbox.payload.
+ */
+function prepareDeliveryEvent(event: DeliveryEvent): PreparedDeliveryEvent {
+  const payload = event.payload;
+  if (payload && typeof payload === "object" &&
+      Object.hasOwn(payload, "envelopeVersion")) {
+    const envelope = validateEventEnvelopeV2(payload);
+    if (envelope.sourceSystem !== event.sourceSystem ||
+        envelope.eventKind !== event.eventKind ||
+        envelope.eventKey !== event.eventKey ||
+        envelope.schemaVersion !== event.schemaVersion) {
+      throw new TypeError("V2 envelope and source outbox identities differ");
+    }
+    if (event.createdAt === undefined) {
+      throw new TypeError("V2 delivery requires source outbox created_at");
+    }
+    if (toUtcIso(event.createdAt) !== envelope.clocks.emittedAt) {
+      throw new TypeError("V2 emittedAt differs from source outbox created_at");
+    }
+    const normalizedEvent: DeliveryEvent = {
+      ...event,
+      payload: envelope.payload as Record<string, unknown>,
+    };
+    return {
+      event: normalizedEvent,
+      body: extractEnvelope(normalizedEvent),
+      envelopeSha256: envelope.payloadSha256,
+    };
+  }
+
+  if (event.createdAt !== undefined &&
+      (event.sourceSystem === "x" || event.sourceSystem === "tg" ||
+       event.sourceSystem === "blockchain") &&
+      getSchemaDefinition(
+        event.sourceSystem as EventSource,
+        event.eventKind,
+        event.schemaVersion,
+      )) {
+    const adapted = adaptLegacyOutboxEventToV2({
+      sourceSystem: event.sourceSystem as EventSource,
+      eventKind: event.eventKind,
+      eventKey: event.eventKey,
+      schemaVersion: event.schemaVersion,
+      payload,
+    }, { emittedAt: event.createdAt });
+    const normalizedEvent: DeliveryEvent = {
+      ...event,
+      payload: adapted.payload as Record<string, unknown>,
+    };
+    return {
+      event: normalizedEvent,
+      body: extractEnvelope(normalizedEvent),
+    };
+  }
+
+  // Unregistered legacy event kinds and non-outbox snapshot imports retain
+  // the established V1 validation/ingestion path unchanged.
+  return { event, body: extractEnvelope(event) };
 }
 
 /** Preserve delivery on migration 010 installations before 018 adds coalescing. */
@@ -233,9 +310,12 @@ async function revokeRetiredTextSnapshots(
 }
 /** Reuse delivery's privacy/invalidation hooks for read-only legacy source
  * snapshots. Caller owns the transaction, including its durable watch cursor. */
-export async function ingestDestinationEvent(tx:PgTransaction,event:DeliveryEvent):Promise<boolean>{
-  const body=extractEnvelope(event);
-  const fresh=await ingestRegistryEvent(tx,body.registryEvent);
+async function ingestPreparedDestinationEvent(
+  tx: PgTransaction,
+  prepared: PreparedDeliveryEvent,
+): Promise<boolean> {
+  const { event, body, envelopeSha256 } = prepared;
+  const fresh = await ingestRegistryEvent(tx, body.registryEvent, envelopeSha256);
   if(event.eventKind==="token_link_verified"||event.eventKind==="token_links_invalidated"){
     await ingestTokenLinkObservation(tx,{
       sourceSystem:event.sourceSystem as "x"|"tg",
@@ -259,16 +339,26 @@ export async function ingestDestinationEvent(tx:PgTransaction,event:DeliveryEven
   return fresh;
 }
 
+/** Reuse delivery's privacy/invalidation hooks for read-only legacy source
+ * snapshots. Caller owns the transaction, including its durable watch cursor. */
+export async function ingestDestinationEvent(tx:PgTransaction,event:DeliveryEvent):Promise<boolean>{
+  return ingestPreparedDestinationEvent(tx, prepareDeliveryEvent(event));
+}
+
 /** The only transaction boundary: destination COMMIT BEFORE source ACK. */
 async function writeDestination(
   pool: DestinationPool, event: ClaimedEvent,
 ): Promise<boolean> {
-  extractEnvelope(event); // Reject malformed source data before borrowing a connection.
+  if (event.createdAt === undefined) {
+    throw new TypeError("Claimed source outbox event is missing created_at");
+  }
+  // Validate and normalize before borrowing a destination connection.
+  const prepared = prepareDeliveryEvent(event);
   const client=await pool.connect();
   let open=false;
   try {
     await client.query("BEGIN"); open=true;
-    const fresh=await ingestDestinationEvent(client,event);
+    const fresh=await ingestPreparedDestinationEvent(client,prepared);
     await client.query("COMMIT");open=false;
     return fresh;
   } catch(error) {
