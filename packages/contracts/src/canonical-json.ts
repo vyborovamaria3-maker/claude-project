@@ -37,6 +37,9 @@ export function canonicalJsonStringify(value: unknown): string {
     active.add(current);
     try {
       if (Array.isArray(current)) {
+        if (Object.getPrototypeOf(current) !== Array.prototype) {
+          throw new TypeError("Non-plain array at " + path);
+        }
         const keys = Object.keys(current);
         const ownNames = Object.getOwnPropertyNames(current);
         if (keys.length !== current.length ||
