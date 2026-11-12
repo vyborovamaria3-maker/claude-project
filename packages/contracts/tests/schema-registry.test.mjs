@@ -84,6 +84,31 @@ test("forward compatibility treats omitted additionalProperties as permissive", 
   assert.equal(checkSchemaCompatibility(previous, next, "forward").compatible, true);
 });
 
+test("additionalProperties compatibility is directional and handles schema-valued rules", () => {
+  const permissive = {
+    type: "object",
+    properties: { id: { type: "string" } },
+    required: ["id"],
+  };
+  const constrained = {
+    type: "object",
+    properties: { id: { type: "string" } },
+    required: ["id"],
+    additionalProperties: { type: "string" },
+  };
+  assert.equal(checkSchemaCompatibility(permissive, constrained, "backward").compatible, false);
+  assert.equal(checkSchemaCompatibility(permissive, constrained, "forward").compatible, true);
+  assert.equal(checkSchemaCompatibility(constrained, permissive, "backward").compatible, true);
+  assert.equal(checkSchemaCompatibility(constrained, permissive, "forward").compatible, false);
+
+  const changedConstraint = {
+    ...constrained,
+    additionalProperties: { type: "number" },
+  };
+  assert.equal(checkSchemaCompatibility(constrained, changedConstraint, "backward").compatible, false);
+  assert.equal(checkSchemaCompatibility(constrained, changedConstraint, "forward").compatible, false);
+});
+
 test("root validation constraints cannot change under a compatible schema version", () => {
   const previous = {
     type: "object",
