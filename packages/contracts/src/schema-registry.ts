@@ -497,6 +497,7 @@ function validateLegacySemantics(identity: SchemaIdentity, payloadValue: unknown
 
 /** Validate a source-owned V1 payload against the central immutable registry. */
 export function validateRegisteredPayload(identity: SchemaIdentity, payload: unknown): SchemaDefinition {
+  canonicalJsonStringify(payload);
   const definition = getSchemaDefinition(identity.sourceSystem, identity.eventKind, identity.schemaVersion);
   if (!definition) {
     throw new TypeError("Unsupported event schema: " +
@@ -519,6 +520,9 @@ function schemaShape(schema: JsonSchema): string {
     minimum: schema.minimum ?? null,
     minLength: schema.minLength ?? null,
     maxLength: schema.maxLength ?? null,
+    minItems: schema.minItems ?? null,
+    maxItems: schema.maxItems ?? null,
+    items: schema.items ?? null,
     properties: schema.properties ?? {},
     required: [...(schema.required ?? [])].sort(),
     additionalProperties: schema.additionalProperties ?? true,
@@ -535,6 +539,21 @@ export function checkSchemaCompatibility(
   const newProperties = next.properties ?? {};
   const oldRequired = new Set(previous.required ?? []);
   const newRequired = new Set(next.required ?? []);
+  const rootConstraints = (schema: JsonSchema) => canonicalJsonStringify({
+    type: schema.type ?? null,
+    const: schema.const ?? null,
+    enum: schema.enum ?? null,
+    pattern: schema.pattern ?? null,
+    minimum: schema.minimum ?? null,
+    minLength: schema.minLength ?? null,
+    maxLength: schema.maxLength ?? null,
+    minItems: schema.minItems ?? null,
+    maxItems: schema.maxItems ?? null,
+    items: schema.items ?? null,
+  });
+  if (rootConstraints(previous) !== rootConstraints(next)) {
+    issues.push("schema: changed root validation constraints");
+  }
 
   const checkBackward = () => {
     for (const key of Object.keys(oldProperties)) {
@@ -553,9 +572,14 @@ export function checkSchemaCompatibility(
 
   const checkForward = () => {
     for (const key of Object.keys(newProperties)) {
-      if (!oldProperties[key] && previous.additionalProperties !== true) {
-        issues.push("forward: new property is not accepted by previous schema: " + key);
-      } else if (oldProperties[key] && schemaShape(oldProperties[key]!) !== schemaShape(newProperties[key]!)) {
+      if (!oldProperties[key]) {
+        const additional = previous.additionalProperties;
+        const accepted = additional === undefined || additional === true ||
+          (typeof additional === "object" && schemaShape(additional) === schemaShape(newProperties[key]!));
+        if (!accepted) {
+          issues.push("forward: new property is not accepted by previous schema: " + key);
+        }
+      } else if (schemaShape(oldProperties[key]!) !== schemaShape(newProperties[key]!)) {
         issues.push("forward: changed property contract " + key);
       }
     }
@@ -584,7 +608,7 @@ export function assertSchemaCompatibility(
 /** Reusing a schema ID for changed wire semantics is forbidden. */
 export function assertSchemaDefinitionImmutable(previous: SchemaDefinition, next: SchemaDefinition): void {
   if (previous.schemaId !== next.schemaId) return;
-  if (canonicalJsonStringify(previous.jsonSchema) !== canonicalJsonStringify(next.jsonSchema)) {
+  if (canonicalJsonStringify(previous) !== canonicalJsonStringify(next)) {
     throw new TypeError("Published schema definition is immutable: " + previous.schemaId);
   }
 }
