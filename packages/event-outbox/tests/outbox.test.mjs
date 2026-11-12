@@ -131,10 +131,21 @@ test("Postgres and SQLite claims reject rows without a valid immutable created_a
     }]:[]}),
     release:()=>{},
   })};
+  const pgCalls=[];
+  const trackedPgPool={connect:async()=>({
+    query:async(sql)=>{pgCalls.push(sql);return sql.includes("RETURNING o.*")?[{
+      id:"3",source_system:"tg",event_kind:E.eventKind,event_key:E.eventKey,
+      schema_version:E.schemaVersion,payload:E.payload,attempts:0,lease_owner:"w",
+      lease_until:"2026-10-18T00:10:00Z",
+    }]:{rows:[]}},
+    release:()=>pgCalls.push("RELEASE"),
+  })};
   await assert.rejects(
-    claimPostgres(pgPool,{workerId:"w",batchSize:1,leaseMs:5000,now:new Date("2026-10-18T00:00:00Z")}),
+    claimPostgres(trackedPgPool,{workerId:"w",batchSize:1,leaseMs:5000,now:new Date("2026-10-18T00:00:00Z")}),
     /created_at timestamp/,
   );
+  assert.ok(pgCalls.includes("ROLLBACK"),
+    "malformed claim metadata must roll back before a lease is committed");
   const db=fakeSqlite();
   const prepare=db.prepare;
   db.prepare=(sql)=>sql.includes("SELECT * FROM outbox_events")
