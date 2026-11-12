@@ -177,7 +177,7 @@ function deepFreezeJson<T>(value: T): T {
     ? value
     : Object.values(value as Record<string, unknown>);
   for (const child of children) deepFreezeJson(child);
-  return Object.isFrozen(value) ? value : Object.freeze(value);
+  return Object.isFrozen(value) ? value : Object.freeze(value) as T;
 }
 
 function nonempty(value: unknown, label: string, maxLength = 512): string {
