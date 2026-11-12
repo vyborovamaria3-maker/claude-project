@@ -297,3 +297,6 @@
 - [x] V2 полный envelope hash используется для duplicate/collision detection.
 - [x] Добавлены focused delivery tests на missing created_at, V1 knownAt parity, V2 hash tampering, identity mismatch, replay и collision.
 - [ ] Подтвердить contracts/outbox/Intelligence CI на точном HEAD; queued/skipped не считаются успешной проверкой.
+
+
+**Cutover blocker:** V1 inbox fingerprints remain registry-only for replay compatibility; V2 inbox fingerprints are full-envelope hashes. Same-key V1→V2 replay is deliberately rejected as `identity_collision` until an explicit cross-version reconciliation/cutover design is implemented and tested. Do not enable V2 producers or rewrite existing outbox payloads before that gate is closed.
