@@ -18,9 +18,21 @@ export function emitSqlite(db: SqliteDb, event: OutboxEvent, createdAt = new Dat
       JSON.stringify(event.payload),date,date);
 }
 
+function databaseTimestampToIso(value: unknown, field: string): string {
+  if (typeof value !== "string" || !/(?:Z|[+-]\\d{2}:\\d{2})$/i.test(value)) {
+    throw new TypeError("Invalid outbox " + field + " timestamp");
+  }
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    throw new TypeError("Invalid outbox " + field + " timestamp");
+  }
+  return date.toISOString();
+}
+
 function rowToEvent(row: Record<string, unknown>, leaseOwner: string, leaseUntil: string): ClaimedEvent {
   return {
-    id:String(row.id),sourceSystem:String(row.source_system) as OutboxEvent["sourceSystem"],
+    id:String(row.id),createdAt:databaseTimestampToIso(row.created_at, "created_at"),
+    sourceSystem:String(row.source_system) as OutboxEvent["sourceSystem"],
     eventKind:String(row.event_kind),eventKey:String(row.event_key),
     schemaVersion:String(row.schema_version),payload:JSON.parse(String(row.payload)) as Record<string,unknown>,
     attempts:Number(row.attempts),leaseOwner,leaseUntil,
