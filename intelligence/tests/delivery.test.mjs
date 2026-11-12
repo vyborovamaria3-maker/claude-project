@@ -504,6 +504,21 @@ test("V2 delivery validates the envelope and binds emittedAt to source created_a
   assert.equal(identity.failed,1);
   assert.deepEqual(identityLog,["FAIL:payload_invalid"]);
 
+  const missingClockLog=[];
+  const missingClock=v2Claim();
+  delete missingClock.createdAt;
+  let missingClockDestinationOpened=false;
+  const missingClockResult=await runDeliveryBatch({
+    claim:async()=>[missingClock],
+    ack:async()=>{missingClockLog.push("ACK");return true;},
+    fail:async(_event,code)=>{missingClockLog.push("FAIL:"+code);return true;},
+  },{connect:async()=>{missingClockDestinationOpened=true;return stubDestination(missingClockLog).connect();}},{
+    workerId:"worker1",batchSize:1,leaseMs:5000,
+  });
+  assert.equal(missingClockResult.failed,1);
+  assert.equal(missingClockDestinationOpened,false);
+  assert.deepEqual(missingClockLog,["FAIL:payload_invalid"]);
+
   const mismatchLog=[];
   const mismatchSource={
     claim:async()=>[v2Claim(registeredV2(),"2026-10-18T00:00:04.000Z")],
