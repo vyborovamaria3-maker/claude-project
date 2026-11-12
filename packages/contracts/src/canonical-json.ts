@@ -38,17 +38,20 @@ export function canonicalJsonStringify(value: unknown): string {
     try {
       if (Array.isArray(current)) {
         const keys = Object.keys(current);
+        const ownNames = Object.getOwnPropertyNames(current);
         if (keys.length !== current.length ||
+            ownNames.length !== current.length + 1 ||
             keys.some((key, index) => key !== String(index)) ||
             Object.getOwnPropertySymbols(current).length > 0) {
           throw new TypeError("Sparse or extended array at " + path);
         }
         const values: string[] = [];
         for (let index = 0; index < current.length; index++) {
-          if (!Object.hasOwn(current, index)) {
-            throw new TypeError("Sparse array at " + path + "[" + index + "]");
+          const descriptor = Object.getOwnPropertyDescriptor(current, String(index));
+          if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, "value")) {
+            throw new TypeError("Accessor or invalid array element at " + path + "[" + index + "]");
           }
-          values.push(serialize(current[index], path + "[" + index + "]"));
+          values.push(serialize(descriptor.value, path + "[" + index + "]"));
         }
         return "[" + values.join(",") + "]";
       }
