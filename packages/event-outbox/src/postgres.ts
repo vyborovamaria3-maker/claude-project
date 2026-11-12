@@ -9,7 +9,7 @@ export type PgPool = { connect(): Promise<PgClient> };
 function databaseTimestampToIso(value: unknown, field: string): string {
   const date = value instanceof Date
     ? value
-    : typeof value === "string" && /(?:Z|[+-]\\d{2}:\\d{2})$/i.test(value)
+    : typeof value === "string" && /(?:Z|[+-]\d{2}:\d{2})$/i.test(value)
       ? new Date(value)
       : null;
   if (!date || !Number.isFinite(date.getTime())) {
