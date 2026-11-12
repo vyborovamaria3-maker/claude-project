@@ -77,7 +77,7 @@ test("X verified link writer is offline by default and uses caller transaction o
     assert.equal(queries.length,1);
     assert.match(queries[0]!.sql,/INSERT INTO outbox_events/);
     assert.match(queries[0]!.sql,/created_at/);
-    assert.match(queries[0]!.sql,/clock_timestamp\\(\\)/,
+    assert.match(queries[0]!.sql,/clock_timestamp\(\)/,
       "verified X evidence must use actual source outbox insertion time");
     const event=JSON.parse(String(queries[0]!.values[4]));
     assert.equal(event.tokenLink.status,"verified");
