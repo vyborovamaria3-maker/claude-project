@@ -105,6 +105,38 @@ test("same event identity with same hash is duplicate; different hash is collisi
   assert.equal(classifyEventReplay(original, differentKey), "different");
 });
 
+test("top-level entity/evidence refs and clocks must match the immutable source payload", () => {
+  assert.throws(() => buildEventEnvelopeV2({
+    sourceSystem: "x", eventKind: "tweet_observed", eventKey,
+    schemaVersion: "x-tweet-v1",
+    producer: { name: "x-collector", version: "legacy-v1" },
+    clocks: { occurredAt, observedAt, emittedAt },
+    entityRefs: [{ kind: "author", canonicalId: "x:1000" }],
+    evidenceRefs: [evidenceRef],
+    payload,
+  }), /entityRefs differ/);
+
+  assert.throws(() => buildEventEnvelopeV2({
+    sourceSystem: "x", eventKind: "tweet_observed", eventKey,
+    schemaVersion: "x-tweet-v1",
+    producer: { name: "x-collector", version: "legacy-v1" },
+    clocks: { occurredAt, observedAt, emittedAt },
+    entityRefs: [{ kind: "author", canonicalId: "x:999" }],
+    evidenceRefs: [{ ...evidenceRef, sourceId: "x:tweet:124" }],
+    payload,
+  }), /evidenceRefs\/clocks differ/);
+
+  assert.throws(() => buildEventEnvelopeV2({
+    sourceSystem: "x", eventKind: "tweet_observed", eventKey,
+    schemaVersion: "x-tweet-v1",
+    producer: { name: "x-collector", version: "legacy-v1" },
+    clocks: { occurredAt: null, observedAt, emittedAt },
+    entityRefs: [{ kind: "author", canonicalId: "x:999" }],
+    evidenceRefs: [evidenceRef],
+    payload,
+  }), /evidenceRefs\/clocks differ/);
+});
+
 test("tampered hash, unsupported schema and clock inversion fail closed", () => {
   const event = build();
   assert.throws(() => validateEventEnvelopeV2({ ...event, payloadSha256: "0".repeat(64) }), /SHA-256 mismatch/);
