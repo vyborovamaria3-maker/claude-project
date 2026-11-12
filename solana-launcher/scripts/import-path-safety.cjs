@@ -37,8 +37,9 @@ function resolveImportPath(inputPath, allowedRoots) {
 
   if (!root) throw new Error(`Path is outside allowed import roots: ${inputPath}`);
 
-  const rootStat = fs.statSync(root);
-  if (!rootStat.isDirectory()) throw new Error(`Allowed import root is not a directory: ${root}`);
+  const rootLstat = fs.lstatSync(root);
+  if (rootLstat.isSymbolicLink()) throw new Error("Allowed import roots must not be symbolic links");
+  if (!rootLstat.isDirectory()) throw new Error(`Allowed import root is not a directory: ${root}`);
   const rootReal = fs.realpathSync(root);
   assertNoSymlinkComponents(root, requested);
 
