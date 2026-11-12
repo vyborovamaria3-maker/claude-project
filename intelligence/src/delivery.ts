@@ -430,7 +430,11 @@ export async function runDeliveryBatch(
     } catch(error) {
       await finish();
       // Codes only: do not leak raw provider response, sessions, or credentials to source outbox.
-      const code=error instanceof TypeError?"payload_invalid":"delivery_failed";
+      const code = error instanceof TypeError
+        ? /identity collision|event collision/i.test(error.message)
+          ? "identity_collision"
+          : "payload_invalid"
+        : "delivery_failed";
       stats.failed++;
       if(lostDuringRenewal){
         stats.lostLeases++;
