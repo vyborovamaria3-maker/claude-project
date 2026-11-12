@@ -547,3 +547,28 @@ test("V2 replay is duplicate only for the same envelope hash; changed hash is a 
   assert.deepEqual(collisionLog,["FAIL:identity_collision"],
     "same source identity with a changed canonical envelope hash must fail as a collision, not ACK");
 });
+
+
+test("V1 to V2 same-key replay fails closed until cross-version inbox reconciliation is designed",async()=>{
+  const log=[];
+  const destination=statefulInboxDestination(log);
+  const v1=await runDeliveryBatch({
+    claim:async()=>[registeredClaim()],
+    ack:async()=>true,fail:async()=>true,
+  },destination,{
+    workerId:"worker1",batchSize:1,leaseMs:5000,
+  });
+  assert.equal(v1.delivered,1);
+
+  const collisionLog=[];
+  const v2=await runDeliveryBatch({
+    claim:async()=>[v2Claim()],
+    ack:async()=>{collisionLog.push("ACK");return true;},
+    fail:async(_event,code)=>{collisionLog.push("FAIL:"+code);return true;},
+  },destination,{
+    workerId:"worker1",batchSize:1,leaseMs:5000,
+  });
+  assert.equal(v2.failed,1);
+  assert.deepEqual(collisionLog,["FAIL:identity_collision"],
+    "legacy registry-only inbox hash must not be mistaken for a full V2 envelope hash");
+});
