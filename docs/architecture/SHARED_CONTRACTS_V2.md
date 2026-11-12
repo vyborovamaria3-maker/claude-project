@@ -232,3 +232,6 @@ This does not switch any producer to V2, enable a source flag, or change a produ
 
 
 **Cross-version replay gate:** V1 rows preserve the historical registry-only `payload_sha256`; V2 rows persist the full canonical envelope hash. If the same source identity is replayed first as V1 and later as V2, the hashes differ and Intelligence returns `identity_collision`. This is intentional fail-closed behavior, not a supported seamless V1→V2 replay. Before enabling V2 producers or rewriting source outbox payloads, add a separately reviewed cross-version reconciliation strategy (including proof that timeline/token-link/swap materializations are identical) or define a new event identity/cutover boundary. The current PR does not perform that reconciliation.
+
+
+**Historical source clock gate:** existing X/TG outbox rows created before the insert-time `clock_timestamp()` change retain the old `created_at DEFAULT now()` value. Because PostgreSQL `now()` is transaction-start time, a pending historical row can have `created_at < observedAt`; the adapter will fail closed rather than move `emittedAt`. Before enabling a live consumer, the operator must inspect pending source rows for this condition and approve a separate reconciliation if needed. No source-row rewrite or production migration is part of this PR.
