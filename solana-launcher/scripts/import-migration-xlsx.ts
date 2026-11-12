@@ -3,9 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { execFileSync } from "node:child_process";
-import { createRequire } from "node:module";
 
-const require = createRequire(import.meta.url);
 const { resolveImportPath, listXlsxFiles } = require("./import-path-safety.cjs") as {
   resolveImportPath: (inputPath: string, allowedRoots: string[]) => string;
   listXlsxFiles: (root: string, maxFiles?: number) => string[];
