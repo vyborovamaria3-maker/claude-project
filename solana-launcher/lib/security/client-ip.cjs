@@ -27,7 +27,7 @@ function clientIpFromHeaders(headers, trustedProxyHops = DEFAULT_TRUST_PROXY_HOP
   const chain = forwarded.split(",").map((value) => value.trim()).filter(Boolean);
   if (chain.length < trustedProxyHops) return "untrusted-proxy";
 
-  const candidate = chain[chain.length - trustedProxyHops];
+  const candidate = chain[chain.length - trustedProxyHops - 1];
   // Accept only a single IP literal; do not allow arbitrary bucket-key input.
   const net = require("node:net");
   return net.isIP(candidate) ? candidate : "untrusted-proxy";
