@@ -1,3 +1,4 @@
+import { canonicalJsonStringify } from "./canonical-json.js";
 import { buildEntityRef, type EntityKind } from "./entity-registry.js";
 import { validateEvidenceRef } from "./evidence.js";
 import { buildEventEnvelopeV2, type EventEnvelopeV2, type EventSource } from "./event-envelope.js";
@@ -33,6 +34,17 @@ export type LegacyV1AdapterOptions = Readonly<{
  * Only the three supported evidence sources are accepted; twitter_research
  * and unknown event schemas remain outside this V2 contract.
  */
+function assertOnlyKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  label: string,
+): void {
+  const accepted = new Set(allowed);
+  for (const key of Object.keys(value)) {
+    if (!accepted.has(key)) throw new TypeError("Unknown " + label + " field: " + key);
+  }
+}
+
 export function adaptLegacyOutboxEventToV2(
   eventValue: LegacyOutboxEvent,
   options: LegacyV1AdapterOptions,
@@ -40,7 +52,11 @@ export function adaptLegacyOutboxEventToV2(
   if (!eventValue || typeof eventValue !== "object" || Array.isArray(eventValue)) {
     throw new TypeError("Invalid legacy outbox event");
   }
+  canonicalJsonStringify(eventValue);
   const event = eventValue as LegacyOutboxEvent;
+  assertOnlyKeys(event as unknown as Record<string, unknown>, [
+    "sourceSystem", "eventKind", "eventKey", "schemaVersion", "payload",
+  ], "legacy outbox event");
   if (!["x", "tg", "blockchain"].includes(event.sourceSystem)) {
     throw new TypeError("Unsupported legacy sourceSystem");
   }
@@ -52,7 +68,12 @@ export function adaptLegacyOutboxEventToV2(
   if (!event.payload || typeof event.payload !== "object" || Array.isArray(event.payload)) {
     throw new TypeError("Legacy payload must be an object");
   }
-  if (!options || options.emittedAt === undefined) {
+  if (!options || typeof options !== "object" || Array.isArray(options)) {
+    throw new TypeError("V1 adapter options are required");
+  }
+  assertOnlyKeys(options as unknown as Record<string, unknown>,
+    ["emittedAt", "producerVersion"], "V1 adapter options");
+  if (options.emittedAt === undefined) {
     throw new TypeError("Source outbox created_at is required for V1 adaptation");
   }
 
