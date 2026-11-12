@@ -123,14 +123,6 @@ test("SQLite emit is caller-owned, claim locks and ACK fenced to owner",()=>{
 
 
 test("Postgres and SQLite claims reject rows without a valid immutable created_at",async()=>{
-  const pgPool={connect:async()=>({
-    query:async(sql)=>({rows:sql.includes("RETURNING o.*")?[{
-      id:"3",source_system:"tg",event_kind:E.eventKind,event_key:E.eventKey,
-      schema_version:E.schemaVersion,payload:E.payload,attempts:0,lease_owner:"w",
-      lease_until:"2026-10-18T00:10:00Z",
-    }]:[]}),
-    release:()=>{},
-  })};
   const pgCalls=[];
   const trackedPgPool={connect:async()=>({
     query:async(sql)=>{pgCalls.push(sql);return {rows:sql.includes("RETURNING o.*")?[{
