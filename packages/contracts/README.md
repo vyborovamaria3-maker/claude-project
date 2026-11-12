@@ -1,4 +1,4 @@
-# Shared contracts — foundation (PR-1)
+# Shared contracts — foundation and Event Envelope V2 (PR-1 / V2 phase 1)
 
 Small dependency-free runtime identity and provenance contracts for the X,
 Telegram and Solana collectors. This package is additive: **no collectors are
@@ -30,8 +30,7 @@ From packages/contracts after installing Node.js 22+:
     npm install --ignore-scripts --no-package-lock
     npm run check
 
-This builds TypeScript and runs node:test fixtures. Only TypeScript is needed
-as a development dependency. No live X/Telegram/Solana credentials or database
+This builds TypeScript and runs node:test fixtures. TypeScript and pinned Node.js type definitions are the only development dependencies. No live X/Telegram/Solana credentials or database
 are involved. CI runs the same command.
 
 ## Example
@@ -89,3 +88,21 @@ The canonical contracts now accept only `solana:<full-base58-address>` token/wal
 Historical source rows are preserved. This change does not rewrite applied SQL migrations or delete legacy EVM/Bitcoin data. TG's historical graph schema may still contain `evm_address` rows for read-only compatibility; the current parser no longer emits new ones.
 
 See [As-Is audit](../../docs/architecture/ARCHITECTURE_AS_IS_20261101.md) and [Solana-only target](../../docs/architecture/ARCHITECTURE_TARGET_20261101.md).
+
+
+## Event Envelope V2 contract layer — 2026-11-12
+
+The architecture-hardening branch now contains the first runtime V2 contract layer:
+
+- `canonicalJsonStringify` and `sha256Canonical`: sorted object keys, preserved array order, and fail-closed handling of undefined values, sparse arrays, cycles, non-finite numbers, accessors and non-plain objects.
+- `EVENT_ENVELOPE_V2_JSON_SCHEMA` plus the published JSON Schema document.
+- `buildEventEnvelopeV2` / `validateEventEnvelopeV2`: deterministic event IDs, normalized clocks, strict source/evidence consistency and canonical envelope hashes.
+- A source-controlled immutable registry for the current X, Telegram and Solana V1 event kinds, including payload schemas, producer/consumer ownership and compatibility mode.
+- `adaptLegacyOutboxEventToV2`: a V1 normalizer that requires the immutable source outbox `created_at` value as `emittedAt`. It uses the explicit `legacy-v1` producer version marker because old rows do not record the producer build.
+- Unit fixtures and a separate CI integration test that invokes the actual X, TG and Solana V1 builders.
+
+This is a contract-layer implementation, **not a producer migration**. Existing producers still emit V1; all outbox flags remain unchanged and default-off. The V1 adapter is not yet wired into the Intelligence delivery path because the current `ClaimedEvent` API does not expose source `created_at`. Adding that timestamp to the PostgreSQL and SQLite claim adapters, then implementing consumer dual-read, is a separate next step.
+
+The registry intentionally rejects unregistered event kinds and `twitter_research` in this V2 scope. It does not add EVM or other chains. Existing V1 producers sometimes encode an unknown source occurrence time as `occurredAt=observedAt`; V1 does not carry enough information to distinguish that fallback from a real timestamp, so the adapter preserves the original V1 value rather than guessing.
+
+CI for the exact current PR head is the acceptance gate. A queued, skipped or incomplete workflow is not a pass, and this package is not a production-readiness claim.
