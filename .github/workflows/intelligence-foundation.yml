@@ -38,6 +38,7 @@ jobs:
           --health-retries 10
     env:
       INTELLIGENCE_TEST_DB_URL: postgresql://test:testpass@127.0.0.1:5432/intelligence_test
+    OUTBOX_TEST_PG_URL: postgresql://test:testpass@127.0.0.1:5432/intelligence_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
