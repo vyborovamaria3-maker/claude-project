@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hasValidInternalServiceKey, requireProdAuth } from "@/lib/routeAuth";
-import { createRequire } from "node:module";
 
-const require = createRequire(import.meta.url);
 const { parseTrustedProxyHops, clientIpFromHeaders } = require("./lib/security/client-ip.cjs") as {
   parseTrustedProxyHops: (value: string | undefined) => number;
   clientIpFromHeaders: (headers: Headers, trustedProxyHops: number) => string;
