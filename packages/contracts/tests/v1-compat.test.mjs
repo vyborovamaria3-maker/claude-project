@@ -217,6 +217,16 @@ test("source entity identities are bound to Telegram and Solana evidence", () =>
   assert.throws(() => adapt(swap), /one wallet and one token/);
 });
 
+test("V1 adapter rejects unknown envelope and option fields instead of silently dropping them", () => {
+  const event = xTweet();
+  assert.throws(() => adaptLegacyOutboxEventToV2({
+    ...event, extraMetadata: "unexpected",
+  }, { emittedAt }), /Unknown legacy outbox event field/);
+  assert.throws(() => adaptLegacyOutboxEventToV2(event, {
+    emittedAt, guessedByAdapter: true,
+  }), /Unknown V1 adapter options field/);
+});
+
 test("legacy event emission cannot be later than the adapter's supplied outbox clock", () => {
   assert.throws(() => adaptLegacyOutboxEventToV2(xTweet(), {
     emittedAt: "2026-10-18T00:00:00Z",
