@@ -109,3 +109,6 @@ Producer-specific V2 builders, all-source V1/V2 parity fixtures, and the operato
 
 
 **Cutover limitation:** V1 inbox rows retain the historical registry-only fingerprint, while V2 rows store the full envelope hash. A same-key V2 replay over an already committed V1 row therefore fails closed as `identity_collision`; it is not silently counted as a duplicate. A separately reviewed cross-version inbox reconciliation/cutover strategy is required before V2 producers are enabled or existing source outbox rows are rewritten.
+
+
+**Historical source-row clock gate:** X/TG outbox rows created before the writer switched to explicit `clock_timestamp()` may retain transaction-start `NOW()` in `created_at`. If such a pending row has `created_at < observedAt`, the V1 adapter rejects it rather than inventing a later `emittedAt`. Inspect pending historical source rows before enabling any live consumer; this PR does not rewrite them.
