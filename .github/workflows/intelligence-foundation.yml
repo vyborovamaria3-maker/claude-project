@@ -5,6 +5,7 @@ on:
     paths:
       - "intelligence/**"
       - "packages/contracts/**"
+      - "packages/event-outbox/**"
       - "packages/ai-gateway/**"
       - ".github/workflows/intelligence-foundation.yml"
   push:
