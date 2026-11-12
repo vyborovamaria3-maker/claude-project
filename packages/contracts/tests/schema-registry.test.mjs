@@ -70,6 +70,35 @@ test("forward compatibility requires the new schema to preserve old required fie
   assert.equal(checkSchemaCompatibility(previous, next, "forward").compatible, false);
 });
 
+test("forward compatibility treats omitted additionalProperties as permissive", () => {
+  const previous = {
+    type: "object",
+    properties: { id: { type: "string" } },
+    required: ["id"],
+  };
+  const next = {
+    type: "object",
+    properties: { id: { type: "string" }, label: { type: "string" } },
+    required: ["id"],
+  };
+  assert.equal(checkSchemaCompatibility(previous, next, "forward").compatible, true);
+});
+
+test("root validation constraints cannot change under a compatible schema version", () => {
+  const previous = {
+    type: "object",
+    properties: { id: { type: "string" } },
+    required: ["id"],
+    additionalProperties: false,
+  };
+  const next = {
+    type: "array",
+    items: { type: "string" },
+  };
+  assert.equal(checkSchemaCompatibility(previous, next, "backward").compatible, false);
+  assert.equal(checkSchemaCompatibility(previous, next, "forward").compatible, false);
+});
+
 test("a published schema ID cannot be reused for changed wire semantics", () => {
   const definition = listSchemaDefinitions()[0];
   assert.ok(definition);
@@ -77,5 +106,9 @@ test("a published schema ID cannot be reused for changed wire semantics", () => 
   assert.throws(() => assertSchemaDefinitionImmutable(definition, {
     ...definition,
     jsonSchema: { ...definition.jsonSchema, title: "Changed under same ID" },
+  }), /immutable/);
+  assert.throws(() => assertSchemaDefinitionImmutable(definition, {
+    ...definition,
+    producerName: "tg-collector",
   }), /immutable/);
 });
