@@ -432,6 +432,23 @@ test("registered V1 delivery adapts with source created_at and preserves knownAt
   assert.ok(log.some(entry=>entry==="ACK"));
 });
 
+test("claimed outbox rows without created_at are retried as invalid before destination access",async()=>{
+  const log=[];
+  const claimed=registeredClaim();
+  delete claimed.createdAt;
+  let opened=0;
+  const result=await runDeliveryBatch({
+    claim:async()=>[claimed],
+    ack:async()=>{log.push("ACK");return true;},
+    fail:async(_event,code)=>{log.push("FAIL:"+code);return true;},
+  },{connect:async()=>{opened++;return stubDestination(log).connect();}},{
+    workerId:"worker1",batchSize:1,leaseMs:5000,
+  });
+  assert.equal(result.failed,1);
+  assert.equal(opened,0);
+  assert.deepEqual(log,["FAIL:payload_invalid"]);
+});
+
 test("registered V1 delivery derives emittedAt only from source created_at",async()=>{
   const log=[];
   let opened=0;
@@ -462,6 +479,30 @@ test("V2 delivery validates the envelope and binds emittedAt to source created_a
   assert.equal(result.delivered,1);
   assert.equal(result.failed,0);
   assert.ok(log.indexOf("COMMIT")<log.indexOf("ACK"));
+
+  const tamperedLog=[];
+  const tamperedEnvelope={...registeredV2(),payloadSha256:"0".repeat(64)};
+  const tampered=await runDeliveryBatch({
+    claim:async()=>[v2Claim(tamperedEnvelope)],
+    ack:async()=>{tamperedLog.push("ACK");return true;},
+    fail:async(_event,code)=>{tamperedLog.push("FAIL:"+code);return true;},
+  },stubDestination(tamperedLog),{
+    workerId:"worker1",batchSize:1,leaseMs:5000,
+  });
+  assert.equal(tampered.failed,1);
+  assert.deepEqual(tamperedLog,["FAIL:payload_invalid"]);
+
+  const identityLog=[];
+  const wrongIdentity={...v2Claim(),eventKey:registeredEventKey+":other"};
+  const identity=await runDeliveryBatch({
+    claim:async()=>[wrongIdentity],
+    ack:async()=>{identityLog.push("ACK");return true;},
+    fail:async(_event,code)=>{identityLog.push("FAIL:"+code);return true;},
+  },stubDestination(identityLog),{
+    workerId:"worker1",batchSize:1,leaseMs:5000,
+  });
+  assert.equal(identity.failed,1);
+  assert.deepEqual(identityLog,["FAIL:payload_invalid"]);
 
   const mismatchLog=[];
   const mismatchSource={
