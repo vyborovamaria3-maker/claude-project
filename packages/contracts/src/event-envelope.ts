@@ -160,6 +160,26 @@ function record(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function assertOnlyKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  label: string,
+): void {
+  const accepted = new Set(allowed);
+  for (const key of Object.keys(value)) {
+    if (!accepted.has(key)) throw new TypeError("Unknown " + label + " field: " + key);
+  }
+}
+
+function deepFreezeJson<T>(value: T): T {
+  if (!value || typeof value !== "object") return value;
+  const children = Array.isArray(value)
+    ? value
+    : Object.values(value as Record<string, unknown>);
+  for (const child of children) deepFreezeJson(child);
+  return Object.isFrozen(value) ? value : Object.freeze(value);
+}
+
 function nonempty(value: unknown, label: string, maxLength = 512): string {
   if (typeof value !== "string" || !value.trim() || value.length > maxLength) {
     throw new TypeError("Invalid " + label);
@@ -178,6 +198,7 @@ function normalizeEntityRefs(value: unknown, observedAt: string): EventEntityRef
   const seen = new Set<string>();
   return value.map((item) => {
     const ref = record(item, "entityRef");
+    assertOnlyKeys(ref, ["kind", "canonicalId"], "entityRef");
     const kind = ref.kind as EntityKind;
     const canonicalId = nonempty(ref.canonicalId, "entity canonicalId");
     const normalized = buildEntityRef({
@@ -232,8 +253,11 @@ function normalizeCoverageRef(value: unknown, sourceSystem: EventSource): EventC
   if (!["complete", "partial", "unknown"].includes(String(raw.status))) {
     throw new TypeError("Invalid coverage status");
   }
-  const windowStart = toUtcIso(String(raw.windowStart ?? ""));
-  const windowEnd = toUtcIso(String(raw.windowEnd ?? ""));
+  if (typeof raw.windowStart !== "string" || typeof raw.windowEnd !== "string") {
+    throw new TypeError("Coverage window bounds must be ISO timestamp strings");
+  }
+  const windowStart = toUtcIso(raw.windowStart);
+  const windowEnd = toUtcIso(raw.windowEnd);
   if (windowStart >= windowEnd) throw new TypeError("Coverage window must have positive duration");
   return Object.freeze({
     sourceSystem,
@@ -248,7 +272,13 @@ function normalizeCoverageRef(value: unknown, sourceSystem: EventSource): EventC
 function normalizeInput<TPayload extends Record<string, unknown>>(
   inputValue: EventEnvelopeV2Input<TPayload>,
 ): Omit<EventEnvelopeV2<TPayload>, "eventId" | "payloadSha256"> {
+  // Validate the entire boundary as JSON before normalizing any fields.
+  canonicalJsonStringify(inputValue);
   const input = record(inputValue, "event envelope input");
+  assertOnlyKeys(input, [
+    "sourceSystem", "eventKind", "eventKey", "schemaVersion", "producer",
+    "clocks", "entityRefs", "evidenceRefs", "coverageRef", "payload",
+  ], "event envelope input");
   const sourceSystem = input.sourceSystem as EventSource;
   if (!["x", "tg", "blockchain"].includes(sourceSystem)) {
     throw new TypeError("Unsupported V2 sourceSystem");
@@ -257,9 +287,11 @@ function normalizeInput<TPayload extends Record<string, unknown>>(
   const eventKey = nonempty(input.eventKey, "eventKey");
   const schemaVersion = nonempty(input.schemaVersion, "schemaVersion", 128);
   const producer = record(input.producer, "producer");
+  assertOnlyKeys(producer, ["name", "version"], "producer");
   const producerName = nonempty(producer.name, "producer.name", 128);
   const producerVersion = nonempty(producer.version, "producer.version", 128);
   const clocks = record(input.clocks, "clocks");
+  assertOnlyKeys(clocks, ["occurredAt", "observedAt", "emittedAt"], "clocks");
   if (clocks.occurredAt !== null && typeof clocks.occurredAt !== "string") {
     throw new TypeError("occurredAt must be an ISO timestamp or null");
   }
@@ -274,6 +306,10 @@ function normalizeInput<TPayload extends Record<string, unknown>>(
   if (normalizedClocks.observedAt > normalizedClocks.emittedAt) {
     throw new TypeError("observedAt cannot be later than emittedAt");
   }
+  if (normalizedClocks.occurredAt !== null &&
+      normalizedClocks.occurredAt > normalizedClocks.observedAt) {
+    throw new TypeError("occurredAt cannot be later than observedAt");
+  }
 
   const definition = getSchemaDefinition(sourceSystem, eventKind, schemaVersion);
   if (!definition) {
@@ -285,7 +321,7 @@ function normalizeInput<TPayload extends Record<string, unknown>>(
     ? undefined
     : normalizeCoverageRef(input.coverageRef, sourceSystem);
   const payloadText = canonicalJsonStringify(input.payload);
-  const payload = JSON.parse(payloadText) as TPayload;
+  const payload = deepFreezeJson(JSON.parse(payloadText) as TPayload);
   validateRegisteredPayload({
     sourceSystem, eventKind, eventKey, schemaVersion,
   }, payload);
