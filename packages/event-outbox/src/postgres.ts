@@ -6,9 +6,22 @@ export type PgQuery = {
 export type PgClient = PgQuery & {release(): void};
 export type PgPool = { connect(): Promise<PgClient> };
 
+function databaseTimestampToIso(value: unknown, field: string): string {
+  const date = value instanceof Date
+    ? value
+    : typeof value === "string" && /(?:Z|[+-]\\d{2}:\\d{2})$/i.test(value)
+      ? new Date(value)
+      : null;
+  if (!date || !Number.isFinite(date.getTime())) {
+    throw new TypeError("Invalid outbox " + field + " timestamp");
+  }
+  return date.toISOString();
+}
+
 function mapRow(row: Record<string, unknown>): ClaimedEvent {
   return {
-    id: String(row.id), sourceSystem: String(row.source_system) as OutboxEvent["sourceSystem"],
+    id: String(row.id), createdAt: databaseTimestampToIso(row.created_at, "created_at"),
+    sourceSystem: String(row.source_system) as OutboxEvent["sourceSystem"],
     eventKind: String(row.event_kind), eventKey: String(row.event_key),
     schemaVersion: String(row.schema_version),
     payload: row.payload as Record<string, unknown>,
