@@ -76,6 +76,9 @@ test("X verified link writer is offline by default and uses caller transaction o
     assert.equal(await emitXVerifiedTokenLinkOutbox(tx,input),true);
     assert.equal(queries.length,1);
     assert.match(queries[0]!.sql,/INSERT INTO outbox_events/);
+    assert.match(queries[0]!.sql,/created_at/);
+    assert.match(queries[0]!.sql,/clock_timestamp\\(\\)/,
+      "verified X evidence must use actual source outbox insertion time");
     const event=JSON.parse(String(queries[0]!.values[4]));
     assert.equal(event.tokenLink.status,"verified");
     assert.equal(JSON.stringify(event).includes(text),false);
@@ -187,12 +190,14 @@ test("X edit invalidation is one atomic source Outbox tombstone in PGlite",async
     delete process.env.X_INTELLIGENCE_TOKEN_LINKS_ENABLED;
     assert.equal(await emitXTokenLinksInvalidation(tx,invalidation),true);
     await pg.exec("COMMIT");
-    const stored=await pg.query<{event_kind:string;payload:{tokenLinksInvalidation?:{reason:string}}}>(
-      "SELECT event_kind,payload FROM outbox_events ORDER BY id",
+    const stored=await pg.query<{event_kind:string;payload:{tokenLinksInvalidation?:{reason:string}};created_at:Date}>(
+      "SELECT event_kind,payload,created_at FROM outbox_events ORDER BY id",
     );
     assert.deepEqual(stored.rows.map(r=>r.event_kind),
       ["token_link_verified","token_links_invalidated"]);
     assert.equal(stored.rows[1]!.payload.tokenLinksInvalidation?.reason,"edited");
+    assert.ok(stored.rows.every(row=>row.created_at instanceof Date),
+      "verified and invalidation rows must have source insertion timestamps");
     assert.equal(buildXTokenLinksInvalidatedOutboxEvent(invalidation).eventKey.length>0,true);
     assert.ok(!JSON.stringify(stored.rows).includes(input.text));
   }finally{
