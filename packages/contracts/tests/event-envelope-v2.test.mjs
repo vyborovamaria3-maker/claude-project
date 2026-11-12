@@ -67,6 +67,13 @@ test("canonical JSON rejects values JSON.stringify would silently lose or rewrit
   const sparse = [];
   sparse.length = 2;
   assert.throws(() => canonicalJsonStringify(sparse), /Sparse/);
+  const accessor = [];
+  Object.defineProperty(accessor, "0", { enumerable: true, get() { return 1; } });
+  accessor.length = 1;
+  assert.throws(() => canonicalJsonStringify(accessor), /Accessor/);
+  const hiddenExtra = [1];
+  Object.defineProperty(hiddenExtra, "secret", { value: 2, enumerable: false });
+  assert.throws(() => canonicalJsonStringify(hiddenExtra), /extended array/);
 });
 
 test("V2 envelope builds and validates with stable identity and canonical hash", () => {
@@ -76,6 +83,67 @@ test("V2 envelope builds and validates with stable identity and canonical hash",
   assert.equal(event.envelopeVersion, "event-envelope-v2");
   assert.deepEqual(event.entityRefs, [{ kind: "author", canonicalId: "x:999" }]);
   assert.deepEqual(validateEventEnvelopeV2(JSON.parse(JSON.stringify(event))), event);
+});
+
+test("built payload is deeply immutable and unknown input fields fail closed", () => {
+  const event = build();
+  assert.equal(Object.isFrozen(event.payload), true);
+  assert.equal(Object.isFrozen(event.payload.registryEvent), true);
+  assert.equal(Object.isFrozen(event.payload.registryEvent.entityRefs), true);
+  assert.throws(() => {
+    event.payload.registryEvent.eventKind = "tampered";
+  }, TypeError);
+
+  assert.throws(() => buildEventEnvelopeV2({
+    sourceSystem: "x", eventKind: "tweet_observed", eventKey,
+    schemaVersion: "x-tweet-v1",
+    producer: { name: "x-collector", version: "legacy-v1", build: "extra" },
+    clocks: { occurredAt, observedAt, emittedAt },
+    entityRefs: [{ kind: "author", canonicalId: "x:999" }],
+    evidenceRefs: [evidenceRef], payload,
+  }), /Unknown producer field/);
+
+  assert.throws(() => buildEventEnvelopeV2({
+    sourceSystem: "x", eventKind: "tweet_observed", eventKey,
+    schemaVersion: "x-tweet-v1",
+    producer: { name: "x-collector", version: "legacy-v1" },
+    clocks: { occurredAt, observedAt, emittedAt, receivedAt: emittedAt },
+    entityRefs: [{ kind: "author", canonicalId: "x:999" }],
+    evidenceRefs: [evidenceRef], payload,
+  }), /Unknown clocks field/);
+
+  assert.throws(() => buildEventEnvelopeV2({
+    sourceSystem: "x", eventKind: "tweet_observed", eventKey,
+    schemaVersion: "x-tweet-v1", extra: true,
+    producer: { name: "x-collector", version: "legacy-v1" },
+    clocks: { occurredAt, observedAt, emittedAt },
+    entityRefs: [{ kind: "author", canonicalId: "x:999" }],
+    evidenceRefs: [evidenceRef], payload,
+  }), /Unknown event envelope input field/);
+
+  assert.throws(() => buildEventEnvelopeV2({
+    sourceSystem: "x", eventKind: "tweet_observed", eventKey,
+    schemaVersion: "x-tweet-v1",
+    producer: { name: "x-collector", version: "legacy-v1" },
+    clocks: { occurredAt, observedAt, emittedAt },
+    entityRefs: [{ kind: "author", canonicalId: "x:999", firstSeenAt: observedAt }],
+    evidenceRefs: [evidenceRef], payload,
+  }), /Unknown entityRef field/);
+});
+
+test("source occurrence cannot be later than first observation", () => {
+  assert.throws(() => buildEventEnvelopeV2({
+    sourceSystem: "x", eventKind: "tweet_observed", eventKey,
+    schemaVersion: "x-tweet-v1",
+    producer: { name: "x-collector", version: "legacy-v1" },
+    clocks: {
+      occurredAt: "2026-10-18T01:01:00.000Z",
+      observedAt,
+      emittedAt,
+    },
+    entityRefs: [{ kind: "author", canonicalId: "x:999" }],
+    evidenceRefs: [evidenceRef], payload,
+  }), /occurredAt cannot be later than observedAt/);
 });
 
 test("same event identity with same hash is duplicate; different hash is collision", () => {
