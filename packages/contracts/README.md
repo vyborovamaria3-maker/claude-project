@@ -106,3 +106,6 @@ This is a contract + consumer dual-read implementation, **not a producer migrati
 The registry intentionally rejects unregistered event kinds and `twitter_research` in this V2 scope. It does not add EVM or other chains. Existing V1 producers sometimes encode an unknown source occurrence time as `occurredAt=observedAt`; V1 does not carry enough information to distinguish that fallback from a real timestamp, so the adapter preserves the original V1 value rather than guessing.
 
 Producer-specific V2 builders, all-source V1/V2 parity fixtures, and the operator-approved canary remain outstanding. CI for the exact current PR head is the acceptance gate. A queued, skipped or incomplete workflow is not a pass, and this package is not a production-readiness claim.
+
+
+**Cutover limitation:** V1 inbox rows retain the historical registry-only fingerprint, while V2 rows store the full envelope hash. A same-key V2 replay over an already committed V1 row therefore fails closed as `identity_collision`; it is not silently counted as a duplicate. A separately reviewed cross-version inbox reconciliation/cutover strategy is required before V2 producers are enabled or existing source outbox rows are rewritten.
