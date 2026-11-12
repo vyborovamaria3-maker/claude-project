@@ -593,8 +593,14 @@ export function checkSchemaCompatibility(
     for (const key of newRequired) {
       if (!oldRequired.has(key)) issues.push("backward: newly required property " + key);
     }
-    if (previous.additionalProperties !== false && next.additionalProperties === false) {
-      issues.push("backward: additional properties are no longer accepted");
+    const oldAdditional = previous.additionalProperties ?? true;
+    const newAdditional = next.additionalProperties ?? true;
+    if ((oldAdditional === true && newAdditional !== true) ||
+        (typeof oldAdditional === "object" &&
+          (newAdditional === false ||
+           (typeof newAdditional === "object" &&
+            schemaShape(oldAdditional) !== schemaShape(newAdditional))))) {
+      issues.push("backward: additional properties are more restricted");
     }
   };
 
@@ -614,8 +620,14 @@ export function checkSchemaCompatibility(
     for (const key of oldRequired) {
       if (!newRequired.has(key)) issues.push("forward: previously required property may be omitted: " + key);
     }
-    if (next.additionalProperties !== false && previous.additionalProperties === false) {
-      issues.push("forward: new schema permits fields rejected by previous schema");
+    const oldAdditional = previous.additionalProperties ?? true;
+    const newAdditional = next.additionalProperties ?? true;
+    if ((oldAdditional === false && newAdditional !== false) ||
+        (typeof oldAdditional === "object" &&
+          (newAdditional === true ||
+           (typeof newAdditional === "object" &&
+            schemaShape(oldAdditional) !== schemaShape(newAdditional))))) {
+      issues.push("forward: new schema permits additional fields rejected by previous schema");
     }
   };
 
