@@ -1,7 +1,7 @@
 import { canonicalJsonStringify } from "./canonical-json.js";
 import { buildEntityRef, type EntityKind } from "./entity-registry.js";
 import { validateEvidenceRef, type EvidenceRef, type EvidenceSourceKind } from "./evidence.js";
-import { buildTimelineEvent, TIMELINE_EVENT_KINDS, type JsonValue, type TimelineEventKind } from "./timeline.js";
+import { buildTimelineEvent, type JsonValue, type TimelineEventKind } from "./timeline.js";
 import { parseTokenId, parseWalletId, isSolanaSignature } from "./canonical-ids.js";
 import { validateVerifiedTokenLinkEvent } from "./token-link.js";
 import { validateTokenLinksInvalidatedEvent } from "./token-link-invalidation.js";
@@ -343,7 +343,9 @@ export function validateJsonSchema(value: unknown, schema: JsonSchema, path = "$
     fail(path, "is not an allowed enum value");
   }
   if (schema.type !== undefined) {
-    const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+    const types: readonly string[] = typeof schema.type === "string"
+      ? [schema.type]
+      : schema.type as readonly string[];
     if (!types.some((type) => matchesType(value, type))) fail(path, "has the wrong type");
   }
   if (typeof value === "string") {
