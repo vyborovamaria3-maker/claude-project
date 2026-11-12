@@ -289,6 +289,28 @@ function normalizeInput<TPayload extends Record<string, unknown>>(
   validateRegisteredPayload({
     sourceSystem, eventKind, eventKey, schemaVersion,
   }, payload);
+  const payloadRecord = record(payload, "payload");
+  const registryEvent = record(payloadRecord.registryEvent, "payload.registryEvent");
+  if (!Array.isArray(registryEvent.entityRefs) || registryEvent.entityRefs.length !== entityRefs.length) {
+    throw new TypeError("Envelope entityRefs do not match source registry evidence");
+  }
+  const sourceEntityRefs = registryEvent.entityRefs.map((value) => {
+    const ref = record(value, "payload.registryEvent.entityRefs[]");
+    return { kind: ref.kind, canonicalId: ref.canonicalId };
+  });
+  const sortRefs = (refs: Array<{ kind: unknown; canonicalId: unknown }>) =>
+    refs.map((ref) => canonicalJsonStringify(ref)).sort();
+  if (canonicalJsonStringify(sortRefs(sourceEntityRefs)) !==
+      canonicalJsonStringify(sortRefs(entityRefs))) {
+    throw new TypeError("Envelope entityRefs differ from source registry entityRefs");
+  }
+  const sourceEvidence = validateEvidenceRef(registryEvent.evidenceRef);
+  if (evidenceRefs.length !== 1 ||
+      canonicalJsonStringify(sourceEvidence) !== canonicalJsonStringify((({ contentSha256: _hash, ...rest }) => rest)(evidenceRefs[0]!)) ||
+      normalizedClocks.observedAt !== sourceEvidence.observedAt ||
+      normalizedClocks.occurredAt !== (sourceEvidence.occurredAt ?? null)) {
+    throw new TypeError("Envelope evidenceRefs/clocks differ from source registry evidence");
+  }
 
   return {
     envelopeVersion: "event-envelope-v2",
@@ -343,6 +365,9 @@ export function validateEventEnvelopeV2(inputValue: unknown): EventEnvelopeV2 {
   });
   if (input.eventId !== built.eventId) throw new TypeError("Event ID does not match canonical identity");
   if (input.payloadSha256 !== built.payloadSha256) throw new TypeError("Event payload SHA-256 mismatch");
+  if (canonicalJsonStringify(input) !== canonicalJsonStringify(built)) {
+    throw new TypeError("Event envelope is not in canonical normalized form");
+  }
   return built;
 }
 
