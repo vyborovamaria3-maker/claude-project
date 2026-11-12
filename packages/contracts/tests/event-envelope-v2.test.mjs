@@ -1,0 +1,161 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  buildEventEnvelopeV2, validateEventEnvelopeV2,
+  classifyEventReplay, assertNoEventIdentityCollision,
+  canonicalJsonStringify, sha256Canonical,
+} from "../dist/index.js";
+
+const observedAt = "2026-10-18T01:00:00.000Z";
+const occurredAt = "2026-10-18T00:45:00.000Z";
+const emittedAt = "2026-10-18T01:00:02.000Z";
+const eventKey = "x:tweet:123:observed:" + Date.parse(observedAt);
+const evidenceRef = {
+  sourceKind: "x_tweet",
+  sourceId: "x:tweet:123",
+  observedAt,
+  occurredAt,
+  parserVersion: "x-collector-v1",
+};
+const entityRefs = [{
+  kind: "author",
+  canonicalId: "x:999",
+  firstSeenAt: observedAt,
+  lastSeenAt: observedAt,
+}];
+const payload = {
+  registryEvent: {
+    sourceSystem: "x", eventKind: "tweet_observed", eventKey,
+    schemaVersion: "x-tweet-v1", entityRefs, evidenceRef,
+  },
+  timelineEvent: {
+    schemaVersion: "timeline-v1", eventKey, kind: "tweet_published",
+    occurredAt, observedAt, entityRefs, evidenceRef, payload: {},
+  },
+};
+
+function build(version = "legacy-v1") {
+  return buildEventEnvelopeV2({
+    sourceSystem: "x",
+    eventKind: "tweet_observed",
+    eventKey,
+    schemaVersion: "x-tweet-v1",
+    producer: { name: "x-collector", version },
+    clocks: { occurredAt, observedAt, emittedAt },
+    entityRefs: [{ kind: "author", canonicalId: "x:999" }],
+    evidenceRefs: [evidenceRef],
+    payload,
+  });
+}
+
+test("canonical JSON sorts object keys but preserves array order", () => {
+  assert.equal(
+    canonicalJsonStringify({ z: 1, a: { y: 2, x: 1 } }),
+    '{"a":{"x":1,"y":2},"z":1}',
+  );
+  assert.equal(sha256Canonical({ a: 1, b: 2 }), sha256Canonical({ b: 2, a: 1 }));
+  assert.notEqual(sha256Canonical([1, 2]), sha256Canonical([2, 1]));
+});
+
+test("canonical JSON rejects values JSON.stringify would silently lose or rewrite", () => {
+  assert.throws(() => canonicalJsonStringify({ missing: undefined }), /Non-JSON value/);
+  assert.throws(() => canonicalJsonStringify({ amount: Number.NaN }), /Non-finite/);
+  assert.throws(() => canonicalJsonStringify(new Date()), /Non-plain object/);
+  const cycle = {};
+  cycle.self = cycle;
+  assert.throws(() => canonicalJsonStringify(cycle), /Circular/);
+  const sparse = [];
+  sparse.length = 2;
+  assert.throws(() => canonicalJsonStringify(sparse), /Sparse/);
+});
+
+test("V2 envelope builds and validates with stable identity and canonical hash", () => {
+  const event = build();
+  assert.match(event.eventId, /^evt_v2_[a-f0-9]{64}$/);
+  assert.match(event.payloadSha256, /^[a-f0-9]{64}$/);
+  assert.equal(event.envelopeVersion, "event-envelope-v2");
+  assert.deepEqual(event.entityRefs, [{ kind: "author", canonicalId: "x:999" }]);
+  assert.deepEqual(validateEventEnvelopeV2(JSON.parse(JSON.stringify(event))), event);
+});
+
+test("same event identity with same hash is duplicate; different hash is collision", () => {
+  const original = build();
+  const replay = validateEventEnvelopeV2(JSON.parse(JSON.stringify(original)));
+  assert.equal(classifyEventReplay(original, replay), "duplicate");
+  assert.equal(assertNoEventIdentityCollision(original, replay), "duplicate");
+
+  const changedProducer = build("different-build");
+  assert.equal(changedProducer.eventId, original.eventId);
+  assert.equal(changedProducer.payloadSha256 === original.payloadSha256, false);
+  assert.equal(classifyEventReplay(original, changedProducer), "collision");
+  assert.throws(() => assertNoEventIdentityCollision(original, changedProducer), /collision/);
+
+  const differentKey = buildEventEnvelopeV2({
+    sourceSystem: "x", eventKind: "tweet_observed",
+    eventKey: eventKey + ":other", schemaVersion: "x-tweet-v1",
+    producer: { name: "x-collector", version: "legacy-v1" },
+    clocks: { occurredAt, observedAt, emittedAt },
+    entityRefs: [{ kind: "author", canonicalId: "x:999" }],
+    evidenceRefs: [evidenceRef],
+    payload: {
+      registryEvent: { ...payload.registryEvent, eventKey: eventKey + ":other" },
+      timelineEvent: { ...payload.timelineEvent, eventKey: eventKey + ":other" },
+    },
+  });
+  assert.equal(classifyEventReplay(original, differentKey), "different");
+});
+
+test("tampered hash, unsupported schema and clock inversion fail closed", () => {
+  const event = build();
+  assert.throws(() => validateEventEnvelopeV2({ ...event, payloadSha256: "0".repeat(64) }), /SHA-256 mismatch/);
+  assert.throws(() => buildEventEnvelopeV2({
+    sourceSystem: "x", eventKind: "tweet_observed", eventKey,
+    schemaVersion: "x-tweet-v99",
+    producer: { name: "x-collector", version: "legacy-v1" },
+    clocks: { occurredAt, observedAt, emittedAt },
+    entityRefs: [{ kind: "author", canonicalId: "x:999" }],
+    evidenceRefs: [evidenceRef], payload,
+  }), /Unsupported event schema/);
+  assert.throws(() => buildEventEnvelopeV2({
+    sourceSystem: "x", eventKind: "tweet_observed", eventKey,
+    schemaVersion: "x-tweet-v1",
+    producer: { name: "x-collector", version: "legacy-v1" },
+    clocks: { occurredAt, observedAt, emittedAt: occurredAt },
+    entityRefs: [{ kind: "author", canonicalId: "x:999" }],
+    evidenceRefs: [evidenceRef], payload,
+  }), /observedAt cannot be later than emittedAt/);
+});
+
+test("coverage metadata is source-scoped and has a positive time window", () => {
+  const event = buildEventEnvelopeV2({
+    sourceSystem: "x", eventKind: "tweet_observed", eventKey,
+    schemaVersion: "x-tweet-v1",
+    producer: { name: "x-collector", version: "legacy-v1" },
+    clocks: { occurredAt, observedAt, emittedAt },
+    entityRefs: [{ kind: "author", canonicalId: "x:999" }],
+    evidenceRefs: [evidenceRef],
+    coverageRef: {
+      sourceSystem: "x", scope: "account:999",
+      windowStart: "2026-10-18T00:00:00Z",
+      windowEnd: "2026-10-18T02:00:00Z",
+      status: "partial", coverageId: "coverage-x-001",
+    },
+    payload,
+  });
+  assert.equal(event.coverageRef.status, "partial");
+  assert.throws(() => buildEventEnvelopeV2({
+    sourceSystem: "x", eventKind: "tweet_observed", eventKey,
+    schemaVersion: "x-tweet-v1",
+    producer: { name: "x-collector", version: "legacy-v1" },
+    clocks: { occurredAt, observedAt, emittedAt },
+    entityRefs: [{ kind: "author", canonicalId: "x:999" }],
+    evidenceRefs: [evidenceRef],
+    coverageRef: {
+      sourceSystem: "tg", scope: "account:999",
+      windowStart: "2026-10-18T02:00:00Z",
+      windowEnd: "2026-10-18T01:00:00Z",
+      status: "complete", coverageId: "coverage-wrong-source",
+    },
+    payload,
+  }), /Coverage source does not match/);
+});
