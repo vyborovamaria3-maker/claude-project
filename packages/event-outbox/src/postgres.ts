@@ -68,8 +68,11 @@ export async function claimPostgres(pool: PgPool, options: ClaimOptions): Promis
     RETURNING o.*`, [
       explicitNow, options.batchSize, options.workerId, options.leaseMs,
     ]);
+    // Validate every claimed row before COMMIT so malformed source metadata
+    // cannot strand a row under a lease that the caller never received.
+    const claimed = rows.rows.map(mapRow);
     await client.query("COMMIT"); open = false;
-    return rows.rows.map(mapRow);
+    return claimed;
   } catch (error) {
     if (open) {try{await client.query("ROLLBACK");}catch{ /* preserve cause */ }}
     throw error;
