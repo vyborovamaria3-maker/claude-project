@@ -110,9 +110,20 @@ export function registryEventFingerprint(input: RegistryEvent): string {
  * Caller MUST open a destination PostgreSQL transaction before calling and
  * commit it before ACK-ing the SOURCE outbox event. No implicit transactions.
  */
-export async function ingestRegistryEvent(tx: PgTransaction, incoming: RegistryEvent): Promise<boolean> {
+export async function ingestRegistryEvent(
+  tx: PgTransaction,
+  incoming: RegistryEvent,
+  canonicalPayloadSha256?: string,
+): Promise<boolean> {
   const event = validateRegistryEvent(incoming);
-  const payloadSha256 = fingerprintValidatedRegistryEvent(event);
+  if (canonicalPayloadSha256 !== undefined &&
+      (typeof canonicalPayloadSha256 !== "string" || !/^[a-f0-9]{64}$/.test(canonicalPayloadSha256))) {
+    throw new TypeError("Invalid canonical event payload SHA-256");
+  }
+  // V1 keeps its historical registry-only fingerprint for replay parity.
+  // V2 supplies the validated full-envelope hash so any payload drift under
+  // the same source identity is a hard collision.
+  const payloadSha256 = canonicalPayloadSha256 ?? fingerprintValidatedRegistryEvent(event);
   const result = await tx.query(`INSERT INTO intelligence_inbox
     (source_system, event_kind, event_key, schema_version, evidence_source_id, payload_sha256)
     VALUES ($1,$2,$3,$4,$5,$6)
