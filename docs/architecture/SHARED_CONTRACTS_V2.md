@@ -207,14 +207,14 @@ The architecture-hardening branch now implements the first runtime contract laye
 - Backward/forward/full compatibility comparison helpers and immutable schema-ID guard.
 - V1-to-V2 normalizer with actual source-builder fixtures in the producer integration workflow.
 
-The outbox contract now exposes immutable `createdAt` on every claimed row from both PostgreSQL and SQLite. PostgreSQL `emitPostgres` stamps `created_at` with `clock_timestamp()` at insert time; SQLite continues to persist the emission timestamp. Intelligence delivery now dual-reads:
+The outbox contract now exposes immutable `createdAt` on every claimed row from both PostgreSQL and SQLite. Generic PostgreSQL, X and TG outbox writers stamp `created_at` with `clock_timestamp()` at insert time; Solana SQLite continues to persist its emission timestamp. X/TG remain V1 payload producers; this is only timestamp-column correctness, not a V2 producer migration. Intelligence delivery now dual-reads:
 - registered V1 source events are validated through `adaptLegacyOutboxEventToV2` using only source `createdAt` for `emittedAt`, then passed to the established V1 ingestion path;
 - unregistered legacy event kinds and read-only snapshot imports retain the previous V1 path;
 - V2 envelopes are strictly validated, checked against the outbox identity and `createdAt`, unwrapped into the same internal payload model, and use the full envelope hash for inbox dedup/collision checks.
 
 V1 inbox fingerprint behavior remains unchanged, preserving existing V1 replay semantics. V2 same-identity/same-hash deliveries are duplicates; same identity with a different canonical envelope hash fails as a collision. Source `occurredAt` and `observedAt` are not rewritten: downstream `knownAt` continues to derive from the original evidence observation timestamp. No production DB schema migration was added.
 
-Existing X/TG/Solana producers still write V1 and remain untouched. No V2 producer flag was added or enabled. Unknown event schemas and `twitter_research` are rejected by this initial V2 registry; multichain remains out of scope. V1 producers may already use `observedAt` as a fallback for missing source occurrence time; the adapter cannot infer whether this was a genuine source timestamp and preserves the V1 value.
+Existing X/TG/Solana producers still write V1. X/TG outbox SQL now sets only the existing `created_at` column with `clock_timestamp()` so the emitted clock is not transaction-start `NOW()`; payloads, flags and schema migrations remain unchanged. No V2 producer flag was added or enabled. Unknown event schemas and `twitter_research` are rejected by this initial V2 registry; multichain remains out of scope. V1 producers may already use `observedAt` as a fallback for missing source occurrence time; the adapter cannot infer whether this was a genuine source timestamp and preserves the V1 value.
 
 **CI acceptance is pending on the exact PR head.** Queued, skipped or incomplete checks do not satisfy the exit criteria. No production migration, collector enablement, merge or deployment is authorized by this implementation.
 
