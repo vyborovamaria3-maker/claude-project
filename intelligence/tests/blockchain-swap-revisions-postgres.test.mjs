@@ -238,8 +238,9 @@ test("ARCH-06b: immutable PG revisions, unsupported correction, late delivery, a
     const xEvent=verifySocial("x",xEvidence,xEntity,"f");
     async function deliverSocial(event){
       return runDeliveryBatch({
-        claim:async()=>[{...event,id:"synthetic",attempts:0,
-          leaseOwner:"fixture",leaseUntil:"2026-10-20T03:00:00Z"}],
+        claim:async()=>[{...event,id:"synthetic",
+          createdAt:new Date(Date.parse(event.payload.registryEvent.evidenceRef.observedAt)+1000).toISOString(),
+          attempts:0,leaseOwner:"fixture",leaseUntil:"2026-10-20T03:00:00Z"}],
         ack:async()=>true,fail:async()=>true,
       },pool,{workerId:"fixture",batchSize:1,leaseMs:120000});
     }
