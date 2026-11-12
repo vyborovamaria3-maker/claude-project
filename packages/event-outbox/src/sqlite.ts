@@ -54,10 +54,13 @@ export function claimSqlite(db: SqliteDb, options: ClaimOptions): ClaimedEvent[]
         AND next_attempt_at <= ?
         AND (lease_until IS NULL OR lease_until <= ?)
       ORDER BY id LIMIT ?`).all(stamp,stamp,options.batchSize) as Record<string,unknown>[];
+    // Normalize all claimed rows before updating lease ownership. A bad
+    // created_at must roll back rather than strand an invisible claim.
+    const claimed = rows.map(row=>rowToEvent(row,options.workerId,leaseUntil));
     const stmt=db.prepare(`UPDATE outbox_events SET lease_owner=?,lease_until=? WHERE id=?`);
     for (const row of rows) stmt.run(options.workerId,leaseUntil,row.id);
     db.exec("COMMIT");open=false;
-    return rows.map(row=>rowToEvent(row,options.workerId,leaseUntil));
+    return claimed;
   } catch(error) {
     if(open) {try{db.exec("ROLLBACK")}catch{/* preserve */}}
     throw error;
