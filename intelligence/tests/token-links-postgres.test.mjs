@@ -45,7 +45,9 @@ function invalidated(at){
   });
 }
 function envelope(event){
-  return {...event,id:"1",attempts:0,leaseOwner:"worker",
+  const observedAt=event.payload.registryEvent.evidenceRef.observedAt;
+  const createdAt=new Date(Date.parse(observedAt)+1000).toISOString();
+  return {...event,id:"1",createdAt,attempts:0,leaseOwner:"worker",
     leaseUntil:"2026-10-20T02:00:00Z"};
 }
 async function send(destination,event){
