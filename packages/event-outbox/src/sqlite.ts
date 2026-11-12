@@ -19,7 +19,7 @@ export function emitSqlite(db: SqliteDb, event: OutboxEvent, createdAt = new Dat
 }
 
 function databaseTimestampToIso(value: unknown, field: string): string {
-  if (typeof value !== "string" || !/(?:Z|[+-]\\d{2}:\\d{2})$/i.test(value)) {
+  if (typeof value !== "string" || !/(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) {
     throw new TypeError("Invalid outbox " + field + " timestamp");
   }
   const date = new Date(value);
