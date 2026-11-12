@@ -187,7 +187,7 @@ No existing producer or consumer should be changed until its full test layout an
 
 - [ ] JSON Schema and TypeScript types agree (schema drift test).
 - [ ] All source producers have golden V1 and V2 fixtures.
-- [ ] Consumer dual-read tests pass.
+- [x] Consumer dual-read validation and focused V1/V2 delivery regression tests are implemented; exact-head CI is still pending.
 - [ ] Same source event has same normalized evidence identity across V1/V2.
 - [ ] Hash/collision/revision semantics pass adversarial tests.
 - [ ] Solana cluster identity is retained without expanding supported chain set.
@@ -207,8 +207,25 @@ The architecture-hardening branch now implements the first runtime contract laye
 - Backward/forward/full compatibility comparison helpers and immutable schema-ID guard.
 - V1-to-V2 normalizer with actual source-builder fixtures in the producer integration workflow.
 
-The adapter requires the immutable source outbox row `created_at` as `emittedAt`. The existing `ClaimedEvent` type and PostgreSQL/SQLite claim adapters do not yet expose that field. Therefore the adapter is currently a tested library boundary, **not yet connected to Intelligence delivery**. The next consumer step must add `createdAt` to claimed events using the stored source timestamp, then dual-read V1 and V2 without changing destination `knownAt` semantics.
+The outbox contract now exposes immutable `createdAt` on every claimed row from both PostgreSQL and SQLite. PostgreSQL `emitPostgres` stamps `created_at` with `clock_timestamp()` at insert time; SQLite continues to persist the emission timestamp. Intelligence delivery now dual-reads:
+- registered V1 source events are validated through `adaptLegacyOutboxEventToV2` using only source `createdAt` for `emittedAt`, then passed to the established V1 ingestion path;
+- unregistered legacy event kinds and read-only snapshot imports retain the previous V1 path;
+- V2 envelopes are strictly validated, checked against the outbox identity and `createdAt`, unwrapped into the same internal payload model, and use the full envelope hash for inbox dedup/collision checks.
+
+V1 inbox fingerprint behavior remains unchanged, preserving existing V1 replay semantics. V2 same-identity/same-hash deliveries are duplicates; same identity with a different canonical envelope hash fails as a collision. Source `occurredAt` and `observedAt` are not rewritten: downstream `knownAt` continues to derive from the original evidence observation timestamp. No production DB schema migration was added.
 
 Existing X/TG/Solana producers still write V1 and remain untouched. No V2 producer flag was added or enabled. Unknown event schemas and `twitter_research` are rejected by this initial V2 registry; multichain remains out of scope. V1 producers may already use `observedAt` as a fallback for missing source occurrence time; the adapter cannot infer whether this was a genuine source timestamp and preserves the V1 value.
 
 **CI acceptance is pending on the exact PR head.** Queued, skipped or incomplete checks do not satisfy the exit criteria. No production migration, collector enablement, merge or deployment is authorized by this implementation.
+
+
+### Consumer dual-read implementation update — 2026-11-12
+
+The current branch includes the additive consumer/outbox step:
+- `ClaimedEvent.createdAt` is populated from `outbox_events.created_at` by both claim adapters. Invalid/missing timestamps fail before the claim lease is committed.
+- PostgreSQL outbox emission explicitly stamps `created_at` with `clock_timestamp()` so it represents the actual insert/emission time rather than the transaction-start `NOW()`.
+- Intelligence validates registered V1 events through the V1 adapter, validates V2 envelope payloads and binds `emittedAt` to source `created_at`.
+- V1 delivery retains the historical registry fingerprint and evidence clocks. V2 delivery uses the full envelope hash for duplicate/collision handling.
+- Regression tests cover missing/invalid source clocks, V1 knownAt parity, V2 hash tampering, identity mismatch, duplicate replay and hash collision.
+
+This does not switch any producer to V2, enable a source flag, or change a production schema. Complete X/TG/Solana parity and producer V2 builders remain future work. Exact-head CI is the acceptance gate.
