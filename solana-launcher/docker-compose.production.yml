@@ -274,6 +274,7 @@ services:
     restart: unless-stopped
     # Deliberately keep the public frontend isolated from backend.env and provider secrets.
     environment:
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
       NODE_ENV: production
       BACKEND_URL: http://backend:8000
       TG_INVITE_INTERNAL_KEY: ${TG_INVITE_INTERNAL_KEY:-}
