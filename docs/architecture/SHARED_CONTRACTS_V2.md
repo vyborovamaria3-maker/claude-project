@@ -229,3 +229,6 @@ The current branch includes the additive consumer/outbox step:
 - Regression tests cover missing/invalid source clocks, V1 knownAt parity, V2 hash tampering, identity mismatch, duplicate replay and hash collision.
 
 This does not switch any producer to V2, enable a source flag, or change a production schema. Complete X/TG/Solana parity and producer V2 builders remain future work. Exact-head CI is the acceptance gate.
+
+
+**Cross-version replay gate:** V1 rows preserve the historical registry-only `payload_sha256`; V2 rows persist the full canonical envelope hash. If the same source identity is replayed first as V1 and later as V2, the hashes differ and Intelligence returns `identity_collision`. This is intentional fail-closed behavior, not a supported seamless V1→V2 replay. Before enabling V2 producers or rewriting source outbox payloads, add a separately reviewed cross-version reconciliation strategy (including proof that timeline/token-link/swap materializations are identical) or define a new event identity/cutover boundary. The current PR does not perform that reconciliation.
