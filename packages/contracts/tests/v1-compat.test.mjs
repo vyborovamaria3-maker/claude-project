@@ -200,6 +200,23 @@ test("unknown schemas, mismatched outer identities and private source text are r
   }, { emittedAt }), /Unsupported legacy sourceSystem/);
 });
 
+test("source entity identities are bound to Telegram and Solana evidence", () => {
+  const telegram = tgDeleted();
+  telegram.payload.registryEvent.entityRefs[0].canonicalId = "tg:source:-100999999999";
+  assert.throws(() => adapt(telegram), /Telegram event source entity/);
+
+  const revision = chainRevision();
+  revision.payload.registryEvent.entityRefs[0].canonicalId = "solana:" + "2".repeat(32);
+  assert.throws(() => adapt(revision), /Solana swap revision identity/);
+
+  const swap = chainSwap();
+  swap.payload.registryEvent.entityRefs = [
+    swap.payload.registryEvent.entityRefs[0],
+    { ...swap.payload.registryEvent.entityRefs[1], kind: "wallet" },
+  ];
+  assert.throws(() => adapt(swap), /one wallet and one token/);
+});
+
 test("legacy event emission cannot be later than the adapter's supplied outbox clock", () => {
   assert.throws(() => adaptLegacyOutboxEventToV2(xTweet(), {
     emittedAt: "2026-10-18T00:00:00Z",
