@@ -410,7 +410,13 @@ test("registered V1 delivery adapts with source created_at and preserves knownAt
     ack:async()=>{log.push("ACK");return true;},
     fail:async(_event,code)=>{log.push("FAIL:"+code);return true;},
   };
-  const destination=stubDestination(log);
+  const destination={connect:async()=>({
+    query:async(sql,params)=>{
+      log.push({sql,params});
+      return {rows:sql.includes("RETURNING event_key")?[{event_key:registeredEventKey}]:[]};
+    },
+    release:()=>{},
+  })};
   const result=await runDeliveryBatch(source,destination,{
     workerId:"worker1",batchSize:1,leaseMs:5000,
   });
