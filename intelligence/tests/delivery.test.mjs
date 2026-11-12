@@ -544,6 +544,6 @@ test("V2 replay is duplicate only for the same envelope hash; changed hash is a 
     workerId:"worker1",batchSize:1,leaseMs:5000,
   });
   assert.equal(collision.failed,1);
-  assert.deepEqual(collisionLog,["FAIL:payload_invalid"],
-    "same source identity with a changed canonical envelope hash must fail, not ACK");
+  assert.deepEqual(collisionLog,["FAIL:identity_collision"],
+    "same source identity with a changed canonical envelope hash must fail as a collision, not ACK");
 });
