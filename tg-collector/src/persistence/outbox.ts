@@ -128,8 +128,8 @@ async function insertOutbox(
   event:{sourceSystem:string;eventKind:string;eventKey:string;schemaVersion:string;payload:Record<string,unknown>},
 ):Promise<void> {
   await tx.query(`INSERT INTO outbox_events
-    (source_system,event_kind,event_key,schema_version,payload)
-    VALUES ($1,$2,$3,$4,$5::jsonb)
+    (source_system,event_kind,event_key,schema_version,payload,created_at)
+    VALUES ($1,$2,$3,$4,$5::jsonb,clock_timestamp())
     ON CONFLICT (source_system,event_kind,event_key) DO NOTHING`,[
       event.sourceSystem,event.eventKind,event.eventKey,
       event.schemaVersion,JSON.stringify(event.payload),
