@@ -517,6 +517,28 @@ test("V2 delivery validates the envelope and binds emittedAt to source created_a
   assert.deepEqual(mismatchLog,["FAIL:payload_invalid"]);
 });
 
+test("V2 unwrapping preserves original occurredAt and observedAt for knownAt",async()=>{
+  const log=[];
+  const destination={connect:async()=>({
+    query:async(sql,params)=>{
+      log.push({sql,params});
+      return {rows:sql.includes("RETURNING event_key")?[{event_key:registeredEventKey}]:[]};
+    },
+    release:()=>{},
+  })};
+  const result=await runDeliveryBatch({
+    claim:async()=>[v2Claim()],
+    ack:async()=>true,fail:async()=>true,
+  },destination,{workerId:"worker1",batchSize:1,leaseMs:5000});
+  assert.equal(result.delivered,1);
+  const evidenceWrite=log.find(entry=>entry.sql.includes("INSERT INTO entity_evidence"));
+  assert.ok(evidenceWrite);
+  assert.equal(evidenceWrite.params[7],registeredObservedAt,
+    "V2 emittedAt must never replace source observedAt/knownAt");
+  assert.equal(evidenceWrite.params[8],registeredOccurredAt,
+    "V2 normalization must preserve source occurredAt");
+});
+
 test("V2 replay is duplicate only for the same envelope hash; changed hash is a collision",async()=>{
   const log=[];
   const destination=statefulInboxDestination(log);
