@@ -190,14 +190,15 @@ test("X edit invalidation is one atomic source Outbox tombstone in PGlite",async
     delete process.env.X_INTELLIGENCE_TOKEN_LINKS_ENABLED;
     assert.equal(await emitXTokenLinksInvalidation(tx,invalidation),true);
     await pg.exec("COMMIT");
-    const stored=await pg.query<{event_kind:string;payload:{tokenLinksInvalidation?:{reason:string}};created_at:Date}>(
-      "SELECT event_kind,payload,created_at FROM outbox_events ORDER BY id",
+    const stored=await pg.query<{event_kind:string;payload:{tokenLinksInvalidation?:{reason:string}};created_at:string}>(
+      "SELECT event_kind,payload,created_at::text AS created_at FROM outbox_events ORDER BY id",
     );
     assert.deepEqual(stored.rows.map(r=>r.event_kind),
       ["token_link_verified","token_links_invalidated"]);
     assert.equal(stored.rows[1]!.payload.tokenLinksInvalidation?.reason,"edited");
-    assert.ok(stored.rows.every(row=>row.created_at instanceof Date),
-      "verified and invalidation rows must have source insertion timestamps");
+    assert.ok(stored.rows.every(row=>Number.isFinite(Date.parse(row.created_at)) &&
+      Date.parse(row.created_at)>=input.observedAt.getTime()),
+      "verified and invalidation rows must be stamped after their source observation");
     assert.equal(buildXTokenLinksInvalidatedOutboxEvent(invalidation).eventKey.length>0,true);
     assert.ok(!JSON.stringify(stored.rows).includes(input.text));
   }finally{
