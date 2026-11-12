@@ -300,3 +300,6 @@
 
 
 **Cutover blocker:** V1 inbox fingerprints remain registry-only for replay compatibility; V2 inbox fingerprints are full-envelope hashes. Same-key V1→V2 replay is deliberately rejected as `identity_collision` until an explicit cross-version reconciliation/cutover design is implemented and tested. Do not enable V2 producers or rewrite existing outbox payloads before that gate is closed.
+
+
+- [ ] До любого live consumer canary проверить pending X/TG outbox rows: исторический `created_at DEFAULT now()` может предшествовать `observedAt`; не переписывать source rows автоматически. При несовместимых строках нужен отдельный операторский план reconciliation.
