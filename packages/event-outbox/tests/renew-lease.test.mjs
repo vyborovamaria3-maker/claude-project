@@ -24,6 +24,8 @@ test("SQLite renewal fences original token, extends expiration and refuses dead 
       workerId:"local-supervisor",batchSize:1,leaseMs:1000,now:t,
     })[0];
     assert.ok(first);
+    assert.equal(first.createdAt,t.toISOString(),
+      "SQLite claim must preserve the exact source emission timestamp");
     const next=renewSqlite(db,first.id,first.leaseOwner,first.leaseUntil,1000,
       new Date(t.getTime()+500));
     assert.equal(next,new Date(t.getTime()+1500).toISOString());
@@ -69,6 +71,8 @@ test("PostgreSQL renewal uses DB time and fences original ACK/NACK",{
       workerId:"local-supervisor",batchSize:1,leaseMs:2000,
     }))[0];
     assert.ok(first);
+    assert.match(first.createdAt,/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$/,
+      "PostgreSQL claim must expose source created_at as normalized UTC ISO");
     const next=await renewPostgres(
       pool,first.id,first.leaseOwner,first.leaseUntil,10_000,
     );
