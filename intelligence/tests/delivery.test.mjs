@@ -15,7 +15,8 @@ const registryEvent={
 };
 function sample(payload={registryEvent}){
   return {id:"1",sourceSystem:"tg",eventKind:"message_observed",eventKey:"tg:-10022:42:v1",
-    schemaVersion:"tg-v1",payload,attempts:0,leaseOwner:"worker1",leaseUntil:"2026-10-18T00:30:00Z"};
+    schemaVersion:"tg-v1",payload,createdAt:"2026-10-18T00:00:03.000Z",
+    attempts:0,leaseOwner:"worker1",leaseUntil:"2026-10-18T00:30:00Z"};
 }
 function stubDestination(log, fail=false) {
   return {connect:async()=>({
@@ -275,7 +276,7 @@ const verifiedLink=buildVerifiedTokenLinkEvent({
   },
 });
 function sampleLink(event=verifiedLink){
-  return {...event,id:"991",attempts:0,
+  return {...event,id:"991",createdAt:"2026-10-18T00:00:03.000Z",attempts:0,
     leaseOwner:"worker1",leaseUntil:"2026-10-18T00:30:00Z"};
 }
 
