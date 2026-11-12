@@ -1,6 +1,6 @@
 # Shared Contracts V2 — design and migration specification
 
-Status: **DESIGN / NOT YET IMPLEMENTED**  
+Status: **PARTIAL IMPLEMENTATION — V2 contract package and V1 adapter exist; producers and consumer dual-read remain V1**  
 Date: 2026-11-12  
 Parent plan: [POTAPOFF_INTELLIGENCE_V2_IMPLEMENTATION_PLAN.md](POTAPOFF_INTELLIGENCE_V2_IMPLEMENTATION_PLAN.md)  
 Scope: X Collector, TG Collector, Solana blockchain module, Node Intelligence.
@@ -195,6 +195,20 @@ No existing producer or consumer should be changed until its full test layout an
 - [ ] CI passes on exact commit; no skipped check counted as success.
 - [ ] V2 producers remain opt-in/default-off until operator canary approval.
 
-## 9. Current audit finding
+## 9. Current implementation and remaining gaps
 
-The current contract is a useful V1 wire protocol but is not yet a full Schema Registry: `schemaVersion` is a string, source builders maintain their own payload shapes, and compatibility rules/golden fixtures are not centralized in one registry. V2 should centralize those rules while preserving V1 readers and all existing source ownership boundaries.
+The architecture-hardening branch now implements the first runtime contract layer in `packages/contracts`:
+
+- `EventEnvelopeV2` TypeScript types, builder and fail-closed validator.
+- Canonical JSON serialization and SHA-256 over the complete normalized envelope excluding `payloadSha256`.
+- Deterministic `eventId` from source system + event kind + event key.
+- Source-controlled schema registry with ten current V1 source/event/schema combinations: X tweet, TG message publication/deletion, Solana raw wallet observation, Solana swap evidence/revision, and X/TG verified-link and invalidation events.
+- JSON Schema document checked against the TypeScript schema object in tests.
+- Backward/forward/full compatibility comparison helpers and immutable schema-ID guard.
+- V1-to-V2 normalizer with actual source-builder fixtures in the producer integration workflow.
+
+The adapter requires the immutable source outbox row `created_at` as `emittedAt`. The existing `ClaimedEvent` type and PostgreSQL/SQLite claim adapters do not yet expose that field. Therefore the adapter is currently a tested library boundary, **not yet connected to Intelligence delivery**. The next consumer step must add `createdAt` to claimed events using the stored source timestamp, then dual-read V1 and V2 without changing destination `knownAt` semantics.
+
+Existing X/TG/Solana producers still write V1 and remain untouched. No V2 producer flag was added or enabled. Unknown event schemas and `twitter_research` are rejected by this initial V2 registry; multichain remains out of scope. V1 producers may already use `observedAt` as a fallback for missing source occurrence time; the adapter cannot infer whether this was a genuine source timestamp and preserves the V1 value.
+
+**CI acceptance is pending on the exact PR head.** Queued, skipped or incomplete checks do not satisfy the exit criteria. No production migration, collector enablement, merge or deployment is authorized by this implementation.
