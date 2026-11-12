@@ -33,7 +33,9 @@ const POSITIVE_ID = /^[1-9][0-9]*$/;
 
 function optionalMetadata(value: string | undefined, label: string): string | undefined {
   if (value === undefined) return undefined;
-  if (!value.trim() || value.length > 4096) throw new TypeError("Invalid " + label);
+  if (typeof value !== "string" || !value.trim() || value.length > 4096) {
+    throw new TypeError("Invalid " + label);
+  }
   return value;
 }
 
@@ -69,4 +71,60 @@ export function buildEvidenceRef(input: EvidenceInput): EvidenceRef {
     ...(input.parserVersion !== undefined ? { parserVersion: optionalMetadata(input.parserVersion, "parserVersion") } : {}),
     ...(input.rawPointer !== undefined ? { rawPointer: optionalMetadata(input.rawPointer, "rawPointer") } : {}),
   };
+}
+
+/** Validate an untrusted wire EvidenceRef and return its canonical representation. */
+export function validateEvidenceRef(input: unknown): EvidenceRef {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new TypeError("Invalid evidence reference");
+  }
+  const raw = input as Record<string, unknown>;
+  const allowed = new Set([
+    "sourceKind", "sourceId", "observedAt", "occurredAt",
+    "provider", "parserVersion", "rawPointer",
+  ]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) throw new TypeError("Unknown evidence field: " + key);
+  }
+  if (typeof raw.sourceId !== "string" || raw.sourceId.length > 512 ||
+      typeof raw.observedAt !== "string") {
+    throw new TypeError("Invalid evidence identity or observation clock");
+  }
+  for (const key of ["occurredAt", "provider", "parserVersion", "rawPointer"] as const) {
+    if (raw[key] !== undefined && typeof raw[key] !== "string") {
+      throw new TypeError("Invalid evidence field: " + key);
+    }
+  }
+  const metadata: EvidenceMetadata = {
+    observedAt: raw.observedAt,
+    ...(raw.occurredAt === undefined ? {} : { occurredAt: raw.occurredAt as string }),
+    ...(raw.provider === undefined ? {} : { provider: raw.provider as string }),
+    ...(raw.parserVersion === undefined ? {} : { parserVersion: raw.parserVersion as string }),
+    ...(raw.rawPointer === undefined ? {} : { rawPointer: raw.rawPointer as string }),
+  };
+
+  if (raw.sourceKind === "x_tweet") {
+    const match = /^x:tweet:([1-9][0-9]*)$/.exec(raw.sourceId);
+    if (!match) throw new TypeError("Invalid X tweet evidence ID");
+    return buildEvidenceRef({ ...metadata, sourceKind: "x_tweet", tweetId: match[1]! });
+  }
+  if (raw.sourceKind === "tg_message") {
+    const match = /^tg:message:(-?(?:[1-9][0-9]*)):([1-9][0-9]*)$/.exec(raw.sourceId);
+    if (!match) throw new TypeError("Invalid Telegram message evidence ID");
+    return buildEvidenceRef({
+      ...metadata, sourceKind: "tg_message",
+      sourceAccountId: match[1]!, messageId: match[2]!,
+    });
+  }
+  if (raw.sourceKind === "chain_tx") {
+    const match = /^chain:tx:solana:([1-9A-HJ-NP-Za-km-z]+)$/.exec(raw.sourceId);
+    if (!match || !isSolanaSignature(match[1])) {
+      throw new TypeError("Invalid Solana transaction evidence ID");
+    }
+    return buildEvidenceRef({
+      ...metadata, sourceKind: "chain_tx", chain: "solana",
+      transactionId: match[1]!,
+    });
+  }
+  throw new TypeError("Unsupported evidence source kind");
 }
