@@ -74,6 +74,8 @@ test("canonical JSON rejects values JSON.stringify would silently lose or rewrit
   const hiddenExtra = [1];
   Object.defineProperty(hiddenExtra, "secret", { value: 2, enumerable: false });
   assert.throws(() => canonicalJsonStringify(hiddenExtra), /extended array/);
+  const customPrototype = Object.setPrototypeOf([1], Object.create(Array.prototype));
+  assert.throws(() => canonicalJsonStringify(customPrototype), /Non-plain array/);
 });
 
 test("V2 envelope builds and validates with stable identity and canonical hash", () => {
