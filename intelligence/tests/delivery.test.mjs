@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {buildEvidenceRef,buildEntityRef,formatTokenId,formatSourceId,buildVerifiedTokenLinkEvent} from "@claude-project/contracts";
+import {
+  buildEvidenceRef,buildEntityRef,buildTimelineEvent,buildEventEnvelopeV2,
+  formatTokenId,formatSourceId,buildVerifiedTokenLinkEvent,
+} from "@claude-project/contracts";
 import {runDeliveryBatch} from "../dist/index.js";
 
 const when="2026-10-18T00:00:00Z";
@@ -17,6 +20,81 @@ function sample(payload={registryEvent}){
   return {id:"1",sourceSystem:"tg",eventKind:"message_observed",eventKey:"tg:-10022:42:v1",
     schemaVersion:"tg-v1",payload,createdAt:"2026-10-18T00:00:03.000Z",
     attempts:0,leaseOwner:"worker1",leaseUntil:"2026-10-18T00:30:00Z"};
+}
+const registeredObservedAt="2026-10-18T00:00:00.000Z";
+const registeredOccurredAt="2026-10-17T23:59:00.000Z";
+const registeredEmittedAt="2026-10-18T00:00:03.000Z";
+const registeredEventKey="tg:message:-10022:42:observed:1760745600000";
+const registeredEntity=buildEntityRef({
+  kind:"source",canonicalId:formatSourceId("tg","-10022"),
+  firstSeenAt:registeredObservedAt,lastSeenAt:registeredObservedAt,
+});
+const registeredEvidence=buildEvidenceRef({
+  sourceKind:"tg_message",sourceAccountId:"-10022",messageId:"42",
+  observedAt:registeredObservedAt,occurredAt:registeredOccurredAt,
+  parserVersion:"tg-collector-v1",
+});
+const registeredPayload={
+  registryEvent:{
+    sourceSystem:"tg",eventKind:"message_observed",eventKey:registeredEventKey,
+    schemaVersion:"tg-message-v1",entityRefs:[registeredEntity],
+    evidenceRef:registeredEvidence,
+  },
+  timelineEvent:buildTimelineEvent({
+    eventKey:registeredEventKey,kind:"tg_message_published",
+    occurredAt:registeredOccurredAt,observedAt:registeredObservedAt,
+    entityRefs:[registeredEntity],evidenceRef:registeredEvidence,payload:{},
+  }),
+};
+function registeredClaim(payload=registeredPayload,createdAt=registeredEmittedAt){
+  return {
+    id:"registered-1",sourceSystem:"tg",eventKind:"message_observed",
+    eventKey:registeredEventKey,schemaVersion:"tg-message-v1",payload,
+    createdAt,attempts:0,leaseOwner:"worker1",leaseUntil:"2026-10-18T00:30:00Z",
+  };
+}
+function registeredV2(producerVersion="v2-fixture"){
+  return buildEventEnvelopeV2({
+    sourceSystem:"tg",eventKind:"message_observed",eventKey:registeredEventKey,
+    schemaVersion:"tg-message-v1",
+    producer:{name:"tg-collector",version:producerVersion},
+    clocks:{
+      occurredAt:registeredOccurredAt,observedAt:registeredObservedAt,
+      emittedAt:registeredEmittedAt,
+    },
+    entityRefs:[{kind:"source",canonicalId:registeredEntity.canonicalId}],
+    evidenceRefs:[registeredEvidence],
+    payload:registeredPayload,
+  });
+}
+function v2Claim(envelope=registeredV2(),createdAt=registeredEmittedAt){
+  return {...registeredClaim(envelope,createdAt),payload:envelope};
+}
+function statefulInboxDestination(log){
+  let stored=null;
+  return {
+    connect:async()=>({
+      query:async(sql,params)=>{
+        log.push({sql,params});
+        if(sql.includes("INSERT INTO intelligence_inbox")){
+          if(stored===null){
+            stored=params[5];
+            return {rows:[{event_key:registeredEventKey}]};
+          }
+          return {rows:[]};
+        }
+        if(sql.includes("SELECT schema_version,evidence_source_id,payload_sha256 FROM intelligence_inbox")){
+          return {rows:[{
+            schema_version:"tg-message-v1",
+            evidence_source_id:registeredEvidence.sourceId,
+            payload_sha256:stored,
+          }]};
+        }
+        return {rows:sql.includes("RETURNING event_key")?[{event_key:registeredEventKey}]:[]};
+      },
+      release:()=>log.push("release"),
+    }),
+  };
 }
 function stubDestination(log, fail=false) {
   return {connect:async()=>({
@@ -322,4 +400,103 @@ test("source/chain/mint/proof tampering is rejected before opening destination",
     assert.equal(result.failed,1);
     assert.deepEqual(log,["payload_invalid"]);
   }
+});
+
+
+test("registered V1 delivery adapts with source created_at and preserves knownAt evidence clocks",async()=>{
+  const log=[];
+  const source={
+    claim:async()=>[registeredClaim()],
+    ack:async()=>{log.push("ACK");return true;},
+    fail:async(_event,code)=>{log.push("FAIL:"+code);return true;},
+  };
+  const destination=stubDestination(log);
+  const result=await runDeliveryBatch(source,destination,{
+    workerId:"worker1",batchSize:1,leaseMs:5000,
+  });
+  assert.equal(result.delivered,1);
+  assert.equal(result.failed,0);
+  const evidenceWrite=log.find(entry=>entry&&typeof entry==="object"&&
+    entry.sql.includes("INSERT INTO entity_evidence"));
+  assert.ok(evidenceWrite,"the original evidence must reach the established ingest path");
+  assert.equal(evidenceWrite.params[7],registeredObservedAt,
+    "observedAt/knownAt must remain the source observation time");
+  assert.equal(evidenceWrite.params[8],registeredOccurredAt,
+    "occurredAt must remain the source occurrence time");
+  assert.ok(log.some(entry=>entry==="ACK"));
+});
+
+test("registered V1 delivery derives emittedAt only from source created_at",async()=>{
+  const log=[];
+  let opened=0;
+  const destination={connect:async()=>{opened++;return stubDestination(log).connect();}};
+  const source={
+    claim:async()=>[registeredClaim(registeredPayload,"2026-10-17T23:00:00.000Z")],
+    ack:async()=>{log.push("ACK");return true;},
+    fail:async(_event,code)=>{log.push("FAIL:"+code);return true;},
+  };
+  const result=await runDeliveryBatch(source,destination,{
+    workerId:"worker1",batchSize:1,leaseMs:5000,
+  });
+  assert.equal(result.failed,1);
+  assert.equal(opened,0,"invalid source created_at must be rejected before borrowing destination");
+  assert.deepEqual(log,["FAIL:payload_invalid"]);
+});
+
+test("V2 delivery validates the envelope and binds emittedAt to source created_at",async()=>{
+  const log=[];
+  const source={
+    claim:async()=>[v2Claim()],
+    ack:async()=>{log.push("ACK");return true;},
+    fail:async(_event,code)=>{log.push("FAIL:"+code);return true;},
+  };
+  const result=await runDeliveryBatch(source,stubDestination(log),{
+    workerId:"worker1",batchSize:1,leaseMs:5000,
+  });
+  assert.equal(result.delivered,1);
+  assert.equal(result.failed,0);
+  assert.ok(log.indexOf("COMMIT")<log.indexOf("ACK"));
+
+  const mismatchLog=[];
+  const mismatchSource={
+    claim:async()=>[v2Claim(registeredV2(),"2026-10-18T00:00:04.000Z")],
+    ack:async()=>{mismatchLog.push("ACK");return true;},
+    fail:async(_event,code)=>{mismatchLog.push("FAIL:"+code);return true;},
+  };
+  const mismatch=await runDeliveryBatch(mismatchSource,stubDestination(mismatchLog),{
+    workerId:"worker1",batchSize:1,leaseMs:5000,
+  });
+  assert.equal(mismatch.failed,1);
+  assert.deepEqual(mismatchLog,["FAIL:payload_invalid"]);
+});
+
+test("V2 replay is duplicate only for the same envelope hash; changed hash is a collision",async()=>{
+  const log=[];
+  const destination=statefulInboxDestination(log);
+  const firstSource={
+    claim:async()=>[v2Claim()],
+    ack:async()=>true,fail:async()=>true,
+  };
+  const first=await runDeliveryBatch(firstSource,destination,{
+    workerId:"worker1",batchSize:1,leaseMs:5000,
+  });
+  assert.equal(first.delivered,1);
+
+  const replay=await runDeliveryBatch(firstSource,destination,{
+    workerId:"worker1",batchSize:1,leaseMs:5000,
+  });
+  assert.equal(replay.duplicates,1);
+  assert.equal(replay.failed,0);
+
+  const collisionLog=[];
+  const collision=await runDeliveryBatch({
+    claim:async()=>[v2Claim(registeredV2("different-build"))],
+    ack:async()=>{collisionLog.push("ACK");return true;},
+    fail:async(_event,code)=>{collisionLog.push("FAIL:"+code);return true;},
+  },destination,{
+    workerId:"worker1",batchSize:1,leaseMs:5000,
+  });
+  assert.equal(collision.failed,1);
+  assert.deepEqual(collisionLog,["FAIL:payload_invalid"],
+    "same source identity with a changed canonical envelope hash must fail, not ACK");
 });
