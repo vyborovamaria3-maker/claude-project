@@ -265,9 +265,10 @@
 - [x] Добавлены JSON Schema drift, compatibility-policy, immutable schema-ID, replay/collision и V1 normalizer unit tests.
 - [x] Добавлен CI integration test, который вызывает фактические V1 builders X/TG/Solana и прогоняет их через общий V2 registry; результат ожидает проверки на точном HEAD.
 - [ ] Подтвердить Shared Contracts и source-producer compatibility CI на точном HEAD; queued/skipped не считать pass.
-- [ ] Добавить source outbox `created_at` в `ClaimedEvent` PostgreSQL/SQLite adapters и подключить V1/V2 dual-read в Intelligence delivery.
+- [x] Добавить source outbox `created_at` в `ClaimedEvent` PostgreSQL/SQLite adapters; PostgreSQL emission использует `clock_timestamp()` в момент вставки.
+- [x] Подключить V1/V2 dual-read в Intelligence delivery без изменения V1 knownAt/fingerprint semantics; V2 hash используется для replay/collision.
 - [ ] Добавить producer-specific V2 builders behind default-off flags; текущие producers остаются V1.
-- [ ] Завершить parity fixtures V1/V2 и consumer dual-read tests.
+- [ ] Завершить полные parity fixtures V1/V2 для X/TG/Solana и проверить их на точном CI HEAD.
 - [ ] Выполнить pipeline fault matrix и operator DLQ/replay proof.
 - [ ] Превратить coverage в обязательный gate для features/correlations/AI reports.
 - [ ] Реализовать evidence-weighted identity links.
@@ -285,3 +286,14 @@
 - Не создавать второй event registry, coverage service или feature store, пока существующий компонент можно расширить безопасно.
 
 ---
+
+
+### Обновление consumer dual-read — 2026-11-12
+
+- [x] `ClaimedEvent.createdAt` добавлен в PostgreSQL и SQLite claim adapters; отсутствующий/невалидный timestamp откатывает claim до фиксации lease.
+- [x] V1 registered events проходят адаптер с `emittedAt = source created_at`; unknown legacy events и read-only snapshots сохраняют прежний V1 путь.
+- [x] V2 envelope валидируется, его outer identity и `emittedAt` сверяются с outbox row.
+- [x] V1 fingerprint и source evidence clocks остаются прежними; `knownAt` не подменяется `emittedAt`.
+- [x] V2 полный envelope hash используется для duplicate/collision detection.
+- [x] Добавлены focused delivery tests на missing created_at, V1 knownAt parity, V2 hash tampering, identity mismatch, replay и collision.
+- [ ] Подтвердить contracts/outbox/Intelligence CI на точном HEAD; queued/skipped не считаются успешной проверкой.
