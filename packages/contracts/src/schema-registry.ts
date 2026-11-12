@@ -415,6 +415,32 @@ function validateLegacySemantics(identity: SchemaIdentity, payloadValue: unknown
     throw new TypeError("Evidence kind does not match sourceSystem");
   }
 
+  // Bind the generic entity references to each source's canonical identity
+  // shape. JSON Schema can constrain the fields, but not these cross-field
+  // invariants.
+  if (identity.eventKind === "tweet_observed") {
+    if (entityRefs.length !== 1 || entityRefs[0]!.kind !== "author") {
+      throw new TypeError("X tweet observation requires exactly one author entity");
+    }
+  } else if (identity.eventKind === "message_observed" ||
+             identity.eventKind === "message_deleted") {
+    const match = /^tg:message:(-?(?:[1-9][0-9]*)):([1-9][0-9]*)$/.exec(evidenceRef.sourceId);
+    if (!match || entityRefs.length !== 1 || entityRefs[0]!.kind !== "source" ||
+        entityRefs[0]!.canonicalId !== "tg:source:" + match[1]) {
+      throw new TypeError("Telegram event source entity does not match message evidence");
+    }
+  } else if (identity.eventKind === "wallet_transaction_observed") {
+    if (entityRefs.length !== 1 || entityRefs[0]!.kind !== "wallet") {
+      throw new TypeError("Solana wallet observation requires exactly one wallet entity");
+    }
+  } else if (identity.eventKind === "token_swap_evidence_observed") {
+    if (entityRefs.length !== 2 ||
+        entityRefs.filter((ref) => ref.kind === "wallet").length !== 1 ||
+        entityRefs.filter((ref) => ref.kind === "token").length !== 1) {
+      throw new TypeError("Solana swap evidence requires one wallet and one token entity");
+    }
+  }
+
   if (payload.timelineEvent !== undefined) {
     const timelineRaw = record(payload.timelineEvent, "$.payload.timelineEvent");
     if (timelineRaw.schemaVersion !== "timeline-v1") {
@@ -471,6 +497,8 @@ function validateLegacySemantics(identity: SchemaIdentity, payloadValue: unknown
     const revision = record(payload.swapRevision, "$.payload.swapRevision");
     const walletId = parseWalletId(revision.walletId);
     if (!walletId || walletId.id !== revision.walletId ||
+        entityRefs.length !== 1 || entityRefs[0]!.kind !== "wallet" ||
+        entityRefs[0]!.canonicalId !== revision.walletId ||
         !isSolanaSignature(revision.signature) ||
         evidenceRef.sourceId !== "chain:tx:solana:" + revision.signature ||
         typeof revision.rawRevision !== "number" || !Number.isSafeInteger(revision.rawRevision) ||
@@ -482,7 +510,7 @@ function validateLegacySemantics(identity: SchemaIdentity, payloadValue: unknown
       const token = parseTokenId(revision.canonicalTokenId);
       if (!token || token.id !== revision.canonicalTokenId ||
           typeof revision.slot !== "number" || !Number.isSafeInteger(revision.slot) ||
-          revision.slot <= 0) {
+          revision.slot <= 0 || evidenceRef.occurredAt === undefined) {
         throw new TypeError("Supported swap revision requires canonical token and slot");
       }
     } else if (revision.status === "unsupported") {
