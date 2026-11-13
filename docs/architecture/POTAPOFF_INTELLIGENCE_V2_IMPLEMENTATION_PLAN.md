@@ -30,7 +30,7 @@
 |---|---|---|
 | Canonical IDs | `packages/contracts/src/canonical-ids.ts`: Solana mint/wallet и X/TG numeric IDs | Formal event envelope/schema registry, compatibility policy и contract test matrix |
 | Evidence/time | `evidence.ts`, `timeline.ts`: observedAt/occurredAt, provider/parser/raw pointer | Uniform event envelope, raw evidence retention reference and schema compatibility rules |
-| Outbox/Inbox | `packages/event-outbox`, `intelligence/src/delivery.ts`, fingerprint migration 017, revision invalidation 018 | End-to-end fault matrix, DLQ operator workflow, real-source canary/replay proof; supervisor is local/foreground, not a managed production service |
+| Outbox/Inbox | `packages/event-outbox`, `intelligence/src/delivery.ts`, fingerprint migration 017, revision invalidation 018, dual-fingerprint migration 019 | End-to-end fault matrix, DLQ operator workflow, real-source canary/replay proof; supervisor is local/foreground, not a managed production service |
 | Identity | `entity_registry` + `entity_evidence` and verified token-link evidence | Separate evidence-weighted entity-link model, conflict resolution, decay, transitivity constraints, manual override/revoke audit |
 | Feature Store | Migration 003, immutable `feature_versions`, as-of snapshots; migration 006 cross-platform aggregates | Per-feature lineage to exact input event IDs, formula/window/update/null semantics and reproducible recomputation |
 | Coverage | Migration 006 `source_coverage_windows`, quality/coverage work and UI/API pieces exist | Make coverage a required join/guard for every report/feature/signal; source scope and completeness evidence must be explicit |
@@ -299,7 +299,7 @@
 - [x] Подтверждён exact-head contracts/outbox/Intelligence CI: 30 успешных workflows, 0 failed, 1 skipped (не засчитан как pass).
 
 
-**Cutover gate — implementation in progress:** migration 019 and dual-fingerprint reconciliation now preserve the stable V1 RegistryEvent fingerprint in `payload_sha256` and store the V2 full-envelope hash separately in `envelope_sha256`. A matching V1 row is promoted once under row lock; later V2 envelopes must match exactly. Unit and PostgreSQL concurrency tests were added. Do not enable V2 producers until exact-head CI, a real disposable PostgreSQL execution, timeline/token-link/swap parity tests and independent review pass.
+**Cutover gate — implementation in progress:** migration 019 and dual-fingerprint reconciliation now preserve the stable V1 RegistryEvent fingerprint in `payload_sha256` and store the V2 full-envelope hash separately in `envelope_sha256`. A matching V1 row is promoted once under row lock; later V2 envelopes must match exactly. Unit and PostgreSQL concurrency tests were added. Do not enable V2 producers until exact-head CI, a real disposable PostgreSQL execution, timeline and swap materialization mismatch tests plus independent review pass; token-link mismatch rollback is covered.
 
 
 - [ ] До любого live consumer canary проверить pending X/TG outbox rows: исторический `created_at DEFAULT now()` может предшествовать `observedAt`; не переписывать source rows автоматически. При несовместимых строках нужен отдельный операторский план reconciliation.
