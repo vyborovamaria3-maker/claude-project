@@ -29,7 +29,7 @@ test("delivery readiness fails closed when token-link migration 004 is missing",
     inbox_fingerprint:true,inbox_envelope_fingerprint:false,
   }]})},{requireEnvelopeFingerprint:true}),/migration 019/);
 });
-test("temporary PostgreSQL target requires additive 004, 005 and 017 before source claims",{
+test("temporary PostgreSQL target requires additive 004, 005, 017 and 019 before V2-capable source claims",{
   skip:!process.env.INTELLIGENCE_TEST_DB_URL,
 },async()=>{
   const url=process.env.INTELLIGENCE_TEST_DB_URL;
