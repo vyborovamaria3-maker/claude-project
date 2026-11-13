@@ -55,7 +55,7 @@ services:
       PGHOST: postgres
       PGPORT: "5432"
       POSTGRES_DB: ${POSTGRES_DB:-solsub}
-      POSTGRES_BOOTSTRAP_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_BOOTSTRAP_USER: ${POSTGRES_USER:-solsub}
       POSTGRES_BOOTSTRAP_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_MIGRATOR_USER: ${POSTGRES_MIGRATOR_USER:-solsub_migrator}
     command: ["sh", "scripts/run-prisma-migrations.sh"]
