@@ -13,7 +13,7 @@ vi.stubEnv("TELEGRAM_WEBHOOK_SECRET", "secret-secret");
 vi.stubEnv("TELEGRAM_WEBAPP_URL", "http://localhost:3000");
 vi.stubEnv("RPC_ENDPOINT", "https://api.devnet.solana.com");
 vi.stubEnv("TREASURY_WALLET", "11111111111111111111111111111111");
-vi.stubEnv("TREASURY_USDC_TOKEN_ACCOUNT", "11111111111111111111111111111111");
+vi.stubEnv("TREASURY_USDC_TOKEN_ACCOUNT", "TokenAcct11111111111111111111111111111111");
 vi.stubEnv("USDC_MINT", "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
 vi.stubEnv("PAYMENT_CONFIRMATION_COMMITMENT", "finalized");
 
@@ -157,6 +157,7 @@ describe("verifySolanaPayment", () => {
     const { PaymentCurrency } = await import("@prisma/client");
     const { solanaConnection, verifySolanaPayment } = await import("../src/services/solana.service");
     const treasury = "11111111111111111111111111111111";
+    const treasuryTokenAccount = "TokenAcct11111111111111111111111111111111";
     const mint = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
     vi.spyOn(solanaConnection, "getSignatureStatus").mockResolvedValue({
       context: { slot: 1 },
@@ -168,9 +169,9 @@ describe("verifySolanaPayment", () => {
         preTokenBalances: [{ accountIndex: 1, mint, owner: treasury, uiTokenAmount: { amount: "0", decimals: 6, uiAmount: 0, uiAmountString: "0" } }],
         postTokenBalances: [{ accountIndex: 1, mint: "FakeMint111111111111111111111111111111111", owner: treasury, uiTokenAmount: { amount: "1000000", decimals: 6, uiAmount: 1, uiAmountString: "1" } }]
       },
-      transaction: { message: { accountKeys: [{ pubkey: { toBase58: () => "11111111111111111111111111111111" } }, { pubkey: { toBase58: () => treasury } }], instructions: [
+      transaction: { message: { accountKeys: [{ pubkey: { toBase58: () => "ComputeBudget111111111111111111111111111111" } }, { pubkey: { toBase58: () => treasuryTokenAccount } }], instructions: [
         { program: "spl-memo", parsed: "usdc-mint-check" },
-        { program: "spl-token", parsed: { type: "transfer", info: { destination: treasury, amount: "1000000" } } }
+        { program: "spl-token", parsed: { type: "transfer", info: { destination: treasuryTokenAccount, amount: "1000000" } } }
       ] } }
     } as never);
 
@@ -183,6 +184,7 @@ describe("verifySolanaPayment", () => {
     const { PaymentCurrency } = await import("@prisma/client");
     const { solanaConnection, verifySolanaPayment } = await import("../src/services/solana.service");
     const treasury = "11111111111111111111111111111111";
+    const treasuryTokenAccount = "TokenAcct11111111111111111111111111111111";
     const mint = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
     vi.spyOn(solanaConnection, "getSignatureStatus").mockResolvedValue({
       context: { slot: 1 },
@@ -194,9 +196,9 @@ describe("verifySolanaPayment", () => {
         preTokenBalances: [{ accountIndex: 1, mint, owner: "WrongOwner111111111111111111111111111111", uiTokenAmount: { amount: "0", decimals: 9, uiAmount: 0, uiAmountString: "0" } }],
         postTokenBalances: [{ accountIndex: 1, mint, owner: "WrongOwner111111111111111111111111111111", uiTokenAmount: { amount: "1000000", decimals: 9, uiAmount: 1, uiAmountString: "1" } }]
       },
-      transaction: { message: { accountKeys: [{ pubkey: { toBase58: () => "11111111111111111111111111111111" } }, { pubkey: { toBase58: () => treasury } }], instructions: [
+      transaction: { message: { accountKeys: [{ pubkey: { toBase58: () => "ComputeBudget111111111111111111111111111111" } }, { pubkey: { toBase58: () => treasuryTokenAccount } }], instructions: [
         { program: "spl-memo", parsed: "usdc-owner-check" },
-        { program: "spl-token", parsed: { type: "transfer", info: { destination: treasury, amount: "1000000" } } }
+        { program: "spl-token", parsed: { type: "transfer", info: { destination: treasuryTokenAccount, amount: "1000000" } } }
       ] } }
     } as never);
 
@@ -210,6 +212,7 @@ describe("verifySolanaPayment", () => {
     const { PaymentCurrency } = await import("@prisma/client");
     const { solanaConnection, verifySolanaPayment } = await import("../src/services/solana.service");
     const treasury = "11111111111111111111111111111111";
+    const treasuryTokenAccount = "TokenAcct11111111111111111111111111111111";
     const mint = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
     vi.spyOn(solanaConnection, "getSignatureStatus").mockResolvedValue({
       context: { slot: 1 },
@@ -221,9 +224,9 @@ describe("verifySolanaPayment", () => {
         preTokenBalances: [{ accountIndex: 1, mint, owner: treasury, uiTokenAmount: { amount: "2500000", decimals: 6, uiAmount: 2.5, uiAmountString: "2.5" } }],
         postTokenBalances: [{ accountIndex: 1, mint, owner: treasury, uiTokenAmount: { amount: "3500000", decimals: 6, uiAmount: 3.5, uiAmountString: "3.5" } }]
       },
-      transaction: { message: { accountKeys: [{ pubkey: { toBase58: () => "11111111111111111111111111111111" } }, { pubkey: { toBase58: () => treasury } }], instructions: [
+      transaction: { message: { accountKeys: [{ pubkey: { toBase58: () => "ComputeBudget111111111111111111111111111111" } }, { pubkey: { toBase58: () => treasuryTokenAccount } }], instructions: [
         { program: "spl-memo", parsed: "usdc-valid-check" },
-        { program: "spl-token", parsed: { type: "transfer", info: { destination: treasury, amount: "1000000" } } }
+        { program: "spl-token", parsed: { type: "transfer", info: { destination: treasuryTokenAccount, amount: "1000000" } } }
       ] } }
     } as never);
 
