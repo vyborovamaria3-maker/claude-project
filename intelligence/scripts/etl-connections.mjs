@@ -82,7 +82,8 @@ export async function checkDestination(pool,options={}){
         AND contype='c'
         AND convalidated
         AND position('envelope_sha256' in pg_get_constraintdef(oid))>0
-        AND position('^[0-9a-f]{64}
+        AND position('length(envelope_sha256)' in pg_get_constraintdef(oid))>0
+        AND position('^[0-9a-f]+
   const row=result.rows[0];
   // Every consumer may encounter token-link events, so reject missing 004 before claiming.
   if(!row?.inbox||!row.registry||!row.evidence||!row.timeline||!row.token_links){
