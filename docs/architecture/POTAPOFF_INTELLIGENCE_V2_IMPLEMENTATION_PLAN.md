@@ -303,3 +303,6 @@
 
 
 - [ ] До любого live consumer canary проверить pending X/TG outbox rows: исторический `created_at DEFAULT now()` может предшествовать `observedAt`; не переписывать source rows автоматически. При несовместимых строках нужен отдельный операторский план reconciliation.
+
+
+- [ ] До live consumer canary проверить pending исторические Solana SQLite outbox rows: старый writer копировал `observedAt` в `created_at`; новый writer фиксирует wall-clock insert time. Не переписывать исторические строки и не выводить `emittedAt` из payload.
