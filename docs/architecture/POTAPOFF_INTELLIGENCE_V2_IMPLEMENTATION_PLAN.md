@@ -264,7 +264,7 @@
 - [x] Добавлены Event Envelope V2 types, canonical JSON/SHA-256, deterministic event ID, runtime validator и source-controlled registry для десяти текущих X/TG/Solana event schemas.
 - [x] Добавлены JSON Schema drift, compatibility-policy, immutable schema-ID, replay/collision и V1 normalizer unit tests.
 - [x] Добавлен CI integration test, который вызывает фактические V1 builders X/TG/Solana и прогоняет их через общий V2 registry; результат ожидает проверки на точном HEAD.
-- [ ] Подтвердить Shared Contracts и source-producer compatibility CI на точном HEAD; queued/skipped не считать pass.
+- [x] Подтверждён exact-head CI для Shared Contracts и source-producer compatibility: 30 успешных workflows, 0 failed, 1 skipped (не засчитан как pass).
 - [x] Добавить source outbox `created_at` в `ClaimedEvent` PostgreSQL/SQLite adapters; PostgreSQL emission использует `clock_timestamp()` в момент вставки.
 - [x] Подключить V1/V2 dual-read в Intelligence delivery без изменения V1 knownAt/fingerprint semantics; V2 hash используется для replay/collision.
 - [ ] Добавить producer-specific V2 builders behind default-off flags; текущие producers остаются V1.
@@ -296,7 +296,7 @@
 - [x] V1 fingerprint и source evidence clocks остаются прежними; `knownAt` не подменяется `emittedAt`.
 - [x] V2 полный envelope hash используется для duplicate/collision detection.
 - [x] Добавлены focused delivery tests на missing created_at, V1 knownAt parity, V2 hash tampering, identity mismatch, replay и collision.
-- [ ] Подтвердить contracts/outbox/Intelligence CI на точном HEAD; queued/skipped не считаются успешной проверкой.
+- [x] Подтверждён exact-head contracts/outbox/Intelligence CI: 30 успешных workflows, 0 failed, 1 skipped (не засчитан как pass).
 
 
 **Cutover blocker:** V1 inbox fingerprints remain registry-only for replay compatibility; V2 inbox fingerprints are full-envelope hashes. Same-key V1→V2 replay is deliberately rejected as `identity_collision` until an explicit cross-version reconciliation/cutover design is implemented and tested. Do not enable V2 producers or rewrite existing outbox payloads before that gate is closed.
@@ -306,3 +306,13 @@
 
 
 - [ ] До live consumer canary проверить pending исторические Solana SQLite outbox rows: старый writer копировал `observedAt` в `created_at`; новый writer фиксирует wall-clock insert time. Не переписывать исторические строки и не выводить `emittedAt` из payload.
+
+
+### CI checkpoint — 2026-11-13
+
+- [x] На точном PR HEAD `3fe5ead99b5ee01d33bf887f55e87af25af595e0` завершились 30 workflows успешно.
+- [x] Неуспешных workflows: 0.
+- [ ] Независимое review: reviews и inline review threads пока отсутствуют.
+- [ ] Cross-version V1/V2 replay reconciliation: подготовлен безопасный additive design в `SHARED_CONTRACTS_V2.md`, код и PostgreSQL concurrency tests ещё не реализованы.
+- [ ] Исторические pending source rows X/TG/Solana: только read-only операторская инвентаризация; source rows не переписывать.
+- [ ] V2 producer builders/parity/fault matrix/coverage enforcement остаются открытыми.
