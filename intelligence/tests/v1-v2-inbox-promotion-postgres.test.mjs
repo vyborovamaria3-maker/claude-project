@@ -4,7 +4,8 @@ import {randomBytes} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import pg from "pg";
 import {
-  buildEntityRef,buildEvidenceRef,buildEventEnvelopeV2,buildVerifiedTokenLinkEvent,formatSourceId,
+  buildEntityRef,buildEvidenceRef,buildTimelineEvent,buildEventEnvelopeV2,
+  buildVerifiedTokenLinkEvent,formatSourceId,
 } from "@claude-project/contracts";
 import {
   ingestRegistryEvent,ingestDestinationEvent,registryEventFingerprint,
@@ -83,6 +84,83 @@ test("PostgreSQL preserves V1 registry identity while promoting and fencing V2 e
     )).rows[0];
     assert.equal(stored.payload_sha256,registrySha);
     assert.equal(stored.envelope_sha256,v2Hash);
+
+    // A registered V1 message with a schema-valid timeline payload can be
+    // replayed as V2 without duplicating the materialized timeline row.
+    const timelineSourceEvent=event("106");
+    const timelineEvent=buildTimelineEvent({
+      eventKey:timelineSourceEvent.eventKey,
+      kind:"tg_message_published",
+      occurredAt:timelineSourceEvent.evidenceRef.occurredAt,
+      observedAt:timelineSourceEvent.evidenceRef.observedAt,
+      entityRefs:timelineSourceEvent.entityRefs,
+      evidenceRef:timelineSourceEvent.evidenceRef,
+      payload:{},
+    });
+    const timelinePayload={
+      registryEvent:{
+        sourceSystem:timelineSourceEvent.sourceSystem,
+        eventKind:timelineSourceEvent.eventKind,
+        eventKey:timelineSourceEvent.eventKey,
+        schemaVersion:timelineSourceEvent.schemaVersion,
+        entityRefs:timelineSourceEvent.entityRefs,
+        evidenceRef:timelineSourceEvent.evidenceRef,
+      },
+      timelineEvent,
+    };
+    const timelineV1Client=await pool.connect();
+    try{
+      await timelineV1Client.query("BEGIN");
+      assert.equal(await ingestDestinationEvent(timelineV1Client,{
+        sourceSystem:"tg",eventKind:"message_observed",
+        eventKey:timelineSourceEvent.eventKey,schemaVersion:"tg-message-v1",
+        payload:timelinePayload,createdAt:"2026-11-13T10:00:03.000Z",
+      }),true);
+      await timelineV1Client.query("COMMIT");
+    }catch(error){
+      try{await timelineV1Client.query("ROLLBACK")}catch{/* preserve first error */}
+      throw error;
+    }finally{timelineV1Client.release();}
+
+    const timelineV2=buildEventEnvelopeV2({
+      sourceSystem:"tg",eventKind:"message_observed",
+      eventKey:timelineSourceEvent.eventKey,schemaVersion:"tg-message-v1",
+      producer:{name:"tg-collector",version:"v2-fixture"},
+      clocks:{
+        occurredAt:timelineSourceEvent.evidenceRef.occurredAt??null,
+        observedAt:timelineSourceEvent.evidenceRef.observedAt,
+        emittedAt:"2026-11-13T10:00:03.000Z",
+      },
+      entityRefs:timelineSourceEvent.entityRefs.map(ref=>({
+        kind:ref.kind,canonicalId:ref.canonicalId,
+      })),
+      evidenceRefs:[timelineSourceEvent.evidenceRef],
+      payload:timelinePayload,
+    });
+    const timelineV2Client=await pool.connect();
+    try{
+      await timelineV2Client.query("BEGIN");
+      assert.equal(await ingestDestinationEvent(timelineV2Client,{
+        sourceSystem:"tg",eventKind:"message_observed",
+        eventKey:timelineSourceEvent.eventKey,schemaVersion:"tg-message-v1",
+        payload:timelineV2,createdAt:"2026-11-13T10:00:03.000Z",
+      }),false);
+      await timelineV2Client.query("COMMIT");
+    }catch(error){
+      try{await timelineV2Client.query("ROLLBACK")}catch{/* preserve first error */}
+      throw error;
+    }finally{timelineV2Client.release();}
+
+    const timelineRows=(await pool.query(
+      "SELECT count(*)::integer AS count FROM timeline_events WHERE event_key=$1",
+      [timelineSourceEvent.eventKey],
+    )).rows[0].count;
+    assert.equal(timelineRows,1,"V1/V2 replay must preserve exactly one timeline row");
+    const timelineInbox=(await pool.query(
+      "SELECT envelope_sha256 FROM intelligence_inbox WHERE event_key=$1",
+      [timelineSourceEvent.eventKey],
+    )).rows[0];
+    assert.equal(timelineInbox.envelope_sha256,timelineV2.payloadSha256);
 
     const concurrent=event("102");
     const seed=await pool.connect();
