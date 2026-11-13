@@ -235,3 +235,6 @@ This does not switch any producer to V2, enable a source flag, or change a produ
 
 
 **Historical source clock gate:** existing X/TG outbox rows created before the insert-time `clock_timestamp()` change retain the old `created_at DEFAULT now()` value. Because PostgreSQL `now()` is transaction-start time, a pending historical row can have `created_at < observedAt`; the adapter will fail closed rather than move `emittedAt`. Before enabling a live consumer, the operator must inspect pending source rows for this condition and approve a separate reconciliation if needed. No source-row rewrite or production migration is part of this PR.
+
+
+**Historical Solana source clock gate:** previous SQLite writers copied `observedAt` into `outbox_events.created_at`; the current writers now stamp wall-clock time at insert. Existing rows are intentionally not rewritten. Before enabling live V1→V2 delivery, inspect pending legacy Solana rows: `created_at == observedAt` may represent the old writer rather than a genuine same-millisecond emission, and this cannot be resolved from the timestamp alone. Do not infer or replace an emission clock.
