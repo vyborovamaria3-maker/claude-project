@@ -1,7 +1,8 @@
 import { canonicalJsonStringify } from "./canonical-json.js";
 import { buildEntityRef, type EntityKind } from "./entity-registry.js";
 import { validateEvidenceRef } from "./evidence.js";
-import { buildEventEnvelopeV2, type EventEnvelopeV2, type EventSource } from "./event-envelope.js";
+import { buildEventEnvelopeV2, type EventEnvelopeV2 } from "./event-envelope.js";
+import type { EventSource } from "./schema-registry.js";
 import { validateRegisteredPayload } from "./schema-registry.js";
 import { toUtcIso } from "./time.js";
 
