@@ -1,6 +1,6 @@
 # Shared Contracts V2 — design and migration specification
 
-Status: **PARTIAL IMPLEMENTATION — V2 contract package and V1 adapter exist; producers and consumer dual-read remain V1**  
+Status: **PARTIAL IMPLEMENTATION — V2 contract package and consumer V1/V2 dual-read are implemented; all source producers still emit V1**  
 Date: 2026-11-12  
 Parent plan: [POTAPOFF_INTELLIGENCE_V2_IMPLEMENTATION_PLAN.md](POTAPOFF_INTELLIGENCE_V2_IMPLEMENTATION_PLAN.md)  
 Scope: X Collector, TG Collector, Solana blockchain module, Node Intelligence.
@@ -187,12 +187,12 @@ No existing producer or consumer should be changed until its full test layout an
 
 - [ ] JSON Schema and TypeScript types agree (schema drift test).
 - [ ] All source producers have golden V1 and V2 fixtures.
-- [x] Consumer dual-read validation and focused V1/V2 delivery regression tests are implemented; exact-head CI is still pending.
+- [x] Consumer dual-read validation and focused V1/V2 delivery regression tests are implemented.
 - [ ] Same source event has same normalized evidence identity across V1/V2.
 - [ ] Hash/collision/revision semantics pass adversarial tests.
 - [ ] Solana cluster identity is retained without expanding supported chain set.
 - [ ] No raw private source content or credentials in events.
-- [ ] CI passes on exact commit; no skipped check counted as success.
+- [x] Exact-head CI: 30 successful workflows, 0 failed, 1 skipped optional workflow (`Security Lock Refresh`); skipped is not counted as success.
 - [ ] V2 producers remain opt-in/default-off until operator canary approval.
 
 ## 9. Current implementation and remaining gaps
@@ -216,7 +216,7 @@ V1 inbox fingerprint behavior remains unchanged, preserving existing V1 replay s
 
 Existing X/TG/Solana producers still write V1. X/TG outbox SQL now sets only the existing `created_at` column with `clock_timestamp()` so the emitted clock is not transaction-start `NOW()`; payloads, flags and schema migrations remain unchanged. No V2 producer flag was added or enabled. Unknown event schemas and `twitter_research` are rejected by this initial V2 registry; multichain remains out of scope. V1 producers may already use `observedAt` as a fallback for missing source occurrence time; the adapter cannot infer whether this was a genuine source timestamp and preserves the V1 value.
 
-**CI acceptance is pending on the exact PR head.** Queued, skipped or incomplete checks do not satisfy the exit criteria. No production migration, collector enablement, merge or deployment is authorized by this implementation.
+**Exact-head CI snapshot (2026-11-13):** 30 workflows completed successfully, 0 failed, and 1 workflow (`Security Lock Refresh`) was skipped. The skipped workflow is not counted as a pass. No production migration, collector enablement, merge or deployment is authorized by this implementation.
 
 
 ### Consumer dual-read implementation update — 2026-11-12
@@ -238,3 +238,17 @@ This does not switch any producer to V2, enable a source flag, or change a produ
 
 
 **Historical Solana source clock gate:** previous SQLite writers copied `observedAt` into `outbox_events.created_at`; the current writers now stamp wall-clock time at insert. Existing rows are intentionally not rewritten. Before enabling live V1→V2 delivery, inspect pending legacy Solana rows: `created_at == observedAt` may represent the old writer rather than a genuine same-millisecond emission, and this cannot be resolved from the timestamp alone. Do not infer or replace an emission clock.
+
+
+### Cross-version replay reconciliation — design decision, implementation pending
+
+The current single-column fingerprint design cannot safely compare a V1 registry fingerprint with a V2 full-envelope hash. The safe additive direction is to keep two independent fingerprints rather than overwrite or reinterpret the existing one:
+
+- Keep `intelligence_inbox.payload_sha256` as the normalized `RegistryEvent` fingerprint for both V1 and V2. This preserves the established V1 replay identity.
+- Add a nullable `envelope_sha256` column for the full canonical V2 envelope hash. V1 rows leave it NULL; V2 rows populate it.
+- On a V1→V2 same-key replay, lock/read the inbox row, require schema version, evidence source and registry fingerprint equality, then set `envelope_sha256` only if it is NULL. If it is already populated, require an exact hash match.
+- Run all existing materialization equality checks in the same destination transaction: timeline equality and entity attribution, verified token-link observation checks, and blockchain swap-revision checks. Any mismatch rolls back the fingerprint promotion and fails delivery.
+- A V2→V1 replay compares the stable registry fingerprint and still runs those materialization checks; V1 cannot attest to V2-only envelope metadata, so it must never clear or replace an existing V2 hash.
+- A NULL legacy fingerprint remains fail-closed. Do not infer it from partial metadata or silently backfill it. Only a separate bounded, dry-run-first operator process may populate it after proving the original normalized source payload.
+
+This strategy does not modify source outbox rows or historical payloads. It requires a new additive Intelligence migration, concurrency-safe row locking/conditional promotion, unit tests, PostgreSQL integration tests for V1→V2/V2→V1/concurrent promotion/timeline mismatch/token-link and swap mismatch, and independent review. Until those gates pass, the current `identity_collision` behavior remains intentional and V2 producers remain disabled.
