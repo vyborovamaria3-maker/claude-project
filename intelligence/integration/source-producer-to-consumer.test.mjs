@@ -325,7 +325,7 @@ test("actual X/TG mint verifiers and source emitters plus Blockchain revision em
         sourceRevisionSha256:createHash("sha256").update(JSON.stringify([
           xEditedText,new Date(xPostedAt).toISOString(),
         ])).digest("hex"),
-        observedAt:new Date(Date.now()+2000),postedAt:new Date(xPostedAt),
+        observedAt:new Date(),postedAt:new Date(xPostedAt),
       });
       await xTombstoneTx.query("COMMIT");
     }catch(error){
@@ -337,7 +337,7 @@ test("actual X/TG mint verifiers and source emitters plus Blockchain revision em
     try{
       await tgTombstoneTx.query("BEGIN");
       const tgEditedText="Edited PRIVATE TG fixture text; literal mint "+mint;
-      const tgEditedAt=new Date(Date.now()+2000);
+      const tgEditedAt=new Date();
       await tgTombstoneTx.query(
         "UPDATE tg_messages SET text=$3,edited_at=$4 WHERE source_id=$1 AND message_id=$2",
         ["1",201,tgEditedText,tgEditedAt],
@@ -347,7 +347,7 @@ test("actual X/TG mint verifiers and source emitters plus Blockchain revision em
         sourceRevisionSha256:createHash("sha256").update(JSON.stringify([
           tgEditedText,tgPostedAt.toISOString(),tgEditedAt.toISOString(),
         ])).digest("hex"),
-        observedAt:new Date(Date.now()+3000),postedAt:tgPostedAt,
+        observedAt:new Date(),postedAt:tgPostedAt,
       });
       await tgTombstoneTx.query("COMMIT");
     }catch(error){

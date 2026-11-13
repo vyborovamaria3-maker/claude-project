@@ -105,12 +105,16 @@ jobs:
             -v "$PWD/scripts/provision-readonly-role.sql:/provision/readonly-role.sql:ro" \
             -v "$PWD/scripts/run-readonly-role-provisioner.sh:/provision/run-readonly-role-provisioner.sh:ro" \
             postgres:16-alpine /bin/sh /provision/run-readonly-role-provisioner.sh
-      - name: Apply Prisma migrations and seed as the migrator identity
+      - name: Apply Prisma migrations with temporary database CREATE, then revoke it
         env:
-          MIGRATOR_DATABASE_URL: postgresql://solsub_migrator:ci-migrator-password@127.0.0.1:5432/solsub_role_ci?schema=public
-        run: |
-          DATABASE_URL="$MIGRATOR_DATABASE_URL" npm run prisma:deploy -w @solsub/api
-          DATABASE_URL="$MIGRATOR_DATABASE_URL" npm run prisma:seed -w @solsub/api
+          DATABASE_URL: postgresql://solsub_migrator:ci-migrator-password@127.0.0.1:5432/solsub_role_ci?schema=public
+          PGHOST: 127.0.0.1
+          PGPORT: "5432"
+          POSTGRES_DB: solsub_role_ci
+          POSTGRES_BOOTSTRAP_USER: postgres
+          POSTGRES_BOOTSTRAP_PASSWORD: ci-bootstrap-password
+          POSTGRES_MIGRATOR_USER: solsub_migrator
+        run: sh scripts/run-prisma-migrations.sh
       - name: Verify runtime DML, read-only SELECT and DDL boundaries
         env:
           APP_DATABASE_URL: postgresql://solsub_app:ci-app-password@127.0.0.1:5432/solsub_role_ci?schema=public

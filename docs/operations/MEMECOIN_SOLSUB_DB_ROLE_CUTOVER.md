@@ -16,7 +16,7 @@ This runbook applies to:
 | `*_app` | API/worker/bot runtime | SELECT, INSERT, UPDATE, DELETE; no schema creation |
 | `*_readonly` | Admin/source inspection | SELECT only; read-only transactions |
 
-The provisioner is idempotent, rejects restricted identities as its bootstrap login, removes role memberships from restricted roles, and sets default privileges for objects created by the migration identity. It also pre-provisions `pgcrypto` for Memecoin Intelligence and ensures the default `public` schema exists as bootstrap, before the restricted migrator runs. This keeps both initial migration files immutable; do not edit an applied SQL or Prisma migration to accommodate a restricted role.
+The provisioner is idempotent, rejects restricted identities as its bootstrap login, removes role memberships from restricted roles, and sets default privileges for objects created by the migration identity. It pre-provisions `pgcrypto` for Memecoin Intelligence and ensures the default `public` schema exists as bootstrap. Solana Subscription's immutable Prisma initial migration still executes `CREATE SCHEMA IF NOT EXISTS public`, which PostgreSQL requires database-level CREATE for even when the schema already exists. The migration-only wrapper temporarily grants CREATE to the migrator only around `prisma migrate deploy`, then revokes it on success or on shell exit; it must never remain on the runtime role. Keep initial SQL/Prisma migrations immutable.
 
 The application containers do not receive the bootstrap or migrator passwords. SolSub Web receives only public `NEXT_PUBLIC_*` configuration. Deployment `.env` files are excluded from both Docker build contexts.
 

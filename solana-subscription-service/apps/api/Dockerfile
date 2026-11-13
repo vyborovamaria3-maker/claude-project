@@ -19,6 +19,9 @@ RUN npm run build -w @solsub/shared && npm run build -w @solsub/api
 # The API runner below deliberately excludes npm and never applies migrations.
 FROM build AS migrator
 ENV NODE_ENV=production
+# Only the migration-profile image needs psql to grant/revoke the short-lived
+# database CREATE privilege required by the immutable Prisma initial migration.
+RUN apk add --no-cache postgresql-client
 USER node
 
 FROM node:22-alpine AS runner
