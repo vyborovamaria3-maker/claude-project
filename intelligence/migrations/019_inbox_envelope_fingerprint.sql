@@ -13,7 +13,7 @@ BEGIN
   ) THEN
     ALTER TABLE intelligence_inbox
       ADD CONSTRAINT intelligence_inbox_envelope_sha256_check
-      CHECK (envelope_sha256 IS NULL OR envelope_sha256 ~ '^[0-9a-f]{64}$') NOT VALID;
+      CHECK (envelope_sha256 IS NULL OR (length(envelope_sha256)=64 AND envelope_sha256 ~ '^[0-9a-f]+$')) NOT VALID;
   END IF;
 END;
 $envelope_fingerprint$;
@@ -28,7 +28,8 @@ BEGIN
       AND conname = 'intelligence_inbox_envelope_sha256_check'
       AND contype = 'c'
       AND position('envelope_sha256' in pg_get_constraintdef(oid)) > 0
-      AND position('^[0-9a-f]{64}$' in pg_get_constraintdef(oid)) > 0
+      AND position('length(envelope_sha256)' in pg_get_constraintdef(oid)) > 0
+      AND position('^[0-9a-f]+$' in pg_get_constraintdef(oid)) > 0
   ) THEN
     RAISE EXCEPTION 'intelligence_inbox_envelope_sha256_check has an unexpected definition';
   END IF;
