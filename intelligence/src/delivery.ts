@@ -316,7 +316,8 @@ async function ingestPreparedDestinationEvent(
   prepared: PreparedDeliveryEvent,
 ): Promise<boolean> {
   const { event, body, envelopeSha256 } = prepared;
-  const fresh = await ingestRegistryEvent(tx, body.registryEvent, envelopeSha256);
+  const fresh = await ingestRegistryEvent(tx, body.registryEvent,
+    envelopeSha256 === undefined ? {} : { envelopeSha256 });
   if(event.eventKind==="token_link_verified"||event.eventKind==="token_links_invalidated"){
     await ingestTokenLinkObservation(tx,{
       sourceSystem:event.sourceSystem as "x"|"tg",
