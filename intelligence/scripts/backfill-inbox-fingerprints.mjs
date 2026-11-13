@@ -119,6 +119,7 @@ async function main() {
     await checkDestination(destination, {
       requireBlockchainRevisions: options.source === "blockchain",
       allowLegacyFingerprints: true,
+      requireEnvelopeFingerprint: false,
     });
     const result = await backfillPending({
       source, destination, sourceName: options.source, limit: options.limit, execute: options.execute,
