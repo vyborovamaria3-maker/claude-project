@@ -278,78 +278,6 @@ def verify_preprovisioned_schema(dsn: str) -> None:
             if database_rights != (True, False, False, False):
                 raise RuntimeError("Admin runtime has unsafe database-level privileges")
 
-            # The runtime must not own, or be able to SET ROLE to the owner of,
-            # any application relation, function or user-defined type. Checking
-            # only the required public tables would miss stale ownership in an
-            # auxiliary schema after its CREATE grant had been revoked.
-            cur.execute(
-                """
-                WITH extension_members AS (
-                    SELECT classid, objid
-                    FROM pg_depend
-                    WHERE deptype = 'e'
-                ),
-                application_objects AS (
-                    SELECT
-                        n.nspname AS schema_name,
-                        n.nspname || '.' || c.relname AS object_name,
-                        c.relowner AS owner_oid
-                    FROM pg_class AS c
-                    JOIN pg_namespace AS n ON n.oid = c.relnamespace
-                    WHERE n.nspname <> 'information_schema'
-                      AND n.nspname NOT LIKE 'pg_%'
-                      AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
-                      AND NOT EXISTS (
-                          SELECT 1 FROM extension_members AS e
-                          WHERE e.classid = 'pg_class'::regclass AND e.objid = c.oid
-                      )
-
-                    UNION ALL
-
-                    SELECT
-                        n.nspname,
-                        n.nspname || '.' || p.proname || '(' ||
-                            pg_get_function_identity_arguments(p.oid) || ')',
-                        p.proowner
-                    FROM pg_proc AS p
-                    JOIN pg_namespace AS n ON n.oid = p.pronamespace
-                    WHERE n.nspname <> 'information_schema'
-                      AND n.nspname NOT LIKE 'pg_%'
-                      AND NOT EXISTS (
-                          SELECT 1 FROM extension_members AS e
-                          WHERE e.classid = 'pg_proc'::regclass AND e.objid = p.oid
-                      )
-
-                    UNION ALL
-
-                    SELECT
-                        n.nspname,
-                        n.nspname || '.' || t.typname,
-                        t.typowner
-                    FROM pg_type AS t
-                    JOIN pg_namespace AS n ON n.oid = t.typnamespace
-                    WHERE n.nspname <> 'information_schema'
-                      AND n.nspname NOT LIKE 'pg_%'
-                      AND t.typtype IN ('b', 'c', 'd', 'e', 'm', 'p', 'r')
-                      AND NOT EXISTS (
-                          SELECT 1 FROM extension_members AS e
-                          WHERE e.classid = 'pg_type'::regclass AND e.objid = t.oid
-                      )
-                )
-                SELECT schema_name, object_name
-                FROM application_objects
-                WHERE pg_has_role(current_user, owner_oid, 'MEMBER')
-                ORDER BY schema_name, object_name
-                LIMIT 1
-                """
-            )
-            owned_object = cur.fetchone()
-            if owned_object:
-                raise RuntimeError(
-                    "Admin runtime owns or can SET ROLE to the owner of application object: "
-                    f"{owned_object[0]}.{owned_object[1]}"
-                )
-
             # A PUBLIC EXECUTE grant on SECURITY DEFINER code is an execution
             # boundary bypass even when table/schema ACLs are otherwise narrow.
             cur.execute(
@@ -424,6 +352,87 @@ def verify_preprovisioned_schema(dsn: str) -> None:
                         raise RuntimeError("Admin runtime audit log must be append-only")
                 elif not all(dml):
                     raise RuntimeError(f"Admin runtime DML privilege missing for {name}")
+
+            # The runtime must not own, or be able to SET ROLE to the owner of,
+            # any application relation, function or user-defined type beyond the
+            # explicit per-table gates above. Checking only the required public
+            # tables would miss stale ownership in an auxiliary schema after its
+            # CREATE grant had been revoked.
+            #
+            # Array types (typcategory 'A') are deliberately excluded: PostgreSQL
+            # ties their owner to the element type's owner, so every array type
+            # is already covered by the scan of its element type. Including them
+            # would only report the row-type array (for example _feature_flags)
+            # instead of the table that actually carries the ownership problem.
+            cur.execute(
+                """
+                WITH extension_members AS (
+                    SELECT classid, objid
+                    FROM pg_depend
+                    WHERE deptype = 'e'
+                ),
+                application_objects AS (
+                    SELECT
+                        n.nspname AS schema_name,
+                        n.nspname || '.' || c.relname AS object_name,
+                        c.relowner AS owner_oid
+                    FROM pg_class AS c
+                    JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                    WHERE n.nspname <> 'information_schema'
+                      AND n.nspname NOT LIKE 'pg_%'
+                      AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
+                      AND NOT EXISTS (
+                          SELECT 1 FROM extension_members AS e
+                          WHERE e.classid = 'pg_class'::regclass AND e.objid = c.oid
+                      )
+
+                    UNION ALL
+
+                    SELECT
+                        n.nspname,
+                        n.nspname || '.' || p.proname || '(' ||
+                            pg_get_function_identity_arguments(p.oid) || ')',
+                        p.proowner
+                    FROM pg_proc AS p
+                    JOIN pg_namespace AS n ON n.oid = p.pronamespace
+                    WHERE n.nspname <> 'information_schema'
+                      AND n.nspname NOT LIKE 'pg_%'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM extension_members AS e
+                          WHERE e.classid = 'pg_proc'::regclass AND e.objid = p.oid
+                      )
+
+                    UNION ALL
+
+                    SELECT
+                        n.nspname,
+                        n.nspname || '.' || t.typname,
+                        t.typowner
+                    FROM pg_type AS t
+                    JOIN pg_namespace AS n ON n.oid = t.typnamespace
+                    WHERE n.nspname <> 'information_schema'
+                      AND n.nspname NOT LIKE 'pg_%'
+                      AND t.typtype IN ('b', 'c', 'd', 'e', 'm', 'p', 'r')
+                      AND NOT (t.typcategory = 'A' AND t.typelem <> 0)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM extension_members AS e
+                          WHERE e.classid = 'pg_type'::regclass AND e.objid = t.oid
+                      )
+                )
+                SELECT schema_name, object_name
+                FROM application_objects
+                WHERE pg_has_role(current_user, owner_oid, 'MEMBER')
+                ORDER BY schema_name, object_name
+                LIMIT 1
+                """
+            )
+            owned_object = cur.fetchone()
+            if owned_object:
+                # object_name is already schema-qualified; do not prefix it again.
+                raise RuntimeError(
+                    "Admin runtime owns or can SET ROLE to the owner of application object: "
+                    f"{owned_object[1]}"
+                )
 
             # Reject a damaged/old schema that happens to reuse correct
             # table names. Compare every application column's type/nullability

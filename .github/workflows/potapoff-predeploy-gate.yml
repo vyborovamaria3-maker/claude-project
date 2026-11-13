@@ -309,6 +309,8 @@ jobs:
           docker compose --env-file memecoin-intelligence/.env -f memecoin-intelligence/docker-compose.production.yml config --quiet
       - name: Exercise PostgreSQL read-only source role provisioners
         run: bash .github/scripts/test-readonly-source-roles.sh
+      - name: Verify provisioner SQL delimiter guard actually executes
+        run: bash .github/scripts/test-provisioner-sql-guard.sh
       - name: Rehearse POTAPoff least-privilege roles and explicit ownership guard
         run: bash .github/scripts/test-potapoff-role-provisioner.sh
       - name: Verify Admin deploy rollback SHA tracking

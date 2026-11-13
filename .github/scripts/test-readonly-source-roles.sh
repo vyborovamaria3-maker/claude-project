@@ -68,10 +68,13 @@ test_role_set() {
   docker exec "$container" mkdir -p /provision
   docker cp "$repo_root/$sql_path" "$container:/provision/readonly-role.sql" >/dev/null
   docker cp "$repo_root/$entrypoint_path" "$container:/provision/run-readonly-role-provisioner.sh" >/dev/null
-  if grep -Eq '^[[:space:]]*DO[[:space:]]+\$[[:space:]]*$|^[[:space:]]*\$;[[:space:]]*$' /provision/readonly-role.sql; then
-    echo "Malformed DO dollar-quote delimiter in $sql_path" >&2
+  # Validate the source SQL on the host BEFORE docker cp: /provision/... exists
+  # only inside the container, so a host-side grep would silently skip the
+  # check inside this if-condition.
+  bash "$repo_root/.github/scripts/check-provisioner-sql-delimiters.sh" "$repo_root/$sql_path" || {
+    echo "Provisioner SQL delimiter guard failed for $sql_path" >&2
     return 1
-  fi
+  }
 
   run_provisioner() {
     docker exec \

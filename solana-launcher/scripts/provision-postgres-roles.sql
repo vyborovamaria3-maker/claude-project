@@ -39,6 +39,12 @@ END
 $$;
 \endif
 
+-- Only reserved role names and pre-existing superuser targets are vetoed here.
+-- Elevated but revocable attributes (CREATEDB, CREATEROLE, REPLICATION,
+-- BYPASSRLS) on existing restricted roles are exactly the configuration drift
+-- this provisioner must converge: the ALTER ROLE statements below reset them.
+-- Vetoing those attributes here would make idempotent re-provisioning
+-- impossible and leave drifted roles unfixable.
 WITH requested_roles(role_name) AS (
   VALUES (:'app_user'), (:'migrator_user'), (:'backup_user'), (:'readonly_user')
 )
@@ -52,10 +58,7 @@ SELECT NOT EXISTS (
      OR target.role_name IN ('postgres', 'rdsadmin', 'cloudsqlsuperuser', 'alloydbadmin')
      OR (
        existing.oid IS NOT NULL
-       AND (
-         existing.rolsuper OR existing.rolcreatedb OR existing.rolcreaterole
-         OR existing.rolreplication OR existing.rolbypassrls
-       )
+       AND existing.rolsuper
      )
 ) AS role_targets_safe \gset
 \if :role_targets_safe

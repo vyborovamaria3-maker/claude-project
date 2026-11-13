@@ -49,13 +49,16 @@ run_psql() {
 }
 
 run_role_provisioner() {
+  # Keep the preflight diagnostics: psql \echo goes to stdout, which used to be
+  # discarded and left only the generic RAISE error for operators to debug.
   run_psql "$bootstrap_user" "$bootstrap_password" \
     -v bootstrap_user="$bootstrap_user" \
     -v app_user="$app_user" -v app_password="$app_password" \
     -v migrator_user="$migrator_user" -v migrator_password="$migrator_password" \
     -v backup_user="$backup_user" -v backup_password="$backup_password" \
     -v readonly_user="$readonly_user" -v readonly_password="$readonly_password" \
-    -f /tmp/provision-postgres-roles.sql
+    -f /tmp/provision-postgres-roles.sql 2>&1 | tee "$scratch/provisioner-last.log" >&2
+  return "${PIPESTATUS[0]}"
 }
 
 original_schema_owner="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
@@ -90,14 +93,23 @@ run_psql "$bootstrap_user" "$bootstrap_password" -c "
   REVOKE ALL ON FUNCTION public.legacy_security_definer_second() FROM PUBLIC;
 " >/dev/null
 
+# Validate the source SQL on the host BEFORE docker cp: /tmp/... paths exist
+# only inside the container, so a host-side grep would silently skip the check.
+for sql_file in \
+  "$root/solana-launcher/scripts/provision-postgres-roles.sql" \
+  "$root/solana-launcher/scripts/check-postgres-migrator-ownership.sql"
+do
+  test -f "$sql_file" || { echo "SQL provisioner file is missing: $sql_file" >&2; exit 1; }
+done
+bash "$(dirname "${BASH_SOURCE[0]}")/check-provisioner-sql-delimiters.sh" \
+  "$root/solana-launcher/scripts/provision-postgres-roles.sql" \
+  "$root/solana-launcher/scripts/check-postgres-migrator-ownership.sql" || {
+  echo "Provisioner SQL delimiter guard failed" >&2
+  exit 1
+}
+
 docker cp "$root/solana-launcher/scripts/provision-postgres-roles.sql" "$container:/tmp/provision-postgres-roles.sql" >/dev/null
 docker cp "$root/solana-launcher/scripts/check-postgres-migrator-ownership.sql" "$container:/tmp/check-postgres-migrator-ownership.sql" >/dev/null
-for sql_file in /tmp/provision-postgres-roles.sql /tmp/check-postgres-migrator-ownership.sql; do
-  if grep -Eq '^[[:space:]]*DO[[:space:]]+\$[[:space:]]*$|^[[:space:]]*\$;[[:space:]]*$' "$sql_file"; then
-    echo "Malformed DO dollar-quote delimiter in $sql_file" >&2
-    exit 1
-  fi
-done
 
 # A pre-existing superuser must never be normalized by ALTER ROLE.
 run_psql "$bootstrap_user" "$bootstrap_password" -c \
@@ -222,13 +234,7 @@ run_psql "$bootstrap_user" "$bootstrap_password" -c "
   ALTER DEFAULT PRIVILEGES FOR ROLE $migrator_user IN SCHEMA public GRANT USAGE, UPDATE ON SEQUENCES TO PUBLIC;
 " >/dev/null
 
-run_psql "$bootstrap_user" "$bootstrap_password" \
-  -v bootstrap_user="$bootstrap_user" \
-  -v app_user="$app_user" -v app_password="$app_password" \
-  -v migrator_user="$migrator_user" -v migrator_password="$migrator_password" \
-  -v backup_user="$backup_user" -v backup_password="$backup_password" \
-  -v readonly_user="$readonly_user" -v readonly_password="$readonly_password" \
-  -f /tmp/provision-postgres-roles.sql >/dev/null
+run_role_provisioner
 
 # Provisioning is idempotent and must not make a bootstrap-owned table appear
 # migrator-owned. It grants DML/SELECT only, not database ownership or RLS bypass.
@@ -519,13 +525,7 @@ run_psql "$bootstrap_user" "$bootstrap_password" -c "
 
 # Re-running provisioning must preserve the manual allowlist transfer and the
 # restricted role boundaries.
-run_psql "$bootstrap_user" "$bootstrap_password" \
-  -v bootstrap_user="$bootstrap_user" \
-  -v app_user="$app_user" -v app_password="$app_password" \
-  -v migrator_user="$migrator_user" -v migrator_password="$migrator_password" \
-  -v backup_user="$backup_user" -v backup_password="$backup_password" \
-  -v readonly_user="$readonly_user" -v readonly_password="$readonly_password" \
-  -f /tmp/provision-postgres-roles.sql >/dev/null
+run_role_provisioner
 [[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
   "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.legacy_records'::regclass")" == "$migrator_user" ]]
 
