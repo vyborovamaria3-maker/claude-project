@@ -360,6 +360,31 @@ def provision_roles(
             )
         )
 
+        # Stale operator grants must not leave runtime, migration or backup
+        # DDL authority on auxiliary user schemas. The migration identity may
+        # hold schema CREATE only on public; runtime and backup never receive
+        # migration privileges anywhere.
+        auxiliary_schemas = [
+            row[0]
+            for row in db.execute(
+                """
+                SELECT nspname FROM pg_namespace
+                WHERE nspname <> 'information_schema'
+                  AND nspname NOT LIKE 'pg_%'
+                  AND nspname <> 'public'
+                """
+            ).fetchall()
+        ]
+        for schema in auxiliary_schemas:
+            db.execute(
+                sql.SQL("REVOKE CREATE ON SCHEMA {} FROM {}, {}, {}").format(
+                    sql.Identifier(schema),
+                    sql.Identifier(app_user),
+                    sql.Identifier(migrator_user),
+                    sql.Identifier(backup_user),
+                )
+            )
+
         # Remove PUBLIC data access and stale grants before applying the narrow
         # runtime and backup ACLs.
         db.execute("REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC")
@@ -542,6 +567,7 @@ def provision_schema(
     app_user: str,
     migrator_user: str,
     backup_user: str,
+    backup_dsn: str | None = None,
 ) -> None:
     # Constructors own the canonical DDL. This mode is intentionally enabled
     # only in the short-lived migration/provisioner process.
@@ -617,9 +643,24 @@ def provision_schema(
 
     os.environ["ADMIN_PG_SCHEMA_MODE"] = "preprovisioned"
     os.environ["ADMIN_STATE_POSTGRES_DSN"] = runtime_dsn
-    from app.postgres_schema_policy import verify_preprovisioned_schema
+    from app.postgres_schema_policy import (
+        verify_backup_role_restricted,
+        verify_preprovisioned_schema,
+    )
 
     verify_preprovisioned_schema(runtime_dsn)
+    if backup_dsn:
+        verify_backup_role_restricted(backup_dsn)
+
+
+def _backup_dsn_from_migrator(
+    migrator_dsn: str, backup_user: str, backup_password: str
+) -> str:
+    """Derive the backup login DSN from the migrator DSN (same host/db)."""
+    params = psycopg.conninfo.conninfo_to_dict(migrator_dsn)
+    params["user"] = backup_user
+    params["password"] = backup_password
+    return psycopg.conninfo.make_conninfo(**params)
 
 
 def main() -> None:
@@ -651,6 +692,9 @@ def main() -> None:
         app_user=app_user,
         migrator_user=migrator_user,
         backup_user=backup_user,
+        backup_dsn=_backup_dsn_from_migrator(
+            migrator_dsn, backup_user, backup_password
+        ),
     )
     print("ADMIN_POSTGRES_ROLE_PROVISIONING_OK")
 

@@ -27,7 +27,8 @@ from app.postgres_admin_state import (  # noqa: E402
     PostgresAuditStore, PostgresControlStore, PostgresLiveAnalysisProfileStore,
 )
 from app.postgres_schema_policy import (  # noqa: E402
-    TABLES, INDEXES, require_admin_postgres_dsn, verify_preprovisioned_schema,
+    TABLES, INDEXES, require_admin_postgres_dsn,
+    verify_backup_role_restricted, verify_preprovisioned_schema,
 )
 from app.postgres_security_store import PostgresAdminSessionStore  # noqa: E402
 from app.postgres_task_queue import PostgresTaskQueue  # noqa: E402
@@ -316,6 +317,69 @@ def provision_test_cluster() -> None:
         bootstrap.execute("DROP SCHEMA admin_ci_migration_owned CASCADE")
 
     provision()
+
+    # Stale operator grants on auxiliary schemas must be revoked for every
+    # restricted identity. Backup must never keep schema CREATE anywhere,
+    # directly or through a SET-able membership.
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+        bootstrap.execute("CREATE SCHEMA admin_ci_archive AUTHORIZATION potapoff_admin")
+        bootstrap.execute("GRANT CREATE ON SCHEMA admin_ci_archive TO admin_ci_backup")
+        bootstrap.execute("GRANT CREATE ON SCHEMA admin_ci_archive TO admin_ci_runtime")
+        bootstrap.execute("CREATE ROLE admin_ci_archive_writer NOLOGIN")
+        bootstrap.execute(
+            "GRANT CREATE ON SCHEMA admin_ci_archive TO admin_ci_archive_writer"
+        )
+        bootstrap.execute(
+            "GRANT admin_ci_archive_writer TO admin_ci_backup "
+            "WITH INHERIT FALSE, SET TRUE"
+        )
+    provision()
+    # Startup verification gates only run in preprovisioned mode; enable the
+    # mode briefly so the backup identity and the stale runtime CREATE grant
+    # are checked by the real policy code.
+    os.environ["ADMIN_PG_SCHEMA_MODE"] = "preprovisioned"
+    verify_backup_role_restricted(BACKUP)
+    with psycopg.connect(BACKUP) as backup:
+        assert backup.execute(
+            "SELECT has_schema_privilege(current_user,'admin_ci_archive','CREATE')"
+        ).fetchone()[0] is False
+        try:
+            backup.execute("CREATE TABLE admin_ci_archive.must_not_exist(id int)")
+        except (InsufficientPrivilege, psycopg.errors.ReadOnlySqlTransaction):
+            pass
+        else:
+            raise AssertionError("Admin backup retained auxiliary schema CREATE")
+        backup.rollback()
+        try:
+            backup.execute("SET ROLE admin_ci_archive_writer")
+        except InsufficientPrivilege:
+            pass
+        else:
+            raise AssertionError("Admin backup retained a SET-able schema-CREATE membership")
+    with psycopg.connect(RUNTIME) as runtime:
+        assert runtime.execute(
+            "SELECT has_schema_privilege(current_user,'admin_ci_archive','CREATE')"
+        ).fetchone()[0] is False
+    # A stale runtime CREATE on an auxiliary schema must fail startup verification.
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+        bootstrap.execute("GRANT CREATE ON SCHEMA admin_ci_archive TO admin_ci_runtime")
+    try:
+        verify_preprovisioned_schema(RUNTIME)
+    except RuntimeError as exc:
+        assert "has DDL privileges in schema" in str(exc), str(exc)
+    else:
+        raise AssertionError("Runtime auxiliary schema CREATE was accepted")
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+        bootstrap.execute("REVOKE CREATE ON SCHEMA admin_ci_archive FROM admin_ci_runtime")
+        bootstrap.execute(
+            "REVOKE CREATE ON SCHEMA admin_ci_archive FROM admin_ci_archive_writer"
+        )
+        bootstrap.execute("DROP ROLE admin_ci_archive_writer")
+        bootstrap.execute("DROP SCHEMA admin_ci_archive")
+    # The application tables do not exist yet at this point in the cluster
+    # rehearsal, so full startup verification is deferred to the dedicated
+    # assert_runtime_restricted phase; restore the rehearsal mode.
+    os.environ["ADMIN_PG_SCHEMA_MODE"] = "legacy"
 
     # Reintroduce stale direct and global/schema-local defaults after roles exist.
     # A second pass must converge to the exact least-privilege policy.

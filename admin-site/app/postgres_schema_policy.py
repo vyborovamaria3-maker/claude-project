@@ -573,3 +573,132 @@ def verify_preprovisioned_schema(dsn: str) -> None:
                     "Admin runtime must not have PostgreSQL role memberships, including SET ROLE: "
                     f"{unexpected_membership[0]}"
                 )
+
+
+def verify_backup_role_restricted(dsn: str) -> None:
+    """Verify the dedicated backup login is a read-only export identity.
+
+    Backup must never carry migration authority: no privileged role flags, no
+    direct or SET-reachable CREATE on any user schema, no writes on application
+    objects, no database CREATE/TEMPORARY and no executable SECURITY DEFINER
+    code through direct, PUBLIC or SET-reachable EXECUTE grants.
+    """
+    if not preprovisioned_schema_enabled():
+        return
+    with psycopg.connect(dsn, connect_timeout=5) as db:
+        with db.cursor() as cur:
+            cur.execute(
+                "SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication, "
+                "rolbypassrls FROM pg_roles WHERE rolname = current_user"
+            )
+            flags = cur.fetchone()
+            if not flags or any(flags):
+                raise RuntimeError("Admin backup identity has unsafe PostgreSQL role flags")
+            cur.execute("SHOW default_transaction_read_only")
+            if cur.fetchone()[0] != "on":
+                raise RuntimeError(
+                    "Admin backup identity must default to read-only transactions"
+                )
+            cur.execute(
+                "SELECT has_database_privilege(current_user, current_database(), 'CREATE'), "
+                "has_database_privilege(current_user, current_database(), 'TEMPORARY')"
+            )
+            database_rights = cur.fetchone()
+            if database_rights != (False, False):
+                raise RuntimeError("Admin backup identity has database DDL privileges")
+            cur.execute(
+                "SELECT n.nspname FROM pg_namespace n "
+                "WHERE n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg_%' "
+                "AND has_schema_privilege(current_user, n.oid, 'CREATE') "
+                "ORDER BY n.nspname LIMIT 1"
+            )
+            row = cur.fetchone()
+            if row:
+                raise RuntimeError(f"Admin backup identity has schema CREATE privilege: {row[0]}")
+            # SET-reachable CREATE would let a login masquerading as the backup
+            # identity obtain migration authority through role membership.
+            cur.execute(
+                """
+                WITH RECURSIVE reachable AS (
+                    SELECT m.roleid
+                    FROM pg_auth_members m
+                    WHERE m.member = current_user::regrole
+                    UNION
+                    SELECT m.roleid
+                    FROM pg_auth_members m
+                    JOIN reachable r ON r.roleid = m.member
+                )
+                SELECT n.nspname, pg_get_userbyid(reachable.roleid)
+                FROM reachable
+                CROSS JOIN pg_namespace n
+                WHERE n.nspname <> 'information_schema'
+                  AND n.nspname NOT LIKE 'pg_%'
+                  AND has_schema_privilege(pg_get_userbyid(reachable.roleid), n.oid, 'CREATE')
+                ORDER BY n.nspname
+                LIMIT 1
+                """
+            )
+            row = cur.fetchone()
+            if row:
+                raise RuntimeError(
+                    "Admin backup identity can SET ROLE to a schema CREATE grant: "
+                    f"{row[0]} via {row[1]}"
+                )
+            cur.execute(
+                "SELECT c.relname, acl.privilege_type FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, '{}'::aclitem[])) acl "
+                "WHERE n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg_%' "
+                "AND c.relkind IN ('r','p','v','m','f') "
+                "AND acl.grantee = current_user::regrole "
+                "AND acl.privilege_type IN ('INSERT','UPDATE','DELETE','TRUNCATE') "
+                "ORDER BY c.relname LIMIT 1"
+            )
+            row = cur.fetchone()
+            if row:
+                raise RuntimeError(
+                    "Admin backup identity must be read-only on application objects: "
+                    f"{row[0]} {row[1]}"
+                )
+            cur.execute(
+                """
+                WITH RECURSIVE reachable AS (
+                    SELECT m.roleid
+                    FROM pg_auth_members m
+                    WHERE m.member = current_user::regrole
+                    UNION
+                    SELECT m.roleid
+                    FROM pg_auth_members m
+                    JOIN reachable r ON r.roleid = m.member
+                )
+                SELECT p.oid::regprocedure::text
+                FROM pg_proc p
+                JOIN pg_namespace n ON n.oid = p.pronamespace
+                CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) acl
+                WHERE n.nspname <> 'information_schema'
+                  AND n.nspname NOT LIKE 'pg_%'
+                  AND p.prosecdef
+                  AND (
+                    acl.grantee = 0
+                    OR acl.grantee = current_user::regrole
+                    OR EXISTS (
+                        SELECT 1 FROM reachable
+                        WHERE reachable.roleid = acl.grantee
+                    )
+                  )
+                  AND acl.privilege_type = 'EXECUTE'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM pg_depend e
+                      WHERE e.classid = 'pg_proc'::regclass
+                        AND e.objid = p.oid
+                        AND e.deptype = 'e'
+                  )
+                ORDER BY 1
+                LIMIT 1
+                """
+            )
+            row = cur.fetchone()
+            if row:
+                raise RuntimeError(
+                    "Admin backup identity can execute SECURITY DEFINER code: " f"{row[0]}"
+                )
