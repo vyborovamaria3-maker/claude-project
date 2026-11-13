@@ -215,9 +215,12 @@ For any release-critical PR document full head SHA, branch, reviewer, scope, req
 ### PR #215 — POTAPoff Intelligence V2 integration (2026-11-13)
 
 - Branch: `codex/architecture-hardening-20261105`
-- Exact HEAD: `3fe5ead99b5ee01d33bf887f55e87af25af595e0`
-- GitHub Actions: 30 successful, 0 failed, 1 skipped (`Security Lock Refresh`; not counted as a pass).
+- Latest implementation checkpoint before this status update: `54230261a220c134275448901e7ffce4ab27d696`
 - PR state: open Draft/HOLD.
+- Branch comparison at latest review: 590 commits ahead of main, 279 changed files. Full independent diff review is required; green CI is not merge authorization.
+- CI on the earlier implementation HEAD `3fe5ead99b5ee01d33bf887f55e87af25af595e0`: 30 successful, 0 failed, 1 skipped. This does not validate later migration 019 / readiness changes.
+- Exact-head CI on `159a2913c4a67e6a91cf9b3c0aeb15fc8c7ca90d`: 30 queued, 1 skipped, 0 completed at the last poll. The skipped `Security Lock Refresh` is not counted as a pass.
+- Fixes added after that CI poll: migration 019 readiness is now checked before V1/V2 CLI claims; the bounded fingerprint backfill remains compatible with 017-only destinations; migration sequence tests now require 019; documentation was reconciled with the dual-fingerprint implementation.
+- New commits after the queued CI snapshot require fresh exact-head validation. No CI result is inferred from queued runs.
 - Independent PR reviews / inline threads: none recorded at last check.
-- Scope warning: branch comparison reports 570 commits ahead of main and 277 changed files. A full independent diff review is required; green CI is not merge authorization.
 - No merge, production migration, V2 flag activation, source-row rewrite or deployment performed.
