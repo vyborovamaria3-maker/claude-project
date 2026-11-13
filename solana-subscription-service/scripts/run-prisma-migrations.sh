@@ -21,11 +21,21 @@ run_psql() {
     -h "$pg_host" -p "$pg_port" -U "$bootstrap_user" -d "$db_name" \
     -v dbname="$db_name" -v migrator="$migrator_user" "$@"
 }
+grant_db_create() {
+  run_psql <<'SQL'
+GRANT CREATE ON DATABASE :"dbname" TO :"migrator";
+SQL
+}
+revoke_db_create() {
+  run_psql <<'SQL'
+REVOKE CREATE ON DATABASE :"dbname" FROM :"migrator";
+SQL
+}
 cleanup() {
   status=$?
   trap - EXIT INT TERM
   if [ "$granted" -eq 1 ]; then
-    if ! run_psql -c 'REVOKE CREATE ON DATABASE :"dbname" FROM :"migrator";'; then
+    if ! revoke_db_create; then
       printf '%s\n' "ERROR: could not revoke temporary database CREATE from migrator" >&2
       [ "$status" -ne 0 ] || status=1
     fi
@@ -61,7 +71,7 @@ case "$baseline_applied" in
     # server commits the privilege but before psql reports success, EXIT still
     # attempts the REVOKE.
     granted=1
-    run_psql -c 'GRANT CREATE ON DATABASE :"dbname" TO :"migrator";'
+    grant_db_create
     ;;
   *)
     printf '%s\\n' "ERROR: invalid Prisma baseline state" >&2
@@ -71,7 +81,7 @@ esac
 
 npm run prisma:deploy -w @solsub/api
 if [ "$granted" -eq 1 ]; then
-  run_psql -c 'REVOKE CREATE ON DATABASE :"dbname" FROM :"migrator";'
+  revoke_db_create
   granted=0
 fi
 trap - EXIT INT TERM
