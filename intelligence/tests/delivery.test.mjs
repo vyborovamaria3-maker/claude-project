@@ -71,24 +71,35 @@ function v2Claim(envelope=registeredV2(),createdAt=registeredEmittedAt){
   return {...registeredClaim(envelope,createdAt),payload:envelope};
 }
 function statefulInboxDestination(log){
-  let stored=null;
+  let storedRegistrySha256=null;
+  let storedEnvelopeSha256=null;
   return {
     connect:async()=>({
       query:async(sql,params)=>{
         log.push({sql,params});
         if(sql.includes("INSERT INTO intelligence_inbox")){
-          if(stored===null){
-            stored=params[5];
+          if(storedRegistrySha256===null){
+            storedRegistrySha256=params[5];
+            storedEnvelopeSha256=sql.includes("envelope_sha256")?params[6]:null;
             return {rows:[{event_key:registeredEventKey}]};
           }
           return {rows:[]};
         }
-        if(sql.includes("SELECT schema_version,evidence_source_id,payload_sha256 FROM intelligence_inbox")){
+        if(sql.includes("SELECT schema_version,evidence_source_id,payload_sha256")){
           return {rows:[{
             schema_version:"tg-message-v1",
             evidence_source_id:registeredEvidence.sourceId,
-            payload_sha256:stored,
+            payload_sha256:storedRegistrySha256,
+            ...(sql.includes("envelope_sha256")?{envelope_sha256:storedEnvelopeSha256}:{}),
           }]};
+        }
+        if(sql.includes("UPDATE intelligence_inbox")&&sql.includes("envelope_sha256")){
+          if(storedEnvelopeSha256===null &&
+             storedRegistrySha256===params[4])storedEnvelopeSha256=params[0];
+          return {rows:[]};
+        }
+        if(sql.includes("SELECT envelope_sha256 FROM intelligence_inbox")){
+          return {rows:[{envelope_sha256:storedEnvelopeSha256}]};
         }
         return {rows:sql.includes("RETURNING event_key")?[{event_key:registeredEventKey}]:[]};
       },
@@ -586,7 +597,7 @@ test("V2 replay is duplicate only for the same envelope hash; changed hash is a 
 });
 
 
-test("V1 to V2 same-key replay fails closed until cross-version inbox reconciliation is designed",async()=>{
+test("V1 to V2 same-key replay promotes the envelope hash without replacing the V1 registry fingerprint",async()=>{
   const log=[];
   const destination=statefulInboxDestination(log);
   const v1=await runDeliveryBatch({
@@ -597,15 +608,27 @@ test("V1 to V2 same-key replay fails closed until cross-version inbox reconcilia
   });
   assert.equal(v1.delivered,1);
 
-  const collisionLog=[];
+  const v2Log=[];
   const v2=await runDeliveryBatch({
     claim:async()=>[v2Claim()],
-    ack:async()=>{collisionLog.push("ACK");return true;},
-    fail:async(_event,code)=>{collisionLog.push("FAIL:"+code);return true;},
+    ack:async()=>{v2Log.push("ACK");return true;},
+    fail:async(_event,code)=>{v2Log.push("FAIL:"+code);return true;},
   },destination,{
     workerId:"worker1",batchSize:1,leaseMs:5000,
   });
-  assert.equal(v2.failed,1);
-  assert.deepEqual(collisionLog,["FAIL:identity_collision"],
-    "legacy registry-only inbox hash must not be mistaken for a full V2 envelope hash");
+  assert.equal(v2.duplicates,1);
+  assert.equal(v2.failed,0);
+  assert.deepEqual(v2Log,["ACK"]);
+  assert.ok(log.some(entry=>entry&&typeof entry==="object"&&
+    entry.sql.includes("UPDATE intelligence_inbox")&&entry.sql.includes("envelope_sha256")),
+    "the matching V1 row must be promoted in the destination transaction");
+
+  const v1Replay=await runDeliveryBatch({
+    claim:async()=>[registeredClaim()],
+    ack:async()=>true,fail:async()=>true,
+  },destination,{
+    workerId:"worker1",batchSize:1,leaseMs:5000,
+  });
+  assert.equal(v1Replay.duplicates,1,
+    "V2-to-V1 replay must continue to use the stable registry fingerprint");
 });
