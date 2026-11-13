@@ -25,7 +25,12 @@ function clientIpFromHeaders(headers, trustedProxyHops = DEFAULT_TRUST_PROXY_HOP
   const forwarded = headers.get("x-forwarded-for");
   if (!forwarded) return "untrusted-proxy";
   const chain = forwarded.split(",").map((value) => value.trim()).filter(Boolean);
-  if (chain.length < trustedProxyHops) return "untrusted-proxy";
+  // The trusted suffix must leave at least one untrusted entry to inspect.
+  // A chain exactly as long as the trusted hop count has no client entry
+  // (for example a single-value header behind a hops=1 proxy that did not
+  // append its own address); fail closed to the shared conservative bucket
+  // instead of reading chain[-1].
+  if (chain.length <= trustedProxyHops) return "untrusted-proxy";
 
   const candidate = chain[chain.length - trustedProxyHops - 1];
   // Accept only a single IP literal; do not allow arbitrary bucket-key input.
