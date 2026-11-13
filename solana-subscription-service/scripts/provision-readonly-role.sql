@@ -41,7 +41,7 @@ SELECT NOT EXISTS (
   WHERE left(target.role_name, 3) = 'pg_'
      OR left(target.role_name, 4) = 'rds_'
      OR left(target.role_name, 6) = 'azure_'
-     OR target.role_name IN ('postgres', 'cloudsqlsuperuser', 'alloydbadmin')
+     OR target.role_name IN ('postgres', 'rdsadmin', 'cloudsqlsuperuser', 'alloydbadmin')
      OR (
        existing.oid IS NOT NULL
        AND (

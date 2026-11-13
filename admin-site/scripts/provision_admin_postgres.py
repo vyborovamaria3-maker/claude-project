@@ -18,7 +18,7 @@ from psycopg import sql
 ROLE_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 PASSWORD_RE = re.compile(r"^[A-Fa-f0-9]{64}$")
 RESERVED_ROLE_PREFIXES = ("pg_", "rds_", "azure_")
-RESERVED_ROLE_NAMES = {"postgres", "cloudsqlsuperuser", "alloydbadmin"}
+RESERVED_ROLE_NAMES = {"postgres", "rdsadmin", "cloudsqlsuperuser", "alloydbadmin"}
 
 
 def _validate_role(name: str, password: str) -> None:

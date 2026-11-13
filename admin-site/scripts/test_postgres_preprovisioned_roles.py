@@ -141,20 +141,21 @@ def provision_test_cluster() -> None:
         )
 
     # Reserved provider/system role names are rejected before opening a connection.
-    try:
-        provision_roles(
-            bootstrap_dsn=BOOTSTRAP_ADMIN_DB,
-            app_user="postgres",
-            app_password=RUNTIME_PASSWORD,
-            migrator_user="admin_ci_migration",
-            migrator_password=MIGRATOR_PASSWORD,
-            backup_user="admin_ci_backup",
-            backup_password=BACKUP_PASSWORD,
-        )
-    except ValueError as exc:
-        assert "reserved PostgreSQL role" in str(exc), str(exc)
-    else:
-        raise AssertionError("Provisioner accepted the reserved postgres role name")
+    for reserved_role in ("postgres", "rdsadmin", "pg_read_all_data"):
+        try:
+            provision_roles(
+                bootstrap_dsn=BOOTSTRAP_ADMIN_DB,
+                app_user=reserved_role,
+                app_password=RUNTIME_PASSWORD,
+                migrator_user="admin_ci_migration",
+                migrator_password=MIGRATOR_PASSWORD,
+                backup_user="admin_ci_backup",
+                backup_password=BACKUP_PASSWORD,
+            )
+        except ValueError as exc:
+            assert "reserved PostgreSQL role" in str(exc), str(exc)
+        else:
+            raise AssertionError(f"Provisioner accepted reserved role name {reserved_role!r}")
 
     # A pre-existing superuser target must not be weakened by ALTER ROLE.
     with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
