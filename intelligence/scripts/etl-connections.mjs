@@ -64,6 +64,56 @@ export async function checkPgOutbox(pool){
   if(!rows[0]?.present)throw new Error("source outbox schema is not installed");
 }
 
+// Verify the deployed envelope-fingerprint CHECK by behavior, not by text
+// fragments. Fragment matching accepts weakened variants (length >= 8,
+// uppercase-permitting regex, OR instead of AND, inverted NULL logic), so the
+// readiness gate replays the actual constraint expression against boundary
+// values on a throwaway temp table before any V2-capable source claim.
+const ENVELOPE_PROBE_VALUES=[
+  [null,false],["a".repeat(64),false],["A".repeat(64),true],
+  ["a".repeat(63),true],["a".repeat(65),true],["g".repeat(64),true],
+];
+
+export async function assertEnvelopeFingerprintContract(pool,definition){
+  if(typeof definition!=="string" || !/^CHECK\b/i.test(definition)){
+    throw new Error(
+      "destination Intelligence migration 019 envelope fingerprint contract violated: "
+      +"missing or non-CHECK constraint",
+    );
+  }
+  await pool.query("CREATE TEMP TABLE intelligence_inbox_envelope_probe (envelope_sha256 text)");
+  try{
+    await pool.query(
+      "ALTER TABLE intelligence_inbox_envelope_probe "
+      +"ADD CONSTRAINT intelligence_inbox_envelope_probe_check "+definition,
+    );
+    for(const [value,mustReject] of ENVELOPE_PROBE_VALUES){
+      try{
+        await pool.query(
+          "INSERT INTO intelligence_inbox_envelope_probe(envelope_sha256) VALUES ($1)",
+          [value],
+        );
+      }catch{
+        if(!mustReject){
+          throw new Error(
+            "destination Intelligence migration 019 envelope fingerprint contract violated: "
+            +"constraint rejects a valid value",
+          );
+        }
+        continue;
+      }
+      if(mustReject){
+        throw new Error(
+          "destination Intelligence migration 019 envelope fingerprint contract violated: "
+          +"constraint accepts a value that must be rejected",
+        );
+      }
+    }
+  }finally{
+    await pool.query("DROP TABLE IF EXISTS intelligence_inbox_envelope_probe");
+  }
+}
+
 export async function checkDestination(pool,options={}){
   const result=await pool.query(`SELECT
     to_regclass('intelligence_inbox') IS NOT NULL AS inbox,
@@ -80,10 +130,11 @@ export async function checkDestination(pool,options={}){
       WHERE conrelid=to_regclass('intelligence_inbox')
         AND conname='intelligence_inbox_envelope_sha256_check'
         AND contype='c'
-        AND convalidated
-        AND position('envelope_sha256' in pg_get_constraintdef(oid))>0
-        AND position('length(envelope_sha256)' in pg_get_constraintdef(oid))>0
-        AND position('^[0-9a-f]+' || chr(36) in pg_get_constraintdef(oid))>0) AS inbox_envelope_fingerprint_constraint`);
+        AND convalidated) AS inbox_envelope_fingerprint_constraint,
+    (SELECT pg_get_constraintdef(oid) FROM pg_constraint
+      WHERE conrelid=to_regclass('intelligence_inbox')
+        AND conname='intelligence_inbox_envelope_sha256_check')
+      AS inbox_envelope_fingerprint_definition`);
   const row=result.rows[0];
   // Every consumer may encounter token-link events, so reject missing 004 before claiming.
   if(!row?.inbox||!row.registry||!row.evidence||!row.timeline||!row.token_links){
@@ -92,9 +143,15 @@ export async function checkDestination(pool,options={}){
   if(!row.inbox_fingerprint){
     throw new Error("destination Intelligence migration 017 required before source claims");
   }
-  if(options.requireEnvelopeFingerprint===true &&
-     (!row.inbox_envelope_fingerprint || !row.inbox_envelope_fingerprint_constraint)){
-    throw new Error("destination Intelligence migration 019 required before V2-capable source claims");
+  if(options.requireEnvelopeFingerprint===true){
+    if(!row.inbox_envelope_fingerprint || !row.inbox_envelope_fingerprint_constraint){
+      throw new Error(
+        "destination Intelligence migration 019 required before V2-capable source claims",
+      );
+    }
+    await assertEnvelopeFingerprintContract(
+      pool,row.inbox_envelope_fingerprint_definition,
+    );
   }
   if(options.requireBlockchainRevisions===true && !row.blockchain_revisions){
     throw new Error("destination Intelligence migration 005 required before Blockchain claim");
