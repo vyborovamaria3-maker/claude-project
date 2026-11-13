@@ -227,7 +227,7 @@ assert(migratorOwnershipGuard.includes("DO $$") && migratorOwnershipGuard.includ
 assert(!/^ *DO +\$ *$/m.test(migratorOwnershipGuard), "migrator ownership guard must use valid dollar-quoted DO blocks");
 assert(!/^ *\$; *$/m.test(migratorOwnershipGuard), "migrator ownership guard must use valid DO block closers");
 assert(postgresRoleProvisioner.includes('REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM :"app_user", :"backup_user", :"readonly_user"'), "role provisioner must clear stale table ACLs before applying grants");
-assert(postgresRoleProvisioner.includes("REVOKE EXECUTE ON FUNCTION %s FROM %I"), "backup/read-only identities must not retain legacy application function EXECUTE grants");
+assert(postgresRoleProvisioner.includes("REVOKE EXECUTE ON ROUTINE %s FROM %I"), "backup/read-only identities must not retain legacy application routine EXECUTE grants (ROUTINE covers functions, procedures and aggregates)");
 assert(postgresRoleProvisioner.includes("REVOKE ALL ON TABLES FROM %I, %I, %I"), "role provisioner must clear stale global default table ACLs");
 assert(postgresRoleProvisioner.includes("REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, %I, %I, %I"), "new functions must require explicit execute grants");
 const deployScript = read("scripts/deploy-production.sh");
