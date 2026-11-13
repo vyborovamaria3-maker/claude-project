@@ -215,12 +215,12 @@ For any release-critical PR document full head SHA, branch, reviewer, scope, req
 ### PR #215 — POTAPoff Intelligence V2 integration (2026-11-13)
 
 - Branch: `codex/architecture-hardening-20261105`
-- Latest code/documentation HEAD: `1860d5852d9e9364f64fcc447b481240b72327d5`
+- Latest code/documentation HEAD: `98d174ddbde8ffd0659a70a786b7373a57c45366`
 - PR state: open Draft/HOLD.
-- Branch comparison at latest review: 604 commits ahead of main, 279 changed files. Full independent diff review is required; green CI is not merge authorization.
+- Branch comparison at latest review: 607 commits ahead of main, 279 changed files. Full independent diff review is required; green CI is not merge authorization.
 - CI on the earlier implementation HEAD `3fe5ead99b5ee01d33bf887f55e87af25af595e0`: 30 successful, 0 failed, 1 skipped. This does not validate later migration 019 / readiness changes.
-- Exact-head CI on `1860d5852d9e9364f64fcc447b481240b72327d5`: 29 queued, 1 pending, 1 skipped, 0 completed at the last poll. The skipped `Security Lock Refresh` is not counted as a pass.
-- Fixes since the earlier queued snapshot: dual-fingerprint V1/V2 inbox reconciliation; migration 019 sequence guard; V2 CLI/supervisor fail-fast preflight for both the new column and its validated check constraint; legacy fingerprint backfill remains compatible with 017-only destinations; readiness tests cover missing/partial migration 019; docs now distinguish prior CI evidence from current pending validation.
-- The disposable PostgreSQL tests cover V1→V2 promotion, V2→V1 replay, competing promotion, NULL legacy fingerprint refusal, migration replay and token-link mismatch rollback. Execution on current HEAD is still pending.
+- Exact-head CI on `98d174ddbde8ffd0659a70a786b7373a57c45366`: 30 queued, 1 skipped, 0 completed at the last poll. The skipped `Security Lock Refresh` is not counted as a pass.
+- Fixes since the earlier CI snapshot: dual-fingerprint V1/V2 inbox reconciliation; migration 019 sequence guard; V2 CLI/supervisor fail-fast preflight for both the new column and its validated check constraint; legacy fingerprint backfill remains compatible with 017-only destinations; readiness tests reject missing/partial migration 019; producer-to-consumer fixtures now apply migration order consistently and include 019; docs distinguish prior CI evidence from current pending validation.
+- Disposable PostgreSQL tests cover V1→V2 promotion, V2→V1 replay, competing promotion, NULL legacy fingerprint refusal, migration replay and token-link mismatch rollback. Execution on current HEAD is still pending.
 - Independent PR reviews / inline threads: none recorded at last check.
 - No merge, production migration, V2 flag activation, source-row rewrite or deployment performed.
