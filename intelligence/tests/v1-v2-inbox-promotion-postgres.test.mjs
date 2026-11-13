@@ -42,9 +42,9 @@ test("PostgreSQL preserves V1 registry identity while promoting and fencing V2 e
     await admin.query('SET search_path TO "'+schema+'"');
     for(const file of [
       "001_entity_registry.sql",
+      "002_timeline.sql",
       "017_inbox_payload_fingerprint.sql",
       "019_inbox_envelope_fingerprint.sql",
-      "002_timeline.sql",
     ]){
       await admin.query(await readFile(new URL("../migrations/"+file,import.meta.url),"utf8"));
     }
