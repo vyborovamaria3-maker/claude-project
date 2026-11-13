@@ -45,6 +45,9 @@ END
 $$;
 \endif
 
+-- Ensure the default schema exists before Prisma runs the immutable initial migration.
+CREATE SCHEMA IF NOT EXISTS public;
+
 SELECT EXISTS (
   SELECT 1
   FROM pg_auth_members membership

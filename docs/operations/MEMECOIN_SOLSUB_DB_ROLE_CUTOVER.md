@@ -16,7 +16,7 @@ This runbook applies to:
 | `*_app` | API/worker/bot runtime | SELECT, INSERT, UPDATE, DELETE; no schema creation |
 | `*_readonly` | Admin/source inspection | SELECT only; read-only transactions |
 
-The provisioner is idempotent, rejects restricted identities as its bootstrap login, removes role memberships from restricted roles, and sets default privileges for objects created by the migration identity.
+The provisioner is idempotent, rejects restricted identities as its bootstrap login, removes role memberships from restricted roles, and sets default privileges for objects created by the migration identity. It also pre-provisions `pgcrypto` for Memecoin Intelligence and ensures the default `public` schema exists as bootstrap, before the restricted migrator runs. This keeps both initial migration files immutable; do not edit an applied SQL or Prisma migration to accommodate a restricted role.
 
 The application containers do not receive the bootstrap or migrator passwords. SolSub Web receives only public `NEXT_PUBLIC_*` configuration. Deployment `.env` files are excluded from both Docker build contexts.
 

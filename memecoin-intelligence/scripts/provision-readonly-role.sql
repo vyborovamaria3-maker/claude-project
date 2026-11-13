@@ -45,6 +45,10 @@ END
 $$;
 \endif
 
+-- The immutable initial migration uses CREATE EXTENSION IF NOT EXISTS pgcrypto.
+-- Install it as bootstrap so the restricted migrator never needs database CREATE.
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 SELECT EXISTS (
   SELECT 1
   FROM pg_auth_members membership

@@ -1,5 +1,5 @@
--- PostgreSQL creates the public schema for every database. The migrator intentionally
--- has no database-level CREATE privilege, so this migration must not issue CREATE SCHEMA.
+-- CreateSchema
+CREATE SCHEMA IF NOT EXISTS "public";
 
 -- CreateEnum
 CREATE TYPE "SubscriptionTier" AS ENUM ('BASIC', 'ADVANCED', 'PREMIUM');
