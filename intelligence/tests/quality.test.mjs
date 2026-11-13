@@ -186,7 +186,7 @@ test("real temporary PostgreSQL sources + destination counters remain separate f
     await admin.query("INSERT INTO tg_sources VALUES(1,'444')");
     await admin.query("INSERT INTO tg_messages VALUES(1,1,NOW(),NULL),(1,2,NOW(),NOW())");
     await admin.query('SET search_path TO "'+schemas.dst+'"');
-    for(const file of ["001_entity_registry.sql","002_timeline.sql","004_token_link_observations.sql"]){
+    for(const file of ["001_entity_registry.sql","017_inbox_payload_fingerprint.sql","002_timeline.sql","004_token_link_observations.sql"]){
       await admin.query(await readFile(new URL("../migrations/"+file,import.meta.url),"utf8"));
     }
     for(const [name,schema] of Object.entries(schemas)){
