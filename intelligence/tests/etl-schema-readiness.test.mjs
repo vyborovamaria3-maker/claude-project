@@ -60,8 +60,16 @@ test("temporary PostgreSQL target requires additive 004, 005, 017 and 019 before
       checkDestination(pool,{requireEnvelopeFingerprint:true}),/migration 019/,
       "V2-capable delivery must fail before claiming when migration 019 is missing",
     );
-    await admin.query(await readFile(new URL(
-      "../migrations/019_inbox_envelope_fingerprint.sql",import.meta.url),"utf8"));
+    const migration019=await readFile(new URL(
+      "../migrations/019_inbox_envelope_fingerprint.sql",import.meta.url),"utf8");
+    // A validated, same-named but incorrect CHECK must not masquerade as 019.
+    await admin.query("ALTER TABLE intelligence_inbox ADD COLUMN envelope_sha256 TEXT");
+    await admin.query("ALTER TABLE intelligence_inbox ADD CONSTRAINT intelligence_inbox_envelope_sha256_check CHECK (envelope_sha256 IS NULL) NOT VALID");
+    await admin.query("ALTER TABLE intelligence_inbox VALIDATE CONSTRAINT intelligence_inbox_envelope_sha256_check");
+    await assert.rejects(checkDestination(pool,{requireEnvelopeFingerprint:true}),/migration 019/);
+    await assert.rejects(admin.query(migration019),/unexpected definition/);
+    await admin.query("ALTER TABLE intelligence_inbox DROP CONSTRAINT intelligence_inbox_envelope_sha256_check");
+    await admin.query(migration019);
     await assert.doesNotReject(checkDestination(pool,{requireEnvelopeFingerprint:true}));
     await assert.rejects(checkDestination(pool,{
       requireBlockchainRevisions:true,requireEnvelopeFingerprint:true,
