@@ -48,6 +48,16 @@ run_psql() {
     psql -X -v ON_ERROR_STOP=1 -d potapoff_ci "$@"
 }
 
+run_role_provisioner() {
+  run_psql "$bootstrap_user" "$bootstrap_password" \
+    -v bootstrap_user="$bootstrap_user" \
+    -v app_user="$app_user" -v app_password="$app_password" \
+    -v migrator_user="$migrator_user" -v migrator_password="$migrator_password" \
+    -v backup_user="$backup_user" -v backup_password="$backup_password" \
+    -v readonly_user="$readonly_user" -v readonly_password="$readonly_password" \
+    -f /tmp/provision-postgres-roles.sql
+}
+
 original_schema_owner="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
   "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='public'")"
 
@@ -88,6 +98,70 @@ for sql_file in /tmp/provision-postgres-roles.sql /tmp/check-postgres-migrator-o
     exit 1
   fi
 done
+
+# A pre-existing superuser must never be normalized by ALTER ROLE.
+run_psql "$bootstrap_user" "$bootstrap_password" -c \
+  "CREATE ROLE $app_user SUPERUSER LOGIN PASSWORD 'ci-existing-superuser-password'" >/dev/null
+if run_role_provisioner >"$scratch/privileged-role.log" 2>&1; then
+  echo "Role provisioner accepted a privileged target role" >&2
+  exit 1
+fi
+grep -Fq "reserved or privileged PostgreSQL role" "$scratch/privileged-role.log" || {
+  cat "$scratch/privileged-role.log" >&2
+  echo "Privileged-role guard failed for the wrong reason" >&2
+  exit 1
+}
+privileged_role_flags="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
+  "SELECT rolsuper::text || '|' || rolcanlogin::text FROM pg_roles WHERE rolname='$app_user'")"
+[[ "$privileged_role_flags" == "true|true" ]] || {
+  echo "Privileged role was modified by failed preflight: $privileged_role_flags" >&2
+  exit 1
+}
+run_psql "$bootstrap_user" "$bootstrap_password" -c "DROP ROLE $app_user" >/dev/null
+
+# A restricted app role that owns a schema keeps implicit CREATE despite REVOKE.
+run_psql "$bootstrap_user" "$bootstrap_password" -c \
+  "CREATE ROLE $app_user NOLOGIN; CREATE SCHEMA potapoff_app_owned AUTHORIZATION $app_user" >/dev/null
+if run_role_provisioner >"$scratch/app-schema-owner.log" 2>&1; then
+  echo "Role provisioner accepted an app-owned schema" >&2
+  exit 1
+fi
+grep -Fq "restricted role owns an application schema" "$scratch/app-schema-owner.log" || {
+  cat "$scratch/app-schema-owner.log" >&2
+  echo "App schema-owner guard failed for the wrong reason" >&2
+  exit 1
+}
+app_schema_owner="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
+  "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='potapoff_app_owned'")"
+app_role_flags="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
+  "SELECT rolsuper::text || '|' || rolcanlogin::text FROM pg_roles WHERE rolname='$app_user'")"
+[[ "$app_schema_owner" == "$app_user" && "$app_role_flags" == "false|false" ]] || {
+  echo "App schema-owner preflight changed existing state: owner=$app_schema_owner flags=$app_role_flags" >&2
+  exit 1
+}
+run_psql "$bootstrap_user" "$bootstrap_password" -c \
+  "DROP SCHEMA potapoff_app_owned CASCADE; DROP ROLE $app_user" >/dev/null
+
+# The migrator may own objects in public, but must not own auxiliary schemas.
+run_psql "$bootstrap_user" "$bootstrap_password" -c \
+  "CREATE ROLE $migrator_user NOLOGIN; CREATE SCHEMA potapoff_migrator_owned AUTHORIZATION $migrator_user" >/dev/null
+if run_role_provisioner >"$scratch/migrator-schema-owner.log" 2>&1; then
+  echo "Role provisioner accepted a migrator-owned auxiliary schema" >&2
+  exit 1
+fi
+grep -Fq "restricted role owns an application schema" "$scratch/migrator-schema-owner.log" || {
+  cat "$scratch/migrator-schema-owner.log" >&2
+  echo "Migrator schema-owner guard failed for the wrong reason" >&2
+  exit 1
+}
+migrator_schema_owner="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
+  "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='potapoff_migrator_owned'")"
+[[ "$migrator_schema_owner" == "$migrator_user" ]] || {
+  echo "Migrator schema owner changed during failed preflight: $migrator_schema_owner" >&2
+  exit 1
+}
+run_psql "$bootstrap_user" "$bootstrap_password" -c \
+  "DROP SCHEMA potapoff_migrator_owned CASCADE; DROP ROLE $migrator_user" >/dev/null
 
 # Bootstrap-owned application objects must block provisioning before any
 # password, role attribute, membership or ACL is changed.

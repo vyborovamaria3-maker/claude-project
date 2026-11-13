@@ -39,6 +39,35 @@ END
 $$;
 \endif
 
+WITH requested_roles(role_name) AS (
+  VALUES (:'app_user'), (:'migrator_user'), (:'backup_user'), (:'readonly_user')
+)
+SELECT NOT EXISTS (
+  SELECT 1
+  FROM requested_roles AS target
+  LEFT JOIN pg_roles AS existing ON existing.rolname = target.role_name
+  WHERE left(target.role_name, 3) = 'pg_'
+     OR left(target.role_name, 4) = 'rds_'
+     OR left(target.role_name, 6) = 'azure_'
+     OR target.role_name IN ('postgres', 'cloudsqlsuperuser', 'alloydbadmin')
+     OR (
+       existing.oid IS NOT NULL
+       AND (
+         existing.rolsuper OR existing.rolcreatedb OR existing.rolcreaterole
+         OR existing.rolreplication OR existing.rolbypassrls
+       )
+     )
+) AS role_targets_safe \gset
+\if :role_targets_safe
+\else
+  \echo 'Role provisioning blocked: refusing to alter a reserved or privileged PostgreSQL role'
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
+\endif
+
 SELECT (
   :'app_password' <> :'migrator_password'
   AND :'app_password' <> :'backup_password'
@@ -71,6 +100,26 @@ BEGIN
   RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
 END
 $$;
+\endif
+
+SELECT EXISTS (
+  SELECT 1
+  FROM pg_namespace AS n
+  JOIN pg_roles AS owner_role ON owner_role.oid = n.nspowner
+  WHERE n.nspname <> 'information_schema'
+    AND n.nspname NOT LIKE 'pg_%'
+    AND (
+      owner_role.rolname IN (:'app_user', :'backup_user', :'readonly_user')
+      OR (n.nspname <> 'public' AND owner_role.rolname = :'migrator_user')
+    )
+) AS has_restricted_schema_owner \gset
+\if :has_restricted_schema_owner
+  \echo 'Provisioning blocked: a restricted role owns an application schema; ownership requires explicit operator review'
+  DO $
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$;
 \endif
 
 SELECT EXISTS (

@@ -139,6 +139,41 @@ def provision_test_cluster() -> None:
             backup_password=BACKUP_PASSWORD,
         )
 
+    # Reserved provider/system role names are rejected before opening a connection.
+    try:
+        provision_roles(
+            bootstrap_dsn=BOOTSTRAP_ADMIN_DB,
+            app_user="postgres",
+            app_password=RUNTIME_PASSWORD,
+            migrator_user="admin_ci_migration",
+            migrator_password=MIGRATOR_PASSWORD,
+            backup_user="admin_ci_backup",
+            backup_password=BACKUP_PASSWORD,
+        )
+    except ValueError as exc:
+        assert "reserved PostgreSQL role" in str(exc), str(exc)
+    else:
+        raise AssertionError("Provisioner accepted the reserved postgres role name")
+
+    # A pre-existing superuser target must not be weakened by ALTER ROLE.
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+        bootstrap.execute(
+            "CREATE ROLE admin_ci_runtime SUPERUSER LOGIN PASSWORD %s",
+            (RUNTIME_PASSWORD,),
+        )
+    try:
+        provision()
+    except RuntimeError as exc:
+        assert "privileged PostgreSQL role" in str(exc), str(exc)
+    else:
+        raise AssertionError("Provisioner accepted an existing superuser target role")
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+        flags = bootstrap.execute(
+            "SELECT rolsuper, rolcanlogin FROM pg_roles WHERE rolname='admin_ci_runtime'"
+        ).fetchone()
+        assert flags == (True, True), flags
+        bootstrap.execute("DROP ROLE admin_ci_runtime")
+
     # Existing bootstrap-owned objects must block provisioning. The
     # provisioner must not silently transfer any database/schema/object owner.
     try:
@@ -234,6 +269,47 @@ def provision_test_cluster() -> None:
         bootstrap.execute(
             "REVOKE ALL ON FUNCTION public.bootstrap_owned_legacy_definer() FROM PUBLIC"
         )
+
+    # Runtime/backup schema ownership survives ordinary ACL revocation and must block.
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+        bootstrap.execute("CREATE ROLE admin_ci_runtime NOLOGIN")
+        bootstrap.execute(
+            "CREATE SCHEMA admin_ci_runtime_owned AUTHORIZATION admin_ci_runtime"
+        )
+    try:
+        provision()
+    except RuntimeError as exc:
+        assert "schema-owner preflight" in str(exc).lower(), str(exc)
+    else:
+        raise AssertionError("Provisioner accepted a runtime-owned schema")
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+        owner = bootstrap.execute(
+            "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='admin_ci_runtime_owned'"
+        ).fetchone()[0]
+        runtime_login = bootstrap.execute(
+            "SELECT rolcanlogin FROM pg_roles WHERE rolname='admin_ci_runtime'"
+        ).fetchone()[0]
+        assert owner == "admin_ci_runtime" and runtime_login is False, (owner, runtime_login)
+        bootstrap.execute("DROP SCHEMA admin_ci_runtime_owned CASCADE")
+        bootstrap.execute("DROP ROLE admin_ci_runtime")
+
+    # The migration role is allowed to own public, but not auxiliary schemas.
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+        bootstrap.execute(
+            "CREATE SCHEMA admin_ci_migration_owned AUTHORIZATION admin_ci_migration"
+        )
+    try:
+        provision()
+    except RuntimeError as exc:
+        assert "schema-owner preflight" in str(exc).lower(), str(exc)
+    else:
+        raise AssertionError("Provisioner accepted a migration-owned auxiliary schema")
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+        owner = bootstrap.execute(
+            "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='admin_ci_migration_owned'"
+        ).fetchone()[0]
+        assert owner == "admin_ci_migration", owner
+        bootstrap.execute("DROP SCHEMA admin_ci_migration_owned CASCADE")
 
     provision()
 

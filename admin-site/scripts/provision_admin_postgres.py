@@ -17,11 +17,15 @@ from psycopg import sql
 
 ROLE_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 PASSWORD_RE = re.compile(r"^[A-Fa-f0-9]{64}$")
+RESERVED_ROLE_PREFIXES = ("pg_", "rds_", "azure_")
+RESERVED_ROLE_NAMES = {"postgres", "cloudsqlsuperuser", "alloydbadmin"}
 
 
 def _validate_role(name: str, password: str) -> None:
     if not ROLE_RE.fullmatch(name):
         raise ValueError(f"Unsafe PostgreSQL role identifier: {name!r}")
+    if name.startswith(RESERVED_ROLE_PREFIXES) or name in RESERVED_ROLE_NAMES:
+        raise ValueError(f"Refusing to provision reserved PostgreSQL role: {name!r}")
     if not PASSWORD_RE.fullmatch(password):
         raise ValueError(f"PostgreSQL role password for {name} must be 64 hex characters")
 
@@ -59,6 +63,53 @@ def _revoke_role_memberships(db: psycopg.Connection[Any], roles: set[str]) -> No
             )
         )
 
+
+def _assert_role_targets_safe(db: psycopg.Connection[Any], roles: set[str]) -> None:
+    """Never ALTER an existing privileged or provider-managed PostgreSQL role."""
+    rows = db.execute(
+        "SELECT rolname, rolsuper, rolcreatedb, rolcreaterole, "
+        "rolreplication, rolbypassrls FROM pg_roles "
+        "WHERE rolname = ANY(%s::text[])",
+        (list(roles),),
+    ).fetchall()
+    for name, is_superuser, can_create_db, can_create_role, can_replicate, bypass_rls in rows:
+        if any((is_superuser, can_create_db, can_create_role, can_replicate, bypass_rls)):
+            raise RuntimeError(
+                "Admin PostgreSQL provisioning blocked: refusing to alter existing "
+                f"privileged PostgreSQL role {name!r}"
+            )
+
+
+def _assert_no_restricted_schema_owners(
+    db: psycopg.Connection[Any],
+    *,
+    app_user: str,
+    migrator_user: str,
+    backup_user: str,
+) -> None:
+    """Fail closed when a role slated for CREATE revocation owns a schema."""
+    row = db.execute(
+        """
+        SELECT n.nspname, owner_role.rolname
+        FROM pg_namespace AS n
+        JOIN pg_roles AS owner_role ON owner_role.oid = n.nspowner
+        WHERE n.nspname <> 'information_schema'
+          AND n.nspname NOT LIKE 'pg_%%'
+          AND (
+              owner_role.rolname IN (%s, %s)
+              OR (n.nspname <> 'public' AND owner_role.rolname = %s)
+          )
+        ORDER BY n.nspname
+        LIMIT 1
+        """,
+        (app_user, backup_user, migrator_user),
+    ).fetchone()
+    if row is not None:
+        raise RuntimeError(
+            "Admin PostgreSQL schema-owner preflight failed: restricted role "
+            f"{row[1]!r} owns application schema {row[0]!r}; ownership requires "
+            "a separately reviewed change"
+        )
 
 def _assert_public_application_objects_owned(
     db: psycopg.Connection[Any], migrator_user: str
@@ -252,6 +303,13 @@ def provision_roles(
         # so any later provisioning error rolls back the complete role cutover.
         # Do not REASSIGN OWNED, ALTER DATABASE OWNER, ALTER SCHEMA OWNER or
         # silently transfer existing application objects here.
+        _assert_role_targets_safe(db, roles)
+        _assert_no_restricted_schema_owners(
+            db,
+            app_user=app_user,
+            migrator_user=migrator_user,
+            backup_user=backup_user,
+        )
         _assert_public_application_objects_owned(db, migrator_user)
         _assert_no_public_nonpublic_schema_create(db)
         _assert_no_public_security_definer(db)

@@ -16,6 +16,8 @@ for provisioner in \
     echo "Unsafe automatic ownership or broad read/bypass grant in $provisioner" >&2
     exit 1
   fi
+  grep -Fq 'role_targets_safe' "$provisioner"
+  grep -Fq 'has_restricted_schema_owner' "$provisioner"
   grep -Fq 'has_unprepared_application_owners' "$provisioner"
   grep -Fq 'has_public_security_definer_execute' "$provisioner"
 done
@@ -86,6 +88,84 @@ test_role_set() {
       -e POSTGRES_READONLY_PASSWORD="$readonly_password" \
       "$container" /bin/sh /provision/run-readonly-role-provisioner.sh
   }
+
+  local guard_log role_flags schema_owner
+  guard_log="$(mktemp)"
+
+  # Existing privileged roles must be rejected before ALTER ROLE can weaken them.
+  run_psql "$database" postgres "$bootstrap_password" -c \
+    "CREATE ROLE $app_user SUPERUSER LOGIN PASSWORD '$app_password'" >/dev/null
+  if run_provisioner >"$guard_log" 2>&1; then
+    rm -f "$guard_log"
+    echo "$database accepted a privileged application role" >&2
+    return 1
+  fi
+  if ! grep -Fq "reserved or privileged PostgreSQL role" "$guard_log"; then
+    cat "$guard_log" >&2
+    rm -f "$guard_log"
+    echo "$database privileged-role guard failed for the wrong reason" >&2
+    return 1
+  fi
+  role_flags="$(run_psql "$database" postgres "$bootstrap_password" -Atq -c \
+    "SELECT rolsuper::text || '|' || rolcanlogin::text FROM pg_roles WHERE rolname='$app_user'")"
+  [[ "$role_flags" == "true|true" ]] || {
+    rm -f "$guard_log"
+    echo "$database modified a privileged target role: $role_flags" >&2
+    return 1
+  }
+  run_psql "$database" postgres "$bootstrap_password" -c "DROP ROLE $app_user" >/dev/null
+
+  # REVOKE CREATE cannot remove a schema owner's implicit CREATE privilege.
+  run_psql "$database" postgres "$bootstrap_password" -c \
+    "CREATE ROLE $app_user NOLOGIN; CREATE SCHEMA source_role_owned_by_app AUTHORIZATION $app_user" >/dev/null
+  if run_provisioner >"$guard_log" 2>&1; then
+    rm -f "$guard_log"
+    echo "$database accepted an app-owned schema" >&2
+    return 1
+  fi
+  if ! grep -Fq "restricted role owns an application schema" "$guard_log"; then
+    cat "$guard_log" >&2
+    rm -f "$guard_log"
+    echo "$database app schema-owner guard failed for the wrong reason" >&2
+    return 1
+  fi
+  schema_owner="$(run_psql "$database" postgres "$bootstrap_password" -Atq -c \
+    "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='source_role_owned_by_app'")"
+  role_flags="$(run_psql "$database" postgres "$bootstrap_password" -Atq -c \
+    "SELECT rolsuper::text || '|' || rolcanlogin::text FROM pg_roles WHERE rolname='$app_user'")"
+  [[ "$schema_owner" == "$app_user" && "$role_flags" == "false|false" ]] || {
+    rm -f "$guard_log"
+    echo "$database app schema-owner preflight changed existing state" >&2
+    return 1
+  }
+  run_psql "$database" postgres "$bootstrap_password" -c \
+    "DROP SCHEMA source_role_owned_by_app CASCADE; DROP ROLE $app_user" >/dev/null
+
+  # The migrator can own public objects, but not an auxiliary schema whose
+  # ownership would bypass the intended schema CREATE revocation.
+  run_psql "$database" postgres "$bootstrap_password" -c \
+    "CREATE ROLE $migrator_user NOLOGIN; CREATE SCHEMA source_role_owned_by_migrator AUTHORIZATION $migrator_user" >/dev/null
+  if run_provisioner >"$guard_log" 2>&1; then
+    rm -f "$guard_log"
+    echo "$database accepted a migrator-owned auxiliary schema" >&2
+    return 1
+  fi
+  if ! grep -Fq "restricted role owns an application schema" "$guard_log"; then
+    cat "$guard_log" >&2
+    rm -f "$guard_log"
+    echo "$database migrator schema-owner guard failed for the wrong reason" >&2
+    return 1
+  fi
+  schema_owner="$(run_psql "$database" postgres "$bootstrap_password" -Atq -c \
+    "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname='source_role_owned_by_migrator'")"
+  [[ "$schema_owner" == "$migrator_user" ]] || {
+    rm -f "$guard_log"
+    echo "$database migrator schema owner changed during failed preflight" >&2
+    return 1
+  }
+  run_psql "$database" postgres "$bootstrap_password" -c \
+    "DROP SCHEMA source_role_owned_by_migrator CASCADE; DROP ROLE $migrator_user" >/dev/null
+  rm -f "$guard_log"
 
   # Verify the fixture really contains a bootstrap-owned application table,
   # then require the provisioner to fail specifically at the ownership gate.
