@@ -83,7 +83,7 @@ export async function checkDestination(pool,options={}){
         AND convalidated
         AND position('envelope_sha256' in pg_get_constraintdef(oid))>0
         AND position('length(envelope_sha256)' in pg_get_constraintdef(oid))>0
-        AND position('^[0-9a-f]+' in pg_get_constraintdef(oid))>0) AS inbox_envelope_fingerprint_constraint`);
+        AND position('^[0-9a-f]+' || chr(36) in pg_get_constraintdef(oid))>0) AS inbox_envelope_fingerprint_constraint`);
   const row=result.rows[0];
   // Every consumer may encounter token-link events, so reject missing 004 before claiming.
   if(!row?.inbox||!row.registry||!row.evidence||!row.timeline||!row.token_links){
