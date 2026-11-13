@@ -206,7 +206,7 @@ test("source entity identities are bound to Telegram and Solana evidence", () =>
   assert.throws(() => adapt(telegram), /Telegram event source entity/);
 
   const revision = chainRevision();
-  revision.payload.registryEvent.entityRefs[0].canonicalId = "solana:" + "2".repeat(32);
+  revision.payload.registryEvent.entityRefs[0].canonicalId = "solana:" + mint;
   assert.throws(() => adapt(revision), /Solana swap revision identity/);
 
   const swap = chainSwap();
