@@ -99,7 +99,7 @@ function usage(){
     "  --max-batches N is a per-source upper bound; 0 means until SIGINT/SIGTERM.",
     "  Use --sources x or --sources tg,blockchain to run only configured sources.",
     "  X_SOURCE_DATABASE_URL, TG_SOURCE_DATABASE_URL, SOLANA_TRADE_DB_PATH",
-    "  INTELLIGENCE_DATABASE_URL: separate target PostgreSQL with migrations 001+002+004+017.",
+    "  INTELLIGENCE_DATABASE_URL: separate target PostgreSQL with migrations 001+002+004+017+019 for V1/V2 delivery.",
     "  Optional INTELLIGENCE_INVALIDATION_WORKER_ENABLED=true requires migrations 010+013+018.",
     "  Requires existing source outbox schemas; does NOT apply migrations.",
     "  Preserve separate producer opt-ins; never point this at live DBs before backup/restore.",
@@ -130,7 +130,10 @@ async function main(){
       sources.push({name,connection,workerId:randomUUID()});
     }
     destination=destinationConnection();
-    await checkDestination(destination,{requireBlockchainRevisions:options.sources.includes('blockchain')});
+    await checkDestination(destination,{
+      requireBlockchainRevisions:options.sources.includes('blockchain'),
+      requireEnvelopeFingerprint:true,
+    });
     const invalidationEnabled=process.env.INTELLIGENCE_INVALIDATION_WORKER_ENABLED==="true";
     const invalidationBatchSize=invalidationEnabled?parseInvalidationBatchSize():4;
     if(invalidationEnabled)await checkInvalidationDestination(destination);
