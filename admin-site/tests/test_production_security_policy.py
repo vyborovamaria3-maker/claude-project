@@ -53,6 +53,15 @@ class ProductionSecurityPolicyTests(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         strong_settings().validate()
 
+    def test_production_rejects_default_route_network_allowlists(self) -> None:
+        for cidr in ("0.0.0.0/0", "::/0"):
+            with self.subTest(cidr=cidr):
+                settings = strong_settings()
+                settings.allowed_networks = [ipaddress.ip_network(cidr)]
+                with patch.dict(os.environ, production_env(), clear=False):
+                    with self.assertRaisesRegex(RuntimeError, "default-route CIDRs"):
+                        settings.validate()
+
     def test_production_rejects_plaintext_admin_password(self) -> None:
         settings = strong_settings()
         settings.admin_password_hash = ""

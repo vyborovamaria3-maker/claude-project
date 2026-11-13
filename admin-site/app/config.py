@@ -127,6 +127,10 @@ class Settings:
             raise RuntimeError("ADMIN_ALLOWED_ORIGINS must be configured in production")
         if production and not self.allowed_networks:
             raise RuntimeError("ADMIN_ALLOWED_NETWORKS must be configured in production")
+        if production and any(network.prefixlen == 0 for network in self.allowed_networks):
+            raise RuntimeError(
+                "ADMIN_ALLOWED_NETWORKS must not include default-route CIDRs (0.0.0.0/0 or ::/0)"
+            )
         if production and not _env_bool("ADMIN_REQUIRE_NETWORK_ALLOWLIST"):
             raise RuntimeError("ADMIN_REQUIRE_NETWORK_ALLOWLIST must be enabled in production")
         if production and not _env_bool("ADMIN_REQUIRE_MFA"):
