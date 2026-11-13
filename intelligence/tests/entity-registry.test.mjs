@@ -61,6 +61,42 @@ test("repeat delivery checks the complete stable payload fingerprint",async()=>{
   }),/identity collision/);
 });
 
+test("matching V1 registry fingerprint can be promoted to one stable V2 envelope hash",async()=>{
+  const stored={
+    schema_version:event.schemaVersion,
+    evidence_source_id:evidence.sourceId,
+    payload_sha256:registryEventFingerprint(event),
+    envelope_sha256:null,
+  };
+  const calls=[];
+  const tx={query:async(sql,params=[])=>{
+    calls.push({sql,params});
+    if(sql.includes("SELECT schema_version"))return {rows:[stored]};
+    if(sql.includes("UPDATE intelligence_inbox")&&sql.includes("envelope_sha256")){
+      if(stored.envelope_sha256===null)stored.envelope_sha256=params[0];
+      return {rows:[]};
+    }
+    if(sql.includes("SELECT envelope_sha256 FROM intelligence_inbox"))
+      return {rows:[{envelope_sha256:stored.envelope_sha256}]};
+    return {rows:[]};
+  }};
+  const envelopeSha256="a".repeat(64);
+  assert.equal(await ingestRegistryEvent(tx,event,{envelopeSha256}),false);
+  assert.equal(stored.payload_sha256,registryEventFingerprint(event),
+    "promotion must not overwrite the V1-compatible registry fingerprint");
+  assert.equal(stored.envelope_sha256,envelopeSha256);
+  assert.ok(calls.some(call=>call.sql.includes("FOR UPDATE")),
+    "promotion must serialize on the inbox row");
+  assert.equal(await ingestRegistryEvent(tx,event,{envelopeSha256}),false,
+    "same V2 envelope replay is a duplicate");
+  await assert.rejects(
+    ingestRegistryEvent(tx,event,{envelopeSha256:"b".repeat(64)}),
+    /V2 envelope hash mismatch/,
+  );
+  assert.equal(await ingestRegistryEvent(tx,event),false,
+    "V2-to-V1 replay remains compatible through the stable registry fingerprint");
+});
+
 test("legacy inbox rows without a fingerprint fail closed",async()=>{
   const tx={query:async sql=>({rows:sql.includes("SELECT schema_version")?[{
     schema_version:event.schemaVersion,evidence_source_id:evidence.sourceId,payload_sha256:null,
