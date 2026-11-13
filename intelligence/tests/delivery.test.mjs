@@ -98,7 +98,7 @@ function statefulInboxDestination(log){
              storedRegistrySha256===params[4])storedEnvelopeSha256=params[0];
           return {rows:[]};
         }
-        if(sql.replace(/\\s+/g," ").includes("SELECT envelope_sha256 FROM intelligence_inbox")){
+        if(sql.replace(/\s+/g," ").includes("SELECT envelope_sha256 FROM intelligence_inbox")){
           return {rows:[{envelope_sha256:storedEnvelopeSha256}]};
         }
         return {rows:sql.includes("RETURNING event_key")?[{event_key:registeredEventKey}]:[]};
