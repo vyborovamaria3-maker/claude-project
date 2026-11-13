@@ -75,7 +75,11 @@ export async function checkDestination(pool,options={}){
     EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('intelligence_inbox')
       AND attname='payload_sha256' AND NOT attisdropped) AS inbox_fingerprint,
     EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('intelligence_inbox')
-      AND attname='envelope_sha256' AND NOT attisdropped) AS inbox_envelope_fingerprint`);
+      AND attname='envelope_sha256' AND NOT attisdropped) AS inbox_envelope_fingerprint,
+    EXISTS (SELECT 1 FROM pg_constraint
+      WHERE conrelid=to_regclass('intelligence_inbox')
+        AND conname='intelligence_inbox_envelope_sha256_check'
+        AND convalidated) AS inbox_envelope_fingerprint_constraint`);
   const row=result.rows[0];
   // Every consumer may encounter token-link events, so reject missing 004 before claiming.
   if(!row?.inbox||!row.registry||!row.evidence||!row.timeline||!row.token_links){
@@ -84,7 +88,8 @@ export async function checkDestination(pool,options={}){
   if(!row.inbox_fingerprint){
     throw new Error("destination Intelligence migration 017 required before source claims");
   }
-  if(options.requireEnvelopeFingerprint===true && !row.inbox_envelope_fingerprint){
+  if(options.requireEnvelopeFingerprint===true &&
+     (!row.inbox_envelope_fingerprint || !row.inbox_envelope_fingerprint_constraint)){
     throw new Error("destination Intelligence migration 019 required before V2-capable source claims");
   }
   if(options.requireBlockchainRevisions===true && !row.blockchain_revisions){
