@@ -10,14 +10,15 @@ import {ingestRegistryEvent,registryEventFingerprint} from "../dist/index.js";
 
 const url=process.env.INTELLIGENCE_TEST_DB_URL;
 
-function event(key){
+function event(messageId){
+  const key="tg:message:-100321:"+messageId;
   const observedAt="2026-11-13T10:00:00.000Z";
   const entity=buildEntityRef({
     kind:"source",canonicalId:formatSourceId("tg","-100321"),
     firstSeenAt:observedAt,lastSeenAt:observedAt,
   });
   const evidenceRef=buildEvidenceRef({
-    sourceKind:"tg_message",sourceAccountId:"-100321",messageId:key,
+    sourceKind:"tg_message",sourceAccountId:"-100321",messageId,
     observedAt,occurredAt:"2026-11-13T09:59:00.000Z",
   });
   return {
@@ -46,7 +47,7 @@ test("PostgreSQL preserves V1 registry identity while promoting and fencing V2 e
     }
     pool=new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:5});
 
-    const original=event("tg:message:-100321:101");
+    const original=event("101");
     const registrySha=registryEventFingerprint(original);
     const v2Hash="a".repeat(64);
     const client=await pool.connect();
@@ -77,7 +78,7 @@ test("PostgreSQL preserves V1 registry identity while promoting and fencing V2 e
     assert.equal(stored.payload_sha256,registrySha);
     assert.equal(stored.envelope_sha256,v2Hash);
 
-    const concurrent=event("tg:message:-100321:102");
+    const concurrent=event("102");
     const seed=await pool.connect();
     try{
       await seed.query("BEGIN");
