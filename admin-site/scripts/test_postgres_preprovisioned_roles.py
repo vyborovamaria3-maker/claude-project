@@ -578,6 +578,28 @@ def assert_runtime_restricted() -> None:
     os.environ["ADMIN_PG_SCHEMA_MODE"] = "preprovisioned"
     verify_preprovisioned_schema(RUNTIME)
 
+    # Revoking schema CREATE does not remove ownership of an existing table.
+    # Runtime startup must detect that ownership drift even in an auxiliary schema.
+    with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+        bootstrap.execute("CREATE SCHEMA admin_ci_runtime_object_drift")
+        bootstrap.execute(
+            "CREATE TABLE admin_ci_runtime_object_drift.runtime_owned(id integer)"
+        )
+        bootstrap.execute(
+            "ALTER TABLE admin_ci_runtime_object_drift.runtime_owned OWNER TO admin_ci_runtime"
+        )
+    try:
+        try:
+            verify_preprovisioned_schema(RUNTIME)
+        except RuntimeError as exc:
+            assert "owns or can set role to the owner of application object" in str(exc).lower(), str(exc)
+        else:
+            raise AssertionError("Runtime-owned auxiliary relation was accepted")
+    finally:
+        with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
+            bootstrap.execute("DROP SCHEMA admin_ci_runtime_object_drift CASCADE")
+    verify_preprovisioned_schema(RUNTIME)
+
     # Runtime startup must reject a SECURITY DEFINER routine that remains
     # executable by PUBLIC, even if the rest of the schema ACLs are correct.
     with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
