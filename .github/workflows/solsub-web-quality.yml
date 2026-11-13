@@ -105,6 +105,8 @@ jobs:
             -v "$PWD/scripts/provision-readonly-role.sql:/provision/readonly-role.sql:ro" \
             -v "$PWD/scripts/run-readonly-role-provisioner.sh:/provision/run-readonly-role-provisioner.sh:ro" \
             postgres:16-alpine /bin/sh /provision/run-readonly-role-provisioner.sh
+      - name: Install PostgreSQL client for the migration privilege wrapper
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: Apply Prisma migrations with temporary database CREATE, then revoke it
         env:
           DATABASE_URL: postgresql://solsub_migrator:ci-migrator-password@127.0.0.1:5432/solsub_role_ci?schema=public

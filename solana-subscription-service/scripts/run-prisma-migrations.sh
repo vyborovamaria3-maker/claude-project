@@ -37,13 +37,42 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# The immutable Prisma baseline contains CREATE SCHEMA IF NOT EXISTS public.
-# PostgreSQL checks database CREATE even if public already exists. Grant it
-# only for migration deploy, then revoke before running the seed.
-run_psql -c 'GRANT CREATE ON DATABASE :"dbname" TO :"migrator";'
-granted=1
+# Only the immutable initial migration contains CREATE SCHEMA. Existing
+# databases whose baseline is already recorded need no database-level grant.
+migration_table_exists=$(run_psql -tA -c "SELECT to_regclass('public.\"_prisma_migrations\"') IS NOT NULL;")
+case "$migration_table_exists" in
+  t)
+    baseline_applied=$(run_psql -tA -c "SELECT EXISTS (SELECT 1 FROM public.\"_prisma_migrations\" WHERE migration_name='20260627143000_init' AND finished_at IS NOT NULL AND rolled_back_at IS NULL);")
+    ;;
+  f)
+    baseline_applied=f
+    ;;
+  *)
+    printf '%s\\n' "ERROR: could not determine Prisma migration history state" >&2
+    exit 1
+    ;;
+esac
+
+case "$baseline_applied" in
+  t)
+    ;;
+  f)
+    # Set the cleanup guard before GRANT: if the connection drops after the
+    # server commits the privilege but before psql reports success, EXIT still
+    # attempts the REVOKE.
+    granted=1
+    run_psql -c 'GRANT CREATE ON DATABASE :"dbname" TO :"migrator";'
+    ;;
+  *)
+    printf '%s\\n' "ERROR: invalid Prisma baseline state" >&2
+    exit 1
+    ;;
+esac
+
 npm run prisma:deploy -w @solsub/api
-run_psql -c 'REVOKE CREATE ON DATABASE :"dbname" FROM :"migrator";'
-granted=0
+if [ "$granted" -eq 1 ]; then
+  run_psql -c 'REVOKE CREATE ON DATABASE :"dbname" FROM :"migrator";'
+  granted=0
+fi
 trap - EXIT INT TERM
 npm run prisma:seed -w @solsub/api
