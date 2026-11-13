@@ -15,7 +15,7 @@ test("delivery readiness fails closed when token-link migration 004 is missing",
   assert.match(calls[0],/token_link_observations/);
   await assert.doesNotReject(checkDestination({query:async()=>({rows:[{
     inbox:true,registry:true,evidence:true,timeline:true,token_links:true,inbox_fingerprint:true,
-    inbox_envelope_fingerprint:true,
+    inbox_envelope_fingerprint:true,inbox_envelope_fingerprint_constraint:true,
   }]})}));
   await assert.rejects(checkDestination({query:async()=>({rows:[{
     inbox:true,registry:true,evidence:true,timeline:true,token_links:true,inbox_fingerprint:true,
@@ -28,6 +28,12 @@ test("delivery readiness fails closed when token-link migration 004 is missing",
     inbox:true,registry:true,evidence:true,timeline:true,token_links:true,
     inbox_fingerprint:true,inbox_envelope_fingerprint:false,
   }]})},{requireEnvelopeFingerprint:true}),/migration 019/);
+  await assert.rejects(checkDestination({query:async()=>({rows:[{
+    inbox:true,registry:true,evidence:true,timeline:true,token_links:true,
+    inbox_fingerprint:true,inbox_envelope_fingerprint:true,
+    inbox_envelope_fingerprint_constraint:false,
+  }]})},{requireEnvelopeFingerprint:true}),/migration 019/,
+  "a partially applied or unvalidated migration 019 must not pass readiness");
 });
 test("temporary PostgreSQL target requires additive 004, 005, 017 and 019 before V2-capable source claims",{
   skip:!process.env.INTELLIGENCE_TEST_DB_URL,
