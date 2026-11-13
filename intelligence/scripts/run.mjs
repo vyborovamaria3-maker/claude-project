@@ -41,7 +41,7 @@ function usage() {
     "  INTELLIGENCE_ETL_ENABLED=true node scripts/run.mjs --source x|tg|blockchain --once --limit 50",
     "Source env: X_SOURCE_DATABASE_URL, TG_SOURCE_DATABASE_URL, SOLANA_TRADE_DB_PATH",
     "Destination env: INTELLIGENCE_DATABASE_URL (required for --once)",
-    "Preconditions: source outbox schema, destination 001+002+004+017; +005 for Blockchain swap revisions",
+    "Preconditions: source outbox schema, destination 001+002+004+017+019 for V1/V2 delivery; +005 for Blockchain swap revisions",
   ].join("\n");
 }
 async function status(source){
@@ -64,7 +64,10 @@ async function main(){
     }
     if(source.kind==="pg")await checkPgOutbox(source.connection);
     destination=destinationConnection();
-    await checkDestination(destination,{requireBlockchainRevisions:args.source==='blockchain'});
+    await checkDestination(destination,{
+      requireBlockchainRevisions:args.source==='blockchain',
+      requireEnvelopeFingerprint:true,
+    });
     const ai=await createAiRuntime(destination,source.kind==='pg'?{[args.source]:source.connection}:{});
     const stats=await runDeliveryBatch(source.port,destination,{
       workerId:randomUUID(),batchSize:args.limit,leaseMs:120_000,
