@@ -45,10 +45,6 @@ END
 $$;
 \endif
 
--- The immutable initial migration uses CREATE EXTENSION IF NOT EXISTS pgcrypto.
--- Install it as bootstrap so the restricted migrator never needs database CREATE.
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
 SELECT EXISTS (
   SELECT 1
   FROM pg_auth_members membership
@@ -171,6 +167,10 @@ $$;
 \endif
 
 BEGIN;
+
+-- Install the extension only after all read-only preflight checks pass.
+-- The restricted migrator then sees it already installed in immutable migration 001.
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user') AS app_role_exists \gset
 SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'migrator_user') AS migrator_role_exists \gset

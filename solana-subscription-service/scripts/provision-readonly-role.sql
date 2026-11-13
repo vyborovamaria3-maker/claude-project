@@ -45,9 +45,6 @@ END
 $$;
 \endif
 
--- Ensure the default schema exists before Prisma runs the immutable initial migration.
-CREATE SCHEMA IF NOT EXISTS public;
-
 SELECT EXISTS (
   SELECT 1
   FROM pg_auth_members membership
@@ -170,6 +167,9 @@ $$;
 \endif
 
 BEGIN;
+
+-- Ensure public exists after read-only preflight and before Prisma's immutable initial migration.
+CREATE SCHEMA IF NOT EXISTS public;
 
 SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user') AS app_role_exists \gset
 SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'migrator_user') AS migrator_role_exists \gset
