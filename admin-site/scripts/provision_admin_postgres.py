@@ -409,15 +409,16 @@ def provision_roles(
                 sql.Identifier(backup_user)
             )
         )
-        # Backup is a data-export identity, not an application function caller.
-        # Remove stale direct EXECUTE grants without changing extension-owned routines.
-        function_signatures = db.execute(
+        # Backup is a data-export identity, not an application routine caller.
+        # Remove stale direct EXECUTE grants without changing extension-owned
+        # routines. ROUTINE covers functions, window functions, aggregates and
+        # procedures; ON FUNCTION would reject procedure signatures.
+        routine_signatures = db.execute(
             """
             SELECT p.oid::regprocedure::text
             FROM pg_proc p
             JOIN pg_namespace n ON n.oid = p.pronamespace
             WHERE n.nspname = 'public'
-              AND p.prokind = 'f'
               AND NOT EXISTS (
                   SELECT 1 FROM pg_depend e
                   WHERE e.classid = 'pg_proc'::regclass
@@ -426,10 +427,10 @@ def provision_roles(
               )
             """
         ).fetchall()
-        for (function_signature,) in function_signatures:
+        for (routine_signature,) in routine_signatures:
             db.execute(
-                sql.SQL("REVOKE EXECUTE ON FUNCTION {} FROM {}").format(
-                    sql.SQL(function_signature),
+                sql.SQL("REVOKE EXECUTE ON ROUTINE {} FROM {}").format(
+                    sql.SQL(routine_signature),
                     sql.Identifier(backup_user),
                 )
             )

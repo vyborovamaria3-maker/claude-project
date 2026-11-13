@@ -295,13 +295,14 @@ REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC;
 REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
 
 -- Backup and read-only identities are SELECT-only; remove legacy EXECUTE grants
--- on application functions, including SECURITY DEFINER routines.
-SELECT format('REVOKE EXECUTE ON FUNCTION %s FROM %I', p.oid::regprocedure, role_name)
+-- on application routines (functions, window functions, aggregates and
+-- procedures, including SECURITY DEFINER ones). ROUTINE covers every pg_proc
+-- kind; the narrower ON FUNCTION spelling rejects procedure signatures.
+SELECT format('REVOKE EXECUTE ON ROUTINE %s FROM %I', p.oid::regprocedure, role_name)
 FROM pg_proc p
 JOIN pg_namespace n ON n.oid = p.pronamespace
 CROSS JOIN (VALUES (:'backup_user'), (:'readonly_user')) AS roles(role_name)
 WHERE n.nspname = 'public'
-  AND p.prokind = 'f'
   AND NOT EXISTS (
     SELECT 1 FROM pg_depend e
     WHERE e.classid = 'pg_proc'::regclass AND e.objid = p.oid AND e.deptype = 'e'

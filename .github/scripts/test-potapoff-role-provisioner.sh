@@ -91,6 +91,10 @@ run_psql "$bootstrap_user" "$bootstrap_password" -c "
   CREATE FUNCTION public.legacy_security_definer_second() RETURNS integer
     LANGUAGE sql SECURITY DEFINER AS \$\$ SELECT 2 \$\$;
   REVOKE ALL ON FUNCTION public.legacy_security_definer_second() FROM PUBLIC;
+  CREATE PROCEDURE public.legacy_security_definer_proc()
+    LANGUAGE plpgsql SECURITY DEFINER AS
+  \$\$ BEGIN INSERT INTO public.legacy_records(label) VALUES ('legacy-proc'); END \$\$;
+  REVOKE ALL ON PROCEDURE public.legacy_security_definer_proc() FROM PUBLIC;
 " >/dev/null
 
 # Validate the source SQL on the host BEFORE docker cp: /tmp/... paths exist
@@ -224,6 +228,7 @@ run_psql "$bootstrap_user" "$bootstrap_password" -c "
   ALTER FUNCTION public.legacy_label_count() OWNER TO $migrator_user;
   ALTER FUNCTION public.legacy_security_definer() OWNER TO $migrator_user;
   ALTER FUNCTION public.legacy_security_definer_second() OWNER TO $migrator_user;
+  ALTER PROCEDURE public.legacy_security_definer_proc() OWNER TO $migrator_user;
   ALTER TYPE public.legacy_state OWNER TO $migrator_user;
   ALTER TYPE public.legacy_composite OWNER TO $migrator_user;
   GRANT SELECT ON TABLE public.legacy_records TO PUBLIC;
@@ -384,11 +389,21 @@ if run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstra
   echo "Ownership guard unexpectedly accepted a PUBLIC-executable SECURITY DEFINER function" >&2
   exit 1
 fi
+run_psql "$bootstrap_user" "$bootstrap_password" -c \
+  "GRANT EXECUTE ON PROCEDURE public.legacy_security_definer_proc() TO PUBLIC" >/dev/null
+if run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_user" -v migrator_user="$migrator_user" \
+  -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
+  -f /tmp/check-postgres-migrator-ownership.sql >/dev/null 2>&1; then
+  echo "Ownership guard unexpectedly accepted a PUBLIC-executable SECURITY DEFINER procedure" >&2
+  exit 1
+fi
 run_psql "$bootstrap_user" "$bootstrap_password" -c "
   REVOKE ALL ON FUNCTION public.legacy_security_definer() FROM PUBLIC;
+  REVOKE ALL ON PROCEDURE public.legacy_security_definer_proc() FROM PUBLIC;
   GRANT EXECUTE ON FUNCTION public.legacy_label_count() TO $app_user;
   GRANT EXECUTE ON FUNCTION public.legacy_security_definer() TO $app_user;
   GRANT EXECUTE ON FUNCTION public.legacy_security_definer_second() TO $app_user;
+  GRANT EXECUTE ON PROCEDURE public.legacy_security_definer_proc() TO $app_user;
 " >/dev/null
 run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_user" -v migrator_user="$migrator_user" \
   -v app_user="$app_user" -v backup_user="$backup_user" -v readonly_user="$readonly_user" \
@@ -439,6 +454,9 @@ run_psql "$app_user" "$app_password" -c "
   "SELECT public.legacy_security_definer()")" == "1" ]]
 [[ "$(run_psql "$app_user" "$app_password" -Atq -c \
   "SELECT public.legacy_security_definer_second()")" == "2" ]]
+run_psql "$app_user" "$app_password" -c "CALL public.legacy_security_definer_proc()" >/dev/null
+[[ "$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
+  "SELECT count(*) FROM public.legacy_records WHERE label='legacy-proc'")" == "1" ]]
 if run_psql "$backup_user" "$backup_password" -c \
   "SELECT public.legacy_security_definer()" >/dev/null 2>&1; then
   echo "Backup role unexpectedly executed a SECURITY DEFINER function" >&2
@@ -447,6 +465,16 @@ fi
 if run_psql "$backup_user" "$backup_password" -c \
   "SELECT public.legacy_security_definer_second()" >/dev/null 2>&1; then
   echo "Backup role unexpectedly executed a second SECURITY DEFINER function" >&2
+  exit 1
+fi
+if run_psql "$backup_user" "$backup_password" -c \
+  "CALL public.legacy_security_definer_proc()" >/dev/null 2>&1; then
+  echo "Backup role unexpectedly called a SECURITY DEFINER procedure" >&2
+  exit 1
+fi
+if run_psql "$readonly_user" "$readonly_password" -c \
+  "CALL public.legacy_security_definer_proc()" >/dev/null 2>&1; then
+  echo "Read-only role unexpectedly called a SECURITY DEFINER procedure" >&2
   exit 1
 fi
 if run_psql "$backup_user" "$backup_password" -c \
@@ -507,6 +535,7 @@ run_psql "$bootstrap_user" "$bootstrap_password" -c "
   GRANT EXECUTE ON FUNCTION public.legacy_label_count() TO $backup_user, $readonly_user;
   GRANT EXECUTE ON FUNCTION public.legacy_security_definer() TO $backup_user, $readonly_user;
   GRANT EXECUTE ON FUNCTION public.legacy_security_definer_second() TO $backup_user, $readonly_user;
+  GRANT EXECUTE ON PROCEDURE public.legacy_security_definer_proc() TO $backup_user, $readonly_user;
   ALTER DEFAULT PRIVILEGES FOR ROLE $migrator_user GRANT INSERT, UPDATE, DELETE, TRUNCATE ON TABLES TO PUBLIC, $backup_user, $readonly_user;
   ALTER DEFAULT PRIVILEGES FOR ROLE $migrator_user GRANT TRUNCATE, REFERENCES, TRIGGER ON TABLES TO $app_user;
   ALTER DEFAULT PRIVILEGES FOR ROLE $migrator_user GRANT USAGE, UPDATE ON SEQUENCES TO PUBLIC, $backup_user, $readonly_user;
@@ -609,6 +638,11 @@ for role in "$backup_user" "$readonly_user"; do
       exit 1
     fi
   done
+  if run_psql "$role" "$role_password" -c \
+    "CALL public.legacy_security_definer_proc()" >/dev/null 2>&1; then
+    echo "$role retained EXECUTE on SECURITY DEFINER procedure legacy_security_definer_proc" >&2
+    exit 1
+  fi
 done
 app_new_table_acl="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c "
   SELECT has_table_privilege('$app_user','public.reprovisioned_acl_probe','SELECT')::text || '|' ||

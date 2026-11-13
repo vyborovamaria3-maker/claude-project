@@ -727,6 +727,33 @@ def assert_runtime_restricted() -> None:
                 raise AssertionError("Restricted identity executed an ungranted function")
     with psycopg.connect(MIGRATE) as migration:
         migration.execute("DROP FUNCTION public.admin_ci_private_function()")
+
+    # SECURITY DEFINER procedures are callable with CALL and must also be
+    # explicit-grant-only for restricted identities; migrator-created
+    # procedures must not inherit PostgreSQL's default PUBLIC EXECUTE.
+    with psycopg.connect(MIGRATE) as migration:
+        migration.execute(
+            "CREATE PROCEDURE public.admin_ci_secdef_proc() "
+            "LANGUAGE sql SECURITY DEFINER AS 'SELECT 1'"
+        )
+        public_execute = migration.execute(
+            "SELECT EXISTS ("
+            "SELECT 1 FROM pg_proc p "
+            "CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f',p.proowner))) acl "
+            "WHERE p.oid='public.admin_ci_secdef_proc()'::regprocedure "
+            "AND acl.grantee=0 AND acl.privilege_type='EXECUTE')"
+        ).fetchone()[0]
+        assert public_execute is False, "Migrator-created procedure retained PUBLIC EXECUTE"
+    for restricted_dsn in (RUNTIME, BACKUP):
+        with psycopg.connect(restricted_dsn) as restricted:
+            try:
+                restricted.execute("CALL public.admin_ci_secdef_proc()")
+            except InsufficientPrivilege:
+                pass
+            else:
+                raise AssertionError("Restricted identity called an ungranted procedure")
+    with psycopg.connect(MIGRATE) as migration:
+        migration.execute("DROP PROCEDURE public.admin_ci_secdef_proc()")
     verify_preprovisioned_schema(RUNTIME)
 
     # Membership in a table-owner role must be rejected even when that role
