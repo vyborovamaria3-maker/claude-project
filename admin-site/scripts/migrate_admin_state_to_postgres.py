@@ -21,18 +21,66 @@ from app.postgres_security_store import PostgresAdminSessionStore
 
 MIGRATION_KEY = "admin-sqlite-to-postgres-v1"
 
+# The migration must refuse silent data loss. Every migrated table has a
+# known shape; extra SQLite columns would be dropped by the fixed SELECT
+# lists below and missing columns would break the copy, so the schema is
+# verified before any row is read.
+EXPECTED_TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
+    "feature_flags": ("name", "enabled", "description", "updated_by", "updated_at"),
+    "alerts": (
+        "id", "level", "title", "message", "source", "status",
+        "created_at", "acknowledged_at", "acknowledged_by",
+    ),
+    "analysis_parameter_overrides": (
+        "domain", "key", "enabled", "threshold", "label", "source", "value_type",
+        "scale", "description", "custom", "deleted", "updated_by", "updated_at",
+    ),
+    "admin_audit": (
+        "id", "created_at", "username", "ip_address", "action", "resource",
+        "success", "details_json",
+    ),
+    "revoked_admin_sessions": ("nonce", "expires_at", "revoked_at"),
+}
+
+
+def _assert_expected_columns(source: sqlite3.Connection, table: str) -> None:
+    expected = EXPECTED_TABLE_COLUMNS.get(table)
+    if expected is None:
+        return
+    actual = [
+        str(row["name"])
+        for row in source.execute(f"PRAGMA table_info({table})").fetchall()
+    ]
+    unknown = [column for column in actual if column not in expected]
+    missing = [column for column in expected if column not in actual]
+    if unknown or missing:
+        raise SystemExit(
+            f"SQLite {table} schema drift: unknown_columns={unknown} "
+            f"missing_columns={missing}; refusing a migration that would "
+            "silently drop or fail to copy data"
+        )
+
 
 def _table_exists(db: sqlite3.Connection, table: str) -> bool:
     row = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
     return row is not None
 
 
-def _json_object(value: str | None) -> str:
+def _json_object(value: str | None, row_id: object) -> str:
+    raw = value or "{}"
     try:
-        parsed = json.loads(value or "{}")
-    except json.JSONDecodeError:
-        parsed = {}
-    return json.dumps(parsed if isinstance(parsed, dict) else {}, ensure_ascii=False, default=str)
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            f"SQLite admin_audit id={row_id} has corrupt details_json: {exc}; "
+            "repair the source row before migrating"
+        )
+    if not isinstance(parsed, dict):
+        raise SystemExit(
+            f"SQLite admin_audit id={row_id} details_json is not a JSON object; "
+            "refusing to replace it with {{}}"
+        )
+    return json.dumps(parsed, ensure_ascii=False, default=str)
 
 
 def _sqlite_state_fingerprint(source: sqlite3.Connection) -> str:
@@ -95,6 +143,31 @@ def _assert_no_target_key_conflicts(
             )
 
 
+def _assert_keys_migrated(
+    cur: psycopg.Cursor,
+    table: str,
+    key_column: str,
+    keys: list[object],
+) -> None:
+    """Fail closed when any source row did not reach PostgreSQL."""
+    if not keys:
+        return
+    cur.execute(
+        sql.SQL("SELECT count(*) FROM {} WHERE {} = ANY(%s)").format(
+            sql.Identifier(table), sql.Identifier(key_column)
+        ),
+        (keys,),
+    )
+    row = cur.fetchone()
+    migrated = int(row["count"])
+    if migrated != len(keys):
+        raise SystemExit(
+            f"Incomplete PostgreSQL transfer for {table}: "
+            f"{migrated} of {len(keys)} source keys present; "
+            "migration marker will not be written"
+        )
+
+
 def main() -> None:
     sqlite_path = os.getenv("ADMIN_AUDIT_DB", "/var/lib/potapoff-admin/audit.db")
     # State cutover mutates schema metadata and sequence values. Prefer the
@@ -120,6 +193,10 @@ def main() -> None:
         # Pin one consistent SQLite read snapshot across every table. The deploy
         # also stops the legacy Admin writer before this process starts.
         source.execute("BEGIN")
+        # Verify the expected source schema before anything else: extra
+        # columns would be silently dropped by the fixed SELECT lists.
+        for table in EXPECTED_TABLE_COLUMNS:
+            _assert_expected_columns(source, table)
         source_fingerprint = _sqlite_state_fingerprint(source)
         with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=5) as target, target.cursor() as cur:
             cur.execute(
@@ -193,6 +270,7 @@ def main() -> None:
                         (row["name"], bool(row["enabled"]), row["description"], row["updated_by"], row["updated_at"]),
                     )
                 counts["feature_flags"] = len(rows)
+                _assert_keys_migrated(cur, "feature_flags", "name", [row["name"] for row in rows])
 
             if _table_exists(source, "alerts"):
                 rows = source.execute("SELECT * FROM alerts ORDER BY id").fetchall()
@@ -205,6 +283,7 @@ def main() -> None:
                     )
                 cur.execute("SELECT setval(pg_get_serial_sequence('alerts','id'), COALESCE(MAX(id),1), COUNT(*)>0) FROM alerts")
                 counts["alerts"] = len(rows)
+                _assert_keys_migrated(cur, "alerts", "id", [row["id"] for row in rows])
 
             if _table_exists(source, "analysis_parameter_overrides"):
                 rows = source.execute("SELECT * FROM analysis_parameter_overrides").fetchall()
@@ -221,10 +300,15 @@ def main() -> None:
                         tuple(row[key] for key in columns),
                     )
                 counts["analysis_parameter_overrides"] = len(rows)
+                _assert_keys_migrated(
+                    cur, "analysis_parameter_overrides", "key",
+                    [row["key"] for row in rows],
+                )
 
             if _table_exists(source, "admin_audit"):
                 last_id = 0
                 migrated = 0
+                audit_ids: list[int] = []
                 while True:
                     rows = source.execute(
                         """SELECT id,created_at,username,ip_address,action,resource,success,details_json
@@ -238,12 +322,14 @@ def main() -> None:
                             """INSERT INTO admin_audit(id,created_at,username,ip_address,action,resource,success,details_json)
                                VALUES(%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
                                ON CONFLICT(id) DO NOTHING""",
-                            (row["id"], row["created_at"], row["username"], row["ip_address"], row["action"], row["resource"], bool(row["success"]), _json_object(row["details_json"])),
+                            (row["id"], row["created_at"], row["username"], row["ip_address"], row["action"], row["resource"], bool(row["success"]), _json_object(row["details_json"], row["id"])),
                         )
                     last_id = int(rows[-1]["id"])
                     migrated += len(rows)
+                    audit_ids.extend(int(row["id"]) for row in rows)
                 cur.execute("SELECT setval(pg_get_serial_sequence('admin_audit','id'), COALESCE(MAX(id),1), COUNT(*)>0) FROM admin_audit")
                 counts["admin_audit"] = migrated
+                _assert_keys_migrated(cur, "admin_audit", "id", audit_ids)
 
             # Preserve revocation replay protection across the backend cutover.
             if _table_exists(source, "revoked_admin_sessions"):
@@ -257,6 +343,7 @@ def main() -> None:
                         (row["nonce"], int(row["expires_at"]), row["revoked_at"]),
                     )
                 counts["revoked_admin_sessions"] = len(rows)
+                _assert_keys_migrated(cur, "revoked_admin_sessions", "nonce", [row["nonce"] for row in rows])
 
             cur.execute(
                 "INSERT INTO admin_state_migrations(migration_key,source_fingerprint) "
