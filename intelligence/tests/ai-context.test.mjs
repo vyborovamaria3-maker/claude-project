@@ -218,7 +218,7 @@ test("real disposable PostgreSQL never leaks future-computed features into an ol
     await admin.query('CREATE SCHEMA "'+schema+'"');
     await admin.query('SET search_path TO "'+schema+'"');
     for(const name of [
-      "001_entity_registry.sql","002_timeline.sql","003_feature_store.sql",
+      "001_entity_registry.sql","017_inbox_payload_fingerprint.sql","002_timeline.sql","003_feature_store.sql",
       "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql",
     ])await admin.query(await readFile(new URL("../migrations/"+name,import.meta.url),"utf8"));
     pool=new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:3});
