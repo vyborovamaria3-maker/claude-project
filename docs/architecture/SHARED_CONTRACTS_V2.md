@@ -210,13 +210,13 @@ The architecture-hardening branch now implements the first runtime contract laye
 The outbox contract now exposes immutable `createdAt` on every claimed row from both PostgreSQL and SQLite. Generic PostgreSQL, X and TG outbox writers stamp `created_at` with `clock_timestamp()` at insert time; Solana SQLite continues to persist its emission timestamp. X/TG remain V1 payload producers; this is only timestamp-column correctness, not a V2 producer migration. Intelligence delivery now dual-reads:
 - registered V1 source events are validated through `adaptLegacyOutboxEventToV2` using only source `createdAt` for `emittedAt`, then passed to the established V1 ingestion path;
 - unregistered legacy event kinds and read-only snapshot imports retain the previous V1 path;
-- V2 envelopes are strictly validated, checked against the outbox identity and `createdAt`, unwrapped into the same internal payload model, and use the full envelope hash for inbox dedup/collision checks.
+- V2 envelopes are strictly validated, checked against the outbox identity and `createdAt`, unwrapped into the same internal payload model, and use the full envelope hash stored separately in `intelligence_inbox.envelope_sha256`.
 
-V1 inbox fingerprint behavior remains unchanged, preserving existing V1 replay semantics. V2 same-identity/same-hash deliveries are duplicates; same identity with a different canonical envelope hash fails as a collision. Source `occurredAt` and `observedAt` are not rewritten: downstream `knownAt` continues to derive from the original evidence observation timestamp. No production DB schema migration was added.
+V1 and V2 both retain the normalized RegistryEvent fingerprint in `payload_sha256`, preserving existing V1 replay semantics. V2 additionally stores its complete canonical envelope hash in `envelope_sha256`. A matching V1 inbox row can be promoted once under `SELECT FOR UPDATE`; later V2 deliveries must match the stored envelope hash exactly. Timeline/token-link/swap materialization checks run in the same destination transaction, so mismatches roll back promotion. Source `occurredAt` and `observedAt` are not rewritten: downstream `knownAt` continues to derive from the original evidence observation timestamp. Migration 019 is present in this branch; no production database has been migrated.
 
 Existing X/TG/Solana producers still write V1. X/TG outbox SQL now sets only the existing `created_at` column with `clock_timestamp()` so the emitted clock is not transaction-start `NOW()`; payloads, flags and schema migrations remain unchanged. No V2 producer flag was added or enabled. Unknown event schemas and `twitter_research` are rejected by this initial V2 registry; multichain remains out of scope. V1 producers may already use `observedAt` as a fallback for missing source occurrence time; the adapter cannot infer whether this was a genuine source timestamp and preserves the V1 value.
 
-**Exact-head CI snapshot (2026-11-13):** 30 workflows completed successfully, 0 failed, and 1 workflow (`Security Lock Refresh`) was skipped. The skipped workflow is not counted as a pass. No production migration, collector enablement, merge or deployment is authorized by this implementation.
+**Earlier exact-head CI snapshot:** commit `3fe5ead99b5ee01d33bf887f55e87af25af595e0` had 30 successful workflows, 0 failed and 1 skipped (`Security Lock Refresh`, not counted as a pass). This snapshot predates migration 019 and the subsequent readiness-gate changes; it is not validation of the current HEAD. The current PR HEAD must pass its own CI. No production migration, collector enablement, merge or deployment is authorized.
 
 
 ### Consumer dual-read implementation update — 2026-11-12
@@ -225,13 +225,13 @@ The current branch includes the additive consumer/outbox step:
 - `ClaimedEvent.createdAt` is populated from `outbox_events.created_at` by both claim adapters. Invalid/missing timestamps fail before the claim lease is committed.
 - PostgreSQL outbox emission explicitly stamps `created_at` with `clock_timestamp()` so it represents the actual insert/emission time rather than the transaction-start `NOW()`.
 - Intelligence validates registered V1 events through the V1 adapter, validates V2 envelope payloads and binds `emittedAt` to source `created_at`.
-- V1 delivery retains the historical registry fingerprint and evidence clocks. V2 delivery uses the full envelope hash for duplicate/collision handling.
+- V1 and V2 retain the stable registry fingerprint in `payload_sha256`; V2 also persists its full canonical envelope hash in `envelope_sha256` for duplicate/collision handling.
 - Regression tests cover missing/invalid source clocks, V1 knownAt parity, V2 hash tampering, identity mismatch, duplicate replay and hash collision.
 
-This does not switch any producer to V2, enable a source flag, or change a production schema. Complete X/TG/Solana parity and producer V2 builders remain future work. Exact-head CI is the acceptance gate.
+This does not switch any producer to V2, enable a source flag, or change a production schema. The branch contains additive migration 019 and a fail-fast CLI readiness check; no production migration has been applied. Complete X/TG/Solana parity and producer V2 builders remain future work. Exact-head CI is the acceptance gate.
 
 
-**Cross-version replay gate:** V1 rows preserve the historical registry-only `payload_sha256`; V2 rows persist the full canonical envelope hash. If the same source identity is replayed first as V1 and later as V2, the hashes differ and Intelligence returns `identity_collision`. This is intentional fail-closed behavior, not a supported seamless V1→V2 replay. Before enabling V2 producers or rewriting source outbox payloads, add a separately reviewed cross-version reconciliation strategy (including proof that timeline/token-link/swap materializations are identical) or define a new event identity/cutover boundary. The current PR does not perform that reconciliation.
+**Cross-version replay gate — implementation present, acceptance pending:** the original single-column design could not safely compare a V1 registry fingerprint with a V2 envelope hash. The branch now preserves the stable RegistryEvent fingerprint in `payload_sha256` for both versions and stores the full V2 envelope hash separately in `envelope_sha256`. A matching V1 row is promoted once under row lock; repeated V2 deliveries must match exactly; V2→V1 replay retains the registry fingerprint. Existing timeline/token-link/swap materialization checks share the same transaction, so a mismatch rolls back promotion. NULL legacy fingerprints and previously stored hashes with the old V2-in-`payload_sha256` semantics fail closed. Migration 019 is additive and has not been applied to production.
 
 
 **Historical source clock gate:** existing X/TG outbox rows created before the insert-time `clock_timestamp()` change retain the old `created_at DEFAULT now()` value. Because PostgreSQL `now()` is transaction-start time, a pending historical row can have `created_at < observedAt`; the adapter will fail closed rather than move `emittedAt`. Before enabling a live consumer, the operator must inspect pending source rows for this condition and approve a separate reconciliation if needed. No source-row rewrite or production migration is part of this PR.
@@ -240,9 +240,9 @@ This does not switch any producer to V2, enable a source flag, or change a produ
 **Historical Solana source clock gate:** previous SQLite writers copied `observedAt` into `outbox_events.created_at`; the current writers now stamp wall-clock time at insert. Existing rows are intentionally not rewritten. Before enabling live V1→V2 delivery, inspect pending legacy Solana rows: `created_at == observedAt` may represent the old writer rather than a genuine same-millisecond emission, and this cannot be resolved from the timestamp alone. Do not infer or replace an emission clock.
 
 
-### Cross-version replay reconciliation — design decision, implementation pending
+### Cross-version replay reconciliation — implemented, CI/review pending
 
-The current single-column fingerprint design cannot safely compare a V1 registry fingerprint with a V2 full-envelope hash. The safe additive direction is to keep two independent fingerprints rather than overwrite or reinterpret the existing one:
+The original single-column fingerprint design could not safely compare a V1 registry fingerprint with a V2 full-envelope hash. The implemented additive design keeps two independent fingerprints rather than overwriting or reinterpreting the existing one:
 
 - Keep `intelligence_inbox.payload_sha256` as the normalized `RegistryEvent` fingerprint for both V1 and V2. This preserves the established V1 replay identity.
 - Add a nullable `envelope_sha256` column for the full canonical V2 envelope hash. V1 rows leave it NULL; V2 rows populate it.
@@ -251,7 +251,7 @@ The current single-column fingerprint design cannot safely compare a V1 registry
 - A V2→V1 replay compares the stable registry fingerprint and still runs those materialization checks; V1 cannot attest to V2-only envelope metadata, so it must never clear or replace an existing V2 hash.
 - A NULL legacy fingerprint remains fail-closed. Do not infer it from partial metadata or silently backfill it. Only a separate bounded, dry-run-first operator process may populate it after proving the original normalized source payload.
 
-This strategy does not modify source outbox rows or historical payloads. The branch now contains additive migration `019_inbox_envelope_fingerprint.sql`, keeps `payload_sha256` as the stable registry fingerprint, stores the V2 hash separately in `envelope_sha256`, and performs row-locked, one-time promotion for a matching V1 row. Unit tests and a disposable PostgreSQL concurrency test cover V1→V2, V2→V1, repeated V2, changed V2 hash and competing promotion. Remaining gates: exact-head CI, PostgreSQL test actually executing with `INTELLIGENCE_TEST_DB_URL`, integration checks for timeline/token-link/swap materialization mismatch, and independent review. V2 producers remain disabled until these gates pass.
+This strategy does not modify source outbox rows or historical payloads. The branch now contains additive migration `019_inbox_envelope_fingerprint.sql`, keeps `payload_sha256` as the stable registry fingerprint, stores the V2 hash separately in `envelope_sha256`, and performs row-locked, one-time promotion for a matching V1 row. Unit tests and a disposable PostgreSQL concurrency test cover V1→V2, V2→V1, repeated V2, changed V2 hash and competing promotion. Remaining gates: exact-head CI, PostgreSQL test actually executing with `INTELLIGENCE_TEST_DB_URL`, timeline and swap materialization mismatch tests, and independent review. The token-link mismatch/rollback path is covered. V2 producers remain disabled until these gates pass.
 
 
 ### Dual-fingerprint implementation checkpoint — 2026-11-13
@@ -264,4 +264,5 @@ This strategy does not modify source outbox rows or historical payloads. The bra
 - [x] V1 replay after V2 promotion continues to compare the stable registry fingerprint.
 - [x] Added unit and disposable PostgreSQL tests for V1→V2, V2→V1, V2 hash mismatch and concurrent competing promotions.
 - [ ] Exact-head CI and actual PostgreSQL integration execution remain pending.
-- [ ] Timeline/token-link/swap materialization mismatch tests and independent review remain required before producer cutover.
+- [x] Token-link materialization mismatch rolls back V1→V2 promotion in the PostgreSQL integration test.
+- [ ] Timeline and swap materialization mismatch tests and independent review remain required before producer cutover.
