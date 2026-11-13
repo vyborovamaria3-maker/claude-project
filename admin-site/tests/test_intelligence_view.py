@@ -324,6 +324,8 @@ class IntelligenceBackendConfigTests(unittest.TestCase):
             "admin_password_hash": "test-only-nonempty-hash",
             "session_secret": "x" * 64,
             "secure_cookie": True,
+            "trust_proxy": True,
+            "trusted_proxy_hops": 1,
             "allowed_networks": [ipaddress.ip_network("127.0.0.0/8")],
             "allowed_origins": ["https://admin.example.com"],
             "solana_rpc_url": "https://api.mainnet-beta.solana.com",

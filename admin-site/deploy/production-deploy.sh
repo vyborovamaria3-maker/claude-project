@@ -82,6 +82,9 @@ preflight() {
   require_true ADMIN_REQUIRE_MFA
   require_true ADMIN_REQUIRE_REAUTH
   require_true ADMIN_REQUIRE_NETWORK_ALLOWLIST
+  require_true ADMIN_TRUST_PROXY
+  require_nonempty ADMIN_TRUSTED_PROXY_HOPS
+  [[ "$(env_get ADMIN_TRUSTED_PROXY_HOPS)" == "1" ]] || die "ADMIN_TRUSTED_PROXY_HOPS must be 1 for the configured local Nginx proxy"
   require_true ADMIN_SESSION_BIND_IP
   require_true ADMIN_SESSION_BIND_USER_AGENT
 
