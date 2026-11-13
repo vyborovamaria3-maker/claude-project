@@ -251,4 +251,17 @@ The current single-column fingerprint design cannot safely compare a V1 registry
 - A V2→V1 replay compares the stable registry fingerprint and still runs those materialization checks; V1 cannot attest to V2-only envelope metadata, so it must never clear or replace an existing V2 hash.
 - A NULL legacy fingerprint remains fail-closed. Do not infer it from partial metadata or silently backfill it. Only a separate bounded, dry-run-first operator process may populate it after proving the original normalized source payload.
 
-This strategy does not modify source outbox rows or historical payloads. It requires a new additive Intelligence migration, concurrency-safe row locking/conditional promotion, unit tests, PostgreSQL integration tests for V1→V2/V2→V1/concurrent promotion/timeline mismatch/token-link and swap mismatch, and independent review. Until those gates pass, the current `identity_collision` behavior remains intentional and V2 producers remain disabled.
+This strategy does not modify source outbox rows or historical payloads. The branch now contains additive migration `019_inbox_envelope_fingerprint.sql`, keeps `payload_sha256` as the stable registry fingerprint, stores the V2 hash separately in `envelope_sha256`, and performs row-locked, one-time promotion for a matching V1 row. Unit tests and a disposable PostgreSQL concurrency test cover V1→V2, V2→V1, repeated V2, changed V2 hash and competing promotion. Remaining gates: exact-head CI, PostgreSQL test actually executing with `INTELLIGENCE_TEST_DB_URL`, integration checks for timeline/token-link/swap materialization mismatch, and independent review. V2 producers remain disabled until these gates pass.
+
+
+### Dual-fingerprint implementation checkpoint — 2026-11-13
+
+- [x] Added additive destination migration `019_inbox_envelope_fingerprint.sql`; it does not rewrite existing inbox/source rows.
+- [x] `payload_sha256` now remains the normalized RegistryEvent fingerprint across V1 and V2.
+- [x] V2 stores its full canonical envelope hash separately in `envelope_sha256`.
+- [x] A V1 inbox row can be promoted once under `SELECT ... FOR UPDATE` only when schema version, evidence source and registry fingerprint match.
+- [x] Repeated V2 must match the stored envelope hash; a changed envelope remains an identity collision.
+- [x] V1 replay after V2 promotion continues to compare the stable registry fingerprint.
+- [x] Added unit and disposable PostgreSQL tests for V1→V2, V2→V1, V2 hash mismatch and concurrent competing promotions.
+- [ ] Exact-head CI and actual PostgreSQL integration execution remain pending.
+- [ ] Timeline/token-link/swap materialization mismatch tests and independent review remain required before producer cutover.
