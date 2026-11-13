@@ -346,9 +346,10 @@ lo_restore_dump="$scratch/large-object.dump"
 docker exec -e PGPASSWORD="$backup_password" "$container" \
   pg_dump -h 127.0.0.1 -U "$backup_user" -d potapoff_ci -Fc > "$lo_restore_dump"
 test -s "$lo_restore_dump"
+docker cp "$lo_restore_dump" "$container:/tmp/large-object.dump" >/dev/null
 run_psql "$bootstrap_user" "$bootstrap_password" -c "CREATE DATABASE potapoff_lo_restore" >/dev/null
 docker exec -e PGPASSWORD="$bootstrap_password" "$container" \
-  pg_restore -h 127.0.0.1 -U "$bootstrap_user" -d potapoff_lo_restore "$lo_restore_dump" >/dev/null 2>&1 || {
+  pg_restore -h 127.0.0.1 -U "$bootstrap_user" -d potapoff_lo_restore /tmp/large-object.dump >/dev/null 2>&1 || {
   # A restore may emit harmless LO ownership warnings; require success explicitly.
   echo "pg_restore of the backup dump failed" >&2
   exit 1
