@@ -77,6 +77,7 @@ export async function verifySolanaPayment(check: SolanaPaymentCheck) {
   if (check.currency === PaymentCurrency.SOL) {
     verifySolTransfer(allInstructions, check.expectedAmount);
   } else {
+    // Parsed account keys are wrappers; the public key is always on `pubkey`.
     const accountKeys = tx.transaction.message.accountKeys.map((key) => key.pubkey.toBase58());
     verifyUsdcTransfer(allInstructions, check.expectedAmount, tx.meta, accountKeys);
   }

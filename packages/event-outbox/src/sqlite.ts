@@ -7,6 +7,7 @@ export type SqliteStatement = {
 };
 export type SqliteDb = { exec(sql: string): unknown; prepare(sql: string): SqliteStatement };
 
+// Production uses the wall-clock default; explicit timestamps are reserved for deterministic fixtures.
 export function emitSqlite(db: SqliteDb, event: OutboxEvent, createdAt = new Date()): void {
   validateOutboxEvent(event);
   const date = createdAt.toISOString();

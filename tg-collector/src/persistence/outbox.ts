@@ -127,6 +127,7 @@ async function insertOutbox(
   tx:PoolClient,
   event:{sourceSystem:string;eventKind:string;eventKey:string;schemaVersion:string;payload:Record<string,unknown>},
 ):Promise<void> {
+  // Persist the source emission clock, not observedAt or transaction-start NOW().
   await tx.query(`INSERT INTO outbox_events
     (source_system,event_kind,event_key,schema_version,payload,created_at)
     VALUES ($1,$2,$3,$4,$5::jsonb,clock_timestamp())

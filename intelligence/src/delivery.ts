@@ -114,6 +114,7 @@ function extractEnvelope(event: DeliveryEvent): RegistryOutboxPayload {
  * validated through the adapter using only the immutable source created_at.
  * V2 rows carry their complete envelope inside outbox.payload.
  */
+// Source outbox created_at is the only authoritative emittedAt; evidence and ingestion clocks stay separate.
 function prepareDeliveryEvent(event: DeliveryEvent): PreparedDeliveryEvent {
   const payload = event.payload;
   if (payload && typeof payload === "object" &&

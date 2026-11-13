@@ -71,7 +71,7 @@ function emitRawChainOutbox(db,input){
   if(!enabled())return false;
   const event=buildWalletRawEvent(input);
   if(!event)return false;
-  // created_at is the source emission clock, not the evidence observation clock.
+  // created_at is the source emission clock; observedAt remains only the evidence clock.
   const createdAt=new Date().toISOString();
   db.prepare(`INSERT OR IGNORE INTO outbox_events
     (source_system,event_kind,event_key,schema_version,payload,created_at,next_attempt_at)
