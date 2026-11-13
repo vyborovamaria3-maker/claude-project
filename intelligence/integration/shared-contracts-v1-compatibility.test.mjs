@@ -13,7 +13,7 @@ import {
   buildVerifiedTgTokenLinkOutboxEvent,
   buildTgTokenLinksInvalidatedOutboxEvent,
 } from "../../tg-collector/src/persistence/outbox.ts";
-import { adaptLegacyOutboxEventToV2 } from "../dist/index.js";
+import { adaptLegacyOutboxEventToV2 } from "@claude-project/contracts";
 
 const require = createRequire(import.meta.url);
 const {
