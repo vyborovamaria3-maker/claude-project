@@ -9,12 +9,13 @@ test("delivery readiness fails closed when token-link migration 004 is missing",
   const calls=[];
   const query=async sql=>{
     calls.push(sql);
-    return {rows:[{inbox:true,registry:true,evidence:true,timeline:true,token_links:false,inbox_fingerprint:true}]};
+    return {rows:[{inbox:true,registry:true,evidence:true,timeline:true,token_links:false,inbox_fingerprint:true,inbox_envelope_fingerprint:true}]};
   };
   await assert.rejects(checkDestination({query}),/001\+002\+004/);
   assert.match(calls[0],/token_link_observations/);
   await assert.doesNotReject(checkDestination({query:async()=>({rows:[{
     inbox:true,registry:true,evidence:true,timeline:true,token_links:true,inbox_fingerprint:true,
+    inbox_envelope_fingerprint:true,
   }]})}));
   await assert.rejects(checkDestination({query:async()=>({rows:[{
     inbox:true,registry:true,evidence:true,timeline:true,token_links:true,inbox_fingerprint:true,
@@ -23,6 +24,10 @@ test("delivery readiness fails closed when token-link migration 004 is missing",
   await assert.rejects(checkDestination({query:async()=>({rows:[{
     inbox:true,registry:true,evidence:true,timeline:true,token_links:true,inbox_fingerprint:false,
   }]})}),/migration 017/);
+  await assert.rejects(checkDestination({query:async()=>({rows:[{
+    inbox:true,registry:true,evidence:true,timeline:true,token_links:true,
+    inbox_fingerprint:true,inbox_envelope_fingerprint:false,
+  }]})},{requireEnvelopeFingerprint:true}),/migration 019/);
 });
 test("temporary PostgreSQL target requires additive 004, 005 and 017 before source claims",{
   skip:!process.env.INTELLIGENCE_TEST_DB_URL,
@@ -45,13 +50,22 @@ test("temporary PostgreSQL target requires additive 004, 005 and 017 before sour
     await assert.rejects(checkDestination(pool),/migration 017/);
     await admin.query(await readFile(new URL(
       "../migrations/017_inbox_payload_fingerprint.sql",import.meta.url),"utf8"));
-    await assert.doesNotReject(checkDestination(pool));
-    await assert.rejects(checkDestination(pool,{requireBlockchainRevisions:true}),/migration 005/);
+    await assert.rejects(
+      checkDestination(pool,{requireEnvelopeFingerprint:true}),/migration 019/,
+      "V2-capable delivery must fail before claiming when migration 019 is missing",
+    );
+    await admin.query(await readFile(new URL(
+      "../migrations/019_inbox_envelope_fingerprint.sql",import.meta.url),"utf8"));
+    await assert.doesNotReject(checkDestination(pool,{requireEnvelopeFingerprint:true}));
+    await assert.rejects(checkDestination(pool,{
+      requireBlockchainRevisions:true,requireEnvelopeFingerprint:true,
+    }),/migration 005/);
     await admin.query(await readFile(new URL(
       "../migrations/005_blockchain_swap_evidence_revisions.sql",import.meta.url),"utf8"));
     await admin.query("INSERT INTO intelligence_inbox(source_system,event_kind,event_key,schema_version,evidence_source_id) VALUES('x','tweet_observed','snapshot-1','x-unattributed-snapshot-v1','x:tweet:1')");
-    await assert.doesNotReject(checkDestination(pool,{requireBlockchainRevisions:true}),
-      "destination-only unattributed snapshots are not source-outbox fingerprint backfill candidates");
+    await assert.doesNotReject(checkDestination(pool,{
+      requireBlockchainRevisions:true,requireEnvelopeFingerprint:true,
+    }),"destination-only unattributed snapshots are not source-outbox fingerprint backfill candidates");
     await admin.query("INSERT INTO intelligence_inbox(source_system,event_kind,event_key,schema_version,evidence_source_id) VALUES('tg','message_observed','legacy-1','tg-message-v1','tg:message:1')");
     await assert.rejects(checkDestination(pool),/legacy Intelligence inbox fingerprints pending/);
   }finally{
