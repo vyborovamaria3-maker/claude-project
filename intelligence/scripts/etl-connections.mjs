@@ -83,46 +83,7 @@ export async function checkDestination(pool,options={}){
         AND convalidated
         AND position('envelope_sha256' in pg_get_constraintdef(oid))>0
         AND position('length(envelope_sha256)' in pg_get_constraintdef(oid))>0
-        AND position('^[0-9a-f]+
-  const row=result.rows[0];
-  // Every consumer may encounter token-link events, so reject missing 004 before claiming.
-  if(!row?.inbox||!row.registry||!row.evidence||!row.timeline||!row.token_links){
-    throw new Error("destination Intelligence migrations 001+002+004 required");
-  }
-  if(!row.inbox_fingerprint){
-    throw new Error("destination Intelligence migration 017 required before source claims");
-  }
-  if(options.requireEnvelopeFingerprint===true &&
-     (!row.inbox_envelope_fingerprint || !row.inbox_envelope_fingerprint_constraint)){
-    throw new Error("destination Intelligence migration 019 required before V2-capable source claims");
-  }
-  if(options.requireBlockchainRevisions===true && !row.blockchain_revisions){
-    throw new Error("destination Intelligence migration 005 required before Blockchain claim");
-  }
-  // A legacy inbox identity with no payload fingerprint is not a safe
-  // idempotent duplicate. Consumers must not claim source events until every
-  // legacy row has been verified against its source outbox. The bounded
-  // backfill opts into this one precondition explicitly.
-  if(options.allowLegacyFingerprints!==true){
-    const pending=await pool.query(
-      "SELECT EXISTS (SELECT 1 FROM intelligence_inbox WHERE payload_sha256 IS NULL " +
-      "AND NOT (source_system='x' AND schema_version='x-unattributed-snapshot-v1')) AS pending",
-    );
-    if(pending.rows[0]?.pending===true){
-      throw new Error("legacy Intelligence inbox fingerprints pending; run the bounded source-outbox backfill before source claims");
-    }
-  }
-}
-
-export function destinationConnection(env=process.env){
-  return new pg.Pool({
-    connectionString:requiredEnv("INTELLIGENCE_DATABASE_URL",env),
-    max:3,connectionTimeoutMillis:5000,
-    query_timeout:30_000,statement_timeout:30_000,
-  });
-}
- in pg_get_constraintdef(oid))>0)
-      AS inbox_envelope_fingerprint_constraint`);
+        AND position('^[0-9a-f]+' in pg_get_constraintdef(oid))>0) AS inbox_envelope_fingerprint_constraint`);
   const row=result.rows[0];
   // Every consumer may encounter token-link events, so reject missing 004 before claiming.
   if(!row?.inbox||!row.registry||!row.evidence||!row.timeline||!row.token_links){
