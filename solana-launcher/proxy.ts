@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hasValidInternalServiceKey, requireProdAuth } from "@/lib/routeAuth";
 
-const { parseTrustedProxyHops, clientIpFromHeaders } = require("./lib/security/client-ip.cjs") as {
-  parseTrustedProxyHops: (value: string | undefined) => number;
-  clientIpFromHeaders: (headers: Headers, trustedProxyHops: number) => string;
-};
+import { parseTrustedProxyHops, clientIpFromHeaders } from "./lib/security/client-ip.cjs";
 const TRUST_PROXY_HOPS = parseTrustedProxyHops(process.env.TRUST_PROXY_HOPS);
 
 const PAID_ROUTE_PREFIXES = [
