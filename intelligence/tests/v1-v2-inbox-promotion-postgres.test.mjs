@@ -195,6 +195,43 @@ test("PostgreSQL preserves V1 registry identity while promoting and fencing V2 e
       "SELECT envelope_sha256 FROM intelligence_inbox WHERE event_key=$1",[eventKey],
     )).rows[0];
     assert.equal(afterPromotion.envelope_sha256,matching.payloadSha256);
+
+    const v2First=event("104");
+    const v2FirstHash="e".repeat(64);
+    const v2FirstClient=await pool.connect();
+    try{
+      await v2FirstClient.query("BEGIN");
+      assert.equal(await ingestRegistryEvent(v2FirstClient,v2First,{
+        envelopeSha256:v2FirstHash,
+      }),true);
+      await v2FirstClient.query("COMMIT");
+    }catch(error){
+      try{await v2FirstClient.query("ROLLBACK")}catch{/* preserve first error */}
+      throw error;
+    }finally{v2FirstClient.release();}
+    const v2FirstStored=(await pool.query(
+      "SELECT payload_sha256,envelope_sha256 FROM intelligence_inbox WHERE event_key=$1",
+      [v2First.eventKey],
+    )).rows[0];
+    assert.equal(v2FirstStored.payload_sha256,registryEventFingerprint(v2First));
+    assert.equal(v2FirstStored.envelope_sha256,v2FirstHash);
+
+    const legacy=event("105");
+    await pool.query(`INSERT INTO intelligence_inbox
+      (source_system,event_kind,event_key,schema_version,evidence_source_id,payload_sha256)
+      VALUES($1,$2,$3,$4,$5,NULL)`,[
+      legacy.sourceSystem,legacy.eventKind,legacy.eventKey,legacy.schemaVersion,
+      legacy.evidenceRef.sourceId,
+    ]);
+    const legacyClient=await pool.connect();
+    try{
+      await legacyClient.query("BEGIN");
+      await assert.rejects(
+        ingestRegistryEvent(legacyClient,legacy,{envelopeSha256:"f".repeat(64)}),
+        /legacy fingerprint missing/,
+      );
+      await legacyClient.query("ROLLBACK");
+    }finally{legacyClient.release();}
   }finally{
     if(pool)await pool.end();
     await admin.query('DROP SCHEMA IF EXISTS "'+schema+'" CASCADE');
