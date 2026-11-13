@@ -76,7 +76,9 @@ async function findSourceEvent(source, row) {
 export async function backfillPending({ source, destination, sourceName, limit = 100, execute = false }) {
   const pending = await destination.query(
     "SELECT source_system,event_kind,event_key,schema_version,evidence_source_id FROM intelligence_inbox " +
-    "WHERE source_system=$1 AND payload_sha256 IS NULL ORDER BY ingested_at,event_key LIMIT $2",
+    "WHERE source_system=$1 AND payload_sha256 IS NULL " +
+    "AND NOT (source_system='x' AND schema_version='x-unattributed-snapshot-v1') " +
+    "ORDER BY ingested_at,event_key LIMIT $2",
     [sourceName, limit],
   );
   let fingerprinted = 0;

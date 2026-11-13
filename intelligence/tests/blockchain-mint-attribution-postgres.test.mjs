@@ -49,7 +49,7 @@ test("actual Blockchain swap Outbox -> Intelligence PG token timeline: as-of, pr
     await admin.query('CREATE SCHEMA "'+schema+'"');
     await admin.query('SET search_path TO "'+schema+'"');
     for(const file of [
-      "001_entity_registry.sql","002_timeline.sql",
+      "001_entity_registry.sql","017_inbox_payload_fingerprint.sql","002_timeline.sql",
       "004_token_link_observations.sql",
     ]){
       await admin.query(await readFile(new URL("../migrations/"+file,import.meta.url),"utf8"));

@@ -51,7 +51,7 @@ test("real PostgreSQL + SQLite to Intelligence: atomic delivery and replay",{ski
   try {
     await admin.query('CREATE SCHEMA "'+schema+'"');
     await admin.query('SET search_path TO "'+schema+'"');
-    for(const name of ["001_entity_registry.sql","002_timeline.sql"]){
+    for(const name of ["001_entity_registry.sql","017_inbox_payload_fingerprint.sql","002_timeline.sql"]){
       const ddl=await readFile(new URL("../migrations/"+name,import.meta.url),"utf8");
       await admin.query(ddl);
     }

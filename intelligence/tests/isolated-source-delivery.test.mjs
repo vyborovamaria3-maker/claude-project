@@ -29,7 +29,7 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
       await admin.query(POSTGRES_OUTBOX_DDL);
     }
     await admin.query('SET search_path TO "'+sources.dst+'"');
-    for (const name of ["001_entity_registry.sql","002_timeline.sql","004_token_link_observations.sql"]) {
+    for (const name of ["001_entity_registry.sql","017_inbox_payload_fingerprint.sql","002_timeline.sql","004_token_link_observations.sql"]) {
       await admin.query(await readFile(new URL("../migrations/"+name,import.meta.url),"utf8"));
     }
     const poolFor=(schema)=>new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:3});

@@ -24,7 +24,7 @@ test("delivery readiness fails closed when token-link migration 004 is missing",
     inbox:true,registry:true,evidence:true,timeline:true,token_links:true,inbox_fingerprint:false,
   }]})}),/migration 017/);
 });
-test("temporary PostgreSQL target refuses only-001/002 then accepts 004",{
+test("temporary PostgreSQL target requires additive 004, 005 and 017 before source claims",{
   skip:!process.env.INTELLIGENCE_TEST_DB_URL,
 },async()=>{
   const url=process.env.INTELLIGENCE_TEST_DB_URL;
@@ -42,14 +42,18 @@ test("temporary PostgreSQL target refuses only-001/002 then accepts 004",{
     await assert.rejects(checkDestination(pool),/001\+002\+004/);
     await admin.query(await readFile(new URL(
       "../migrations/004_token_link_observations.sql",import.meta.url),"utf8"));
+    await assert.rejects(checkDestination(pool),/migration 017/);
+    await admin.query(await readFile(new URL(
+      "../migrations/017_inbox_payload_fingerprint.sql",import.meta.url),"utf8"));
     await assert.doesNotReject(checkDestination(pool));
     await assert.rejects(checkDestination(pool,{requireBlockchainRevisions:true}),/migration 005/);
     await admin.query(await readFile(new URL(
       "../migrations/005_blockchain_swap_evidence_revisions.sql",import.meta.url),"utf8"));
-    await assert.doesNotReject(checkDestination(pool,{requireBlockchainRevisions:true}));
-    await admin.query(await readFile(new URL(
-      "../migrations/017_inbox_payload_fingerprint.sql",import.meta.url),"utf8"));
-    await assert.doesNotReject(checkDestination(pool,{requireBlockchainRevisions:true}));
+    await admin.query("INSERT INTO intelligence_inbox(source_system,event_kind,event_key,schema_version,evidence_source_id) VALUES('x','tweet_observed','snapshot-1','x-unattributed-snapshot-v1','x:tweet:1')");
+    await assert.doesNotReject(checkDestination(pool,{requireBlockchainRevisions:true}),
+      "destination-only unattributed snapshots are not source-outbox fingerprint backfill candidates");
+    await admin.query("INSERT INTO intelligence_inbox(source_system,event_kind,event_key,schema_version,evidence_source_id) VALUES('tg','message_observed','legacy-1','tg-message-v1','tg:message:1')");
+    await assert.rejects(checkDestination(pool),/legacy Intelligence inbox fingerprints pending/);
   }finally{
     if(pool)await pool.end();
     await admin.query("SET search_path TO public");

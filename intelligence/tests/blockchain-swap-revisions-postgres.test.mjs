@@ -68,7 +68,7 @@ test("ARCH-06b: immutable PG revisions, unsupported correction, late delivery, a
   try{
     await admin.query('CREATE SCHEMA "'+schema+'"');
     await admin.query('SET search_path TO "'+schema+'"');
-    for(const file of ["001_entity_registry.sql","002_timeline.sql",
+    for(const file of ["001_entity_registry.sql","017_inbox_payload_fingerprint.sql","002_timeline.sql",
       "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql"]){
       await admin.query(await readFile(new URL("../migrations/"+file,import.meta.url),"utf8"));
     }

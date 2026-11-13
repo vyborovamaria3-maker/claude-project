@@ -36,6 +36,18 @@ test("source event must match the exact legacy inbox identity", () => {
   assert.throws(() => eventFromOutbox(sourceRow, { ...inbox, evidence_source_id: "wrong" }), /identity/);
 });
 
+test("destination-only unattributed X snapshots are excluded from source-outbox backfill",async()=>{
+  let selectedSql="";
+  const source={kind:"sqlite",connection:{prepare:()=>({all:()=>{throw new Error("snapshot must not query source outbox");}})}};
+  const destination={query:async sql=>{
+    selectedSql=sql;
+    return {rows:[]};
+  }};
+  const result=await backfillPending({source,destination,sourceName:"x",execute:false});
+  assert.equal(result.examined,0);
+  assert.match(selectedSql,/x-unattributed-snapshot-v1/);
+});
+
 test("dry-run never writes and execute uses a compare-and-set update", async () => {
   let writes = 0;
   const source = { kind: "sqlite", connection: { prepare: () => ({ all: () => [sourceRow] }) } };

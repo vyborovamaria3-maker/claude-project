@@ -13,6 +13,7 @@ test("PostgreSQL real transaction: replay, provenance and time bounds", {skip:!u
     await client.query("BEGIN");
     const ddl=await readFile(new URL("../migrations/001_entity_registry.sql",import.meta.url),"utf8");
     await client.query(ddl);
+    await client.query(await readFile(new URL("../migrations/017_inbox_payload_fingerprint.sql",import.meta.url),"utf8"));
     const mint="So11111111111111111111111111111111111111112";
     const id=formatTokenId("solana",mint);
     const t1="2026-10-18T00:00:00Z",t2="2026-10-18T00:02:00Z";
@@ -57,7 +58,7 @@ test("cross-platform refresh SQL keeps transaction, swap evidence and settled tr
   try{
     await client.query("BEGIN");
     for(const file of [
-      "001_entity_registry.sql","002_timeline.sql","003_feature_store.sql",
+      "001_entity_registry.sql","017_inbox_payload_fingerprint.sql","002_timeline.sql","003_feature_store.sql",
       "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql",
       "006_cross_platform_analytics.sql",
       "009_ai_analysis.sql",

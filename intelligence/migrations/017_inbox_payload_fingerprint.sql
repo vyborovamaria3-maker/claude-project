@@ -20,4 +20,4 @@ $fingerprint$;
 ALTER TABLE intelligence_inbox VALIDATE CONSTRAINT intelligence_inbox_payload_sha256_check;
 
 COMMENT ON COLUMN intelligence_inbox.payload_sha256 IS
-  'SHA-256 of the complete normalized RegistryEvent; NULL means legacy/unfingerprinted and is not a safe duplicate.';
+  'Versioned replay fingerprint: canonical V1 RegistryEvent or full normalized V2 envelope; NULL means legacy/unfingerprinted.';

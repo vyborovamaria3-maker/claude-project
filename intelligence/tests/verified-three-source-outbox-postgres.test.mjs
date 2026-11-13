@@ -124,7 +124,7 @@ test("P0 #173: isolated X/TG PG and chain SQLite outboxes deliver verified sourc
     }
     await admin.query('SET search_path TO "'+schemas.dst+'"');
     for(const name of [
-      "001_entity_registry.sql","002_timeline.sql",
+      "001_entity_registry.sql","017_inbox_payload_fingerprint.sql","002_timeline.sql",
       "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql",
     ])
       await admin.query(await readFile(new URL("../migrations/"+name,import.meta.url),"utf8"));

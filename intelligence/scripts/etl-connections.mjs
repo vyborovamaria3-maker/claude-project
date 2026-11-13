@@ -91,7 +91,8 @@ export async function checkDestination(pool,options={}){
   // backfill opts into this one precondition explicitly.
   if(options.allowLegacyFingerprints!==true){
     const pending=await pool.query(
-      "SELECT EXISTS (SELECT 1 FROM intelligence_inbox WHERE payload_sha256 IS NULL) AS pending",
+      "SELECT EXISTS (SELECT 1 FROM intelligence_inbox WHERE payload_sha256 IS NULL " +
+      "AND NOT (source_system='x' AND schema_version='x-unattributed-snapshot-v1')) AS pending",
     );
     if(pending.rows[0]?.pending===true){
       throw new Error("legacy Intelligence inbox fingerprints pending; run the bounded source-outbox backfill before source claims");
