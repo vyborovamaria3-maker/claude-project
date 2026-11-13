@@ -48,6 +48,8 @@ test("PostgreSQL preserves V1 registry identity while promoting and fencing V2 e
     ]){
       await admin.query(await readFile(new URL("../migrations/"+file,import.meta.url),"utf8"));
     }
+    // Additive migration must be safely replayable in disposable upgrade rehearsals.
+    await admin.query(await readFile(new URL("../migrations/019_inbox_envelope_fingerprint.sql",import.meta.url),"utf8"));
     pool=new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:5});
 
     const original=event("101");
