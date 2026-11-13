@@ -111,7 +111,7 @@ jobs:
           PGHOST: 127.0.0.1
           PGPORT: "5432"
           POSTGRES_DB: solsub_role_ci
-          POSTGRES_BOOTSTRAP_USER: postgres
+          POSTGRES_BOOTSTRAP_USER: solsub_bootstrap
           POSTGRES_BOOTSTRAP_PASSWORD: ci-bootstrap-password
           POSTGRES_MIGRATOR_USER: solsub_migrator
         run: sh scripts/run-prisma-migrations.sh
