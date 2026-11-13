@@ -328,6 +328,55 @@ docker exec -i "$container" pg_restore --list < "$archive" >/dev/null
 [[ "$(run_psql "$backup_user" "$backup_password" -Atq -c \
   "SELECT pg_has_role(current_user, 'pg_read_all_data', 'MEMBER')")" == "f" ]]
 
+# Large objects must be covered by the backup dump. A migrator-owned large
+# object receives an explicit SELECT grant for the export identities; a large
+# object still owned by the bootstrap identity must block provisioning
+# because large-object ownership cannot be transferred with ALTER.
+lo_content_hex="53454c4543545f4c415247455f4f424a4543545f50524f4f46"  # SELECT_LARGE_OBJECT_PROOF
+lo_oid="$(run_psql "$migrator_user" "$migrator_password" -Atq -c \
+  "SELECT lo_from_bytea(0, decode('$lo_content_hex','hex'))")"
+[[ "$lo_oid" =~ ^[0-9]+$ ]] || { echo "Large object fixture creation failed: $lo_oid" >&2; exit 1; }
+run_role_provisioner
+if run_psql "$backup_user" "$backup_password" -c \
+  "SELECT lo_get($lo_oid)" >/dev/null 2>&1; then :; else
+  echo "Backup role cannot read a migrator-owned large object" >&2
+  exit 1
+fi
+lo_restore_dump="$scratch/large-object.dump"
+docker exec -e PGPASSWORD="$backup_password" "$container" \
+  pg_dump -h 127.0.0.1 -U "$backup_user" -d potapoff_ci -Fc > "$lo_restore_dump"
+test -s "$lo_restore_dump"
+run_psql "$bootstrap_user" "$bootstrap_password" -c "CREATE DATABASE potapoff_lo_restore" >/dev/null
+docker exec -e PGPASSWORD="$bootstrap_password" "$container" \
+  pg_restore -h 127.0.0.1 -U "$bootstrap_user" -d potapoff_lo_restore "$lo_restore_dump" >/dev/null 2>&1 || {
+  # A restore may emit harmless LO ownership warnings; require success explicitly.
+  echo "pg_restore of the backup dump failed" >&2
+  exit 1
+}
+restored_hex="$(run_psql "$bootstrap_user" "$bootstrap_password" -d potapoff_lo_restore -Atq -c \
+  "SELECT encode(lo_get($lo_oid),'hex')")"
+[[ "$restored_hex" == "$lo_content_hex" ]] || {
+  echo "Restored large object content mismatch: $restored_hex" >&2
+  exit 1
+}
+run_psql "$bootstrap_user" "$bootstrap_password" -c "DROP DATABASE potapoff_lo_restore" >/dev/null
+run_psql "$migrator_user" "$migrator_password" -c "SELECT lo_unlink($lo_oid)" >/dev/null
+
+# A bootstrap-owned large object must block provisioning (no ALTER OWNER for
+# large objects; operators must remove or recreate them).
+blocked_lo_oid="$(run_psql "$bootstrap_user" "$bootstrap_password" -Atq -c \
+  "SELECT lo_from_bytea(0, decode('424c4f434b4544','hex'))")"
+if run_role_provisioner >"$scratch/lo-ownership.log" 2>&1; then
+  echo "Role provisioner accepted a bootstrap-owned large object" >&2
+  exit 1
+fi
+grep -Fq "large objects require a separately reviewed migration-owner allowlist" "$scratch/lo-ownership.log" || {
+  cat "$scratch/lo-ownership.log" >&2
+  echo "Large-object ownership guard failed for the wrong reason" >&2
+  exit 1
+}
+run_psql "$bootstrap_user" "$bootstrap_password" -c "SELECT lo_unlink($blocked_lo_oid)" >/dev/null
+
 # After the explicit allowlist and role provisioning, the deployment guard
 # should pass without changing any database object.
 run_psql "$bootstrap_user" "$bootstrap_password" -v bootstrap_user="$bootstrap_user" -v migrator_user="$migrator_user" \

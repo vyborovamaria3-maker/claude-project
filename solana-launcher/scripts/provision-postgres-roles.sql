@@ -314,6 +314,17 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO :"app_user";
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO :"backup_user", :"readonly_user";
 GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO :"backup_user", :"readonly_user";
 
+-- Large objects are read through their own ACLs, not table privileges, so a
+-- pg_dump run as the backup/read-only identity would silently omit them
+-- without an explicit SELECT grant. The ownership gate above already
+-- guarantees every large object is migrator-owned; grant the export
+-- identities read access and nothing more. Large objects cannot transfer
+-- ownership via ALTER, so any non-migrator-owned large object keeps blocking
+-- provisioning until an operator removes or recreates it.
+SELECT format('GRANT SELECT ON LARGE OBJECT %s TO %I, %I', l.oid, :'backup_user', :'readonly_user')
+FROM pg_largeobject_metadata l
+WHERE pg_get_userbyid(l.lomowner) = :'migrator_user' \gexec
+
 -- Global and schema-local default ACLs are additive. Reset stale grants
 -- before applying the reviewed role-specific defaults.
 SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I REVOKE ALL ON TABLES FROM %I, %I, %I', :'migrator_user', :'app_user', :'backup_user', :'readonly_user') \gexec
