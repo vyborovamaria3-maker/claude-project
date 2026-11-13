@@ -61,11 +61,11 @@ SELECT NOT EXISTS (
 \if :role_targets_safe
 \else
   \echo 'Role provisioning blocked: refusing to alter a reserved or privileged PostgreSQL role'
-  DO $
+  DO $$
 BEGIN
   RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
 END
-$;
+$$;
 \endif
 
 SELECT (
@@ -115,11 +115,11 @@ SELECT EXISTS (
 ) AS has_restricted_schema_owner \gset
 \if :has_restricted_schema_owner
   \echo 'Provisioning blocked: a restricted role owns an application schema; ownership requires explicit operator review'
-  DO $
+  DO $$
 BEGIN
   RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
 END
-$;
+$$;
 \endif
 
 SELECT EXISTS (
