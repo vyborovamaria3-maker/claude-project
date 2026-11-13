@@ -17,7 +17,8 @@ try {
   assert.equal(isWithin(root, path.join(root, "nested")), true);
   assert.equal(isWithin(root, sibling), false);
   assert.equal(resolveImportPath(path.join(root, "nested", "ok.xlsx"), [root]), path.join(root, "nested", "ok.xlsx"));
-  assert.throws(() => resolveImportPath(path.join(sibling, "outside.xlsx"), [root]), /outside allowed/);\n  assert.throws(() => resolveImportPath(path.join(root, "nested", "missing.xlsx"), [root]), /ENOENT/);
+  assert.throws(() => resolveImportPath(path.join(sibling, "outside.xlsx"), [root]), /outside allowed/);
+  assert.throws(() => resolveImportPath(path.join(root, "nested", "missing.xlsx"), [root]), /ENOENT/);
   assert.deepEqual(listXlsxFiles(root), [path.join(root, "nested", "ok.xlsx")]);
 
   const link = path.join(root, "escape");
