@@ -28,13 +28,7 @@ BEGIN
       AND conname = 'intelligence_inbox_envelope_sha256_check'
       AND contype = 'c'
       AND position('envelope_sha256' in pg_get_constraintdef(oid)) > 0
-      AND position('^[0-9a-f]{64}
-
-COMMENT ON COLUMN intelligence_inbox.payload_sha256 IS
-  'Stable normalized RegistryEvent fingerprint shared by V1 and V2 deliveries.';
-COMMENT ON COLUMN intelligence_inbox.envelope_sha256 IS
-  'Full canonical V2 envelope SHA-256. NULL means the event has only been observed as V1 or has not been safely promoted.';
- in pg_get_constraintdef(oid)) > 0
+      AND position('^[0-9a-f]{64}$' in pg_get_constraintdef(oid)) > 0
   ) THEN
     RAISE EXCEPTION 'intelligence_inbox_envelope_sha256_check has an unexpected definition';
   END IF;
