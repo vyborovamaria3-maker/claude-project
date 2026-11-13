@@ -112,3 +112,6 @@ Producer-specific V2 builders, all-source V1/V2 parity fixtures, and the operato
 
 
 **Historical source-row clock gate:** X/TG outbox rows created before the writer switched to explicit `clock_timestamp()` may retain transaction-start `NOW()` in `created_at`. If such a pending row has `created_at < observedAt`, the V1 adapter rejects it rather than inventing a later `emittedAt`. Inspect pending historical source rows before enabling any live consumer; this PR does not rewrite them.
+
+
+**Historical Solana SQLite clock gate:** older Solana outbox writers copied `observedAt` into `created_at`. New writers now stamp wall-clock insertion time. Existing rows are not rewritten; inspect pending legacy Solana rows before enabling V1→V2 delivery because their stored `created_at` may be equal to (rather than later than) `observedAt`, and the old and new same-millisecond cases cannot be distinguished from the timestamp alone.
