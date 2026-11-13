@@ -76,7 +76,7 @@ test("matching V1 registry fingerprint can be promoted to one stable V2 envelope
       if(stored.envelope_sha256===null)stored.envelope_sha256=params[0];
       return {rows:[]};
     }
-    if(sql.includes("SELECT envelope_sha256 FROM intelligence_inbox"))
+    if(sql.replace(/\\s+/g," ").includes("SELECT envelope_sha256 FROM intelligence_inbox"))
       return {rows:[{envelope_sha256:stored.envelope_sha256}]};
     return {rows:[]};
   }};
