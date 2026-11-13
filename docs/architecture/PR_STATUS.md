@@ -210,3 +210,14 @@ Point-in-time snapshot of the public [GitHub PR listing](https://github.com/vybo
 ## Release-review checklist
 
 For any release-critical PR document full head SHA, branch, reviewer, scope, required checks, secrets/DB safety, dependency/target branch, rollback and real evidence. A merged PR can target an **intermediate branch** rather than `main`, and no offline CI implies real production operations. For operator-required work see [KNOWN_GAPS](KNOWN_GAPS.md), [LIVE_TESTS](LIVE_TESTS.md) and [DELIVERY_PLAN](DELIVERY_PLAN_20261024.md).
+
+
+### PR #215 — POTAPoff Intelligence V2 integration (2026-11-13)
+
+- Branch: `codex/architecture-hardening-20261105`
+- Exact HEAD: `3fe5ead99b5ee01d33bf887f55e87af25af595e0`
+- GitHub Actions: 30 successful, 0 failed, 1 skipped (`Security Lock Refresh`; not counted as a pass).
+- PR state: open Draft/HOLD.
+- Independent PR reviews / inline threads: none recorded at last check.
+- Scope warning: branch comparison reports 570 commits ahead of main and 277 changed files. A full independent diff review is required; green CI is not merge authorization.
+- No merge, production migration, V2 flag activation, source-row rewrite or deployment performed.
