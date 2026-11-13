@@ -97,6 +97,13 @@ preflight() {
   state_password="$(env_get ADMIN_STATE_DB_PASSWORD)"
   allowed_networks="$(env_get ADMIN_ALLOWED_NETWORKS)"
   workers="$(env_get ADMIN_WEB_WORKERS)"; workers="${workers:-1}"
+  local -a allowed_network_list
+  local network
+  IFS=',' read -r -a allowed_network_list <<< "$allowed_networks"
+  for network in "${allowed_network_list[@]}"; do
+    network="${network//[[:space:]]/}"
+    [[ "$network" != "0.0.0.0/0" && "$network" != "::/0" ]] || die "ADMIN_ALLOWED_NETWORKS must not include default-route CIDRs"
+  done
   [[ ${#session_secret} -ge 32 ]] || die "ADMIN_SESSION_SECRET must be at least 32 characters"
   [[ ${#state_password} -ge 24 ]] || die "ADMIN_STATE_DB_PASSWORD should be at least 24 characters"
   [[ "$workers" =~ ^[1-8]$ ]] || die "ADMIN_WEB_WORKERS must be between 1 and 8"
