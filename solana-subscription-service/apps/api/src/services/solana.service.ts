@@ -77,9 +77,7 @@ export async function verifySolanaPayment(check: SolanaPaymentCheck) {
   if (check.currency === PaymentCurrency.SOL) {
     verifySolTransfer(allInstructions, check.expectedAmount);
   } else {
-    const accountKeys = tx.transaction.message.accountKeys.map((key) =>
-      "pubkey" in key ? key.pubkey.toBase58() : key.toBase58()
-    );
+    const accountKeys = tx.transaction.message.accountKeys.map((key) => key.pubkey.toBase58());
     verifyUsdcTransfer(allInstructions, check.expectedAmount, tx.meta, accountKeys);
   }
 }
@@ -143,8 +141,8 @@ function verifyUsdcTransfer(
     after &&
     before.mint === env.USDC_MINT &&
     after.mint === env.USDC_MINT &&
-    before.decimals === 6 &&
-    after.decimals === 6 &&
+    before.uiTokenAmount.decimals === 6 &&
+    after.uiTokenAmount.decimals === 6 &&
     before.owner === env.TREASURY_WALLET &&
     after.owner === env.TREASURY_WALLET &&
     BigInt(after.uiTokenAmount.amount) - BigInt(before.uiTokenAmount.amount) === expectedBaseUnits
