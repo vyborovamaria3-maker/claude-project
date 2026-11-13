@@ -28,4 +28,6 @@ test("SQL migrations have unique sequential version numbers",async()=>{
   assert.match(envelopeFingerprint,/ADD COLUMN IF NOT EXISTS envelope_sha256/);
   assert.match(envelopeFingerprint,/payload_sha256 remains the stable normalized RegistryEvent fingerprint/);
   assert.match(envelopeFingerprint,/envelope_sha256/);
+  assert.match(envelopeFingerprint,/intelligence_inbox_envelope_sha256_check/);
+  assert.match(envelopeFingerprint,/VALIDATE CONSTRAINT/);
 });
