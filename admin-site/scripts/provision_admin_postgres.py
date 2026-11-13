@@ -111,6 +111,7 @@ def _assert_no_restricted_schema_owners(
             "a separately reviewed change"
         )
 
+
 def _assert_public_application_objects_owned(
     db: psycopg.Connection[Any], migrator_user: str
 ) -> None:

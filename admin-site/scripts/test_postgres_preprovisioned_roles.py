@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 
 import psycopg
+from psycopg import sql
 from psycopg.errors import InsufficientPrivilege
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -158,8 +159,10 @@ def provision_test_cluster() -> None:
     # A pre-existing superuser target must not be weakened by ALTER ROLE.
     with psycopg.connect(BOOTSTRAP_ADMIN_DB) as bootstrap:
         bootstrap.execute(
-            "CREATE ROLE admin_ci_runtime SUPERUSER LOGIN PASSWORD %s",
-            (RUNTIME_PASSWORD,),
+            sql.SQL("CREATE ROLE {} SUPERUSER LOGIN PASSWORD {}").format(
+                sql.Identifier("admin_ci_runtime"),
+                sql.Literal(RUNTIME_PASSWORD),
+            )
         )
     try:
         provision()
