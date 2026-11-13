@@ -195,8 +195,11 @@ def main() -> None:
         source.execute("BEGIN")
         # Verify the expected source schema before anything else: extra
         # columns would be silently dropped by the fixed SELECT lists.
+        # Legacy databases may predate some stores; absence is legal and is
+        # reported in the fingerprint, not an error.
         for table in EXPECTED_TABLE_COLUMNS:
-            _assert_expected_columns(source, table)
+            if _table_exists(source, table):
+                _assert_expected_columns(source, table)
         source_fingerprint = _sqlite_state_fingerprint(source)
         with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=5) as target, target.cursor() as cur:
             cur.execute(
