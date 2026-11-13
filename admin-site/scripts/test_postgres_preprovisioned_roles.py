@@ -586,7 +586,13 @@ def assert_runtime_restricted() -> None:
             "CREATE TABLE admin_ci_runtime_object_drift.runtime_owned(id integer)"
         )
         bootstrap.execute(
+            "GRANT CREATE ON SCHEMA admin_ci_runtime_object_drift TO admin_ci_runtime"
+        )
+        bootstrap.execute(
             "ALTER TABLE admin_ci_runtime_object_drift.runtime_owned OWNER TO admin_ci_runtime"
+        )
+        bootstrap.execute(
+            "REVOKE CREATE ON SCHEMA admin_ci_runtime_object_drift FROM admin_ci_runtime"
         )
     try:
         try:
