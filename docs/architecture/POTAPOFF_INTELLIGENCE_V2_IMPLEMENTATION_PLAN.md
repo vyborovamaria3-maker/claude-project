@@ -299,7 +299,7 @@
 - [x] Подтверждён exact-head contracts/outbox/Intelligence CI: 30 успешных workflows, 0 failed, 1 skipped (не засчитан как pass).
 
 
-**Cutover blocker:** V1 inbox fingerprints remain registry-only for replay compatibility; V2 inbox fingerprints are full-envelope hashes. Same-key V1→V2 replay is deliberately rejected as `identity_collision` until an explicit cross-version reconciliation/cutover design is implemented and tested. Do not enable V2 producers or rewrite existing outbox payloads before that gate is closed.
+**Cutover gate — implementation in progress:** migration 019 and dual-fingerprint reconciliation now preserve the stable V1 RegistryEvent fingerprint in `payload_sha256` and store the V2 full-envelope hash separately in `envelope_sha256`. A matching V1 row is promoted once under row lock; later V2 envelopes must match exactly. Unit and PostgreSQL concurrency tests were added. Do not enable V2 producers until exact-head CI, a real disposable PostgreSQL execution, timeline/token-link/swap parity tests and independent review pass.
 
 
 - [ ] До любого live consumer canary проверить pending X/TG outbox rows: исторический `created_at DEFAULT now()` может предшествовать `observedAt`; не переписывать source rows автоматически. При несовместимых строках нужен отдельный операторский план reconciliation.
@@ -316,3 +316,16 @@
 - [ ] Cross-version V1/V2 replay reconciliation: подготовлен безопасный additive design в `SHARED_CONTRACTS_V2.md`, код и PostgreSQL concurrency tests ещё не реализованы.
 - [ ] Исторические pending source rows X/TG/Solana: только read-only операторская инвентаризация; source rows не переписывать.
 - [ ] V2 producer builders/parity/fault matrix/coverage enforcement остаются открытыми.
+
+
+### V1/V2 fingerprint reconciliation implementation — 2026-11-13
+
+- [x] Добавлена additive migration `019_inbox_envelope_fingerprint.sql`; source outbox и исторические payload не меняются.
+- [x] `payload_sha256` сохраняет стабильный fingerprint RegistryEvent для V1 и V2.
+- [x] `envelope_sha256` отдельно хранит полный hash V2.
+- [x] V1→V2 promotion выполняется только при совпадении registry fingerprint и metadata, под `SELECT FOR UPDATE`, один раз.
+- [x] Повторный V2 с другим envelope hash остаётся collision; V2→V1 replay проверяет стабильный registry fingerprint.
+- [x] Добавлены unit и PostgreSQL race tests.
+- [ ] Дождаться CI на новом HEAD; подтвердить, что PG integration test реально выполнился, а не был skipped.
+- [ ] Добавить integration проверки несовпадения timeline/token-link/swap materialization.
+- [ ] Независимый review миграции и cutover semantics.
