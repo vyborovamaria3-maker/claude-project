@@ -4,10 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import { execFileSync } from "node:child_process";
 
-const { resolveImportPath, listXlsxFiles } = require("./import-path-safety.cjs") as {
-  resolveImportPath: (inputPath: string, allowedRoots: string[]) => string;
-  listXlsxFiles: (root: string, maxFiles?: number) => string[];
-};
+import { resolveImportPath, listXlsxFiles } from "./import-path-safety.cjs";
 import * as XLSX from "potapoff-safe-xlsx";
 import {
   getCreatorForMint,
