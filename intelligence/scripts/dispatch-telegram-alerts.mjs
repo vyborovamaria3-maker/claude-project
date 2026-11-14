@@ -42,19 +42,26 @@ async function main() {
     +"AND conname='token_alerts_status_check'");
   if(!/dead_lettered/.test(String(statusCheck.rows[0]?.def ?? ""))){
     await pool.end();
-    throw new Error("intelligence migration 020 required");
+    throw new Error("intelligence_migration_020_required");
   }
   try {
     const client=await pool.connect();
     let rows;
     try {
       await client.query("BEGIN");
+      // 'open' rows are bounded by the retry budget; stale 'sending' rows are
+      // reclaimable at any attempt count so a crash between claim and the
+      // terminal update self-heals: the next run either delivers or
+      // dead-letters the alert on the failure path.
       const claimed=await client.query(`WITH picked AS (
         SELECT alert_id FROM token_alerts
-        WHERE delivery_attempts < 10 AND triggered_at <= NOW()
-          AND (status='open' AND (delivery_attempted_at IS NULL
-               OR delivery_attempted_at < NOW()-INTERVAL '1 minute')
-               OR status='sending' AND delivery_attempted_at < NOW()-INTERVAL '10 minutes')
+        WHERE triggered_at <= NOW()
+          AND (
+            (status='open' AND delivery_attempts < 10
+              AND (delivery_attempted_at IS NULL
+                   OR delivery_attempted_at < NOW()-INTERVAL '1 minute'))
+            OR (status='sending' AND delivery_attempted_at < NOW()-INTERVAL '10 minutes')
+          )
         ORDER BY triggered_at ASC LIMIT $1 FOR UPDATE SKIP LOCKED
       )
       UPDATE token_alerts AS alert
