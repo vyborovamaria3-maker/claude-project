@@ -11,10 +11,29 @@ test("SQL migrations have unique sequential version numbers",async()=>{
       "duplicate migration version "+prefix+" in "+byVersion.get(prefix)+" and "+name);
     byVersion.set(prefix,name);
   }
-  for(let n=1;n<=14;n++)assert.ok(byVersion.has(n),
+  for(let n=1;n<=20;n++)assert.ok(byVersion.has(n),
     "missing migration "+String(n).padStart(3,"0"));
   const privacy=await readFile(new URL("014_privacy_evidence_indexes.sql",root),"utf8");
   assert.match(privacy,/idx_intelligence_inbox_evidence_source/);
   const retries=await readFile(new URL("013_invalidation_retry_schedule.sql",root),"utf8");
   assert.match(retries,/next_attempt_at/);
+  const fingerprint=await readFile(new URL("017_inbox_payload_fingerprint.sql",root),"utf8");
+  assert.match(fingerprint,/payload_sha256/);
+  assert.match(fingerprint,/64/);
+  const invalidation=await readFile(new URL("018_event_revision_invalidation.sql",root),"utf8");
+  assert.match(invalidation,/coalesce_key/);
+  assert.match(invalidation,/next_day/);
+  assert.match(invalidation,/uq_analytics_invalidation_coalesced/);
+  const envelopeFingerprint=await readFile(new URL("019_inbox_envelope_fingerprint.sql",root),"utf8");
+  assert.match(envelopeFingerprint,/ADD COLUMN IF NOT EXISTS envelope_sha256/);
+  assert.match(envelopeFingerprint,/payload_sha256 remains the stable normalized RegistryEvent fingerprint/);
+  assert.match(envelopeFingerprint,/envelope_sha256/);
+  assert.match(envelopeFingerprint,/intelligence_inbox_envelope_sha256_check/);
+  assert.match(envelopeFingerprint,/VALIDATE CONSTRAINT/);
+  const deadLetter=await readFile(new URL("020_alert_dead_letter.sql",root),"utf8");
+  assert.match(deadLetter,/dead_lettered/);
+  assert.match(deadLetter,/token_alerts_status_check/);
+  assert.match(deadLetter,/token_alert_status_history_status_check/);
+  assert.match(deadLetter,/status = 'sending'/);
+  assert.match(deadLetter,/INTERVAL '10 minutes'/);
 });

@@ -10,8 +10,6 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
-    env_file:
-      - .env.server
     environment:
       POSTGRES_DB: potapoff
       POSTGRES_USER: potapoff
@@ -23,26 +21,70 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    networks:
+      - default
+      - data-network
+    logging: *default-logging
+
+  postgres-role-provisioner:
+    image: postgres:16-alpine
+    restart: "no"
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: potapoff
+      PGUSER: ${POSTGRES_USER:-potapoff}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-potapoff_app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}
+      POSTGRES_MIGRATOR_USER: ${POSTGRES_MIGRATOR_USER:-potapoff_migrator}
+      POSTGRES_MIGRATOR_PASSWORD: ${POSTGRES_MIGRATOR_PASSWORD:?POSTGRES_MIGRATOR_PASSWORD is required}
+      POSTGRES_BACKUP_USER: ${POSTGRES_BACKUP_USER:-potapoff_backup}
+      POSTGRES_BACKUP_PASSWORD: ${POSTGRES_BACKUP_PASSWORD:?POSTGRES_BACKUP_PASSWORD is required}
+      POSTGRES_READONLY_USER: ${POSTGRES_READONLY_USER:-potapoff_readonly}
+      POSTGRES_READONLY_PASSWORD: ${POSTGRES_READONLY_PASSWORD:?POSTGRES_READONLY_PASSWORD is required}
+    volumes:
+      - ./scripts/provision-postgres-roles.sql:/provision/roles.sql:ro
+    entrypoint: ["/bin/sh", "-ec"]
+    command: >-
+      psql -X -v ON_ERROR_STOP=1
+      -v bootstrap_user="$${PGUSER}"
+      -v app_user="$${POSTGRES_APP_USER}"
+      -v app_password="$${POSTGRES_APP_PASSWORD}"
+      -v migrator_user="$${POSTGRES_MIGRATOR_USER}"
+      -v migrator_password="$${POSTGRES_MIGRATOR_PASSWORD}"
+      -v backup_user="$${POSTGRES_BACKUP_USER}"
+      -v backup_password="$${POSTGRES_BACKUP_PASSWORD}"
+      -v readonly_user="$${POSTGRES_READONLY_USER}"
+      -v readonly_password="$${POSTGRES_READONLY_PASSWORD}"
+      -f /provision/roles.sql
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - data-network
     logging: *default-logging
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --appendonly yes
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 10
+    networks:
+      - data-network
     logging: *default-logging
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
     restart: unless-stopped
-    env_file:
-      - .env.server
     environment:
       RABBITMQ_DEFAULT_USER: potapoff
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
@@ -54,6 +96,8 @@ services:
       timeout: 30s
       retries: 10
       start_period: 180s
+    networks:
+      - data-network
     logging: *default-logging
 
   backend:
@@ -61,15 +105,16 @@ services:
     restart: unless-stopped
     env_file:
       - backend.env
-      - .env.server
+      - .env.runtime
     environment:
       ENVIRONMENT: production
       DEBUG: "false"
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
-      DATABASE_URL: postgresql+asyncpg://potapoff:${POSTGRES_PASSWORD}@postgres:5432/potapoff
-      REDIS_URL: redis://redis:6379/0
+      INTERNAL_SERVICE_API_KEY: ${INTERNAL_SERVICE_API_KEY:?INTERNAL_SERVICE_API_KEY is required}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_APP_USER:-potapoff_app}:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}@postgres:5432/potapoff
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
       CELERY_BROKER_URL: amqp://potapoff:${RABBITMQ_PASSWORD}@rabbitmq:5672//
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/1
       FRONTEND_URL: https://potapoff.fun
       FRONTEND_INTERNAL_URL: http://frontend:3000
       CORS_ORIGINS: '["https://potapoff.fun","https://www.potapoff.fun"]'
@@ -97,10 +142,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      postgres-role-provisioner:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+    networks:
+      - default
+      - data-network
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
       interval: 15s
@@ -114,20 +164,24 @@ services:
     restart: unless-stopped
     env_file:
       - backend.env
-      - .env.server
+      - .env.runtime
     environment:
       ENVIRONMENT: production
       DEBUG: "false"
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
-      DATABASE_URL: postgresql+asyncpg://potapoff:${POSTGRES_PASSWORD}@postgres:5432/potapoff
-      REDIS_URL: redis://redis:6379/0
+      INTERNAL_SERVICE_API_KEY: ${INTERNAL_SERVICE_API_KEY:?INTERNAL_SERVICE_API_KEY is required}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_APP_USER:-potapoff_app}:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}@postgres:5432/potapoff
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
       CELERY_BROKER_URL: amqp://potapoff:${RABBITMQ_PASSWORD}@rabbitmq:5672//
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/1
       SOLANA_TRACKER_API_KEY: ${SOLANA_TRACKER_API_KEY:-}
       SOLANA_TRACKER_API_BASE: ${SOLANA_TRACKER_API_BASE:-https://data.solanatracker.io}
       KOL_TRADE_SYNC_INTERVAL_SECONDS: ${KOL_TRADE_SYNC_INTERVAL_SECONDS:-1200}
       KOL_TRADE_SYNC_WALLETS_PER_RUN: ${KOL_TRADE_SYNC_WALLETS_PER_RUN:-1}
     command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=info"]
+    networks:
+      - default
+      - data-network
     depends_on:
       backend:
         condition: service_healthy
@@ -138,20 +192,23 @@ services:
     restart: unless-stopped
     env_file:
       - backend.env
-      - .env.server
+      - .env.runtime
     environment:
       ENVIRONMENT: production
       DEBUG: "false"
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
-      DATABASE_URL: postgresql+asyncpg://potapoff:${POSTGRES_PASSWORD}@postgres:5432/potapoff
-      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_APP_USER:-potapoff_app}:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}@postgres:5432/potapoff
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
       CELERY_BROKER_URL: amqp://potapoff:${RABBITMQ_PASSWORD}@rabbitmq:5672//
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/1
       SOLANA_TRACKER_API_KEY: ${SOLANA_TRACKER_API_KEY:-}
       SOLANA_TRACKER_API_BASE: ${SOLANA_TRACKER_API_BASE:-https://data.solanatracker.io}
       KOL_TRADE_SYNC_INTERVAL_SECONDS: ${KOL_TRADE_SYNC_INTERVAL_SECONDS:-1200}
       KOL_TRADE_SYNC_WALLETS_PER_RUN: ${KOL_TRADE_SYNC_WALLETS_PER_RUN:-1}
     command: ["celery", "-A", "app.tasks.celery_app:celery_app", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
+    networks:
+      - default
+      - data-network
     depends_on:
       backend:
         condition: service_healthy
@@ -164,16 +221,20 @@ services:
     restart: unless-stopped
     env_file:
       - backend.env
-      - .env.server
+      - .env.runtime
     environment:
       ENVIRONMENT: production
       DEBUG: "false"
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
-      DATABASE_URL: postgresql+asyncpg://potapoff:${POSTGRES_PASSWORD}@postgres:5432/potapoff
-      REDIS_URL: redis://redis:6379/0
+      INTERNAL_SERVICE_API_KEY: ${INTERNAL_SERVICE_API_KEY:?INTERNAL_SERVICE_API_KEY is required}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_APP_USER:-potapoff_app}:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}@postgres:5432/potapoff
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
       CELERY_BROKER_URL: amqp://potapoff:${RABBITMQ_PASSWORD}@rabbitmq:5672//
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/1
     command: ["python", "-m", "app.cli.twitter_discovery_daemon", "--public-interval", "900", "--cycle-interval", "1800"]
+    networks:
+      - default
+      - data-network
     depends_on:
       backend:
         condition: service_healthy
@@ -185,12 +246,12 @@ services:
     restart: unless-stopped
     env_file:
       - backend.env
-      - .env.server
+      - .env.runtime
     environment:
       ENVIRONMENT: production
       DEBUG: "false"
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
-      DATABASE_URL: postgresql+asyncpg://potapoff:${POSTGRES_PASSWORD}@postgres:5432/potapoff
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_APP_USER:-potapoff_app}:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}@postgres:5432/potapoff
       TG_API_ID: ${TG_API_ID:-}
       TG_API_HASH: ${TG_API_HASH:-}
       TG_SESSION_STRING: ${TG_SESSION_STRING:-}
@@ -200,6 +261,9 @@ services:
       TG_ENTITY_LIMIT: ${TG_ENTITY_LIMIT:-100}
       TG_EVALUATE_INTERVAL_SECONDS: ${TG_EVALUATE_INTERVAL_SECONDS:-300}
     command: ["python", "-m", "app.cli.telegram_monitor"]
+    networks:
+      - default
+      - data-network
     depends_on:
       backend:
         condition: service_healthy
@@ -210,11 +274,13 @@ services:
     restart: unless-stopped
     # Deliberately keep the public frontend isolated from backend.env and provider secrets.
     environment:
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
       NODE_ENV: production
       BACKEND_URL: http://backend:8000
       TG_INVITE_INTERNAL_KEY: ${TG_INVITE_INTERNAL_KEY:-}
       KOL_INTERNAL_KEY: ${KOL_INTERNAL_KEY:?KOL_INTERNAL_KEY is required}
       SUBSCRIPTION_INTERNAL_KEY: ${SUBSCRIPTION_INTERNAL_KEY:?SUBSCRIPTION_INTERNAL_KEY is required}
+      INTERNAL_SERVICE_API_KEY: ${INTERNAL_SERVICE_API_KEY:?INTERNAL_SERVICE_API_KEY is required}
       FRONTEND_URL: https://potapoff.fun
       NEXT_PUBLIC_APP_URL: https://potapoff.fun
       NEXT_PUBLIC_FRONTEND_URL: https://potapoff.fun
@@ -224,6 +290,8 @@ services:
       TELEGRAM_PROXY_URL: ${TELEGRAM_PROXY_URL:-}
     volumes:
       - ./data:/app/data
+    networks:
+      - default
     depends_on:
       backend:
         condition: service_healthy
@@ -249,6 +317,8 @@ services:
       NEXT_PUBLIC_APP_URL: https://potapoff.fun
       NEXT_PUBLIC_FRONTEND_URL: https://potapoff.fun
       NEXT_PUBLIC_TELEGRAM_BOT_URL: ${NEXT_PUBLIC_TELEGRAM_BOT_URL:-https://t.me/Soft777bot}
+    networks:
+      - default
     depends_on:
       backend:
         condition: service_healthy
@@ -284,6 +354,8 @@ services:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
+    networks:
+      - default
     logging: *default-logging
 
 volumes:
@@ -292,5 +364,7 @@ volumes:
   rabbitmq-data:
 
 networks:
+  data-network:
+    driver: bridge
   potapoff-shared:
     external: true

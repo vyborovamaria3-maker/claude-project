@@ -26,9 +26,9 @@ docker compose run --rm admin python scripts/hash_password.py
 # use output as ADMIN_PASSWORD_HASH
 ```
 
-Never commit `.env`, `.env.intelligence`, `sources.json` containing credentials, or generated state DBs.
+Never commit `.env`, `.env.runtime`, `.env.intelligence`, `sources.json` containing credentials, or generated state DBs.
 
-**Secret boundary:** `.env` belongs to the admin container. `.env.intelligence` belongs only to `intelligence-worker`. Never copy the worker PostgreSQL DSN into `.env`, and never pass the complete admin `.env` to the worker.
+**Secret boundary:** `.env` is used for Compose substitution and provisioning. `deploy/refresh-runtime-env.sh` creates `.env.runtime` for the admin container using the explicit allowlist in `.env.runtime.example`; PostgreSQL bootstrap, migrator, backup and subscription-admin credentials are excluded. `.env.intelligence` belongs only to `intelligence-worker`. Never copy the worker PostgreSQL DSN into the admin runtime environment or pass the complete admin `.env` to the worker.
 
 ## 3. Database access
 
@@ -119,6 +119,7 @@ Attach the PostgreSQL services that admin/worker must reach to `potapoff-shared`
 ## 6. Validate and start
 
 ```bash
+bash deploy/refresh-runtime-env.sh
 docker compose config
 docker compose build --pull
 
@@ -193,12 +194,40 @@ Then verify in a browser:
 - audit log records login/logout/export events;
 - source failures do not expose credentials or DSNs.
 
-## 10. Rollback
+## 10. Deploy version tracking and rollback
+
+The deploy script tracks the last successfully deployed commit in
+`/var/backups/potapoff-admin/DEPLOYED_GIT_SHA`. Each deployment backup records
+the previous successful commit in `git-sha.txt` and the target checkout in
+`target-git-sha.txt`. The marker is updated only after Admin, Intelligence and
+the deployment smoke checks succeed.
+
+For the first upgrade of an existing server that predates this marker, supply
+the full commit SHA that is currently deployed:
 
 ```bash
-git checkout <previous-good-commit>
-docker compose build
-docker compose up -d
+PREVIOUS_GIT_SHA=<currently-deployed-40-character-commit> bash deploy/production-deploy.sh deploy
 ```
+
+The script verifies that this commit exists locally. If a previous deployment
+exists but its SHA is unknown, deployment stops instead of recording the new
+checkout as the rollback target. Subsequent deployments use the marker
+automatically:
+
+```bash
+bash deploy/production-deploy.sh deploy
+```
+
+To roll back a failed or completed deployment, use the backup created for that
+deployment:
+
+```bash
+bash deploy/production-rollback.sh /var/backups/potapoff-admin/<deployment-backup>
+```
+
+Rollback requires distinct, valid previous and target SHAs. It restores the
+previous commit and updates the marker only after the health check succeeds.
+Legacy backups without both SHA files are rejected because they cannot prove
+which commit was actually deployed.
 
 Keep `admin-state` and `intelligence-state` volumes unless intentionally resetting durable state.

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildTgOutboxEvent,buildTgDeletionOutboxEvent,telegramOutboxEnabled,
+  emitTgMessageOutbox,
 } from "../src/persistence/outbox.js";
 
 const now = new Date("2026-10-18T01:30:00Z");
@@ -65,4 +66,27 @@ test("canonical negative Telegram channel peer ID survives publication and soft-
   assert.equal((deleted.payload.registryEvent as {
     evidenceRef:{sourceId:string}
   }).evidenceRef.sourceId,"tg:message:-100123456789:42");
+});
+
+
+test("Telegram outbox writer stamps created_at with the actual insert clock",async()=>{
+  const old=process.env.TG_INTELLIGENCE_OUTBOX_ENABLED;
+  const calls:{sql:string;params:unknown[]}[]=[];
+  const tx={query:async(sql:string,params:unknown[]=[]):Promise<{rows:unknown[]}>=>{
+    calls.push({sql,params});
+    if(sql.includes("SELECT peer_id FROM tg_sources"))return {rows:[{peer_id:"123456789"}]};
+    return {rows:[]};
+  }} as any;
+  try{
+    process.env.TG_INTELLIGENCE_OUTBOX_ENABLED="true";
+    await emitTgMessageOutbox(tx,"source-1",msg,now);
+    const insert=calls.find(call=>call.sql.includes("INSERT INTO outbox_events"));
+    assert.ok(insert);
+    assert.match(insert!.sql,/created_at/);
+    assert.match(insert!.sql,/clock_timestamp\(\)/,
+      "TG created_at must be the source outbox insertion time, not transaction-start NOW()");
+  }finally{
+    if(old===undefined)delete process.env.TG_INTELLIGENCE_OUTBOX_ENABLED;
+    else process.env.TG_INTELLIGENCE_OUTBOX_ENABLED=old;
+  }
 });

@@ -2,13 +2,14 @@
  * Evidence-only Telegram relationship extraction.
  * Mentions and address co-occurrence do not establish identity, ownership or coordinated behavior.
  */
-export const ANALYSIS_VERSION = 4;
+// v5 removes new EVM address edges; historical evm_address rows remain readable.
+export const ANALYSIS_VERSION = 5;
 
 import { isSolanaAddress, normalizeTarget } from "./normalize.js";
 export { isSolanaAddress } from "./normalize.js";
 
 export type LinkKind = "mention" | "forward" | "address";
-export type TargetKind = "handle" | "channel_id" | "solana_address" | "evm_address";
+export type TargetKind = "handle" | "channel_id" | "solana_address";
 export type MessageLink = { kind: LinkKind; targetKind: TargetKind; targetKey: string };
 
 export interface RawTelegramMessage {
@@ -38,7 +39,6 @@ export interface RawTelegramMessage {
 }
 
 const TOKEN_RE = /(?<![1-9A-HJ-NP-Za-km-z])[1-9A-HJ-NP-Za-km-z]{32,44}(?![1-9A-HJ-NP-Za-km-z])/g;
-const EVM_RE = /(?<![0-9a-fA-F])0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/g;
 const MENTION_RE = /(?<![\w@])@([a-zA-Z][a-zA-Z0-9_]{4,31})\b/g;
 const TME_RE = /(?<![a-zA-Z0-9_.-])(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.me)\/([a-zA-Z][a-zA-Z0-9_]{4,31})(?![\w])/gi;
 
@@ -70,9 +70,8 @@ export function extractLinks(message: RawTelegramMessage): MessageLink[] {
   const evidenceTexts = [txt, ...hiddenUrls];
   for (const content of evidenceTexts) {
     for (const match of content.matchAll(MENTION_RE)) add("mention", "handle", match[1]);
-  for (const match of content.matchAll(TME_RE)) add("mention", "handle", match[1]);
-  for (const match of content.matchAll(EVM_RE)) add("address", "evm_address", match[0]);
-  for (const match of content.matchAll(TOKEN_RE)) add("address", "solana_address", match[0]);
+    for (const match of content.matchAll(TME_RE)) add("mention", "handle", match[1]);
+    for (const match of content.matchAll(TOKEN_RE)) add("address", "solana_address", match[0]);
   }
   return [...links.values()].sort((a,b) => a.kind.localeCompare(b.kind) ||
     a.targetKind.localeCompare(b.targetKind) || a.targetKey.localeCompare(b.targetKey));

@@ -8,6 +8,10 @@ on:
       - "solana-launcher/**"
       - "admin-site/**"
       - "memecoin-intelligence/**"
+      - "solana-subscription-service/**"
+      - ".github/scripts/test-readonly-source-roles.sh"
+      - ".github/scripts/test-potapoff-role-provisioner.sh"
+      - ".github/scripts/test-admin-deploy-sha.sh"
       - ".github/workflows/potapoff-predeploy-gate.yml"
       - ".github/workflows/potapoff-production.yml"
       - ".github/workflows/potapoff-release-images.yml"
@@ -71,6 +75,12 @@ jobs:
           current_head="$(alembic current | awk '/^[0-9][0-9]/ {print $1}')"
           test -n "$expected_head"
           test "$current_head" = "$expected_head"
+      - name: Execute actual Alembic graph as isolated non-superuser migration role
+        working-directory: solana-launcher/backend
+        run: |
+          set -Eeuo pipefail
+          bash -n ../../.github/scripts/test-backend-alembic-restricted.sh
+          bash ../../.github/scripts/test-backend-alembic-restricted.sh
       - name: Run Twitter, KOL and migration regression tests
         working-directory: solana-launcher/backend
         run: pytest -q tests/test_twitter*.py tests/test_kol*.py tests/test_alembic_revision_ids.py
@@ -141,13 +151,22 @@ jobs:
           pip install -r admin-site/requirements.txt
       - name: Run deep Control Center regression suite
         run: bash admin-site/scripts/test-deep.sh
+      - name: Prove Admin PostgreSQL 17 preprovisioned schema supports DML-only runtime
+        env:
+          ADMIN_PG_SCHEMA_MODE: legacy
+        run: python admin-site/scripts/test_postgres_preprovisioned_roles.py
       - name: Validate Control Center Compose
         run: |
           set -Eeuo pipefail
           cp admin-site/.env.example admin-site/.env
           sed -i 's/^ADMIN_STATE_DB_PASSWORD=.*/ADMIN_STATE_DB_PASSWORD=ci-compose-password/' admin-site/.env
+          sed -i 's/^ADMIN_STATE_APP_PASSWORD=.*/ADMIN_STATE_APP_PASSWORD=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/' admin-site/.env
+          sed -i 's/^ADMIN_STATE_MIGRATOR_PASSWORD=.*/ADMIN_STATE_MIGRATOR_PASSWORD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/' admin-site/.env
+          sed -i 's/^ADMIN_STATE_BACKUP_PASSWORD=.*/ADMIN_STATE_BACKUP_PASSWORD=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/' admin-site/.env
+          sed -i 's/^ADMIN_STATE_RUNTIME_PASSWORD=.*/ADMIN_STATE_RUNTIME_PASSWORD=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/' admin-site/.env
           sed -i 's/^SUBSCRIPTION_ADMIN_KEY=.*/SUBSCRIPTION_ADMIN_KEY=ci-subscription-admin-key/' admin-site/.env
           cp admin-site/.env.intelligence.example admin-site/.env.intelligence
+          bash admin-site/deploy/refresh-runtime-env.sh
           cp admin-site/sources.example.json admin-site/sources.json
           cp admin-site/logs.example.json admin-site/logs.json
           docker compose -f admin-site/docker-compose.yml config --quiet
@@ -176,7 +195,12 @@ jobs:
         run: npm run build
       - name: Validate intelligence production Compose
         env:
+          POSTGRES_USER: memecoin
+          POSTGRES_DB: memecoin
           POSTGRES_PASSWORD: ci-postgres-password
+          POSTGRES_APP_PASSWORD: ci-postgres-app-password
+          POSTGRES_MIGRATOR_PASSWORD: ci-postgres-migrator-password
+          POSTGRES_READONLY_PASSWORD: ci-postgres-readonly-password
           REDIS_PASSWORD: ci-redis-password
           INTERNAL_ADMIN_API_KEY: ci-admin-key
         run: docker compose -f docker-compose.production.yml config >/dev/null
@@ -194,18 +218,30 @@ jobs:
           while IFS= read -r -d '' file; do
             echo "BASH_N $file"
             bash -n "$file"
-          done < <(find solana-launcher/scripts -type f -name '*.sh' -print0)
+          done < <(find solana-launcher/scripts admin-site/deploy -type f -name '*.sh' -print0)
+      - name: Set up Node for Compose command safety regression
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+      - name: Verify Compose down preserves named volumes by default
+        run: node --test solana-launcher/scripts/compose-command-safety.test.mjs
       - name: Prepare non-secret Compose validation environment
         run: |
           cat > solana-launcher/.env.server <<'EOF'
           IMAGE_TAG=predeploy-ci
           POSTGRES_PASSWORD=ci-postgres-password
+          POSTGRES_APP_PASSWORD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          POSTGRES_MIGRATOR_PASSWORD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          POSTGRES_BACKUP_PASSWORD=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+          POSTGRES_READONLY_PASSWORD=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+          REDIS_PASSWORD=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
           RABBITMQ_PASSWORD=ci-rabbitmq-password
           SECRET_KEY=ci-signing-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm
           BACKEND_API_KEY=ci-backend-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm
           KOL_INTERNAL_KEY=ci-kol-internal-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm
           SUBSCRIPTION_INTERNAL_KEY=ci-subscription-internal-abcdefghijklmnopqrstuvwxyz
           SUBSCRIPTION_ADMIN_KEY=ci-subscription-admin-abcdefghijklmnopqrstuvwxyz
+          INTERNAL_SERVICE_API_KEY=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
           TELEGRAM_BOT_TOKEN=ci-compose-bot-token
           TELEGRAM_WEBHOOK_URL=https://example.invalid/api/telegram/webhook
           TELEGRAM_WEBHOOK_SECRET=ci-webhook-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm
@@ -216,11 +252,95 @@ jobs:
           SUBSCRIPTION_PASSWORD_ENCRYPTION_KEY=ci-encryption-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm
           TWITTER_CRAWLER_ADMIN_KEY=ci-twitter-admin-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm
           EOF
+          : > solana-launcher/.env.runtime
       - name: Validate production Compose
         working-directory: solana-launcher
         run: docker compose --env-file .env.server -f docker-compose.production.yml config --quiet
+      - name: Validate Subscription and Memecoin production Compose
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > solana-subscription-service/.env <<'EOF'
+          POSTGRES_DB=solsub
+          POSTGRES_USER=solsub
+          POSTGRES_PASSWORD=ci-solsub-bootstrap-password
+          POSTGRES_APP_USER=solsub_app
+          POSTGRES_APP_PASSWORD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          POSTGRES_MIGRATOR_USER=solsub_migrator
+          POSTGRES_MIGRATOR_PASSWORD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          POSTGRES_READONLY_PASSWORD=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+          REDIS_PASSWORD=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+          WEB_ORIGIN=https://subscription.example.invalid
+          API_PUBLIC_URL=https://api.subscription.example.invalid
+          WEB_PUBLIC_URL=https://subscription.example.invalid
+          JWT_ACCESS_SECRET=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          JWT_REFRESH_SECRET=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          TELEGRAM_BOT_TOKEN=123456:ci-test-token-placeholder
+          TELEGRAM_BOT_USERNAME=ci_subscription_bot
+          TELEGRAM_WEBHOOK_SECRET=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+          TELEGRAM_WEBAPP_URL=https://subscription.example.invalid
+          SOLANA_CLUSTER=devnet
+          RPC_ENDPOINT=https://api.devnet.solana.com
+          TREASURY_WALLET=11111111111111111111111111111111
+          TREASURY_USDC_TOKEN_ACCOUNT=11111111111111111111111111111111
+          USDC_MINT=4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
+          PAYMENT_CONFIRMATION_COMMITMENT=finalized
+          NEXT_PUBLIC_API_URL=https://api.subscription.example.invalid
+          NEXT_PUBLIC_WEB_URL=https://subscription.example.invalid
+          NEXT_PUBLIC_TELEGRAM_BOT_USERNAME=ci_subscription_bot
+          NEXT_PUBLIC_SOLANA_CLUSTER=devnet
+          NEXT_PUBLIC_RPC_ENDPOINT=https://api.devnet.solana.com
+          NEXT_PUBLIC_TREASURY_WALLET=11111111111111111111111111111111
+          EOF
+          docker compose --env-file solana-subscription-service/.env -f solana-subscription-service/docker-compose.prod.yml config --quiet
+          cat > memecoin-intelligence/.env <<'EOF'
+          POSTGRES_USER=memecoin
+          POSTGRES_DB=memecoin
+          POSTGRES_PASSWORD=ci-memecoin-bootstrap-password
+          POSTGRES_APP_USER=memecoin_app
+          POSTGRES_APP_PASSWORD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          POSTGRES_MIGRATOR_USER=memecoin_migrator
+          POSTGRES_MIGRATOR_PASSWORD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          POSTGRES_READONLY_PASSWORD=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+          REDIS_PASSWORD=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+          INTERNAL_ADMIN_API_KEY=ci-memecoin-internal-admin-key
+          WEB_ORIGIN=https://memecoin.example.invalid
+          EOF
+          docker compose --env-file memecoin-intelligence/.env -f memecoin-intelligence/docker-compose.production.yml config --quiet
+      - name: Exercise PostgreSQL read-only source role provisioners
+        run: bash .github/scripts/test-readonly-source-roles.sh
+      - name: Verify provisioner SQL delimiter guard actually executes
+        run: bash .github/scripts/test-provisioner-sql-guard.sh
+      - name: Rehearse POTAPoff least-privilege roles and explicit ownership guard
+        run: bash .github/scripts/test-potapoff-role-provisioner.sh
+      - name: Verify Admin deploy rollback SHA tracking
+        run: bash .github/scripts/test-admin-deploy-sha.sh
       - name: Build backend production image
         run: docker build --pull -t potapoff-backend-predeploy:${{ github.sha }} solana-launcher/backend
+      - name: Verify backend runtime excludes build-only Python tooling
+        run: |
+          image="potapoff-backend-predeploy:${{ github.sha }}"
+          docker run --rm --entrypoint sh "$image" -ec '
+            python -c '\''import importlib.metadata as m; blocked={"setuptools","wheel","jaraco.context"}; installed={d.metadata.get("Name","").lower() for d in m.distributions()}; remaining=sorted(blocked & installed); assert not remaining, remaining'\''
+            if find /usr/local/lib /usr/lib -type d -name "setuptools-*.dist-info" -print -quit | grep -q . \
+              || find /usr/local/lib /usr/lib -type d -name "setuptools-*.egg-info" -print -quit | grep -q .; then
+              echo "Unexpected setuptools metadata remains in the runtime image" >&2
+              exit 1
+            fi
+            for package in python3-setuptools python3-pkg-resources; do
+              status="$(dpkg-query -W -f='\''${db:Status-Status}'\'' "$package" 2>/dev/null || true)"
+              test "$status" != installed
+            done
+          '
+      - name: Scan backend image for HIGH/CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: potapoff-backend-predeploy:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "HIGH,CRITICAL"
       - name: Build frontend production image
         run: |
           docker build --pull \
@@ -232,9 +352,43 @@ jobs:
             --build-arg NEXT_PUBLIC_BUILD_SHA=predeploy-${{ github.sha }} \
             -t potapoff-frontend-predeploy:${{ github.sha }} \
             solana-launcher
+      - name: Scan frontend image for HIGH/CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: potapoff-frontend-predeploy:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "HIGH,CRITICAL"
       - name: Build Telegram bot production image
         run: |
           docker build --pull \
             -f solana-launcher/Dockerfile.telegram-bot \
             -t potapoff-telegram-bot-predeploy:${{ github.sha }} \
             solana-launcher
+      - name: Scan Telegram bot image for HIGH/CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: potapoff-telegram-bot-predeploy:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "HIGH,CRITICAL"
+      - name: Verify Telegram bot final image runtime and non-root identity
+        run: |
+          image="potapoff-telegram-bot-predeploy:${{ github.sha }}"
+          runtime_user="$(docker image inspect "$image" --format '{{.Config.User}}')"
+          test "$runtime_user" = "node"
+          runtime_uid="$(docker run --rm --entrypoint id "$image" -u)"
+          test "$runtime_uid" != "0"
+          runtime_major="$(docker run --rm --entrypoint node "$image" -p 'Number(process.versions.node.split(".")[0])')"
+          echo "Telegram bot image Node.js major: ${runtime_major}"
+          test "${runtime_major}" -ge 22
+          for build_tool in python3 make g++; do
+            if docker run --rm --entrypoint sh "$image" -c "command -v $build_tool >/dev/null 2>&1"; then
+              echo "Unexpected build tool in Telegram bot runtime image: $build_tool" >&2
+              exit 1
+            fi
+          done

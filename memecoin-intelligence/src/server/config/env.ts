@@ -46,19 +46,25 @@ const schema = z.object({
 
 const parsedEnv = schema.parse(process.env);
 
-if (parsedEnv.NODE_ENV === 'production') {
-  if (!parsedEnv.SECURITY_HEADERS_STRICT) {
+export const env = parsedEnv;
+
+/**
+ * API-only production guard. Keep this out of module initialization so the
+ * one-shot DB migrator and background workers can reuse typed configuration
+ * without needing HTTP security credentials they never consume.
+ */
+export function assertProductionApiSecurity(): void {
+  if (env.NODE_ENV !== 'production') return;
+  if (!env.SECURITY_HEADERS_STRICT) {
     throw new Error('SECURITY_HEADERS_STRICT must be enabled in production');
   }
-  if (!parsedEnv.SECURITY_RBAC_ENABLED) {
+  if (!env.SECURITY_RBAC_ENABLED) {
     throw new Error('SECURITY_RBAC_ENABLED must be enabled in production');
   }
-  if (!parsedEnv.INTERNAL_ADMIN_API_KEY && !parsedEnv.INTERNAL_API_KEY) {
+  if (!env.INTERNAL_ADMIN_API_KEY && !env.INTERNAL_API_KEY) {
     throw new Error('INTERNAL_ADMIN_API_KEY or INTERNAL_API_KEY is required in production');
   }
 }
-
-export const env = parsedEnv;
 
 // Backward-compatible export for callers that still use securityConfig.
 export const securityConfig = {

@@ -9,10 +9,54 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      test: ["CMD-SHELL", "pg_isready -U \"${POSTGRES_USER:-memecoin}\" -d \"${POSTGRES_DB:-memecoin}\""]
       interval: 10s
       timeout: 5s
       retries: 10
+    networks:
+      default: {}
+      potapoff-data:
+        aliases:
+          - memecoin-postgres
+
+  postgres-readonly-provisioner:
+    image: postgres:16-alpine
+    restart: "no"
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-memecoin}
+      PGUSER: ${POSTGRES_USER:-memecoin}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-memecoin_app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?set POSTGRES_APP_PASSWORD}
+      POSTGRES_MIGRATOR_USER: ${POSTGRES_MIGRATOR_USER:-memecoin_migrator}
+      POSTGRES_MIGRATOR_PASSWORD: ${POSTGRES_MIGRATOR_PASSWORD:?set POSTGRES_MIGRATOR_PASSWORD}
+      POSTGRES_READONLY_USER: memecoin_readonly
+      POSTGRES_READONLY_PASSWORD: ${POSTGRES_READONLY_PASSWORD:?set POSTGRES_READONLY_PASSWORD}
+    volumes:
+      - ./scripts/provision-readonly-role.sql:/provision/readonly-role.sql:ro
+      - ./scripts/run-readonly-role-provisioner.sh:/provision/run-readonly-role-provisioner.sh:ro
+    entrypoint: ["/bin/sh", "/provision/run-readonly-role-provisioner.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  migrator:
+    profiles: ["migrate"]
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+      target: migrator
+    restart: "no"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_MIGRATOR_USER:-memecoin_migrator}:${POSTGRES_MIGRATOR_PASSWORD:?set POSTGRES_MIGRATOR_PASSWORD}@postgres:5432/${POSTGRES_DB:-memecoin}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      postgres-readonly-provisioner:
+        condition: service_completed_successfully
 
   redis:
     image: redis:7-alpine
@@ -38,7 +82,7 @@ services:
       SECURITY_HEADERS_STRICT: "true"
       SECURITY_RBAC_ENABLED: "true"
       INTERNAL_ADMIN_API_KEY: ${INTERNAL_ADMIN_API_KEY:?set INTERNAL_ADMIN_API_KEY}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-memecoin}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-memecoin}
+      DATABASE_URL: postgresql://${POSTGRES_APP_USER:-memecoin_app}:${POSTGRES_APP_PASSWORD:?set POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-memecoin}
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
       TELEGRAM_AI_ENABLED: ${TELEGRAM_AI_ENABLED:-false}
       TELEGRAM_AI_MODE: ${TELEGRAM_AI_MODE:-mock}
@@ -50,6 +94,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      postgres-readonly-provisioner:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 
@@ -60,10 +106,7 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      SECURITY_HEADERS_STRICT: "true"
-      SECURITY_RBAC_ENABLED: "true"
-      INTERNAL_ADMIN_API_KEY: ${INTERNAL_ADMIN_API_KEY:?set INTERNAL_ADMIN_API_KEY}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-memecoin}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-memecoin}
+      DATABASE_URL: postgresql://${POSTGRES_APP_USER:-memecoin_app}:${POSTGRES_APP_PASSWORD:?set POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-memecoin}
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
       TELEGRAM_AI_ENABLED: ${TELEGRAM_AI_ENABLED:-false}
       TELEGRAM_AI_MODE: ${TELEGRAM_AI_MODE:-mock}
@@ -73,9 +116,16 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      postgres-readonly-provisioner:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 
 volumes:
   postgres_data:
   redis_data:
+
+networks:
+  potapoff-data:
+    external: true
+    name: potapoff_default

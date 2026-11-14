@@ -181,6 +181,7 @@ services:
     container_name: potapoff-frontend
     restart: unless-stopped
     environment:
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
       NODE_ENV: production
       FRONTEND_URL: ${NEXT_PUBLIC_APP_URL:?NEXT_PUBLIC_APP_URL must be set in solana-launcher/.env}
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:?NEXT_PUBLIC_APP_URL must be set in solana-launcher/.env}

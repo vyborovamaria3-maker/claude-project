@@ -13,6 +13,7 @@ test("PostgreSQL real transaction: replay, provenance and time bounds", {skip:!u
     await client.query("BEGIN");
     const ddl=await readFile(new URL("../migrations/001_entity_registry.sql",import.meta.url),"utf8");
     await client.query(ddl);
+    await client.query(await readFile(new URL("../migrations/017_inbox_payload_fingerprint.sql",import.meta.url),"utf8"));
     const mint="So11111111111111111111111111111111111111112";
     const id=formatTokenId("solana",mint);
     const t1="2026-10-18T00:00:00Z",t2="2026-10-18T00:02:00Z";
@@ -21,6 +22,13 @@ test("PostgreSQL real transaction: replay, provenance and time bounds", {skip:!u
     const tg={sourceSystem:"tg",eventKind:"message_observed",eventKey:"tg:-100222:37:v1",schemaVersion:"v1",entityRefs:[entity],evidenceRef:tgEvidence};
     assert.equal(await ingestRegistryEvent(client,tg),true);
     assert.equal(await ingestRegistryEvent(client,tg),false);
+    const storedFingerprint=await client.query(
+      "SELECT payload_sha256 FROM intelligence_inbox WHERE source_system=$1 AND event_key=$2",["tg",tg.eventKey]);
+    assert.match(storedFingerprint.rows[0].payload_sha256,/^[0-9a-f]{64}$/);
+    const changedEntity=buildEntityRef({kind:"token",
+      canonicalId:formatTokenId("solana","EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),
+      firstSeenAt:t1,lastSeenAt:t1});
+    await assert.rejects(ingestRegistryEvent(client,{...tg,entityRefs:[changedEntity]}),/identity collision/);
     await assert.rejects(ingestRegistryEvent(client,{
       ...tg,evidenceRef:buildEvidenceRef({
         sourceKind:"tg_message",sourceAccountId:"-100222",messageId:"38",observedAt:t1
@@ -50,7 +58,7 @@ test("cross-platform refresh SQL keeps transaction, swap evidence and settled tr
   try{
     await client.query("BEGIN");
     for(const file of [
-      "001_entity_registry.sql","002_timeline.sql","003_feature_store.sql",
+      "001_entity_registry.sql","017_inbox_payload_fingerprint.sql","002_timeline.sql","003_feature_store.sql",
       "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql",
       "006_cross_platform_analytics.sql",
       "009_ai_analysis.sql",

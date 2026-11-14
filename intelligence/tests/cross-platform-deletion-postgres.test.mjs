@@ -8,10 +8,10 @@ import {formatTokenId} from "@claude-project/contracts";
 
 const dbUrl=process.env.INTELLIGENCE_TEST_DB_URL;
 const token=formatTokenId("solana","So11111111111111111111111111111111111111112");
-const migrations=["001_entity_registry.sql","002_timeline.sql","003_feature_store.sql",
+const migrations=["001_entity_registry.sql","017_inbox_payload_fingerprint.sql","002_timeline.sql","003_feature_store.sql",
 "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql",
 "006_cross_platform_analytics.sql","008_alert_status_history.sql","009_ai_analysis.sql",
-"010_intelligence_governance.sql"];
+"010_intelligence_governance.sql","013_invalidation_retry_schedule.sql","018_event_revision_invalidation.sql"];
 
 test("deleted Telegram evidence is excluded as-of without erasing history",{skip:!dbUrl},async()=>{
  const db=new pg.Client({connectionString:dbUrl});

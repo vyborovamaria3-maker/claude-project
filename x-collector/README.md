@@ -1,6 +1,10 @@
 # X collector
 
+**Runtime:** Node.js 22 LTS or newer. The package engine, Docker image and X Collector CI are aligned on Node 22. Node 20 is not an accepted runtime for this package.
+
 This is the PostgreSQL X collector from fixed_project.zip, integrated as an isolated subsystem. It does not replace the existing SQLite collector inside solana-launcher.
+
+The optional historical blockchain evidence importer and adapter in this subsystem are **Solana-only**. New Ethereum/Bitcoin imports are rejected before database writes. Existing legacy rows are preserved and are not exposed as supported networks by the current registry.
 
 ## Migration chain and provenance
 

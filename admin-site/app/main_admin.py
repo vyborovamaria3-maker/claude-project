@@ -20,6 +20,7 @@ from .postgres_admin_state import PostgresAuditStore, PostgresControlStore, Post
 from .postgres_pool import build_postgres_pool
 from .postgres_security_store import PostgresAdminSessionStore
 from .postgres_task_queue import PostgresTaskQueue
+from .postgres_schema_policy import require_admin_postgres_dsn, verify_preprovisioned_schema
 from .x_collector_admin import build_x_collector_router
 from .fomo_evaluation import build_fomo_evaluation_router
 from .author_outcomes import build_author_outcomes_router
@@ -49,8 +50,9 @@ def _bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
 
 
 def create_app() -> FastAPI:
-    app = create_base_app()
     state_dsn = os.getenv("ADMIN_STATE_POSTGRES_DSN", "").strip()
+    require_admin_postgres_dsn(state_dsn)
+    app = create_base_app()
     web_workers = _bounded_int("ADMIN_WEB_WORKERS", 1, 1, 8)
     if web_workers > 1 and not state_dsn:
         raise RuntimeError("ADMIN_STATE_POSTGRES_DSN is required when ADMIN_WEB_WORKERS > 1")
@@ -58,6 +60,7 @@ def create_app() -> FastAPI:
     shared_security = None
     state_pool = None
     if state_dsn:
+        verify_preprovisioned_schema(state_dsn)
         state_pool = build_postgres_pool(state_dsn, name="admin-state")
         app.state.postgres_state_pool = state_pool
         app.state.audit = PostgresAuditStore(state_dsn, pool=state_pool)

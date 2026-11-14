@@ -5,3 +5,7 @@ export * from "./time.js";
 export * from "./timeline.js";
 export * from "./token-link.js";
 export * from "./token-link-invalidation.js";
+export * from "./canonical-json.js";
+export * from "./event-envelope.js";
+export * from "./schema-registry.js";
+export * from "./v1-compat.js";

@@ -25,6 +25,7 @@ test -r backend.env
 test -r "$COMPOSE_FILE"
 test -r "$BACKUP_SCRIPT"
 test -r "$HEALTH_SCRIPT"
+test -r "$DEPLOY_DIR/scripts/check-postgres-migrator-ownership.sql"
 test -r "$PROMETHEUS_CONFIG"
 test -r "$ADMIN_COMPOSE_FILE"
 test -r "$ADMIN_ENV_FILE"
@@ -61,10 +62,116 @@ set_env_value() {
   fi
 }
 
+ensure_runtime_database_credentials() {
+  local key value default_user tmp
+  for key in POSTGRES_APP_PASSWORD POSTGRES_MIGRATOR_PASSWORD POSTGRES_BACKUP_PASSWORD POSTGRES_READONLY_PASSWORD REDIS_PASSWORD; do
+    value="$(resolve_env_value "$key")"
+    if [[ -z "$value" ]]; then
+      value="$(openssl rand -hex 32)"
+      echo "Generated $key"
+    fi
+    if [[ ! "$value" =~ ^[A-Fa-f0-9]{64}$ ]]; then
+      echo "$key must be a 64-character hexadecimal secret" >&2
+      return 1
+    fi
+    set_env_value .env.server "$key" "$value"
+    export "$key=$value"
+  done
+
+  key=INTERNAL_SERVICE_API_KEY
+  value="$(resolve_env_value "$key")"
+  if [[ -z "$value" ]]; then
+    value="$(openssl rand -hex 32)"
+    echo "Generated $key"
+  fi
+  if [[ ! "$value" =~ ^[A-Fa-f0-9]{64}$ ]]; then
+    echo "$key must be a 64-character hexadecimal secret" >&2
+    return 1
+  fi
+  set_env_value .env.server "$key" "$value"
+  export "$key=$value"
+
+  for key in POSTGRES_APP_USER POSTGRES_MIGRATOR_USER POSTGRES_BACKUP_USER POSTGRES_READONLY_USER; do
+    value="$(resolve_env_value "$key")"
+    if [[ -z "$value" ]]; then
+      case "$key" in
+        POSTGRES_APP_USER) default_user=potapoff_app ;;
+        POSTGRES_MIGRATOR_USER) default_user=potapoff_migrator ;;
+        POSTGRES_BACKUP_USER) default_user=potapoff_backup ;;
+        POSTGRES_READONLY_USER) default_user=potapoff_readonly ;;
+      esac
+      value="$default_user"
+    fi
+    if [[ ! "$value" =~ ^[a-z_][a-z0-9_]{0,62}$ ]]; then
+      echo "$key must be a lowercase PostgreSQL role identifier" >&2
+      return 1
+    fi
+    set_env_value .env.server "$key" "$value"
+    export "$key=$value"
+  done
+
+  if grep -Eq '^(POSTGRES_|REDIS_PASSWORD=)' backend.env; then
+    echo "Remove database credentials from backend.env; runtime DSNs are injected by Compose" >&2
+    return 1
+  fi
+  tmp="$(mktemp)"
+  awk -F= '$1 !~ /^POSTGRES_/ && $1 != "REDIS_PASSWORD" && $1 != "INTERNAL_SERVICE_API_KEY" { print }' .env.server > "$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" .env.runtime
+  set_env_value "$ADMIN_ENV_FILE" POTAPOFF_DB_READONLY_PASSWORD "$POSTGRES_READONLY_PASSWORD"
+  for key in ADMIN_STATE_APP_PASSWORD ADMIN_STATE_MIGRATOR_PASSWORD ADMIN_STATE_BACKUP_PASSWORD; do
+    value="$(env_value_from_file "$ADMIN_ENV_FILE" "$key")"
+    if [[ -z "$value" ]]; then
+      value="$(openssl rand -hex 32)"
+      echo "Generated $key"
+    fi
+    if [[ ! "$value" =~ ^[A-Fa-f0-9]{64}$ ]]; then
+      echo "$key must be a 64-character hexadecimal secret" >&2
+      return 1
+    fi
+    set_env_value "$ADMIN_ENV_FILE" "$key" "$value"
+  done
+
+  for key in ADMIN_STATE_APP_USER ADMIN_STATE_MIGRATOR_USER ADMIN_STATE_BACKUP_USER; do
+    value="$(env_value_from_file "$ADMIN_ENV_FILE" "$key")"
+    if [[ -z "$value" ]]; then
+      case "$key" in
+        ADMIN_STATE_APP_USER) value=potapoff_admin_app ;;
+        ADMIN_STATE_MIGRATOR_USER) value=potapoff_admin_migrator ;;
+        ADMIN_STATE_BACKUP_USER) value=potapoff_admin_backup ;;
+      esac
+    fi
+    if [[ ! "$value" =~ ^[a-z_][a-z0-9_]{0,62}$ ]]; then
+      echo "$key must be a lowercase PostgreSQL role identifier" >&2
+      return 1
+    fi
+    set_env_value "$ADMIN_ENV_FILE" "$key" "$value"
+  done
+
+  set_env_value "$ADMIN_ENV_FILE" ADMIN_STATE_RUNTIME_USER "$(env_value_from_file "$ADMIN_ENV_FILE" ADMIN_STATE_APP_USER)"
+  set_env_value "$ADMIN_ENV_FILE" ADMIN_STATE_RUNTIME_PASSWORD "$(env_value_from_file "$ADMIN_ENV_FILE" ADMIN_STATE_APP_PASSWORD)"
+  set_env_value "$ADMIN_ENV_FILE" ADMIN_PG_SCHEMA_MODE preprovisioned
+  chmod 600 .env.server "$ADMIN_ENV_FILE" 2>/dev/null || true
+}
+
+refresh_admin_runtime_env() {
+  local helper="$ADMIN_DIR/deploy/refresh-runtime-env.sh"
+  if [[ -r "$helper" ]]; then
+    ADMIN_DIR="$ADMIN_DIR" bash "$helper"
+  elif [[ -n "${ADMIN_STAGE_DIR:-}" && -r "$ADMIN_STAGE_DIR/admin-site/deploy/refresh-runtime-env.sh" && -r "$ADMIN_STAGE_DIR/admin-site/.env.runtime.example" ]]; then
+    ADMIN_DIR="$ADMIN_DIR" RUNTIME_ENV_TEMPLATE="$ADMIN_STAGE_DIR/admin-site/.env.runtime.example" bash "$ADMIN_STAGE_DIR/admin-site/deploy/refresh-runtime-env.sh"
+  elif [[ -f "$ADMIN_DIR/.env.runtime" ]]; then
+    echo "Legacy rollback source has no allowlist helper; retaining its existing .env.runtime"
+  elif grep -q '\.env\.runtime' "$ADMIN_DIR/docker-compose.yml"; then
+    echo "Admin runtime env helper and .env.runtime are missing" >&2
+    return 1
+  fi
+}
+
 ensure_twitter_crawler_admin_secret() {
   local backend_key admin_key key
 
-  # backend and worker containers load backend.env first and .env.server second.
+  # backend and worker containers load backend.env first and .env.runtime second.
   # A value in .env.server would therefore override the dedicated backend-only
   # credential, including an empty assignment. Keep this secret exclusively in
   # backend.env + admin-site/.env and fail before touching the deployment.
@@ -149,6 +256,8 @@ resolve_subscription_admin_key() {
   fi
   export SUBSCRIPTION_ADMIN_KEY="$key"
 }
+
+ensure_runtime_database_credentials
 
 COMPOSE=(docker compose --env-file .env.server -f "$COMPOSE_FILE")
 export DB_BUSY_TIMEOUT="${DB_BUSY_TIMEOUT:-5000}"
@@ -422,6 +531,13 @@ rollback() {
   stop_twitter_discovery
   stop_celery_runtime
   start_core_services
+  # The previous image predates DML-only Admin startup. Use the bootstrap login
+  # only for this emergency rollback, then the next forward deploy restores the
+  # restricted runtime identity.
+  set_env_value "$ADMIN_ENV_FILE" ADMIN_STATE_RUNTIME_USER potapoff_admin
+  set_env_value "$ADMIN_ENV_FILE" ADMIN_STATE_RUNTIME_PASSWORD "$(env_value_from_file "$ADMIN_ENV_FILE" ADMIN_STATE_DB_PASSWORD)"
+  set_env_value "$ADMIN_ENV_FILE" ADMIN_PG_SCHEMA_MODE legacy
+  refresh_admin_runtime_env
   start_admin
   start_celery_runtime
   start_twitter_discovery_rollback
@@ -445,6 +561,7 @@ trap rollback ERR
 verify_release_images "$NEW_TAG"
 activate_admin_source
 ensure_twitter_crawler_admin_secret
+refresh_admin_runtime_env
 resolve_backend_api_key
 resolve_kol_runtime
 resolve_subscription_admin_key
@@ -454,8 +571,35 @@ export IMAGE_TAG="$NEW_TAG"
 export ADMIN_IMAGE_TAG="$NEW_TAG"
 "${COMPOSE[@]}" config >/dev/null
 "${ADMIN_COMPOSE[@]}" config --quiet
+"${ADMIN_COMPOSE[@]}" run --rm admin-db-provisioner
 
+# Create/refresh least-privilege roles and object grants. This provisioner
+# deliberately does NOT transfer existing ownership; the backup role must exist
+# before the verified backup, and the read-only ownership guard runs afterwards.
+"${COMPOSE[@]}" run --rm postgres-role-provisioner
 "$BACKUP_SCRIPT"
+
+# Fail before stopping writers or running Alembic if any existing application
+# object still has a legacy owner. Ownership transfer is a separate, reviewed
+# allowlist operation rehearsed on an isolated restore; never use REASSIGN OWNED.
+POSTGRES_BOOTSTRAP_USER="$(resolve_env_value POSTGRES_USER)"
+POSTGRES_BOOTSTRAP_USER="${POSTGRES_BOOTSTRAP_USER:-potapoff}"
+POSTGRES_BOOTSTRAP_PASSWORD="$(resolve_env_value POSTGRES_PASSWORD)"
+if [[ -z "$POSTGRES_BOOTSTRAP_PASSWORD" ]]; then
+  echo "POSTGRES_PASSWORD is required for the read-only migrator ownership guard" >&2
+  exit 1
+fi
+"${COMPOSE[@]}" exec -T \
+  -e "PGPASSWORD=$POSTGRES_BOOTSTRAP_PASSWORD" \
+  postgres psql -X -v ON_ERROR_STOP=1 \
+  -v bootstrap_user="$POSTGRES_BOOTSTRAP_USER" \
+  -v migrator_user="$POSTGRES_MIGRATOR_USER" \
+  -v app_user="$POSTGRES_APP_USER" \
+  -v backup_user="$POSTGRES_BACKUP_USER" \
+  -v readonly_user="$POSTGRES_READONLY_USER" \
+  -U "$POSTGRES_BOOTSTRAP_USER" -d potapoff -f - \
+  < "$DEPLOY_DIR/scripts/check-postgres-migrator-ownership.sql"
+
 DEPLOYMENT_STARTED=1
 printf '%s\n' "$PREVIOUS_TAG" > .previous-image-tag
 printf '%s\n' "$NEW_TAG" > .current-image-tag
@@ -473,7 +617,8 @@ stop_celery_runtime
 # database. This prevents new application code from seeing a pre-migration
 # schema and still allows rollback because production backend startup does not
 # run Alembic implicitly.
-"${COMPOSE[@]}" run --rm --no-deps backend alembic upgrade heads
+MIGRATOR_DATABASE_URL="postgresql+asyncpg://${POSTGRES_MIGRATOR_USER}:${POSTGRES_MIGRATOR_PASSWORD}@postgres:5432/potapoff"
+"${COMPOSE[@]}" run --rm --no-deps -e DATABASE_URL="$MIGRATOR_DATABASE_URL" backend alembic upgrade heads
 
 start_core_services
 start_admin

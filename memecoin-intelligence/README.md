@@ -31,6 +31,19 @@ For asynchronous analysis also run:
 npm run dev:worker
 ```
 
+## Production Compose and database roles
+
+Production Compose uses separate PostgreSQL identities: bootstrap for initialization/provisioning, `memecoin_migrator` for one-shot schema migrations, `memecoin_app` for API/worker DML, and `memecoin_readonly` for Admin inspection.
+
+For a **new empty database**, configure the role passwords in `.env`, ensure the shared external Docker network `potapoff_default` exists, then run:
+
+```bash
+docker compose -f docker-compose.production.yml --profile migrate run --rm migrator
+docker compose -f docker-compose.production.yml up -d
+```
+
+The API and worker never connect as `POSTGRES_USER`. For existing persistent volumes, do not run the migration profile until object ownership has been inventoried and the backup/restore and forward/rollback rehearsal is approved. Follow [the role cutover runbook](../docs/operations/MEMECOIN_SOLSUB_DB_ROLE_CUTOVER.md).
+
 ## Free testing
 
 Keep `DATA_PROVIDER=fixture`. No X account, browser cookie or paid API is required.

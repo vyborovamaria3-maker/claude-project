@@ -3,7 +3,7 @@
 The Intelligence modules are built independently of collector databases.
 Only the test workflow opens a disposable PostgreSQL 16 instance.
 
-Migration order: 001_entity_registry.sql, 002_timeline.sql, 003_feature_store.sql, 004_token_link_observations.sql, 005_blockchain_swap_evidence_revisions.sql, then 006_cross_platform_analytics.sql and 008_alert_status_history.sql and 009_ai_analysis.sql, then 010_intelligence_governance.sql, 011_validation_preregistration.sql, 012_ai_shared_budget.sql, and 013_invalidation_retry_schedule.sql, followed by 014_privacy_evidence_indexes.sql. Migration 007_feature_embeddings_pgvector.sql is optional and requires pgvector on the PostgreSQL server. The analytics API requires 003, 004, 005, 006 and 008. Do not start the ETL supervisor against a target missing 004 (or 005 when ARCH-06b events are enabled).
+Migration order: 001_entity_registry.sql, 002_timeline.sql, 003_feature_store.sql, 004_token_link_observations.sql, 005_blockchain_swap_evidence_revisions.sql, 006_cross_platform_analytics.sql, 008_alert_status_history.sql, 009_ai_analysis.sql, 010_intelligence_governance.sql, 011_validation_preregistration.sql, 012_ai_shared_budget.sql, 013_invalidation_retry_schedule.sql, 014_privacy_evidence_indexes.sql, 015_ai_watch_cursor.sql, 016_token_ai_requests.sql, 017_inbox_payload_fingerprint.sql, 018_event_revision_invalidation.sql, and 019_inbox_envelope_fingerprint.sql. Migration 007_feature_embeddings_pgvector.sql is optional and requires pgvector on the PostgreSQL server. The analytics API requires 003, 004, 005, 006 and 008. The V1 X/TG ETL consumer requires 001, 002, 004 and 017; include 005 when Blockchain swap-revision events are selected. V2 envelope delivery additionally requires 019; do not start a V2 consumer before applying it in the destination database. The current `scripts/run.mjs` and `scripts/supervise.mjs` are V1/V2 dual-read consumers and explicitly preflight 019 before claiming any source event; the bounded legacy fingerprint-backfill utility remains compatible with a 017-only destination. If the optional AI runtime is enabled, it additionally requires 009 and 010, and 012 when shared AI budgeting is enabled. Never start a consumer against a destination missing its required migrations. Do not edit already-applied migration files: add new numbered migrations instead. Migration 017 is required before ETL claims, and legacy inbox rows must be fingerprinted from their source outbox first. The explicit `x-unattributed-snapshot-v1` destination-only timeline snapshots have no source outbox row and are excluded from that source fingerprint backfill.
 
 - Ingest RegistryEvent after claiming a source outbox event; source ACK only after
   destination transaction commits. Consumer runDeliveryBatch remains a bounded,
@@ -38,9 +38,7 @@ Local commands (Node 22+):
   npm install --prefix intelligence --ignore-scripts --no-package-lock
   npm --prefix intelligence run check
 
-Remaining: deployment-safe source migrations and opt-in real data verification,
-backfill, blockchain reconciliation, verified token-link producers,
-AI embeddings/training/outcome labels, secured APIs and operational runbooks.
+Remaining: operator-approved live source verification and deployed migration-ledger checks, checkpointed historical backfill/materialization, complete blockchain evidence coverage, process-manager provisioning and external monitoring, authenticated product API/UI, and independently validated AI embeddings/outcome labels. X/TG/Blockchain producer and verified-link code has offline coverage in the integration branch; live operation and complete historical coverage remain NOT VERIFIED.
 
 ## Bounded local ETL CLI (explicit opt-in)
 
@@ -56,7 +54,7 @@ Other sources: `--source x`, `--source blockchain`. Environment variables:
 `X_SOURCE_DATABASE_URL`, `TG_SOURCE_DATABASE_URL`,
 `SOLANA_TRADE_DB_PATH`, and `INTELLIGENCE_DATABASE_URL`.
 
-The status command only reads source outbox counts. The once command is
+The status command only reads source outbox metadata and reports pending/ready/leased/retry/DLQ counts, oldest-pending age, last progress and retry attempts; it never reads event payloads. PostgreSQL status and fingerprint-backfill source pools start with `default_transaction_read_only=on` and a reader application name; this is a guardrail, not a substitute for a dedicated least-privilege read-only database role, because a privileged login can override session defaults. The once command is
 explicitly gated and handles one finite claim batch with destination transaction
 commit before source ACK; no Telegram login, browser, provider request, replay
 loop, background scheduling, or trading instruction is performed. Keep all
@@ -77,10 +75,13 @@ outboxes in the **foreground on the laptop**. It does not run a server, browser,
 XActions, MTProto, Solana RPC, trades, publishers or migration command. The
 existing `run.mjs --status` and `run.mjs --once` modes remain available.
 
-**Prerequisites:** verified independent source outbox schemas, destination
-Intelligence PostgreSQL migrations 001 and 002, WAL-safe backup/restore drill,
-dedicated DB privileges, and a reviewed local configuration. Producers remain
-disabled by default; do not turn them on merely because a consumer exists.
+**Prerequisites:** verified independent source outbox schemas; destination
+Intelligence PostgreSQL migrations 001, 002, 004 and 017 (plus 005 when
+Blockchain swap revisions are selected); WAL-safe backup/restore drill,
+dedicated least-privilege DB identities, and a reviewed local configuration.
+If the optional AI runtime is enabled, apply 009 and 010 (and 012 when shared
+budgeting is enabled). Producers remain disabled by default; do not turn them
+on merely because a consumer exists.
 
 Windows PowerShell, from `intelligence` (never commit these variables):
 
@@ -118,12 +119,16 @@ Runtime safeguards:
   finish before closing connection pools.
 - Bounded JSON lines include counters and error **codes**, never event payloads,
   passwords or original exception strings.
-- Operator can inspect per-source backlog and dead letters using the existing
-  read-only `run.mjs --source <source> --status`.
+- Operator can inspect per-source backlog, oldest-pending age, last progress,
+  retries and dead letters using the read-only `run.mjs --source <source> --status`.
+- The supervisor emits one structured health snapshot at startup and then every
+  30 seconds per source. It emits local `health_alert` records for any DLQ item,
+  pending age >=15 minutes, or >=5 retrying events. These are stdout records,
+  not a Prometheus endpoint or external notification sink.
 
 Caveats: this implementation does not persist a machine-level process manager,
-does not create a health HTTP service, does not apply migrations, and does not
-validate a live X/TG/Blockchain producer or the real token-link resolver.
+does not create a health HTTP service or external alert delivery, does not apply
+migrations, and does not validate a live X/TG/Blockchain producer or the real token-link resolver.
 Startup after Windows restart requires explicit process launch. The current
 one-shot CLI can claim more than one event, so its unstarted batch members are
 not heartbeat-protected; keep its batch size small on slow destinations.
@@ -189,3 +194,22 @@ npm --prefix intelligence run token:report -- \
 Проверки: `npm --prefix intelligence test` запускает `tests/local-token-report.test.mjs` вместе с остальными Intelligence тестами; PG интеграционные проверки требуют только `INTELLIGENCE_TEST_DB_URL` для одноразовой тестовой БД. Реальная работа на аккаунтах X/TG, блокчейн-провайдерах и production без разрешения не запускается.
 
 Связанные задачи: [#173](https://github.com/vyborovamaria3-maker/claude-project/issues/173) — достоверное происхождение; [#177](https://github.com/vyborovamaria3-maker/claude-project/issues/177) — UX одного токена; [#176](https://github.com/vyborovamaria3-maker/claude-project/issues/176) — отдельный дизайн AI API. Черновики [#166](https://github.com/vyborovamaria3-maker/claude-project/pull/166) и [#167](https://github.com/vyborovamaria3-maker/claude-project/pull/167) **не включаются** автоматически.
+
+
+## Migration 017 — inbox payload fingerprints
+
+Migration 017 adds the nullable `intelligence_inbox.payload_sha256` column and its format constraint. New ingestion requires the column and accepts a repeated event identity only when the normalized RegistryEvent fingerprint matches exactly. Existing rows remain NULL until verified against exactly one matching source outbox row; NULL is not treated as a safe duplicate.
+
+For existing destinations, run the bounded backfill in dry-run mode first:
+
+```sh
+npm --prefix intelligence run etl:fingerprint-backfill -- --source x --limit 100
+```
+
+Only after reviewing the dry-run output, use the explicit write opt-in for one source at a time:
+
+```sh
+INTELLIGENCE_FINGERPRINT_BACKFILL_ENABLED=true npm --prefix intelligence run etl:fingerprint-backfill -- --source x --limit 100 --execute
+```
+
+The backfill opens the selected source store read-only and writes only the destination fingerprint using a compare-and-set predicate. It does not claim, ACK, NACK, migrate or mutate source outbox rows. Missing or ambiguous source events fail closed; never reconstruct a fingerprint from aggregate entity tables. Repeat separately for `tg` and `blockchain` only after each source and destination backup is verified.

@@ -7,12 +7,12 @@
     "build": "npm run analysis:test && next build",
     "start": "next start",
     "lint": "eslint .",
-    "security:test": "node scripts/security-regression.mjs",
+    "security:test": "node scripts/security-regression.mjs && node scripts/import-path-safety.test.cjs && node lib/security/client-ip.test.cjs",
     "admin-confirmation:test": "node ../admin-site/tests/analysis-confirmation-browser.mjs",
     "landing:test": "node scripts/landing-regression.mjs",
     "kols:test": "node scripts/kols-regression.mjs",
     "token-intelligence:test": "node --test scripts/token-intelligence-proxy-regression.mjs",
-    "analysis:test": "vitest run lib/trade/fomo-quality.test.ts lib/trade/fomo-snapshot.test.ts --environment node && node --test scripts/token-campaigns.test.mjs scripts/fomo-backtest.test.mjs scripts/fomo-price-joiner.test.mjs scripts/fomo-outcomes.test.mjs scripts/fomo-local-worker.test.mjs scripts/fomo-local-social.test.mjs scripts/fomo-gecko-prices.test.mjs scripts/token-on-demand-regression.mjs scripts/token-intelligence-proxy-regression.mjs && node scripts/analysis-regression.mjs && node scripts/live-intelligence-regression.mjs && node scripts/kols-regression.mjs && node scripts/blockchain-collector-regression.mjs && node scripts/blockchain-seed-regression.cjs && node scripts/blockchain-seed-integration.cjs && node scripts/blockchain-forensics-regression.cjs && node scripts/blockchain-forensics-sqlite-integration.cjs && node scripts/blockchain-helius-pagination.cjs && node scripts/blockchain-seed-budget-regression.cjs && node scripts/blockchain-alchemy-provider-regression.cjs && node scripts/blockchain-collector-forensics-integration.cjs && node scripts/blockchain-dex-index-regression.cjs && node scripts/blockchain-sqlite-health-regression.cjs && node scripts/blockchain-sqlite-source-revisions-regression.cjs && node scripts/blockchain-legacy-schema-migration-regression.cjs && node scripts/blockchain-token-trade-fills-regression.cjs && node scripts/blockchain-forensics-stream-sqlite-regression.cjs && node scripts/blockchain-evidence-api-regression.cjs && node scripts/blockchain-recursive-pilot-regression.cjs && node scripts/blockchain-wallet-cache-regression.cjs",
+    "analysis:test": "vitest run lib/trade/fomo-quality.test.ts lib/trade/fomo-snapshot.test.ts --environment node && node --test scripts/token-campaigns.test.mjs scripts/fomo-backtest.test.mjs scripts/fomo-price-joiner.test.mjs scripts/fomo-outcomes.test.mjs scripts/fomo-local-worker.test.mjs scripts/fomo-local-social.test.mjs scripts/fomo-gecko-prices.test.mjs scripts/token-on-demand-regression.mjs scripts/token-intelligence-proxy-regression.mjs && node scripts/analysis-regression.mjs && node scripts/live-intelligence-regression.mjs && node scripts/kols-regression.mjs && node scripts/blockchain-collector-regression.mjs && node scripts/blockchain-seed-regression.cjs && node scripts/blockchain-seed-integration.cjs && node scripts/blockchain-forensics-regression.cjs && node scripts/blockchain-forensics-sqlite-integration.cjs && node scripts/blockchain-helius-pagination.cjs && node scripts/blockchain-seed-budget-regression.cjs && node scripts/blockchain-alchemy-provider-regression.cjs && node scripts/blockchain-collector-forensics-integration.cjs && node scripts/blockchain-dex-index-regression.cjs && node scripts/blockchain-sqlite-health-regression.cjs && node scripts/wallet-summary-regression.cjs && node scripts/blockchain-sqlite-source-revisions-regression.cjs && node scripts/blockchain-legacy-schema-migration-regression.cjs && node scripts/blockchain-token-trade-fills-regression.cjs && node scripts/blockchain-forensics-stream-sqlite-regression.cjs && node scripts/blockchain-evidence-api-regression.cjs && node scripts/blockchain-recursive-pilot-regression.cjs && node scripts/blockchain-wallet-cache-regression.cjs && node --test scripts/compose-down-volumes.test.mjs",
     "fomo:backtest": "node scripts/fomo-backtest.mjs",
     "fomo:price-join": "node scripts/fomo-price-joiner.mjs",
     "fomo:price-join:test": "node --test scripts/fomo-price-joiner.test.mjs",
@@ -21,7 +21,7 @@
     "backend:dev": "python -m uvicorn app.main:app --reload --app-dir backend --port 8000",
     "backend:test": "cd backend && pytest",
     "compose:up": "docker compose up --build",
-    "compose:down": "docker compose down -v",
+    "compose:down": "docker compose down",
     "cache:cleanup": "node scripts/cleanup-cache.cjs",
     "x:login": "node scripts/x-login.mjs",
     "x:analyze": "node scripts/analyze-twitter-manipulation.mjs",
@@ -69,7 +69,11 @@
     "fomo:outcomes:test": "node --test scripts/fomo-outcomes.test.mjs",
     "fomo:local": "node scripts/fomo-local-worker.mjs",
     "fomo:local:test": "node --test scripts/fomo-local-worker.test.mjs scripts/fomo-local-social.test.mjs scripts/fomo-gecko-prices.test.mjs",
-    "campaigns:test": "node --test scripts/token-campaigns.test.mjs"
+    "campaigns:test": "node --test scripts/token-campaigns.test.mjs",
+    "compose:down:volumes": "node scripts/compose-down-volumes.mjs",
+    "wallet-summary:rebuild": "node scripts/rebuild-wallet-summary.cjs",
+    "wallet-summary:test": "node scripts/wallet-summary-regression.cjs",
+    "bot:build": "tsc -p telegram-bot/tsconfig.json"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
@@ -130,10 +134,13 @@
     "typescript": "^5.5.3",
     "vite": "^8.2.2",
     "vitest": "^5.0.0",
-    "xlsx": "file:./scripts/xlsx-safe-package"
+    "potapoff-safe-xlsx": "file:./scripts/xlsx-safe-package"
   },
   "overrides": {
     "toml": "^5.0.1",
     "bigint-buffer": "$bigint-buffer"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

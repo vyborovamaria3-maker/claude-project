@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireProdAuth } from "@/lib/routeAuth";
+import { hasValidInternalServiceKey, requireProdAuth } from "@/lib/routeAuth";
+
+import { parseTrustedProxyHops, clientIpFromHeaders } from "./lib/security/client-ip.cjs";
+const TRUST_PROXY_HOPS = parseTrustedProxyHops(process.env.TRUST_PROXY_HOPS);
 
 const PAID_ROUTE_PREFIXES = [
   "/api/trade",
@@ -11,6 +14,8 @@ const PRIVATE_PRODUCTION_PREFIXES = [
 ];
 
 const HEAVY_ROUTE_PREFIXES = [
+  "/api/trade/dev-twitter",
+  "/api/trade/fomo-snapshot",
   "/api/trade/analyze",
   "/api/trade/analyze-stream",
   "/api/trade/dev-forensics",
@@ -27,6 +32,8 @@ const VERY_HEAVY_ROUTE_LIMITS = [
 const HEAVY_LIMIT = 30;
 const HEAVY_WINDOW_MS = 60_000;
 const MAX_HEAVY_KEYS = 20_000;
+// This limiter is process-local. Do not treat it as a cluster-wide quota; deploy
+// a shared atomic store before scaling this Next.js service horizontally.
 const heavyRequests = new Map<string, { count: number; resetAt: number }>();
 
 const BROWSER_CONNECT_ORIGINS = [
@@ -97,14 +104,7 @@ function matchesPrefix(pathname: string, prefixes: string[]): boolean {
 }
 
 function clientIp(request: NextRequest): string {
-  const realIp = request.headers.get("x-real-ip")?.trim();
-  if (realIp && realIp.length <= 64) return realIp;
-  const forwarded = request.headers
-    .get("x-forwarded-for")
-    ?.split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
-  return forwarded?.[0] || "unknown";
+  return clientIpFromHeaders(request.headers, TRUST_PROXY_HOPS);
 }
 
 function checkHeavyRateLimit(request: NextRequest, pathname: string): NextResponse | null {
@@ -168,8 +168,13 @@ export async function proxy(request: NextRequest) {
   if (heavyLimitError) return applyCsp(heavyLimitError, csp);
 
   if (matchesPrefix(pathname, PAID_ROUTE_PREFIXES)) {
-    const authError = await requireProdAuth(request);
-    if (authError) return applyCsp(authError, csp);
+    const internalXCollection = pathname === "/api/trade/dev-twitter"
+      && request.method === "POST"
+      && hasValidInternalServiceKey(request);
+    if (!internalXCollection) {
+      const authError = await requireProdAuth(request);
+      if (authError) return applyCsp(authError, csp);
+    }
   }
 
   const requestHeaders = new Headers(request.headers);

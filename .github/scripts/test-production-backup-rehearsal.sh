@@ -6,28 +6,140 @@ root="$(cd -- "$(dirname -- "$0")/../.." && pwd)"
 scratch="$(mktemp -d)"
 product="potapoff-ci-product-$$"
 admin="potapoff-admin-postgres"
+frontend="potapoff-ci-frontend-$$"
+intelligence="potapoff-intelligence"
+intelligence_volume="potapoff-intelligence-ci-$$"
+
 cleanup(){
-  docker rm -f "$product" "$admin" >/dev/null 2>&1 || true
+  docker rm -f "$product" "$admin" "$frontend" "$intelligence" >/dev/null 2>&1 || true
+  docker volume rm "$intelligence_volume" >/dev/null 2>&1 || true
   rm -rf -- "$scratch"
 }
 trap cleanup EXIT
+
+[[ -d "$root/solana-launcher/node_modules/better-sqlite3" ]] || {
+  echo "Install solana-launcher dependencies before this rehearsal" >&2
+  exit 1
+}
+mkdir -p "$scratch/deploy/scripts" "$scratch/admin" "$scratch/frontend-data" "$scratch/backups"
+cp "$root/solana-launcher/scripts/provision-postgres-roles.sql" "$scratch/deploy/scripts/"
+chmod 0777 "$scratch/frontend-data"
+
+# This test-only frontend container mirrors the production /app/data mount and
+# uses the exact locked better-sqlite3 package. It has no network and cannot
+# reach any production resource.
+docker run -d --rm --network none --user node --name "$frontend" \
+  --label com.docker.compose.project=potapoff \
+  --label com.docker.compose.service=frontend \
+  -v "$scratch/frontend-data:/app/data" \
+  -v "$scratch/backups:/backup" \
+  -v "$root/solana-launcher/node_modules:/app/node_modules:ro" \
+  -w /app node:22-bookworm-slim sleep infinity >/dev/null
+
+# Keep a writer open with committed rows still in WAL. The production backup
+# must capture these rows through SQLite Online Backup, not by copying trade.db.
+docker exec -d "$frontend" node -e '
+  const fs = require("node:fs");
+  const Database = require("better-sqlite3");
+  try {
+    const db = new Database("/app/data/trade.db");
+    db.pragma("journal_mode=WAL");
+    db.pragma("wal_autocheckpoint=0");
+    db.exec("CREATE TABLE backup_fixture(id INTEGER PRIMARY KEY, payload TEXT NOT NULL)");
+    db.prepare("INSERT INTO backup_fixture(id,payload) VALUES(1,?)").run("written-to-wal");
+    fs.writeFileSync("/tmp/sqlite-fixture-ready", "ready");
+    setInterval(() => { db.pragma("data_version"); }, 1000);
+  } catch (error) {
+    fs.writeFileSync("/tmp/sqlite-fixture-error", String(error && error.message || error));
+    process.exit(1);
+  }
+'
+ready=0
+for i in $(seq 1 50); do
+  if docker exec "$frontend" test -s /tmp/sqlite-fixture-ready >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  if docker exec "$frontend" test -s /tmp/sqlite-fixture-error >/dev/null 2>&1; then
+    docker exec "$frontend" cat /tmp/sqlite-fixture-error >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+[[ "$ready" = 1 ]] || {
+  echo "SQLite WAL fixture did not become ready" >&2
+  exit 1
+}
+docker exec "$frontend" test -s /app/data/trade.db-wal
+
+# Separate synthetic Python Intelligence worker and named volume. This proves
+# that trade.db backup does not replace the Intelligence recovery artifact.
+docker volume create "$intelligence_volume" >/dev/null
+docker run -d --rm --network none --name "$intelligence" \
+  -v "$intelligence_volume:/var/lib/potapoff-intelligence" \
+  python:3.12-alpine sleep infinity >/dev/null
+# Keep a Python SQLite writer open with a committed row still in WAL.
+# This proves the worker's Online Backup API captures WAL-only state too.
+docker exec -d "$intelligence" python -c '
+import sqlite3, time
+path = "/var/lib/potapoff-intelligence/intelligence.sqlite3"
+try:
+    db = sqlite3.connect(path)
+    mode = db.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+    if mode.lower() != "wal":
+        raise RuntimeError("Python Intelligence fixture did not enter WAL mode")
+    db.execute("PRAGMA wal_autocheckpoint=0")
+    db.execute("CREATE TABLE synthetic_intelligence(id INTEGER PRIMARY KEY, tag TEXT NOT NULL)")
+    db.execute("INSERT INTO synthetic_intelligence VALUES(3, ?)", ("safe-fixture",))
+    db.commit()
+    with open("/tmp/intelligence-fixture-ready", "w") as marker:
+        marker.write("ready")
+    while True:
+        time.sleep(60)
+except Exception as error:
+    with open("/tmp/intelligence-fixture-error", "w") as marker:
+        marker.write(str(error))
+    raise
+'
+ready=0
+for i in $(seq 1 50); do
+  if docker exec "$intelligence" test -s /tmp/intelligence-fixture-ready >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  if docker exec "$intelligence" test -s /tmp/intelligence-fixture-error >/dev/null 2>&1; then
+    docker exec "$intelligence" cat /tmp/intelligence-fixture-error >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+[[ "$ready" = 1 ]] || {
+  echo "Python Intelligence WAL fixture did not become ready" >&2
+  exit 1
+}
+docker exec "$intelligence" test -s /var/lib/potapoff-intelligence/intelligence.sqlite3-wal
+
 # These are disposable test-only PostgreSQL containers; no live host is used.
 docker run -d --rm --network none --name "$product" \
   --label com.docker.compose.project=potapoff \
   --label com.docker.compose.service=postgres \
   -e POSTGRES_USER=potapoff -e POSTGRES_DB=potapoff \
-  -e POSTGRES_HOST_AUTH_METHOD=trust postgres:16-alpine >/dev/null
+  -e POSTGRES_PASSWORD=ci-product-bootstrap-password postgres:16-alpine >/dev/null
 docker run -d --rm --network none --name "$admin" \
   -e POSTGRES_USER=potapoff_admin -e POSTGRES_DB=potapoff_admin \
-  -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17-alpine >/dev/null
+  -e POSTGRES_PASSWORD=ci-admin-bootstrap-password postgres:17-alpine >/dev/null
 ready=0
 for i in $(seq 1 45); do
   # Avoid a false positive during Docker entrypoint's bootstrap PostgreSQL
   # server; it is intentionally stopped before the final server starts.
   if docker logs "$product" 2>&1 | grep -Fq 'PostgreSQL init process complete; ready for start up.' &&
      docker logs "$admin" 2>&1 | grep -Fq 'PostgreSQL init process complete; ready for start up.' &&
-     docker exec "$product" pg_isready -U potapoff >/dev/null 2>&1 &&
-     docker exec "$admin" pg_isready -U potapoff_admin >/dev/null 2>&1; then
+     # The bootstrap server is Unix-socket-only; TCP plus SELECT 1 proves
+     # that each final postmaster is ready after initdb has completed.
+     docker exec -e PGPASSWORD=ci-product-bootstrap-password "$product" pg_isready -h 127.0.0.1 -U potapoff -d potapoff >/dev/null 2>&1 &&
+     docker exec -e PGPASSWORD=ci-product-bootstrap-password "$product" psql -h 127.0.0.1 -U potapoff -d potapoff -X -Atq -v ON_ERROR_STOP=1 -c "SELECT 1" 2>/dev/null | grep -qx "1" &&
+     docker exec -e PGPASSWORD=ci-admin-bootstrap-password "$admin" pg_isready -h 127.0.0.1 -U potapoff_admin -d potapoff_admin >/dev/null 2>&1 &&
+     docker exec -e PGPASSWORD=ci-admin-bootstrap-password "$admin" psql -h 127.0.0.1 -U potapoff_admin -d potapoff_admin -X -Atq -v ON_ERROR_STOP=1 -c "SELECT 1" 2>/dev/null | grep -qx "1"; then
     ready=1
     break
   fi
@@ -36,16 +148,54 @@ done
 [[ "$ready" = 1 ]] || { echo "Synthetic DBs failed to initialize" >&2; exit 1; }
 
 docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
-  -c "CREATE TABLE synthetic_product(id integer primary key, tag text); INSERT INTO synthetic_product VALUES (1,'safe-fixture');" >/dev/null
-docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
-  -c "CREATE TABLE synthetic_admin(id integer primary key, tag text); INSERT INTO synthetic_admin VALUES (2,'safe-fixture');" >/dev/null
+  -c "CREATE TABLE potapoff_backup_ci_product_fixture(id bigserial PRIMARY KEY, tag text NOT NULL); INSERT INTO potapoff_backup_ci_product_fixture(tag) VALUES ('safe-fixture'); CREATE TABLE users(id uuid PRIMARY KEY, email text, created_at timestamptz NOT NULL); INSERT INTO users VALUES ('00000000-0000-0000-0000-000000000001','ci@example.invalid',now()); CREATE TABLE tokens(id bigserial PRIMARY KEY, mint_address varchar(64) NOT NULL, status varchar(16) NOT NULL); INSERT INTO tokens(mint_address,status) VALUES ('fixture-mint','active'); CREATE TABLE wallets(id bigserial PRIMARY KEY, wallet_address varchar(64) NOT NULL); INSERT INTO wallets(wallet_address) VALUES ('fixture-wallet')" >/dev/null
+docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
+  -c "CREATE TABLE alembic_version(version_num varchar(32) PRIMARY KEY); INSERT INTO alembic_version VALUES ('ci_review_head');" >/dev/null
 
-mkdir -p "$scratch/deploy" "$scratch/admin"
-printf 'POSTGRES_PASSWORD=ci-synthetic\n' > "$scratch/deploy/.env.server"
+POSTGRES_BACKUP_PASSWORD=0000000000000000000000000000000000000000000000000000000000000000
+docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
+  -c "CREATE ROLE potapoff_backup LOGIN PASSWORD '$POSTGRES_BACKUP_PASSWORD' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT; GRANT CONNECT ON DATABASE potapoff TO potapoff_backup; GRANT USAGE ON SCHEMA public TO potapoff_backup; ALTER ROLE potapoff_backup SET default_transaction_read_only=on; GRANT SELECT ON ALL TABLES IN SCHEMA public TO potapoff_backup; GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO potapoff_backup;" >/dev/null
+docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
+  -c "CREATE TYPE public.backup_fixture_state AS ENUM ('queued','done'); REVOKE USAGE ON TYPE public.backup_fixture_state FROM PUBLIC; GRANT USAGE ON TYPE public.backup_fixture_state TO potapoff_backup;" >/dev/null
+
+docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
+  -c "CREATE TABLE potapoff_backup_ci_admin_fixture(id bigserial PRIMARY KEY, tag text NOT NULL); INSERT INTO potapoff_backup_ci_admin_fixture(tag) VALUES ('safe-fixture'); CREATE TABLE admin_audit(id bigserial PRIMARY KEY, action text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()); INSERT INTO admin_audit(action) VALUES ('fixture'); CREATE TABLE feature_flags(name text PRIMARY KEY, enabled boolean NOT NULL); INSERT INTO feature_flags VALUES ('ci.fixture',true); CREATE TABLE admin_background_tasks(id text PRIMARY KEY, state text NOT NULL); INSERT INTO admin_background_tasks VALUES ('ci-fixture','queued'); CREATE TABLE admin_security_sessions(nonce text PRIMARY KEY, username text NOT NULL); INSERT INTO admin_security_sessions VALUES ('ci-session','ci');" >/dev/null
+
+ADMIN_STATE_BACKUP_PASSWORD=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
+  -c "CREATE ROLE potapoff_admin_backup LOGIN PASSWORD '$ADMIN_STATE_BACKUP_PASSWORD' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT; GRANT CONNECT ON DATABASE potapoff_admin TO potapoff_admin_backup; GRANT USAGE ON SCHEMA public TO potapoff_admin_backup; ALTER ROLE potapoff_admin_backup SET default_transaction_read_only=on; GRANT SELECT ON ALL TABLES IN SCHEMA public TO potapoff_admin_backup; GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO potapoff_admin_backup;" >/dev/null
+docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
+  -c "CREATE TYPE public.admin_backup_fixture_state AS ENUM ('queued','done'); REVOKE USAGE ON TYPE public.admin_backup_fixture_state FROM PUBLIC; GRANT USAGE ON TYPE public.admin_backup_fixture_state TO potapoff_admin_backup;" >/dev/null
+
+
+# Exercise the read-only privilege audit as a least-privilege role on
+# both PostgreSQL majors; do not run it only as the fixture superuser.
+for database in "$product potapoff potapoff potapoff_backup_ci_product_fixture" "$admin potapoff_admin potapoff_admin potapoff_backup_ci_admin_fixture"; do
+  read -r container db_user db_name table_name <<< "$database"
+  docker exec "$container" psql -X -U "$db_user" -d "$db_name" -v ON_ERROR_STOP=1 \
+    -c "CREATE ROLE backup_audit_probe NOLOGIN; CREATE ROLE backup_column_probe NOLOGIN; CREATE ROLE backup_audit_group NOLOGIN; CREATE ROLE backup_audit_member NOLOGIN; GRANT backup_audit_group TO backup_audit_member WITH INHERIT TRUE, SET TRUE; GRANT CONNECT ON DATABASE $db_name TO backup_audit_probe, backup_column_probe; GRANT USAGE ON SCHEMA public TO backup_audit_probe, backup_column_probe; GRANT SELECT ON TABLE public.$table_name TO backup_audit_probe; GRANT SELECT (tag) ON TABLE public.$table_name TO backup_column_probe" >/dev/null
+
+  audit_output="$(
+    { printf '%s\n' 'SET ROLE backup_audit_probe;'; cat "$root/docs/operations/postgres-effective-privileges.sql"; } |
+      docker exec -i "$container" psql -X -U "$db_user" -d "$db_name" -v ON_ERROR_STOP=1
+  )"
+  grep -Fq "backup_audit_probe" <<< "$audit_output"
+
+  privilege_flags="$(docker exec "$container" psql -X -U "$db_user" -d "$db_name" -Atq \
+    -v ON_ERROR_STOP=1 \
+    -c "SET ROLE backup_audit_probe; SELECT rolsuper::text || ':' || has_table_privilege(current_user, 'public.$table_name', 'SELECT')::text || ':' || has_table_privilege(current_user, 'public.$table_name', 'INSERT')::text FROM pg_roles WHERE rolname=current_user")"
+  [[ "$privilege_flags" == "false:true:false" ]] || {
+    echo "Least-privilege audit fixture returned unexpected grants for $container: $privilege_flags" >&2
+    exit 1
+  }
+done
+
+printf 'POSTGRES_PASSWORD=ci-synthetic\nPOSTGRES_BACKUP_USER=potapoff_backup\nPOSTGRES_BACKUP_PASSWORD=%s\n' "$POSTGRES_BACKUP_PASSWORD" > "$scratch/deploy/.env.server"
 printf 'TEST_ONLY=1\n' > "$scratch/deploy/backend.env"
+printf 'ADMIN_ENVIRONMENT=test\n' > "$scratch/deploy/.env.runtime"
 printf 'services: {}\n' > "$scratch/deploy/docker-compose.production.yml"
 printf 'ci-image-tag\n' > "$scratch/deploy/.current-image-tag"
-printf 'ADMIN_ENVIRONMENT=test\n' > "$scratch/admin/.env"
+printf 'ADMIN_ENVIRONMENT=test\nADMIN_STATE_BACKUP_USER=potapoff_admin_backup\nADMIN_STATE_BACKUP_PASSWORD=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n' > "$scratch/admin/.env"
 printf 'POTAPOFF_INTELLIGENCE_BACKEND=test\n' > "$scratch/admin/.env.intelligence"
 printf '{}\n' > "$scratch/admin/sources.json"
 printf '[]\n' > "$scratch/admin/logs.json"
@@ -53,20 +203,378 @@ printf '[]\n' > "$scratch/admin/logs.json"
 export DEPLOY_DIR="$scratch/deploy"
 export BACKUP_ROOT="$scratch/backups"
 export ADMIN_DIR="$scratch/admin"
+# Before this new backup exists, simulate an older recovery point. Creating
+# a verified backup MUST NOT erase older copies by arbitrary age.
+old_copy="$BACKUP_ROOT/20260901-000000"
+mkdir -p "$old_copy"
+printf 'operator-retained-recovery-point\n' > "$old_copy/keep.txt"
+touch -d '35 days ago' "$old_copy"
 backup="$(bash "$root/solana-launcher/scripts/backup-production.sh")"
+[[ -s "$old_copy/keep.txt" ]] || {
+  echo "A successful new backup erased an older recovery point" >&2
+  exit 1
+}
 [[ -s "$backup/postgres.dump" && -s "$backup/admin-postgres.dump" ]]
-[[ -s "$backup/SHA256SUMS" && -r "$backup/admin-site/.env" ]]
+[[ -s "$backup/trade.db" && -s "$backup/intelligence.sqlite" && -s "$backup/SHA256SUMS" && -r "$backup/admin-site/.env" ]]
+grep -Fq "  ./trade.db" "$backup/SHA256SUMS"
+grep -Fq "  ./intelligence.sqlite" "$backup/SHA256SUMS"
 [[ ! -e "$BACKUP_ROOT/.incomplete-" ]] || {
   echo "Incomplete backup was promoted" >&2; exit 1;
 }
-bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" |
-  grep -Fq 'BACKUP_RESTORE_REHEARSAL_OK'
-echo "SYNTHETIC_RESTORE_TEST_OK both_databases"
 
-# Mutation must invalidate checksums before any database is restored.
-printf 'corruption' >> "$backup/postgres.dump"
-if bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" >/dev/null 2>&1; then
-  echo "Corrupted database backup passed restore gate" >&2
+# A failed restore verifier must prevent *publication*, not merely cause
+# a warning after the timestamp has been promoted. Replace only the sibling
+# verifier of a copied script under this isolated test directory.
+fault_scripts="$scratch/fail-restore/scripts"
+mkdir -p "$fault_scripts"
+cp "$root/solana-launcher/scripts/backup-production.sh" "$fault_scripts/backup-production.sh"
+cp "$root/solana-launcher/scripts/postgres-role-restoration-fingerprint.sql" \
+  "$fault_scripts/postgres-role-restoration-fingerprint.sql"
+cat > "$fault_scripts/verify-backup-restore.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'restore-attempted\n' > "$BACKUP_VERIFY_TEST_MARKER"
+exit 42
+SH
+failed_root="$scratch/failed-backups"
+if BACKUP_ROOT="$failed_root" BACKUP_VERIFY_TEST_MARKER="$scratch/failed-verify.marker" \
+    bash "$fault_scripts/backup-production.sh" >/dev/null 2>&1; then
+  echo "Backup was published despite a failing restore verifier" >&2
   exit 1
 fi
-echo "CORRUPTED_BACKUP_REJECTED_OK"
+[[ -s "$scratch/failed-verify.marker" ]] || {
+  echo "Failed-restore regression did not reach the verifier" >&2
+  exit 1
+}
+if find "$failed_root" -mindepth 1 -type d -print -quit | grep -q .; then
+  echo "Failed verifier left a published or incomplete backup directory" >&2
+  exit 1
+fi
+echo "BACKUP_PUBLICATION_REQUIRES_RESTORE_OK"
+
+# A PostgreSQL dump with sequence state behind restored IDs must not pass the
+# recovery verifier, even when its archive and complete SHA256 manifest parse.
+sequence_bad_backup="$scratch/sequence-behind"
+cp -a "$backup" "$sequence_bad_backup"
+docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
+  -c "SELECT setval('public.tokens_id_seq', 1, false)" >/dev/null
+docker exec -i "$product" pg_dump -U potapoff -d potapoff -Fc \
+  > "$sequence_bad_backup/postgres.dump"
+docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
+  -c "SELECT setval('public.tokens_id_seq', 1, true)" >/dev/null
+(
+  cd "$sequence_bad_backup"
+  find . -type f ! -path './SHA256SUMS' -print0 \
+    | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS
+)
+if bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$sequence_bad_backup" \
+    > "$scratch/sequence-behind.log" 2>&1; then
+  echo "Restore verifier accepted a sequence that would collide with restored IDs" >&2
+  exit 1
+fi
+grep -Fq "Restored sequence tokens_id_seq is behind data in tokens.id" \
+  "$scratch/sequence-behind.log" || {
+    echo "Sequence regression was rejected for an unexpected reason" >&2
+    tail -n 20 "$scratch/sequence-behind.log" >&2
+    exit 1
+  }
+echo "STALE_POSTGRES_SEQUENCE_REJECTED_OK"
+
+# The canonical manifest covers regular files only. A FIFO/device/socket
+# must therefore be rejected explicitly rather than silently ignored.
+mkfifo "$backup/untracked-fifo"
+if bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" \
+    > "$scratch/nonregular-entry.log" 2>&1; then
+  echo "Restore verifier accepted an unmanifested special filesystem entry" >&2
+  exit 1
+fi
+grep -Fq "unsupported non-regular entry" "$scratch/nonregular-entry.log"
+rm -f "$backup/untracked-fifo"
+
+# End-to-end positive verification of the OPERATOR WRAPPER on an exclusively
+# synthetic, disposable backup. The real off-host encrypted source/RPO/RTO
+# remains operator-only and must not be fetched by CI.
+mkdir -m 0700 "$scratch/operator-evidence"
+synthetic_manifest_sha="$(sha256sum "$backup/SHA256SUMS" | awk '{print $1}')"
+reviewed_ci_sha="$(git -C "$root" rev-parse --verify HEAD)"
+bash "$root/solana-launcher/scripts/run-offhost-recovery-evidence.sh" \
+  --backup-dir "$backup" \
+  --expected-manifest-sha256 "$synthetic_manifest_sha" \
+  --evidence-dir "$scratch/operator-evidence" \
+  --code-sha "$reviewed_ci_sha" \
+  --ticket-id ci-synthetic-fixture \
+  --confirm-isolated-offhost \
+  > "$scratch/operator-wrapper-output.log" 2>&1
+python3 - "$scratch/operator-evidence" "$reviewed_ci_sha" "$synthetic_manifest_sha" <<'PY'
+import json
+from pathlib import Path
+import sys
+files = list(Path(sys.argv[1]).glob("*.json"))
+assert len(files) == 1, files
+with files[0].open(encoding="utf-8") as fp:
+    evidence = json.load(fp)
+assert evidence["result"] == "PASS", evidence
+assert evidence["exit_code"] == 0, evidence
+assert evidence["code_sha"] == sys.argv[2], evidence
+assert evidence["independent_sha256_of_sha256sums"] == sys.argv[3], evidence
+assert evidence["rpo_status"] == "NOT_MEASURED", evidence
+assert evidence["rto_status"] == "NOT_MEASURED", evidence
+assert evidence["approval_for_role_cutover"] is False, evidence
+assert evidence["source_database_writes"] is False, evidence
+assert evidence["production_host_isolation"] == "OPERATOR_ATTESTATION_REQUIRED", evidence
+assert evidence["docker_endpoint_kind"] in ("unix", "npipe"), evidence
+log = files[0].with_name(evidence["private_log_basename"])
+assert log.is_file() and log.stat().st_size > 0, evidence
+assert "BACKUP_RESTORE_REHEARSAL_OK no_live_database_access=true" in log.read_text(encoding="utf-8"), evidence
+PY
+echo "OFFHOST_OPERATOR_WRAPPER_SYNTHETIC_OK"
+
+# A successful restore is not a successful operator rehearsal unless its
+# evidence JSON is persisted. Stub only the verifier's success marker so this
+# regression isolates the EXIT-trap/evidence-writer failure without performing
+# a second full PostgreSQL+SQLite restore.
+real_python="$(command -v python3)"
+real_bash="$(command -v bash)"
+mkdir -m 0700 "$scratch/failing-tool-bin" "$scratch/operator-evidence-write-failure"
+cat > "$scratch/failing-tool-bin/python3" <<'SH'
+#!/bin/bash
+if [[ "${2:-}" == *.json.tmp ]]; then
+  echo "synthetic_evidence_writer_failure" >&2
+  exit 73
+fi
+exec "$REAL_PYTHON_FOR_TEST" "$@"
+SH
+cat > "$scratch/failing-tool-bin/bash" <<'SH'
+#!/bin/bash
+if [[ "${1:-}" == "$OFFHOST_VERIFIER_PATH" ]]; then
+  printf '%s\n' 'BACKUP_RESTORE_REHEARSAL_OK no_live_database_access=true'
+  exit 0
+fi
+exec "$REAL_BASH_FOR_TEST" "$@"
+SH
+chmod 0700 "$scratch/failing-tool-bin/python3" "$scratch/failing-tool-bin/bash"
+if REAL_PYTHON_FOR_TEST="$real_python" REAL_BASH_FOR_TEST="$real_bash" \
+    OFFHOST_VERIFIER_PATH="$root/solana-launcher/scripts/verify-backup-restore.sh" \
+    PATH="$scratch/failing-tool-bin:$PATH" \
+    bash "$root/solana-launcher/scripts/run-offhost-recovery-evidence.sh" \
+      --backup-dir "$backup" \
+      --expected-manifest-sha256 "$synthetic_manifest_sha" \
+      --evidence-dir "$scratch/operator-evidence-write-failure" \
+      --code-sha "$reviewed_ci_sha" \
+      --ticket-id ci-evidence-write-failure \
+      --confirm-isolated-offhost \
+      > "$scratch/operator-wrapper-write-failure.log" 2>&1; then
+  echo "Offline recovery wrapper returned success without persisting its evidence JSON" >&2
+  exit 1
+fi
+grep -Fq "Failed to persist offline recovery evidence; refusing success" \
+  "$scratch/operator-wrapper-write-failure.log"
+shopt -s nullglob
+failed_evidence_json=("$scratch/operator-evidence-write-failure"/*.json)
+if (("${#failed_evidence_json[@]}" != 0)); then
+  echo "Offline recovery wrapper left a misleading PASS evidence JSON after writer failure" >&2
+  exit 1
+fi
+echo "OFFHOST_OPERATOR_EVIDENCE_PERSISTENCE_FAILURE_REJECTED"
+
+# Verify the committed WAL-only row using an isolated *copy* of the snapshot.
+# Even a read-only SQLite connection can create -wal/-shm sidecars or checkpoint
+# a WAL-mode file. The sealed, checksummed recovery directory must stay inert.
+probe_snapshot="/tmp/potapoff-trade-restore-probe-${BASHPID}.db"
+docker cp "$backup/trade.db" "$frontend:$probe_snapshot"
+docker exec --user root -e "BACKUP_SQLITE_PATH=$probe_snapshot" \
+  "$frontend" node -e '
+    const Database = require("better-sqlite3");
+    const db = new Database(process.env.BACKUP_SQLITE_PATH, { readonly: true, fileMustExist: true });
+    try {
+      const row = db.prepare("SELECT payload FROM backup_fixture WHERE id=1").get();
+      if (!row || row.payload !== "written-to-wal") process.exit(1);
+      console.log("SQLITE_WAL_ROW_RESTORED_OK");
+    } finally {
+      db.close();
+    }
+  ' | grep -Fq "SQLITE_WAL_ROW_RESTORED_OK"
+docker exec --user root "$frontend" rm -f -- "$probe_snapshot" "${probe_snapshot}-wal" "${probe_snapshot}-shm"
+
+# Verify the Python Intelligence snapshot includes its synthetic committed row.
+docker run --rm --network none --read-only --pids-limit 32 \
+  --tmpfs /tmp:size=16m,mode=1777 \
+  --mount "type=bind,src=$backup,dst=/backup,readonly" \
+  python:3.12-alpine python -c '
+import shutil
+import sqlite3
+# A WAL-mode SQLite snapshot may need a writable directory for its shared
+# memory sidecar even when the database connection itself is read-only.
+shutil.copy2("/backup/intelligence.sqlite", "/tmp/intelligence-source.sqlite")
+source = sqlite3.connect("file:/tmp/intelligence-source.sqlite?mode=ro", uri=True)
+target = sqlite3.connect("/tmp/intelligence-restored.sqlite")
+try:
+    source.backup(target)
+    if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+        raise SystemExit("Python Intelligence restore integrity mismatch")
+    row = target.execute("SELECT tag FROM synthetic_intelligence WHERE id=3").fetchone()
+    if row != ("safe-fixture",):
+        raise SystemExit("Python Intelligence restore marker mismatch")
+    print("INTELLIGENCE_SQLITE_RESTORED_OK")
+finally:
+    target.close()
+    source.close()
+' | grep -Fq "INTELLIGENCE_SQLITE_RESTORED_OK"
+
+bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" |
+  grep -Fq 'BACKUP_RESTORE_REHEARSAL_OK'
+echo "SYNTHETIC_RESTORE_TEST_OK product_pg admin_pg blockchain_sqlite_wal intelligence_sqlite_wal"
+
+# A valid SHA256 manifest is NOT proof of owner/ACL fidelity. Corrupt the
+# reference catalog and re-sign every file locally; only the role-aware
+# reconstruction comparison is expected to reject this otherwise valid set.
+cp "$backup/postgres-role-fingerprint.txt" "$scratch/postgres-role-fingerprint.original"
+cp "$backup/SHA256SUMS" "$scratch/SHA256SUMS.role-original"
+printf 'relation|public|tokens:r|wrong_owner|\n' \
+  >> "$backup/postgres-role-fingerprint.txt"
+(
+  cd "$backup"
+  find . -type f ! -path './SHA256SUMS' -print0 \
+    | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS
+)
+role_reject_log="$scratch/role-acl-reject.log"
+if bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" \
+     > "$role_reject_log" 2>&1; then
+  echo "Role-fingerprint mismatch was accepted despite valid SHA256SUMS" >&2
+  exit 1
+fi
+grep -Fq 'Owner/ACL mismatch after isolated role-aware restore' "$role_reject_log" || {
+  echo "Role-fingerprint corruption rejected for wrong reason" >&2
+  tail -n 20 "$role_reject_log" >&2
+  exit 1
+}
+mv "$scratch/postgres-role-fingerprint.original" "$backup/postgres-role-fingerprint.txt"
+mv "$scratch/SHA256SUMS.role-original" "$backup/SHA256SUMS"
+echo "ROLE_ACL_MISMATCH_REJECTED_OK"
+
+
+# A checksum-only verifier can be fooled by removing the manifest entry for
+# a modified configuration file. Check exact membership, including dotfiles.
+cp "$backup/SHA256SUMS" "$scratch/SHA256SUMS.original"
+cp "$backup/backend.env" "$scratch/backend.env.original"
+grep -vF '  ./backend.env' "$scratch/SHA256SUMS.original" > "$backup/SHA256SUMS"
+printf 'UNEXPECTED_TAMPER=1\n' >> "$backup/backend.env"
+if bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" >/dev/null 2>&1; then
+  echo "Incomplete SHA256 manifest accepted a tampered configuration" >&2
+  exit 1
+fi
+mv "$scratch/backend.env.original" "$backup/backend.env"
+cp "$scratch/SHA256SUMS.original" "$backup/SHA256SUMS"
+echo "INCOMPLETE_SHA256_MANIFEST_REJECTED_OK"
+
+# Extra files must not be silently ignored, even if all listed sums match.
+printf 'injected\n' > "$backup/admin-site/.untracked"
+if bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" >/dev/null 2>&1; then
+  echo "Unlisted backup file unexpectedly passed verification" >&2
+  exit 1
+fi
+rm "$backup/admin-site/.untracked"
+echo "UNLISTED_BACKUP_FILE_REJECTED_OK"
+
+# Corruption of either database family must invalidate the whole recovery set.
+cp "$backup/postgres.dump" "$scratch/postgres.dump.original"
+printf 'corruption' >> "$backup/postgres.dump"
+if bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" >/dev/null 2>&1; then
+  echo "Corrupted PostgreSQL backup passed restore gate" >&2
+  exit 1
+fi
+mv "$scratch/postgres.dump.original" "$backup/postgres.dump"
+echo "CORRUPTED_POSTGRES_BACKUP_REJECTED_OK"
+
+cp "$backup/trade.db" "$scratch/trade.db.original"
+printf 'corruption' >> "$backup/trade.db"
+if bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" >/dev/null 2>&1; then
+  echo "Corrupted SQLite backup passed restore gate" >&2
+  exit 1
+fi
+mv "$scratch/trade.db.original" "$backup/trade.db"
+echo "CORRUPTED_SQLITE_BACKUP_REJECTED_OK"
+
+cp "$backup/intelligence.sqlite" "$scratch/intelligence.sqlite.original"
+printf 'corruption' >> "$backup/intelligence.sqlite"
+if bash "$root/solana-launcher/scripts/verify-backup-restore.sh" "$backup" >/dev/null 2>&1; then
+  echo "Corrupted Python Intelligence backup passed restore gate" >&2
+  exit 1
+fi
+mv "$scratch/intelligence.sqlite.original" "$backup/intelligence.sqlite"
+echo "CORRUPTED_INTELLIGENCE_SQLITE_REJECTED_OK"
+
+# A symlink copied from a config source must not escape the checksum manifest.
+mv "$scratch/admin/sources.json" "$scratch/admin/sources.json.original"
+ln -s .env "$scratch/admin/sources.json"
+sleep 1
+if bash "$root/solana-launcher/scripts/backup-production.sh" >/dev/null 2>&1; then
+  echo "Backup unexpectedly accepted a symlinked config file" >&2
+  exit 1
+fi
+rm "$scratch/admin/sources.json"
+mv "$scratch/admin/sources.json.original" "$scratch/admin/sources.json"
+if find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name '.incomplete-*' -print -quit | grep -q .; then
+  echo "Symlink rejection left an incomplete directory behind" >&2
+  exit 1
+fi
+echo "SYMLINKED_BACKUP_SOURCE_REJECTED_OK"
+
+# Missing Python Intelligence database file must fail closed even while
+# its owner container is running; the incomplete recovery set must be removed.
+docker exec "$intelligence" mv \
+  /var/lib/potapoff-intelligence/intelligence.sqlite3 \
+  /var/lib/potapoff-intelligence/intelligence.sqlite3.missing
+sleep 1
+if bash "$root/solana-launcher/scripts/backup-production.sh" >/dev/null 2>&1; then
+  echo "Backup unexpectedly passed without the Python Intelligence database file" >&2
+  exit 1
+fi
+docker exec "$intelligence" mv \
+  /var/lib/potapoff-intelligence/intelligence.sqlite3.missing \
+  /var/lib/potapoff-intelligence/intelligence.sqlite3
+if find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name '.incomplete-*' -print -quit | grep -q .; then
+  echo "Missing Python Intelligence DB left an incomplete directory behind" >&2
+  exit 1
+fi
+echo "MISSING_INTELLIGENCE_DATABASE_REJECTED_OK"
+
+# Missing Blockchain trade.db file must fail closed even while the frontend
+# container remains running.
+docker exec "$frontend" mv /app/data/trade.db /app/data/trade.db.missing
+sleep 1
+if bash "$root/solana-launcher/scripts/backup-production.sh" >/dev/null 2>&1; then
+  echo "Backup unexpectedly passed without the Blockchain trade.db file" >&2
+  exit 1
+fi
+docker exec "$frontend" mv /app/data/trade.db.missing /app/data/trade.db
+if find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name '.incomplete-*' -print -quit | grep -q .; then
+  echo "Missing Blockchain trade.db left an incomplete directory behind" >&2
+  exit 1
+fi
+echo "MISSING_TRADE_DATABASE_REJECTED_OK"
+
+# Missing Python Intelligence source must fail closed and clean the incomplete set.
+docker stop "$intelligence" >/dev/null
+sleep 1
+if bash "$root/solana-launcher/scripts/backup-production.sh" >/dev/null 2>&1; then
+  echo "Backup unexpectedly passed without the Python Intelligence source container" >&2
+  exit 1
+fi
+if find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name '.incomplete-*' -print -quit | grep -q .; then
+  echo "Failed Intelligence backup left an incomplete directory behind" >&2
+  exit 1
+fi
+echo "MISSING_INTELLIGENCE_SOURCE_REJECTED_OK"
+
+# Missing frontend/SQLite source must fail closed and remove its incomplete set.
+docker stop "$frontend" >/dev/null
+sleep 1
+if bash "$root/solana-launcher/scripts/backup-production.sh" >/dev/null 2>&1; then
+  echo "Backup unexpectedly passed without the SQLite source container" >&2
+  exit 1
+fi
+if find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name '.incomplete-*' -print -quit | grep -q .; then
+  echo "Failed backup left an incomplete directory behind" >&2
+  exit 1
+fi
+echo "MISSING_SQLITE_SOURCE_REJECTED_OK"

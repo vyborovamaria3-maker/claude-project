@@ -19,7 +19,7 @@ export async function runSourceLoop({
   source, runBatch, signal, pollMs=2000, paceMs=100,
   maxFailures=5, maxBatches=0, onReport=()=>{},
 }) {
-  if(!["x","tg","blockchain"].includes(source) ||
+  if(!["x","tg","blockchain","invalidation"].includes(source) ||
      !signal || typeof signal.aborted!=="boolean" ||
      typeof runBatch!=="function" || typeof onReport!=="function" ||
      !Number.isSafeInteger(pollMs) || pollMs<100 || pollMs>60_000 ||

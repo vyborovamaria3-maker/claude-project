@@ -39,8 +39,14 @@ export async function verifySolanaPayment(check: SolanaPaymentCheck) {
   }
 
   const confirmation = status.value?.confirmationStatus;
-  if (!confirmation || !["confirmed", "finalized"].includes(confirmation)) {
-    throw new AppError(409, "Transaction is not confirmed yet", "PAYMENT_NOT_CONFIRMED");
+  const confirmationRank = confirmation === "finalized" ? 2 : confirmation === "confirmed" ? 1 : 0;
+  const requiredRank = env.PAYMENT_CONFIRMATION_COMMITMENT === "finalized" ? 2 : 1;
+  if (confirmationRank < requiredRank) {
+    throw new AppError(
+      409,
+      requiredRank === 2 ? "Transaction is not finalized yet" : "Transaction is not confirmed yet",
+      requiredRank === 2 ? "PAYMENT_NOT_FINALIZED" : "PAYMENT_NOT_CONFIRMED"
+    );
   }
 
   const tx = await solanaConnection.getParsedTransaction(check.signature, {
@@ -55,20 +61,25 @@ export async function verifySolanaPayment(check: SolanaPaymentCheck) {
   }
 
   const allInstructions = tx.transaction.message.instructions;
-  const memoFound = allInstructions.some((ix) => {
-    if ("program" in ix && ix.program === "spl-memo") {
-      return String(ix.parsed ?? "").includes(check.nonce);
-    }
-    return "programId" in ix && ix.programId.toBase58().includes("Memo") && JSON.stringify(ix).includes(check.nonce);
-  });
-  if (!memoFound && !JSON.stringify(tx.meta?.logMessages ?? []).includes(check.nonce)) {
-    throw new AppError(400, "Payment nonce was not found in memo", "PAYMENT_NONCE_MISMATCH");
+  // Only a parsed instruction from the recognized SPL Memo program is
+  // authoritative. Arbitrary program logs and program IDs containing the
+  // word "Memo" are attacker-controlled and must never bind a payment nonce.
+  const memoFound = allInstructions.some((ix) =>
+    "program" in ix &&
+    ix.program === "spl-memo" &&
+    typeof ix.parsed === "string" &&
+    ix.parsed === check.nonce
+  );
+  if (!memoFound) {
+    throw new AppError(400, "Payment nonce was not found in SPL Memo instruction", "PAYMENT_NONCE_MISMATCH");
   }
 
   if (check.currency === PaymentCurrency.SOL) {
     verifySolTransfer(allInstructions, check.expectedAmount);
   } else {
-    verifyUsdcTransfer(allInstructions, check.expectedAmount);
+    // Parsed account keys are wrappers; the public key is always on `pubkey`.
+    const accountKeys = tx.transaction.message.accountKeys.map((key) => key.pubkey.toBase58());
+    verifyUsdcTransfer(allInstructions, check.expectedAmount, tx.meta, accountKeys);
   }
 }
 
@@ -91,22 +102,54 @@ function verifySolTransfer(instructions: readonly unknown[], expectedAmount: num
   }
 }
 
-function verifyUsdcTransfer(instructions: readonly unknown[], expectedAmount: number) {
-  const expectedBaseUnits = Math.round(expectedAmount * 1_000_000);
+function verifyUsdcTransfer(
+  instructions: readonly unknown[],
+  expectedAmount: number,
+  meta: NonNullable<Awaited<ReturnType<typeof solanaConnection.getParsedTransaction>>>["meta"],
+  accountKeys: readonly string[],
+) {
+  const expectedBaseUnits = BigInt(Math.round(expectedAmount * 1_000_000));
   const treasuryTokenAccount = env.TREASURY_USDC_TOKEN_ACCOUNT;
+  const treasuryTokenIndex = accountKeys.indexOf(treasuryTokenAccount);
+  if (treasuryTokenIndex < 0 || !meta?.preTokenBalances || !meta.postTokenBalances) {
+    throw new AppError(400, "USDC token-account balance evidence is missing", "PAYMENT_TOKEN_ACCOUNT_MISMATCH");
+  }
 
-  const ok = instructions.some((ix) => {
+  const matchingTransfer = instructions.some((ix) => {
     const parsedIx = ix as ParsedInstruction;
-    const amountInfo = parsedIx.parsed?.info?.tokenAmount;
-    return (
-      parsedIx.program === "spl-token" &&
-      ["transfer", "transferChecked"].includes(parsedIx.parsed?.type) &&
-      parsedIx.parsed.info?.destination === treasuryTokenAccount &&
-      Number(amountInfo?.amount ?? parsedIx.parsed.info?.amount) === expectedBaseUnits
-    );
+    const info = parsedIx.parsed?.info;
+    if (
+      parsedIx.program !== "spl-token" ||
+      !["transfer", "transferChecked"].includes(parsedIx.parsed?.type ?? "") ||
+      info?.destination !== treasuryTokenAccount
+    ) return false;
+
+    // transferChecked exposes the mint directly. Unchecked transfer is bound
+    // to the configured mint below using the transaction's pre/post token balances.
+    if (info.mint !== undefined && info.mint !== env.USDC_MINT) return false;
+    const rawAmount = info.tokenAmount?.amount ?? info.amount;
+    try {
+      return rawAmount !== undefined && BigInt(String(rawAmount)) === expectedBaseUnits;
+    } catch {
+      return false;
+    }
   });
 
-  if (!ok) {
-    throw new AppError(400, "USDC transfer amount or destination mismatch", "PAYMENT_AMOUNT_MISMATCH");
+  const before = meta.preTokenBalances.find((balance) => balance.accountIndex === treasuryTokenIndex);
+  const after = meta.postTokenBalances.find((balance) => balance.accountIndex === treasuryTokenIndex);
+  const validBalanceEvidence = Boolean(
+    before &&
+    after &&
+    before.mint === env.USDC_MINT &&
+    after.mint === env.USDC_MINT &&
+    before.uiTokenAmount.decimals === 6 &&
+    after.uiTokenAmount.decimals === 6 &&
+    before.owner === env.TREASURY_WALLET &&
+    after.owner === env.TREASURY_WALLET &&
+    BigInt(after.uiTokenAmount.amount) - BigInt(before.uiTokenAmount.amount) === expectedBaseUnits
+  );
+
+  if (!matchingTransfer || !validBalanceEvidence) {
+    throw new AppError(400, "USDC mint, token account owner, decimals, amount or destination mismatch", "PAYMENT_AMOUNT_MISMATCH");
   }
 }

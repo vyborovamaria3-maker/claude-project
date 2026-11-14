@@ -142,6 +142,26 @@ npm run prisma:seed -w @solsub/api
 npm run dev
 ```
 
+## Production Docker Compose: database roles
+
+Production Compose separates the PostgreSQL bootstrap, migration and runtime identities:
+
+- API and bot connect as `solsub_app`.
+- The opt-in one-shot migration service connects as `solsub_migrator`.
+- Admin/source inspection uses `solsub_readonly`.
+- `POSTGRES_USER` / `POSTGRES_PASSWORD` are used only by PostgreSQL initialization and the role provisioner.
+
+For a **new empty database**, configure all role passwords in `.env`, then run:
+
+```bash
+docker compose -f docker-compose.prod.yml --profile migrate run --rm migrator
+docker compose -f docker-compose.prod.yml up -d
+```
+
+The API runner starts Node directly; it no longer attempts to run npm/Prisma migrations inside the pruned production image. The migration profile retains the Prisma CLI and seed tooling and is invoked separately.
+
+For an existing persistent volume, do not run the migration profile until object ownership has been inventoried and a backup/restore plus forward/rollback rehearsal has been approved. See [the role cutover runbook](../docs/operations/MEMECOIN_SOLSUB_DB_ROLE_CUTOVER.md).
+
 ## Деплой
 
 Railway:

@@ -12,6 +12,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import psycopg
+from psycopg import sql
+from psycopg.conninfo import make_conninfo
 
 ADMIN_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = ADMIN_ROOT.parent
@@ -20,6 +22,40 @@ sys.path.insert(0, str(ADMIN_ROOT))
 from app.postgres_admin_state import PostgresAuditStore, PostgresControlStore, PostgresLiveAnalysisProfileStore
 from app.postgres_security_store import PostgresAdminSessionStore
 from app.postgres_task_queue import PostgresTaskQueue, TaskState
+
+
+class PgCompatConnectionTests(unittest.TestCase):
+    def test_close_rolls_back_before_pool_context_exit(self) -> None:
+        from unittest.mock import patch
+        from app import postgres_admin_state
+
+        events: list[str] = []
+
+        class FakeDatabase:
+            def rollback(self) -> None:
+                events.append("rollback")
+
+        class FakeContext:
+            def __init__(self) -> None:
+                self.database = FakeDatabase()
+
+            def __enter__(self):
+                return self.database
+
+            def __exit__(self, exc_type, exc, traceback) -> None:
+                events.append("context_exit")
+                if exc_type is None:
+                    events.append("context_success_exit")
+
+        context = FakeContext()
+        with patch.object(postgres_admin_state, "pooled_connection", return_value=context):
+            connection = postgres_admin_state._PgCompatConnection("postgresql://unused")
+
+        connection.close()
+        connection.close()
+
+        self.assertEqual(events, ["rollback", "context_exit", "context_success_exit"])
+
 
 
 DSN = os.getenv("ADMIN_STATE_TEST_DSN", "").strip()
@@ -129,10 +165,55 @@ class PostgresSharedStateTests(unittest.TestCase):
         finally:
             q1.stop(); q2.stop()
 
-    def test_sqlite_migration_is_idempotent_and_preserves_revocations(self) -> None:
+    def test_sqlite_migration_is_idempotent_and_refuses_target_conflicts(self) -> None:
         suffix = uuid.uuid4().hex[:8]
         nonce = uuid.uuid4().hex
         now = int(time.time())
+        schema = "admin_migration_" + uuid.uuid4().hex
+        app_user = "admin_runtime_" + suffix
+        migrator_user = "admin_migrator_" + suffix
+        migrator_password = uuid.uuid4().hex + uuid.uuid4().hex
+        with psycopg.connect(DSN, autocommit=True) as admin:
+            database = admin.execute("SELECT current_database()").fetchone()[0]
+            admin.execute(
+                sql.SQL(
+                    "CREATE ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
+                    "NOINHERIT NOREPLICATION NOBYPASSRLS PASSWORD {}"
+                ).format(sql.Identifier(migrator_user), sql.Literal(migrator_password))
+            )
+            admin.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(app_user)))
+            admin.execute(
+                sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
+                    sql.Identifier(database), sql.Identifier(migrator_user)
+                )
+            )
+            admin.execute(
+                sql.SQL("CREATE SCHEMA {} AUTHORIZATION {}").format(
+                    sql.Identifier(schema), sql.Identifier(migrator_user)
+                )
+            )
+            admin.execute(
+                sql.SQL(
+                    "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA {} "
+                    "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {}"
+                ).format(sql.Identifier(migrator_user), sql.Identifier(schema), sql.Identifier(app_user))
+            )
+        test_dsn = make_conninfo(DSN, options=f"-c search_path={schema}")
+        migrator_dsn = make_conninfo(
+            DSN, user=migrator_user, password=migrator_password,
+            options=f"-c search_path={schema}",
+        )
+
+        def drop_schema() -> None:
+            with psycopg.connect(DSN, autocommit=True) as admin:
+                admin.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+                admin.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(app_user)))
+                admin.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(migrator_user)))
+                admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(app_user)))
+                admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(migrator_user)))
+
+        self.addCleanup(drop_schema)
+
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "admin.db"
             db = sqlite3.connect(path)
@@ -158,29 +239,336 @@ class PostgresSharedStateTests(unittest.TestCase):
                 db.close()
 
             env = os.environ.copy()
-            env.update({"ADMIN_AUDIT_DB": str(path), "ADMIN_STATE_POSTGRES_DSN": DSN})
+            env.update({
+                "ADMIN_AUDIT_DB": str(path),
+                "ADMIN_STATE_MIGRATOR_DSN": migrator_dsn,
+                "ADMIN_STATE_APP_USER": app_user,
+            })
             script = ADMIN_ROOT / "scripts" / "migrate_admin_state_to_postgres.py"
-            with psycopg.connect(DSN, connect_timeout=5) as db:
-                db.execute(
-                    "CREATE TABLE IF NOT EXISTS admin_state_migrations("
-                    "migration_key TEXT PRIMARY KEY, "
-                    "applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
-                )
-                db.execute(
-                    "DELETE FROM admin_state_migrations "
-                    "WHERE migration_key='admin-sqlite-to-postgres-v1'"
-                )
-            first = subprocess.run([sys.executable, str(script)], cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=True)
-            second = subprocess.run([sys.executable, str(script)], cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=True)
+            first = subprocess.run(
+                [sys.executable, str(script)], cwd=REPO_ROOT, env=env,
+                capture_output=True, text=True, check=True,
+            )
             self.assertIn("MIGRATION_OK", first.stdout)
-            self.assertIn("already applied", second.stdout)
 
-        control = PostgresControlStore(DSN)
-        self.assertTrue(any(row["name"] == f"migration.{suffix}" and row["enabled"] for row in control.flags()))
-        profiles = PostgresLiveAnalysisProfileStore(DSN)
+            second = subprocess.run(
+                [sys.executable, str(script)], cwd=REPO_ROOT, env=env,
+                capture_output=True, text=True, check=True,
+            )
+            self.assertIn("SKIP admin-sqlite-to-postgres-v1: source fingerprint unchanged", second.stdout)
+
+            # Removing the marker must not turn a stale SQLite snapshot into an
+            # overwrite path. The target row remains authoritative on conflict.
+            with psycopg.connect(test_dsn) as target:
+                target.execute(
+                    "DELETE FROM admin_state_migrations WHERE migration_key='admin-sqlite-to-postgres-v1'"
+                )
+            source_db = sqlite3.connect(path)
+            try:
+                source_db.execute(
+                    "UPDATE feature_flags SET enabled=0,description='stale overwrite' WHERE name=?",
+                    (f"migration.{suffix}",),
+                )
+            finally:
+                source_db.close()
+
+            conflict = subprocess.run(
+                [sys.executable, str(script)], cwd=REPO_ROOT, env=env,
+                capture_output=True, text=True,
+            )
+            self.assertNotEqual(conflict.returncode, 0)
+            self.assertIn("PostgreSQL target conflict in feature_flags", conflict.stderr)
+
+        control = PostgresControlStore(migrator_dsn)
+        flag = next(row for row in control.flags() if row["name"] == f"migration.{suffix}")
+        self.assertTrue(flag["enabled"])
+        self.assertEqual(flag["description"], "migrated")
+
+        profiles = PostgresLiveAnalysisProfileStore(migrator_dsn)
         self.assertTrue(any(row["key"] == f"mig_{suffix}" for row in profiles.list("telegram")))
-        security = PostgresAdminSessionStore(DSN, ip_binding=lambda _request: "", ua_binding=lambda _request: "")
+        security = PostgresAdminSessionStore(migrator_dsn, ip_binding=lambda _request: "", ua_binding=lambda _request: "")
         self.assertTrue(security.is_revoked(nonce))
+
+        with psycopg.connect(test_dsn) as target:
+            migrator_flags = target.execute(
+                "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolinherit, rolbypassrls "
+                "FROM pg_roles WHERE rolname=%s",
+                (migrator_user,),
+            ).fetchone()
+            self.assertEqual(migrator_flags, (True, False, False, False, False, False))
+            migration_owner = target.execute(
+                "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='admin_state_migrations'::regclass"
+            ).fetchone()[0]
+            self.assertEqual(migration_owner, migrator_user)
+            app_can_read_feature_flags = target.execute(
+                "SELECT has_table_privilege(%s, 'feature_flags', 'SELECT')",
+                (app_user,),
+            ).fetchone()[0]
+            self.assertTrue(app_can_read_feature_flags, "test default ACL must grant runtime access to application tables")
+            migration_marker_privileges = target.execute(
+                "SELECT has_table_privilege(%s, 'admin_state_migrations', 'SELECT'), "
+                "has_table_privilege(%s, 'admin_state_migrations', 'INSERT'), "
+                "has_table_privilege(%s, 'admin_state_migrations', 'UPDATE'), "
+                "has_table_privilege(%s, 'admin_state_migrations', 'DELETE')",
+                (app_user, app_user, app_user, app_user),
+            ).fetchone()
+            self.assertEqual(migration_marker_privileges, (False, False, False, False))
+            self.assertEqual(
+                target.execute(
+                    "SELECT count(*) FROM admin_state_migrations "
+                    "WHERE migration_key='admin-sqlite-to-postgres-v1'"
+                ).fetchone()[0],
+                0,
+                "a rejected conflicting migration must not leave a success marker",
+            )
+
+
+    def _make_source_db(self, path: Path, marker: str) -> None:
+        db = sqlite3.connect(path)
+        try:
+            db.executescript(
+                """
+                CREATE TABLE feature_flags(name TEXT PRIMARY KEY, enabled INTEGER NOT NULL, description TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL);
+                CREATE TABLE alerts(id INTEGER PRIMARY KEY AUTOINCREMENT, level TEXT NOT NULL, title TEXT NOT NULL, message TEXT NOT NULL, source TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, acknowledged_at TEXT, acknowledged_by TEXT);
+                CREATE TABLE analysis_parameter_overrides(domain TEXT NOT NULL,key TEXT NOT NULL,enabled INTEGER NOT NULL,threshold TEXT NOT NULL,label TEXT,source TEXT,value_type TEXT,scale TEXT,description TEXT,custom INTEGER NOT NULL,deleted INTEGER NOT NULL,updated_by TEXT,updated_at TEXT NOT NULL,PRIMARY KEY(domain,key));
+                CREATE TABLE admin_audit(id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, username TEXT, ip_address TEXT, action TEXT NOT NULL, resource TEXT, success INTEGER NOT NULL, details_json TEXT);
+                CREATE TABLE revoked_admin_sessions(nonce TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, revoked_at TEXT NOT NULL);
+                """
+            )
+            db.execute("INSERT INTO feature_flags VALUES(?,?,?,?,?)", (f"migration.{marker}", 1, "migrated", "admin", "2026-08-16T09:00:00+00:00"))
+            db.execute("INSERT INTO admin_audit(created_at,username,action,success,details_json) VALUES(?,?,?,?,?)", ("2026-08-16T09:00:00+00:00", "admin", f"migration_{marker}", 1, '{"ok":true}'))
+            db.commit()
+        finally:
+            db.close()
+
+    def _run_migration(self, env: dict, sqlite_path: Path) -> subprocess.CompletedProcess:
+        run_env = env.copy()
+        run_env["ADMIN_AUDIT_DB"] = str(sqlite_path)
+        script = ADMIN_ROOT / "scripts" / "migrate_admin_state_to_postgres.py"
+        return subprocess.run(
+            [sys.executable, str(script)], cwd=REPO_ROOT, env=run_env,
+            capture_output=True, text=True,
+        )
+
+    def _marker_count(self, dsn: str) -> int:
+        """Count success markers; tolerate a rolled-back (absent) marker table."""
+        with psycopg.connect(dsn) as target:
+            present = target.execute(
+                "SELECT to_regclass('admin_state_migrations') IS NOT NULL"
+            ).fetchone()[0]
+            if not present:
+                return 0
+            return int(
+                target.execute(
+                    "SELECT count(*) FROM admin_state_migrations "
+                    "WHERE migration_key='admin-sqlite-to-postgres-v1'"
+                ).fetchone()[0]
+            )
+
+    def test_corrupt_json_and_schema_drift_fail_closed_and_recover(self) -> None:
+        """Corrupt audit JSON or unknown source columns must abort with no
+        partial transfer and no success marker; repairing the source then
+        completes the same migration."""
+        suffix = uuid.uuid4().hex[:8]
+        schema = "admin_migration_" + uuid.uuid4().hex
+        migrator_user = "admin_migrator_" + suffix
+        migrator_password = uuid.uuid4().hex + uuid.uuid4().hex
+        app_user = "admin_runtime_" + suffix
+        with psycopg.connect(DSN, autocommit=True) as admin:
+            database = admin.execute("SELECT current_database()").fetchone()[0]
+            admin.execute(
+                sql.SQL(
+                    "CREATE ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
+                    "NOINHERIT NOREPLICATION NOBYPASSRLS PASSWORD {}"
+                ).format(sql.Identifier(migrator_user), sql.Literal(migrator_password))
+            )
+            admin.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(app_user)))
+            admin.execute(
+                sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
+                    sql.Identifier(database), sql.Identifier(migrator_user)
+                )
+            )
+            admin.execute(
+                sql.SQL("CREATE SCHEMA {} AUTHORIZATION {}").format(
+                    sql.Identifier(schema), sql.Identifier(migrator_user)
+                )
+            )
+            admin.execute(
+                sql.SQL(
+                    "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA {} "
+                    "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {}"
+                ).format(sql.Identifier(migrator_user), sql.Identifier(schema), sql.Identifier(app_user))
+            )
+        migrator_dsn = make_conninfo(
+            DSN, user=migrator_user, password=migrator_password,
+            options=f"-c search_path={schema}",
+        )
+        test_dsn = make_conninfo(DSN, options=f"-c search_path={schema}")
+
+        def drop_schema() -> None:
+            with psycopg.connect(DSN, autocommit=True) as admin:
+                admin.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+                admin.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(app_user)))
+                admin.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(migrator_user)))
+                admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(app_user)))
+                admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(migrator_user)))
+
+        self.addCleanup(drop_schema)
+
+        env = {
+            "ADMIN_STATE_MIGRATOR_DSN": migrator_dsn,
+            "ADMIN_STATE_APP_USER": app_user,
+            "PATH": os.environ["PATH"],
+            "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
+        }
+        marker = f"drift_{suffix}"
+
+        # 1. Corrupt audit details_json must abort without writing a marker.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "admin.db"
+            self._make_source_db(path, marker)
+            db = sqlite3.connect(path)
+            try:
+                db.execute("UPDATE admin_audit SET details_json='{broken'")
+                db.commit()
+            finally:
+                db.close()
+            failed = self._run_migration(env, path)
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("corrupt details_json", failed.stderr)
+            with psycopg.connect(test_dsn) as target:
+                self.assertEqual(
+                    target.execute("SELECT count(*) FROM admin_audit").fetchone()[0], 0
+                )
+                self.assertEqual(self._marker_count(test_dsn), 0,
+                                 "a failed migration must not leave a success marker")
+            # Repairing the source must let the same migration complete.
+            db = sqlite3.connect(path)
+            try:
+                db.execute('UPDATE admin_audit SET details_json=\'{\"ok\":true}\'')
+                db.commit()
+            finally:
+                db.close()
+            repaired = self._run_migration(env, path)
+            self.assertEqual(repaired.returncode, 0, repaired.stderr)
+            self.assertIn("MIGRATION_OK", repaired.stdout)
+
+        # 2. Unknown extra columns must abort instead of silently dropping data.
+            with psycopg.connect(test_dsn) as target:
+                target.execute(
+                    "TRUNCATE feature_flags, alerts, analysis_parameter_overrides, "
+                    "admin_audit, revoked_admin_sessions"
+                )
+                target.execute("DELETE FROM admin_state_migrations")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "admin.db"
+            self._make_source_db(path, marker)
+            db = sqlite3.connect(path)
+            try:
+                db.execute("ALTER TABLE feature_flags ADD COLUMN operator_note TEXT")
+                db.execute("UPDATE feature_flags SET operator_note='must-not-be-lost'")
+                db.commit()
+            finally:
+                db.close()
+            failed = self._run_migration(env, path)
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("unknown_columns=['operator_note']", failed.stderr)
+            with psycopg.connect(test_dsn) as target:
+                self.assertEqual(self._marker_count(test_dsn), 0,
+                                 "a schema-drift failure must not leave a success marker")
+
+        # 3. Partially populated PostgreSQL must not stop the copy of the
+        #    remaining disjoint rows, and pre-existing keys stay untouched.
+            with psycopg.connect(test_dsn) as target:
+                target.execute(
+                    "TRUNCATE feature_flags, alerts, analysis_parameter_overrides, "
+                    "admin_audit, revoked_admin_sessions"
+                )
+                target.execute("DELETE FROM admin_state_migrations")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "admin.db"
+            self._make_source_db(path, marker)
+            with psycopg.connect(test_dsn) as target:
+                target.execute(
+                    "INSERT INTO feature_flags(name,enabled,description,updated_by,updated_at) "
+                    "VALUES(%s,false,'pre-existing','system','2026-08-16T08:00:00+00:00')",
+                    (f"pre_existing_{suffix}",),
+                )
+            result = self._run_migration(env, path)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("MIGRATION_OK", result.stdout)
+            with psycopg.connect(test_dsn) as target:
+                self.assertEqual(
+                    target.execute(
+                        "SELECT count(*) FROM feature_flags WHERE description='migrated'"
+                    ).fetchone()[0],
+                    1,
+                )
+                self.assertTrue(
+                    target.execute(
+                        "SELECT 1 FROM feature_flags WHERE name=%s",
+                        (f"pre_existing_{suffix}",),
+                    ).fetchone(),
+                    "independently created PostgreSQL state must survive the cutover",
+                )
+
+        # 4. Interrupting the migration must leave no marker, and a rerun must
+        #    still succeed from a clean target.
+            with psycopg.connect(test_dsn) as target:
+                target.execute(
+                    "TRUNCATE feature_flags, alerts, analysis_parameter_overrides, "
+                    "admin_audit, revoked_admin_sessions"
+                )
+                target.execute("DELETE FROM admin_state_migrations")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "admin.db"
+            self._make_source_db(path, marker)
+            env_interrupt = env.copy()
+            env_interrupt["ADMIN_STATE_MIGRATOR_DSN"] = "postgresql://127.0.0.1:1/none"
+            aborted = self._run_migration(env_interrupt, path)
+            self.assertNotEqual(aborted.returncode, 0)
+            with psycopg.connect(test_dsn) as target:
+                self.assertEqual(self._marker_count(test_dsn), 0)
+            rerun = self._run_migration(env, path)
+            self.assertEqual(rerun.returncode, 0, rerun.stderr)
+            self.assertIn("MIGRATION_OK", rerun.stdout)
+
+class AdminSQLiteSnapshotTests(unittest.TestCase):
+    def test_backup_script_captures_committed_wal_pages(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="admin-sqlite-snapshot-") as tmp:
+            source_path = Path(tmp) / "audit.db"
+            source = sqlite3.connect(source_path)
+            try:
+                source.execute("PRAGMA journal_mode=WAL")
+                source.execute("CREATE TABLE audit_rows(id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
+                source.execute("INSERT INTO audit_rows VALUES(1,'committed-in-wal')")
+                source.commit()
+                self.assertTrue(Path(str(source_path) + "-wal").exists())
+
+                env = os.environ.copy()
+                env["ADMIN_AUDIT_DB"] = str(source_path)
+                script = ADMIN_ROOT / "scripts" / "backup_admin_state_sqlite.py"
+                result = subprocess.run(
+                    [sys.executable, str(script)],
+                    cwd=ADMIN_ROOT,
+                    env=env,
+                    capture_output=True,
+                    check=True,
+                )
+                self.assertTrue(result.stdout.startswith(b"SQLite format 3"))
+                snapshot_path = Path(tmp) / "snapshot.db"
+                snapshot_path.write_bytes(result.stdout)
+                with sqlite3.connect(snapshot_path) as snapshot:
+                    self.assertEqual(
+                        snapshot.execute("PRAGMA integrity_check").fetchone()[0],
+                        "ok",
+                    )
+                    self.assertEqual(
+                        snapshot.execute("SELECT value FROM audit_rows WHERE id=1").fetchone()[0],
+                        "committed-in-wal",
+                    )
+            finally:
+                source.close()
 
 
 if __name__ == "__main__":

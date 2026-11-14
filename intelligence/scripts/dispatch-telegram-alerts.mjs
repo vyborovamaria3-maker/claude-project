@@ -33,15 +33,35 @@ async function main() {
     connectionString,max:2,connectionTimeoutMillis:3000,
     query_timeout:10000,statement_timeout:8000,options:"-c statement_timeout=8000",
   });
+  // Fail fast when the terminal dead-letter status has not been provisioned
+  // yet (migration 020); otherwise the first exhausted alert would crash the
+  // dispatch loop mid-run on the CHECK constraint violation.
+  const statusCheck=await pool.query(
+    "SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint "
+    +"WHERE conrelid='token_alerts'::regclass "
+    +"AND conname='token_alerts_status_check'");
+  if(!/dead_lettered/.test(String(statusCheck.rows[0]?.def ?? ""))){
+    await pool.end();
+    throw new Error("intelligence_migration_020_required");
+  }
   try {
     const client=await pool.connect();
     let rows;
     try {
       await client.query("BEGIN");
+      // 'open' rows are bounded by the retry budget; stale 'sending' rows are
+      // reclaimable at any attempt count so a crash between claim and the
+      // terminal update self-heals: the next run either delivers or
+      // dead-letters the alert on the failure path.
       const claimed=await client.query(`WITH picked AS (
         SELECT alert_id FROM token_alerts
-        WHERE delivery_attempts < 10 AND triggered_at <= NOW()
-          AND (status='open' OR (status='sending' AND delivery_attempted_at < NOW()-INTERVAL '10 minutes'))
+        WHERE triggered_at <= NOW()
+          AND (
+            (status='open' AND delivery_attempts < 10
+              AND (delivery_attempted_at IS NULL
+                   OR delivery_attempted_at < NOW()-INTERVAL '1 minute'))
+            OR (status='sending' AND delivery_attempted_at < NOW()-INTERVAL '10 minutes')
+          )
         ORDER BY triggered_at ASC LIMIT $1 FOR UPDATE SKIP LOCKED
       )
       UPDATE token_alerts AS alert
@@ -76,7 +96,15 @@ async function main() {
         await pool.query("UPDATE token_alerts SET status='delivered',delivered_at=NOW() WHERE alert_id=$1 AND status='sending' AND delivery_attempts=$2",[row.alert_id,row.delivery_attempts]);
         delivered++;
       } else {
-        await pool.query("UPDATE token_alerts SET status='open' WHERE alert_id=$1 AND status='sending' AND delivery_attempts=$2",[row.alert_id,row.delivery_attempts]);
+        // Terminal dead-letter state after the retry budget is exhausted:
+        // leaving the alert as 'open' would silently drop it from both the
+        // claim query and any operator dashboard. A one-minute backoff on
+        // 'open' rows keeps a Telegram outage from hammering the Bot API.
+        await pool.query(
+          "UPDATE token_alerts SET status=CASE WHEN delivery_attempts >= 10 "
+          +"THEN 'dead_lettered' ELSE 'open' END "
+          +"WHERE alert_id=$1 AND status='sending' AND delivery_attempts=$2",
+          [row.alert_id,row.delivery_attempts]);
         failed++;
       }
     }

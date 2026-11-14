@@ -87,17 +87,26 @@ export async function recordAiCost(tx:PgTransaction,input:CostEntry):Promise<boo
 /** Enqueue an idempotent invalidation; processing must publish a NEW snapshot. */
 export async function queueAnalyticsInvalidation(tx:PgTransaction,input:Readonly<{
   canonicalTokenId:string;sourceSystem:"x"|"tg"|"blockchain"|"derived";
-  eventKind:string;eventKey:string;reason:"edit"|"delete"|"link_invalidated"|"backfill"|"model_changed"|"late_outcome";
+  eventKind:string;eventKey:string;coalesceKey?:string;
+  reason:"edit"|"delete"|"link_invalidated"|"backfill"|"model_changed"|"late_outcome";
 }>):Promise<boolean> {
+  const coalesceKey=input.coalesceKey??input.eventKey;
   if(!/^solana:[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(input.canonicalTokenId)||
-      !input.eventKind||input.eventKind.length>128||!input.eventKey||input.eventKey.length>512)
+      !input.eventKind||input.eventKind.length>128||!input.eventKey||input.eventKey.length>512||
+      !coalesceKey||coalesceKey.length>512)
     throw new TypeError("Invalid invalidation identity");
+  // One row per token/source/evidence/reason: a newer revision reopens it.
   const result=await tx.query(`INSERT INTO analytics_invalidation_queue
-    (canonical_token_id,source_system,event_kind,event_key,reason)
-    VALUES ($1,$2,$3,$4,$5)
-    ON CONFLICT(canonical_token_id,source_system,event_kind,event_key,reason)
-      DO NOTHING RETURNING invalidation_id`,[
-      input.canonicalTokenId,input.sourceSystem,input.eventKind,input.eventKey,input.reason,
+    (canonical_token_id,source_system,event_kind,event_key,coalesce_key,reason)
+    VALUES ($1,$2,$3,$4,$5,$6)
+    ON CONFLICT(canonical_token_id,source_system,event_kind,coalesce_key,reason)
+      DO UPDATE SET event_kind=EXCLUDED.event_kind,event_key=EXCLUDED.event_key,
+        status='queued',attempts=0,queued_at=clock_timestamp(),processed_at=NULL,
+        next_attempt_at=clock_timestamp(),next_day=NULL
+      WHERE analytics_invalidation_queue.event_key IS DISTINCT FROM EXCLUDED.event_key
+    RETURNING invalidation_id`,[
+      input.canonicalTokenId,input.sourceSystem,input.eventKind,input.eventKey,
+      coalesceKey,input.reason,
     ]);
   if(!result.rows.length)return false;
   await tx.query(`INSERT INTO analytics_invalidation_log(invalidation_id,transition)

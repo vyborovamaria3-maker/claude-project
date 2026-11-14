@@ -14,7 +14,11 @@ function Add-Result([string]$Name, [string]$Status, [string]$Detail) {
 }
 
 function Get-Json([string]$Uri, [int]$TimeoutSec = 30) {
-    return Invoke-RestMethod -Uri $Uri -TimeoutSec $TimeoutSec
+    return Invoke-RestMethod -Method Get -Uri $Uri -TimeoutSec $TimeoutSec
+}
+
+function Post-Json([string]$Uri, [int]$TimeoutSec = 30) {
+    return Invoke-RestMethod -Method Post -Uri $Uri -TimeoutSec $TimeoutSec
 }
 
 Write-Host "=== POTAPoff Social + AI live backtest ===" -ForegroundColor Cyan
@@ -100,14 +104,14 @@ try {
 
 # 4. X forced Playwright verifies the browser/session path; auto verifies fallback routing.
 try {
-    $xForced = Get-Json ("$Base/api/trade/dev-twitter?mint=$Mint&strategy=playwright&limit=20&excludeSuspicious=false") 120
+    $xForced = Post-Json ("$Base/api/trade/dev-twitter?mint=$Mint&strategy=playwright&limit=20&excludeSuspicious=false") 120
     Add-Result "x-playwright-runtime" "PASS" ("tweets=" + $xForced.totalTweets + "; strategy=" + $xForced.collectionStrategy)
 } catch {
     Add-Result "x-playwright-runtime" "FAIL" $_.Exception.Message
 }
 
 try {
-    $xAuto = Get-Json ("$Base/api/trade/dev-twitter?mint=$Mint&strategy=auto&limit=20&excludeSuspicious=false") 120
+    $xAuto = Post-Json ("$Base/api/trade/dev-twitter?mint=$Mint&strategy=auto&limit=20&excludeSuspicious=false") 120
     if ([int]$xAuto.totalTweets -gt 0) {
         Add-Result "x-token-data" "PASS" ("tweets=" + $xAuto.totalTweets + "; strategy=" + $xAuto.collectionStrategy)
     } else {
