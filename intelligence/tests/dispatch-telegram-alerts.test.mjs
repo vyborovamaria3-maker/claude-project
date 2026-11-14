@@ -160,7 +160,8 @@ test("migration 020: converts exhausted 'sending' rows only after lease expiry, 
       "SELECT conrelid::regclass::text AS table_name, count(*) AS n FROM pg_constraint "
       +"WHERE conname IN ('token_alerts_status_check','token_alert_status_history_status_check') "
       +"AND conrelid IN (format('%I.token_alerts',$1::text)::regclass,format('%I.token_alert_status_history',$1::text)::regclass) "
-      +"GROUP BY conrelid::regclass::text ORDER BY 1",[schema])).rows;
+      +"GROUP BY conrelid::regclass::text",[schema])).rows
+      .sort((a,b)=>a.table_name<b.table_name?-1:1);
     assert.deepEqual(constraints,[
       {table_name:"token_alert_status_history",n:"1"},
       {table_name:"token_alerts",n:"1"},
