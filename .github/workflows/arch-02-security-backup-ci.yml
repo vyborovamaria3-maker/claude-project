@@ -54,6 +54,7 @@ jobs:
           bash -n .github/scripts/test-pinned-ssh.sh
           bash -n .github/scripts/test-production-backup-rehearsal.sh
           bash -n .github/scripts/test-postgres-role-separation.sh
+          bash -n .github/scripts/test-large-object-grant-cadence.sh
           bash -n solana-launcher/scripts/backup-production.sh
           bash -n solana-launcher/scripts/verify-backup-restore.sh
           bash -n solana-launcher/scripts/run-offhost-recovery-evidence.sh
@@ -98,3 +99,16 @@ jobs:
         run: bash -n .github/scripts/test-postgres-role-separation.sh
       - name: Check least-privilege migration/runtime/backup roles in disconnected fixtures
         run: bash .github/scripts/test-postgres-role-separation.sh
+
+  large-object-grant-cadence:
+    name: Synthetic PG16/PG17 large-object export grant cadence
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Check grant-cadence drill syntax
+        run: bash -n .github/scripts/test-large-object-grant-cadence.sh
+      - name: Drill large-object export grants and backup-identity restore
+        run: bash .github/scripts/test-large-object-grant-cadence.sh

@@ -120,6 +120,7 @@ jobs:
             solana-launcher/scripts/verify-backup-restore.sh \
             solana-launcher/scripts/postgres-role-restoration-fingerprint.sql \
             solana-launcher/scripts/provision-postgres-roles.sql \
+            solana-launcher/scripts/grant-large-objects.sql \
             solana-launcher/scripts/healthcheck-production.sh \
             solana-launcher/scripts/deploy-production.sh \
             "$SERVER_USER@$SERVER_HOST:/opt/potapoff-deploy/scripts/"

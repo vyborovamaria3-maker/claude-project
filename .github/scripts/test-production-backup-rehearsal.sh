@@ -153,8 +153,9 @@ docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
   -c "CREATE TABLE alembic_version(version_num varchar(32) PRIMARY KEY); INSERT INTO alembic_version VALUES ('ci_review_head');" >/dev/null
 
 POSTGRES_BACKUP_PASSWORD=0000000000000000000000000000000000000000000000000000000000000000
+POSTGRES_MIGRATOR_PASSWORD=1111111111111111111111111111111111111111111111111111111111111111
 docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
-  -c "CREATE ROLE potapoff_backup LOGIN PASSWORD '$POSTGRES_BACKUP_PASSWORD' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT; GRANT CONNECT ON DATABASE potapoff TO potapoff_backup; GRANT USAGE ON SCHEMA public TO potapoff_backup; ALTER ROLE potapoff_backup SET default_transaction_read_only=on; GRANT SELECT ON ALL TABLES IN SCHEMA public TO potapoff_backup; GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO potapoff_backup;" >/dev/null
+  -c "CREATE ROLE potapoff_backup LOGIN PASSWORD '$POSTGRES_BACKUP_PASSWORD' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT; GRANT CONNECT ON DATABASE potapoff TO potapoff_backup; GRANT USAGE ON SCHEMA public TO potapoff_backup; ALTER ROLE potapoff_backup SET default_transaction_read_only=on; GRANT SELECT ON ALL TABLES IN SCHEMA public TO potapoff_backup; GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO potapoff_backup; CREATE ROLE potapoff_migrator LOGIN PASSWORD '$POSTGRES_MIGRATOR_PASSWORD' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT; GRANT CONNECT ON DATABASE potapoff TO potapoff_migrator; GRANT USAGE ON SCHEMA public TO potapoff_migrator; CREATE ROLE potapoff_readonly LOGIN PASSWORD '$POSTGRES_BACKUP_PASSWORD' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT; GRANT CONNECT ON DATABASE potapoff TO potapoff_readonly; GRANT USAGE ON SCHEMA public TO potapoff_readonly; ALTER ROLE potapoff_readonly SET default_transaction_read_only=on; GRANT SELECT ON ALL TABLES IN SCHEMA public TO potapoff_readonly; GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO potapoff_readonly;" >/dev/null
 docker exec "$product" psql -U potapoff -d potapoff -v ON_ERROR_STOP=1 \
   -c "CREATE TYPE public.backup_fixture_state AS ENUM ('queued','done'); REVOKE USAGE ON TYPE public.backup_fixture_state FROM PUBLIC; GRANT USAGE ON TYPE public.backup_fixture_state TO potapoff_backup;" >/dev/null
 
@@ -162,8 +163,9 @@ docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1
   -c "CREATE TABLE potapoff_backup_ci_admin_fixture(id bigserial PRIMARY KEY, tag text NOT NULL); INSERT INTO potapoff_backup_ci_admin_fixture(tag) VALUES ('safe-fixture'); CREATE TABLE admin_audit(id bigserial PRIMARY KEY, action text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()); INSERT INTO admin_audit(action) VALUES ('fixture'); CREATE TABLE feature_flags(name text PRIMARY KEY, enabled boolean NOT NULL); INSERT INTO feature_flags VALUES ('ci.fixture',true); CREATE TABLE admin_background_tasks(id text PRIMARY KEY, state text NOT NULL); INSERT INTO admin_background_tasks VALUES ('ci-fixture','queued'); CREATE TABLE admin_security_sessions(nonce text PRIMARY KEY, username text NOT NULL); INSERT INTO admin_security_sessions VALUES ('ci-session','ci');" >/dev/null
 
 ADMIN_STATE_BACKUP_PASSWORD=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+ADMIN_STATE_MIGRATOR_PASSWORD=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
-  -c "CREATE ROLE potapoff_admin_backup LOGIN PASSWORD '$ADMIN_STATE_BACKUP_PASSWORD' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT; GRANT CONNECT ON DATABASE potapoff_admin TO potapoff_admin_backup; GRANT USAGE ON SCHEMA public TO potapoff_admin_backup; ALTER ROLE potapoff_admin_backup SET default_transaction_read_only=on; GRANT SELECT ON ALL TABLES IN SCHEMA public TO potapoff_admin_backup; GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO potapoff_admin_backup;" >/dev/null
+  -c "CREATE ROLE potapoff_admin_backup LOGIN PASSWORD '$ADMIN_STATE_BACKUP_PASSWORD' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT; GRANT CONNECT ON DATABASE potapoff_admin TO potapoff_admin_backup; GRANT USAGE ON SCHEMA public TO potapoff_admin_backup; ALTER ROLE potapoff_admin_backup SET default_transaction_read_only=on; GRANT SELECT ON ALL TABLES IN SCHEMA public TO potapoff_admin_backup; GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO potapoff_admin_backup; CREATE ROLE potapoff_admin_migrator LOGIN PASSWORD '$ADMIN_STATE_MIGRATOR_PASSWORD' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT; GRANT CONNECT ON DATABASE potapoff_admin TO potapoff_admin_migrator; GRANT USAGE ON SCHEMA public TO potapoff_admin_migrator;" >/dev/null
 docker exec "$admin" psql -U potapoff_admin -d potapoff_admin -v ON_ERROR_STOP=1 \
   -c "CREATE TYPE public.admin_backup_fixture_state AS ENUM ('queued','done'); REVOKE USAGE ON TYPE public.admin_backup_fixture_state FROM PUBLIC; GRANT USAGE ON TYPE public.admin_backup_fixture_state TO potapoff_admin_backup;" >/dev/null
 
@@ -190,12 +192,12 @@ for database in "$product potapoff potapoff potapoff_backup_ci_product_fixture" 
   }
 done
 
-printf 'POSTGRES_PASSWORD=ci-synthetic\nPOSTGRES_BACKUP_USER=potapoff_backup\nPOSTGRES_BACKUP_PASSWORD=%s\n' "$POSTGRES_BACKUP_PASSWORD" > "$scratch/deploy/.env.server"
+printf 'POSTGRES_PASSWORD=ci-synthetic\nPOSTGRES_BACKUP_USER=potapoff_backup\nPOSTGRES_BACKUP_PASSWORD=%s\nPOSTGRES_MIGRATOR_USER=potapoff_migrator\nPOSTGRES_MIGRATOR_PASSWORD=%s\nPOSTGRES_READONLY_USER=potapoff_readonly\n' "$POSTGRES_BACKUP_PASSWORD" "$POSTGRES_MIGRATOR_PASSWORD" > "$scratch/deploy/.env.server"
 printf 'TEST_ONLY=1\n' > "$scratch/deploy/backend.env"
 printf 'ADMIN_ENVIRONMENT=test\n' > "$scratch/deploy/.env.runtime"
 printf 'services: {}\n' > "$scratch/deploy/docker-compose.production.yml"
 printf 'ci-image-tag\n' > "$scratch/deploy/.current-image-tag"
-printf 'ADMIN_ENVIRONMENT=test\nADMIN_STATE_BACKUP_USER=potapoff_admin_backup\nADMIN_STATE_BACKUP_PASSWORD=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n' > "$scratch/admin/.env"
+printf 'ADMIN_ENVIRONMENT=test\nADMIN_STATE_BACKUP_USER=potapoff_admin_backup\nADMIN_STATE_BACKUP_PASSWORD=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\nADMIN_STATE_MIGRATOR_USER=potapoff_admin_migrator\nADMIN_STATE_MIGRATOR_PASSWORD=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\n' > "$scratch/admin/.env"
 printf 'POTAPOFF_INTELLIGENCE_BACKEND=test\n' > "$scratch/admin/.env.intelligence"
 printf '{}\n' > "$scratch/admin/sources.json"
 printf '[]\n' > "$scratch/admin/logs.json"

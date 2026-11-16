@@ -52,6 +52,7 @@ for file in .env.server .env.runtime backend.env docker-compose.production.yml; 
 done
 cp -a "$ROLE_FINGERPRINT_SQL" "$DEST/"
 cp -a "$DEPLOY_DIR/scripts/provision-postgres-roles.sql" "$DEST/"
+cp -a "$SCRIPT_DIR/grant-large-objects.sql" "$DEST/"
 if [[ -r "$DEPLOY_DIR/.current-image-tag" ]]; then
   cp -a "$DEPLOY_DIR/.current-image-tag" "$DEST/"
 fi
@@ -85,6 +86,33 @@ if [[ ! "$POSTGRES_BACKUP_USER" =~ ^[a-z_][a-z0-9_]{0,62}$ || ! "$POSTGRES_BACKU
   echo "Dedicated PostgreSQL backup credentials are missing or invalid" >&2
   exit 1
 fi
+POSTGRES_MIGRATOR_USER="$(sed -n 's/^POSTGRES_MIGRATOR_USER=//p' "$DEPLOY_DIR/.env.server" | tail -n 1)"
+POSTGRES_MIGRATOR_USER="${POSTGRES_MIGRATOR_USER:-potapoff_migrator}"
+POSTGRES_MIGRATOR_PASSWORD="$(sed -n 's/^POSTGRES_MIGRATOR_PASSWORD=//p' "$DEPLOY_DIR/.env.server" | tail -n 1)"
+POSTGRES_READONLY_USER="$(sed -n 's/^POSTGRES_READONLY_USER=//p' "$DEPLOY_DIR/.env.server" | tail -n 1)"
+POSTGRES_READONLY_USER="${POSTGRES_READONLY_USER:-potapoff_readonly}"
+if [[ ! "$POSTGRES_MIGRATOR_USER" =~ ^[a-z_][a-z0-9_]{0,62}$ || ! "$POSTGRES_MIGRATOR_PASSWORD" =~ ^[A-Fa-f0-9]{64}$ || ! "$POSTGRES_READONLY_USER" =~ ^[a-z_][a-z0-9_]{0,62}$ ]]; then
+  echo "Dedicated PostgreSQL migrator or read-only credentials are missing or invalid" >&2
+  exit 1
+fi
+
+# Review finding F3 (issue #216): large-object SELECT grants are stamped at
+# provisioner time only and PostgreSQL has no default privileges for large
+# objects. Refresh the export grants as the migrator (the large-object owner)
+# before every backup cycle so a large object created after provisioning is
+# never silently omitted from the backup-identity dump.
+docker cp "$SCRIPT_DIR/grant-large-objects.sql" "$POSTGRES_CONTAINER:/tmp/grant-large-objects.sql" >/dev/null
+if ! docker_exec_with_pgpassword "$POSTGRES_CONTAINER" "$POSTGRES_MIGRATOR_PASSWORD" \
+  psql -h 127.0.0.1 -X -U "$POSTGRES_MIGRATOR_USER" -d potapoff -v ON_ERROR_STOP=1 \
+  -v migrator_user="$POSTGRES_MIGRATOR_USER" \
+  -v backup_user="$POSTGRES_BACKUP_USER" \
+  -v readonly_user="$POSTGRES_READONLY_USER" \
+  -f /tmp/grant-large-objects.sql >/dev/null; then
+  docker exec "$POSTGRES_CONTAINER" rm -f /tmp/grant-large-objects.sql >/dev/null 2>&1 || true
+  echo "Large-object export grant refresh failed for potapoff" >&2
+  exit 1
+fi
+docker exec "$POSTGRES_CONTAINER" rm -f /tmp/grant-large-objects.sql >/dev/null 2>&1 || true
 
 docker_exec_with_pgpassword "$POSTGRES_CONTAINER" "$POSTGRES_BACKUP_PASSWORD" \
   pg_dump -h 127.0.0.1 -U "$POSTGRES_BACKUP_USER" -d potapoff -Fc \
@@ -123,6 +151,29 @@ if [[ ! "$ADMIN_STATE_BACKUP_USER" =~ ^[a-z_][a-z0-9_]{0,62}$ || ! "$ADMIN_STATE
   echo "Dedicated Control Center PostgreSQL backup credentials are missing or invalid" >&2
   exit 1
 fi
+ADMIN_STATE_MIGRATOR_USER="$(sed -n 's/^ADMIN_STATE_MIGRATOR_USER=//p' "$ADMIN_DIR/.env" | tail -n 1)"
+ADMIN_STATE_MIGRATOR_USER="${ADMIN_STATE_MIGRATOR_USER:-potapoff_admin_migrator}"
+ADMIN_STATE_MIGRATOR_PASSWORD="$(sed -n 's/^ADMIN_STATE_MIGRATOR_PASSWORD=//p' "$ADMIN_DIR/.env" | tail -n 1)"
+if [[ ! "$ADMIN_STATE_MIGRATOR_USER" =~ ^[a-z_][a-z0-9_]{0,62}$ || ! "$ADMIN_STATE_MIGRATOR_PASSWORD" =~ ^[A-Fa-f0-9]{64}$ ]]; then
+  echo "Dedicated Control Center PostgreSQL migrator credentials are missing or invalid" >&2
+  exit 1
+fi
+
+# Same large-object export grant refresh (issue #216) for the Control Center
+# database. The admin provisioner creates no separate read-only identity, so
+# the grant step runs with an empty second grantee.
+docker cp "$SCRIPT_DIR/grant-large-objects.sql" "$ADMIN_POSTGRES_CONTAINER:/tmp/grant-large-objects.sql" >/dev/null
+if ! docker_exec_with_pgpassword "$ADMIN_POSTGRES_CONTAINER" "$ADMIN_STATE_MIGRATOR_PASSWORD" \
+  psql -h 127.0.0.1 -X -U "$ADMIN_STATE_MIGRATOR_USER" -d potapoff_admin -v ON_ERROR_STOP=1 \
+  -v migrator_user="$ADMIN_STATE_MIGRATOR_USER" \
+  -v backup_user="$ADMIN_STATE_BACKUP_USER" \
+  -v readonly_user="" \
+  -f /tmp/grant-large-objects.sql >/dev/null; then
+  docker exec "$ADMIN_POSTGRES_CONTAINER" rm -f /tmp/grant-large-objects.sql >/dev/null 2>&1 || true
+  echo "Large-object export grant refresh failed for potapoff_admin" >&2
+  exit 1
+fi
+docker exec "$ADMIN_POSTGRES_CONTAINER" rm -f /tmp/grant-large-objects.sql >/dev/null 2>&1 || true
 
 # Data dumps use the dedicated read-only backup login over authenticated TCP.
 # The bootstrap login is reserved below for global role metadata and catalog

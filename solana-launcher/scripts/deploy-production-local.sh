@@ -128,6 +128,7 @@ install -m 0644 "$SOURCE_ROOT/solana-launcher/nginx/nginx.conf" "$DEPLOY_DIR/ngi
 install -m 0644 "$SOURCE_ROOT/solana-launcher/prometheus/prometheus.yml" "$DEPLOY_DIR/prometheus/prometheus.yml"
 install -m 0644 "$SOURCE_ROOT/solana-launcher/scripts/postgres-role-restoration-fingerprint.sql" "$DEPLOY_DIR/scripts/postgres-role-restoration-fingerprint.sql"
 install -m 0644 "$SOURCE_ROOT/solana-launcher/scripts/provision-postgres-roles.sql" "$DEPLOY_DIR/scripts/provision-postgres-roles.sql"
+install -m 0644 "$SOURCE_ROOT/solana-launcher/scripts/grant-large-objects.sql" "$DEPLOY_DIR/scripts/grant-large-objects.sql"
 install -m 0700 \
   "$SOURCE_ROOT/solana-launcher/scripts/backup-production.sh" \
   "$SOURCE_ROOT/solana-launcher/scripts/verify-backup-restore.sh" \
