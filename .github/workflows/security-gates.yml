@@ -3,16 +3,6 @@ name: Security Gates
 on:
   pull_request:
     branches: [main]
-    paths:
-      - "solana-launcher/**"
-      - "solana-subscription-service/**"
-      - "telegram-miniapp/backend-new/**"
-      - "telegram-miniapp/bot/**"
-      - "security/**"
-      - ".github/workflows/security-gates.yml"
-      - ".github/workflows/potapoff-predeploy-gate.yml"
-      - ".github/workflows/potapoff-release-images.yml"
-      - ".github/workflows/potapoff-production.yml"
   workflow_dispatch:
 
 concurrency:

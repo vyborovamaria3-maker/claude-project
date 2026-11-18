@@ -6,37 +6,9 @@ name: Intelligence CI
 # manual dispatch on main keep the central self-hosted selection.
 on:
   pull_request:
-    paths:
-      - "intelligence/**"
-      - "scripts/verify_intelligence.py"
-      - "admin-site/app/intelligence_view.py"
-      - "admin-site/app/intelligence_view_factory.py"
-      - "admin-site/app/main_admin.py"
-      - "admin-site/app/config.py"
-      - "admin-site/tests/test_intelligence_*.py"
-      - "admin-site/docker-compose.yml"
-      - "admin-site/.env.example"
-      - "admin-site/.env.intelligence.example"
-      - "admin-site/requirements.txt"
-      - ".gitignore"
-      - ".github/workflows/intelligence-ci.yml"
   push:
     branches:
       - main
-    paths:
-      - "intelligence/**"
-      - "scripts/verify_intelligence.py"
-      - "admin-site/app/intelligence_view.py"
-      - "admin-site/app/intelligence_view_factory.py"
-      - "admin-site/app/main_admin.py"
-      - "admin-site/app/config.py"
-      - "admin-site/tests/test_intelligence_*.py"
-      - "admin-site/docker-compose.yml"
-      - "admin-site/.env.example"
-      - "admin-site/.env.intelligence.example"
-      - "admin-site/requirements.txt"
-      - ".gitignore"
-      - ".github/workflows/intelligence-ci.yml"
   workflow_dispatch:
 
 permissions:
