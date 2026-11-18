@@ -1,3 +1,4 @@
+import {emitPostgres,POSTGRES_OUTBOX_DDL} from "@claude-project/event-outbox";
 import {readFile} from "node:fs/promises";
 import {fileURLToPath} from "node:url";
 import {dirname,resolve} from "node:path";
@@ -8,6 +9,7 @@ const DAY_MS=86_400_000;
 export async function installSchema(pool){
   const sql=await readFile(resolve(here,"../schema.sql"),"utf8");
   await pool.query(sql);
+  await pool.query(POSTGRES_OUTBOX_DDL);
 }
 
 function requireRetention(days){
@@ -24,6 +26,25 @@ export function isExpiredObservation(observation,retentionDays,clock=new Date())
   // Future-dated data is not proof of historical publication and must be rejected.
   if(published>clock.getTime()+5*60_000)throw new Error("Future-dated Discord message");
   return published < clock.getTime()-retentionDays*DAY_MS;
+}
+
+
+async function emitDiscordObservation(client,o){
+  const eventKind=o.kind==="observed"?"message_observed":o.kind==="edited"?"message_edited":"message_deleted";
+  const eventKey=["discord:message",o.channelId,o.messageId,o.revisionKey].join(":");
+  const payload={
+    kind:o.kind,channelId:o.channelId,messageId:o.messageId,revisionKey:o.revisionKey,
+    observedAt:o.observedAt,
+    occurredAt:o.kind==="deleted"?null:o.kind==="edited"?o.editedAt:o.occurredAt,
+    contentSha256:o.kind==="deleted"?null:o.contentSha,
+    ...(o.kind==="deleted"?{contentErased:true}:{}),
+    producerVersion:"0.1.0",
+  };
+  // The outbox insert uses the SAME transaction as message/revision storage.
+  // No raw content, author ID, guild ID or attachment URL crosses this boundary.
+  await emitPostgres(client,{
+    sourceSystem:"discord",eventKind,eventKey,schemaVersion:"discord-message-v1",payload,
+  });
 }
 
 export async function storeObservation(pool, o, retentionDays, clock=new Date()){
@@ -88,6 +109,7 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date())
         [o.messageId,o.guildId,o.channelId,o.authorId,o.occurredAt,o.observedAt,
          o.editedAt,o.content,o.contentSha,o.revisionAt]);
     }
+    if(!stale)await emitDiscordObservation(client,o);
     await client.query("COMMIT");
     return {status:stale?"stale":o.kind==="deleted"?"deleted":"stored"};
   }catch(e){await client.query("ROLLBACK");throw e}

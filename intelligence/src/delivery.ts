@@ -1,7 +1,7 @@
 import type { ClaimOptions, ClaimedEvent } from "@claude-project/event-outbox";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
-  adaptLegacyOutboxEventToV2, buildTimelineEvent, getSchemaDefinition, toUtcIso,
+  adaptLegacyOutboxEventToV2, buildDiscordMessageEnvelope, buildTimelineEvent, getSchemaDefinition, toUtcIso,
   validateEventEnvelopeV2, validateVerifiedTokenLinkEvent, validateTokenLinksInvalidatedEvent,
   type TimelineEvent,
 } from "@claude-project/contracts";
@@ -141,6 +141,29 @@ function prepareDeliveryEvent(event: DeliveryEvent): PreparedDeliveryEvent {
       body: extractEnvelope(normalizedEvent),
       envelopeSha256: envelope.payloadSha256,
     };
+  }
+
+  if (event.sourceSystem === "discord") {
+    if (event.createdAt === undefined) throw new TypeError("Discord V2 delivery requires source outbox created_at");
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new TypeError("Invalid Discord source outbox payload");
+    const raw = payload as Record<string, unknown>;
+    const allowed = new Set(["kind","channelId","messageId","revisionKey","observedAt","occurredAt","contentSha256","contentErased","producerVersion"]);
+    for (const key of Object.keys(raw)) if (!allowed.has(key)) throw new TypeError("Unexpected Discord outbox payload field");
+    const envelope = buildDiscordMessageEnvelope({
+      kind: raw.kind as "observed"|"edited"|"deleted", channelId: raw.channelId as string,
+      messageId: raw.messageId as string, revisionKey: raw.revisionKey as string,
+      observedAt: raw.observedAt as string, emittedAt: event.createdAt,
+      occurredAt: (raw.occurredAt ?? null) as string|null,
+      contentSha256: (raw.contentSha256 ?? null) as string|null,
+      contentErased: raw.contentErased as boolean|undefined,
+      producerVersion: raw.producerVersion as string,
+    });
+    if (envelope.sourceSystem !== event.sourceSystem || envelope.eventKind !== event.eventKind ||
+        envelope.eventKey !== event.eventKey || envelope.schemaVersion !== event.schemaVersion) {
+      throw new TypeError("Discord V2 envelope and source outbox identities differ");
+    }
+    const normalizedEvent: DeliveryEvent = {...event, payload: envelope.payload as Record<string, unknown>};
+    return {event: normalizedEvent, body: extractEnvelope(normalizedEvent), envelopeSha256: envelope.payloadSha256};
   }
 
   if (event.createdAt !== undefined &&

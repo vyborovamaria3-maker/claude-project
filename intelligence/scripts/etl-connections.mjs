@@ -16,12 +16,12 @@ export function requiredEnv(name,env=process.env) {
 }
 
 export function postgresSourcePoolOptions(source,write,env=process.env){
-  if(!["x","tg"].includes(source)||typeof write!=="boolean")throw new Error("invalid PostgreSQL source connection mode");
+  if(!["x","tg","discord"].includes(source)||typeof write!=="boolean")throw new Error("invalid PostgreSQL source connection mode");
   return {
-    connectionString:requiredEnv(source==="x"?"X_SOURCE_DATABASE_URL":"TG_SOURCE_DATABASE_URL",env),
+    connectionString:requiredEnv(source==="x"?"X_SOURCE_DATABASE_URL":source==="tg"?"TG_SOURCE_DATABASE_URL":"DISCORD_SOURCE_DATABASE_URL",env),
     max:2,connectionTimeoutMillis:5000,
     query_timeout:30_000,statement_timeout:30_000,
-    application_name:write?"potapoff-intelligence-source-writer":"potapoff-intelligence-source-reader",
+    application_name:source==="discord"?(write?"potapoff-intelligence-discord-source-writer":"potapoff-intelligence-discord-source-reader"):(write?"potapoff-intelligence-source-writer":"potapoff-intelligence-source-reader"),
     ...(write?{}:{options:"-c default_transaction_read_only=on"}),
   };
 }
@@ -45,7 +45,7 @@ export function sourceConnection(source,write) {
       };
     }catch(error){db.close();throw error;}
   }
-  if(!["x","tg"].includes(source))throw new Error("unknown source");
+  if(!["x","tg","discord"].includes(source))throw new Error("unknown source");
   const pool=new pg.Pool(postgresSourcePoolOptions(source,write));
   return {
     kind:"pg",connection:pool,
@@ -134,7 +134,15 @@ export async function checkDestination(pool,options={}){
     (SELECT pg_get_constraintdef(oid) FROM pg_constraint
       WHERE conrelid=to_regclass('intelligence_inbox')
         AND conname='intelligence_inbox_envelope_sha256_check')
-      AS inbox_envelope_fingerprint_definition`);
+      AS inbox_envelope_fingerprint_definition,
+    (SELECT pg_get_constraintdef(oid) FROM pg_constraint
+      WHERE conrelid=to_regclass('entity_evidence')
+        AND conname='entity_evidence_evidence_kind_check' AND contype='c' AND convalidated)
+      AS discord_evidence_definition,
+    (SELECT pg_get_constraintdef(oid) FROM pg_constraint
+      WHERE conrelid=to_regclass('timeline_events')
+        AND conname='timeline_events_timeline_kind_check' AND contype='c' AND convalidated)
+      AS discord_timeline_definition`);
   const row=result.rows[0];
   // Every consumer may encounter token-link events, so reject missing 004 before claiming.
   if(!row?.inbox||!row.registry||!row.evidence||!row.timeline||!row.token_links){
@@ -152,6 +160,14 @@ export async function checkDestination(pool,options={}){
     await assertEnvelopeFingerprintContract(
       pool,row.inbox_envelope_fingerprint_definition,
     );
+  }
+  if(options.requireDiscordEvidence===true){
+    const evidence=String(row.discord_evidence_definition??"");
+    const timeline=String(row.discord_timeline_definition??"");
+    if(!evidence.includes("discord_message") || !timeline.includes("discord_message_published") ||
+       !timeline.includes("discord_message_edited") || !timeline.includes("discord_message_deleted")){
+      throw new Error("destination Intelligence migration 022 required before Discord source claims");
+    }
   }
   if(options.requireBlockchainRevisions===true && !row.blockchain_revisions){
     throw new Error("destination Intelligence migration 005 required before Blockchain claim");

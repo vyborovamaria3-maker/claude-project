@@ -16,25 +16,25 @@ const url=process.env.INTELLIGENCE_TEST_DB_URL;
 
 test("independent X/TG PG sources deliver to a separate Intelligence schema with ACK-after-commit",{skip:!url},async()=>{
   const suffix=randomBytes(5).toString("hex");
-  const sources={x:"source_x_"+suffix,tg:"source_tg_"+suffix,dst:"intelligence_"+suffix};
+  const sources={x:"source_x_"+suffix,tg:"source_tg_"+suffix,discord:"source_discord_"+suffix,dst:"intelligence_"+suffix};
   const admin=new pg.Client({connectionString:url});
-  let xPool, tgPool, destPool;
+  let xPool, tgPool, discordPool, destPool;
   await admin.connect();
   try {
     for (const schema of Object.values(sources)) {
       await admin.query('CREATE SCHEMA "'+schema+'"');
     }
-    for (const name of ["x","tg"]) {
+    for (const name of ["x","tg","discord"]) {
       await admin.query('SET search_path TO "'+sources[name]+'"');
       await admin.query(POSTGRES_OUTBOX_DDL);
     }
     await admin.query('SET search_path TO "'+sources.dst+'"');
-    for (const name of ["001_entity_registry.sql","017_inbox_payload_fingerprint.sql","002_timeline.sql","004_token_link_observations.sql"]) {
+    for (const name of ["001_entity_registry.sql","017_inbox_payload_fingerprint.sql","002_timeline.sql","004_token_link_observations.sql","019_inbox_envelope_fingerprint.sql","022_discord_source_contracts.sql"]) {
       await admin.query(await readFile(new URL("../migrations/"+name,import.meta.url),"utf8"));
     }
     const poolFor=(schema)=>new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:3});
-    xPool=poolFor(sources.x); tgPool=poolFor(sources.tg); destPool=poolFor(sources.dst);
-    for (const [pool, schema] of [[xPool,sources.x],[tgPool,sources.tg],[destPool,sources.dst]]) {
+    xPool=poolFor(sources.x); tgPool=poolFor(sources.tg); discordPool=poolFor(sources.discord); destPool=poolFor(sources.dst);
+    for (const [pool, schema] of [[xPool,sources.x],[tgPool,sources.tg],[discordPool,sources.discord],[destPool,sources.dst]]) {
       assert.equal((await pool.query("SELECT current_schema() AS name")).rows[0].name,schema);
     }
     const when="2026-10-18T01:00:00Z";
@@ -104,6 +104,57 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
     // envelopes (not a mocked claim function). Destination transaction commit
     // must precede an independent source ACK, and a source edit cannot revoke
     // evidence from another social platform.
+
+    // Discord compact source events are upgraded to V2 using the immutable
+    // source outbox created_at, then committed to Inbox/evidence/timeline before ACK.
+    const channelId="223456789012345678",messageId="323456789012345678";
+    const revision="d".repeat(64),contentHash="a".repeat(64);
+    const discordEvent={
+      sourceSystem:"discord",eventKind:"message_observed",
+      eventKey:["discord:message",channelId,messageId,revision].join(":"),
+      schemaVersion:"discord-message-v1",
+      payload:{kind:"observed",channelId,messageId,revisionKey:revision,
+        observedAt:seen,occurredAt:seen,contentSha256:contentHash,producerVersion:"0.1.0"},
+    };
+    await emitInNativeTransaction(discordPool,discordEvent);
+    const discordStats=await runDeliveryBatch(port(discordPool),destPool,
+      {workerId:"discord-worker",batchSize:2,leaseMs:120000});
+    assert.equal(discordStats.delivered,1,JSON.stringify(discordStats));
+    assert.equal(discordStats.failed,0);
+    const discordInbox=await destPool.query(
+      "SELECT source_system,evidence_source_id,envelope_sha256 FROM intelligence_inbox WHERE source_system='discord'");
+    assert.equal(discordInbox.rows.length,1);
+    assert.equal(discordInbox.rows[0].evidence_source_id,"discord:message:"+channelId+":"+messageId);
+    assert.match(discordInbox.rows[0].envelope_sha256,/^[a-f0-9]{64}$/);
+    const discordTimeline=await destPool.query(
+      "SELECT timeline_kind FROM timeline_events WHERE source_system='discord'");
+    assert.deepEqual(discordTimeline.rows.map(r=>r.timeline_kind),["discord_message_published"]);
+
+    // ACK loss must replay as a destination duplicate, not a second timeline row.
+    await discordPool.query("UPDATE outbox_events SET processed_at=NULL,lease_owner=NULL,lease_until=NULL WHERE source_system='discord'");
+    const discordReplay=await runDeliveryBatch(port(discordPool),destPool,
+      {workerId:"discord-replay",batchSize:1,leaseMs:120000});
+    assert.equal(discordReplay.duplicates,1);
+    assert.equal(discordReplay.delivered,0);
+    assert.equal((await destPool.query("SELECT count(*)::int AS n FROM timeline_events WHERE source_system='discord'")).rows[0].n,1);
+
+    // Deletion is a first-class tombstone with no body hash, not a silent drop.
+    const deleteRevision="e".repeat(64),deletedAt=new Date(Date.now()+2000).toISOString();
+    const deletion={
+      sourceSystem:"discord",eventKind:"message_deleted",
+      eventKey:["discord:message",channelId,messageId,deleteRevision].join(":"),
+      schemaVersion:"discord-message-v1",
+      payload:{kind:"deleted",channelId,messageId,revisionKey:deleteRevision,
+        observedAt:deletedAt,occurredAt:null,contentSha256:null,contentErased:true,producerVersion:"0.1.0"},
+    };
+    await emitInNativeTransaction(discordPool,deletion);
+    const deletedStats=await runDeliveryBatch(port(discordPool),destPool,
+      {workerId:"discord-delete",batchSize:1,leaseMs:120000});
+    assert.equal(deletedStats.delivered,1,JSON.stringify(deletedStats));
+    assert.equal(deletedStats.failed,0);
+    const kinds=await destPool.query("SELECT timeline_kind FROM timeline_events WHERE source_system='discord' ORDER BY occurred_at");
+    assert.deepEqual(kinds.rows.map(r=>r.timeline_kind),["discord_message_published","discord_message_deleted"]);
+
     const mint="So11111111111111111111111111111111111111112";
     const token=formatTokenId("solana",mint);
     const seen="2026-10-22T13:00:00Z";
@@ -240,6 +291,7 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
   }finally{
     if(xPool)await xPool.end();
     if(tgPool)await tgPool.end();
+    if(discordPool)await discordPool.end();
     if(destPool)await destPool.end();
     for(const schema of Object.values(sources).reverse()) {
       try{await admin.query('DROP SCHEMA IF EXISTS "'+schema+'" CASCADE')}catch{}

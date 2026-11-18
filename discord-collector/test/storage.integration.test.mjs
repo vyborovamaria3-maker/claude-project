@@ -26,16 +26,34 @@ test("PostgreSQL revisions, stale history, deletions and revoke/retention", {ski
     const origin=normalizeMessage(base,"observed",now.toISOString());
     assert.equal((await storeObservation(pool,origin,30)).status,"stored");
     assert.equal((await storeObservation(pool,origin,30)).status,"stored");
+    let queued=await pool.query("SELECT event_kind,event_key,payload FROM outbox_events WHERE source_system='discord' ORDER BY id");
+    assert.equal(queued.rows.length,1,"duplicate observations must be idempotent in the source outbox");
+    assert.equal(queued.rows[0].event_kind,"message_observed");
+    assert.equal(queued.rows[0].payload.channelId,channelId);
+    assert.equal(queued.rows[0].payload.contentSha256,origin.contentSha);
+    assert.equal("content" in queued.rows[0].payload,false);
+    assert.equal("authorId" in queued.rows[0].payload,false);
     const edited=normalizeMessage({...base,editedAt,content:"edited message"},"edited",now.toISOString());
     assert.equal((await storeObservation(pool,edited,30)).status,"stored");
     const stale=normalizeMessage(base,"observed",new Date(now.getTime()+1000).toISOString());
     assert.equal((await storeObservation(pool,stale,30)).status,"stale");
+    queued=await pool.query("SELECT event_kind,event_key,payload FROM outbox_events WHERE source_system='discord' ORDER BY id");
+    assert.equal(queued.rows.length,2,"stale REST history must not create a fresh source event");
+    assert.equal(queued.rows[1].event_kind,"message_edited");
+    assert.equal(queued.rows[1].payload.contentSha256,edited.contentSha);
     const active=await pool.query("SELECT content,revision_at FROM discord_messages WHERE message_id=$1",[messageId]);
     assert.equal(active.rows[0].content,"edited message");
     assert.equal(new Date(active.rows[0].revision_at).getTime(),editedAt.getTime());
     const deletePartial={id:messageId,channelId};
     const deletion=normalizeMessage(deletePartial,"deleted",now.toISOString(),guildId);
     assert.equal((await storeObservation(pool,deletion,30)).status,"deleted");
+    queued=await pool.query("SELECT event_kind,payload FROM outbox_events WHERE source_system='discord' ORDER BY id");
+    assert.equal(queued.rows.length,3);
+    assert.equal(queued.rows[2].event_kind,"message_deleted");
+    assert.equal(queued.rows[2].payload.contentErased,true);
+    assert.equal(queued.rows[2].payload.contentSha256,null);
+    assert.equal("content" in queued.rows[2].payload,false);
+    assert.equal("authorId" in queued.rows[2].payload,false);
     assert.equal((await storeObservation(pool,edited,30)).status,"tombstoned");
     const erased=await pool.query("SELECT content,content_sha256,author_id,deleted_at FROM discord_messages WHERE message_id=$1",[messageId]);
     assert.equal(erased.rows[0].content,null);
@@ -60,6 +78,16 @@ test("PostgreSQL revisions, stale history, deletions and revoke/retention", {ski
       "SELECT resolved_at FROM discord_recovery_checks WHERE channel_id=$1 "+
       "AND status='gap_unresolved' ORDER BY id DESC LIMIT 1",[channelId]);
     assert.ok(status.rows[0].resolved_at);
+
+    // If the outbox insert fails, the message and revision must roll back too.
+    await pool.query("CREATE OR REPLACE FUNCTION fail_discord_outbox_fixture() RETURNS trigger LANGUAGE plpgsql AS $ BEGIN RAISE EXCEPTION 'fixture outbox failure'; END $");
+    await pool.query("CREATE TRIGGER fail_discord_outbox_fixture BEFORE INSERT ON outbox_events FOR EACH ROW EXECUTE FUNCTION fail_discord_outbox_fixture()");
+    const atomic=normalizeMessage({...base,id:"723456789012345678",content:"must roll back"},"observed",now.toISOString());
+    await assert.rejects(storeObservation(pool,atomic,30),/fixture outbox failure/);
+    const rolledBack=await pool.query("SELECT (SELECT count(*) FROM discord_messages WHERE message_id=$1)::int AS messages,(SELECT count(*) FROM discord_message_revisions WHERE message_id=$1)::int AS revisions",[atomic.messageId]);
+    assert.deepEqual(rolledBack.rows[0],{messages:0,revisions:0});
+    await pool.query("DROP TRIGGER fail_discord_outbox_fixture ON outbox_events");
+    await pool.query("DROP FUNCTION fail_discord_outbox_fixture()");
   }finally{
     await pool.end();
   }
