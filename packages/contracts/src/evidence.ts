@@ -31,7 +31,7 @@ export type EvidenceInput = EvidenceMetadata & (
 );
 
 const POSITIVE_ID = /^[1-9][0-9]*$/;
-const DISCORD_SNOWFLAKE = /^[0-9]{15,22}$/;
+const DISCORD_SNOWFLAKE = /^[1-9][0-9]{14,21}$/;
 
 function optionalMetadata(value: string | undefined, label: string): string | undefined {
   if (value === undefined) return undefined;
@@ -135,7 +135,7 @@ export function validateEvidenceRef(input: unknown): EvidenceRef {
     });
   }
   if (raw.sourceKind === "discord_message") {
-    const match = /^discord:message:([0-9]{15,22}):([0-9]{15,22}):([0-9]{15,22})$/.exec(raw.sourceId);
+    const match = /^discord:message:([1-9][0-9]{14,21}):([1-9][0-9]{14,21}):([1-9][0-9]{14,21})$/.exec(raw.sourceId);
     if (!match) throw new TypeError("Invalid Discord message evidence ID");
     return buildEvidenceRef({...metadata,sourceKind:"discord_message",guildId:match[1]!,channelId:match[2]!,messageId:match[3]!});
   }

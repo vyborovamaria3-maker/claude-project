@@ -280,7 +280,7 @@ function normalizeInput<TPayload extends Record<string, unknown>>(
     "clocks", "entityRefs", "evidenceRefs", "coverageRef", "payload",
   ], "event envelope input");
   const sourceSystem = input.sourceSystem as EventSource;
-  if (!["x", "tg", "blockchain"].includes(sourceSystem)) {
+  if (!["x", "tg", "blockchain", "discord"].includes(sourceSystem)) {
     throw new TypeError("Unsupported V2 sourceSystem");
   }
   const eventKind = nonempty(input.eventKind, "eventKind");

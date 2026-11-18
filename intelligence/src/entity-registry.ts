@@ -32,7 +32,7 @@ function validateEvidence(evidence: EvidenceRef): EvidenceRef {
     x_tweet: /^x:tweet:[1-9][0-9]*$/,
     tg_message: /^tg:message:(?:[1-9][0-9]*|-[1-9][0-9]*):[1-9][0-9]*$/,
     chain_tx: /^chain:tx:solana:[A-Za-z0-9]+$/,
-    discord_message: /^discord:message:[0-9]{15,22}:[0-9]{15,22}:[0-9]{15,22}$/,
+    discord_message: /^discord:message:[1-9][0-9]{14,21}:[1-9][0-9]{14,21}:[1-9][0-9]{14,21}$/,
   };
   if (!patterns[evidence.sourceKind].test(id)) {
     throw new TypeError("Evidence/source identity mismatch");
@@ -78,7 +78,7 @@ export function validateRegistryEvent(input: RegistryEvent): RegistryEvent {
     firstSeenAt: ref.firstSeenAt, lastSeenAt: ref.lastSeenAt,
   }));
   if (input.sourceSystem === "discord") {
-    const match = /^discord:message:([0-9]{15,22}):([0-9]{15,22}):([0-9]{15,22})$/.exec(evidenceRef.sourceId);
+    const match = /^discord:message:([1-9][0-9]{14,21}):([1-9][0-9]{14,21}):([1-9][0-9]{14,21})$/.exec(evidenceRef.sourceId);
     if (!match || entityRefs.length !== 1 || entityRefs[0]!.kind !== "source" || entityRefs[0]!.canonicalId !== "discord:channel:" + match[2]) {
       throw new TypeError("Discord evidence must resolve to exactly its canonical channel source");
     }

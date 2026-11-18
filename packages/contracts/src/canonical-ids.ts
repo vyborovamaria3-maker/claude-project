@@ -115,7 +115,7 @@ function validateAccountId(platform: SocialPlatform, accountId: unknown): string
   if (typeof accountId !== "string") throw new TypeError("Account ID must be a string");
   if (platform === "x" && DIGITS.test(accountId)) return accountId;
   if (platform === "tg" && TG_DIGITS.test(accountId)) return accountId;
-  if (platform === "discord" && /^[0-9]{15,22}$/.test(accountId)) return accountId;
+  if (platform === "discord" && /^[1-9][0-9]{14,21}$/.test(accountId)) return accountId;
   throw new TypeError("Stable numeric X/TG/Discord ID required; do not use a handle");
 }
 

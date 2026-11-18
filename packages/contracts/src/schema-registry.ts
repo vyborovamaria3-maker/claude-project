@@ -85,8 +85,8 @@ function evidenceSchema(sourceKind: EvidenceSourceKind, sourceIdPattern: string)
 const X_EVIDENCE = evidenceSchema("x_tweet", "^x:tweet:[1-9][0-9]*$");
 const TG_EVIDENCE = evidenceSchema("tg_message", "^tg:message:-?(?:[1-9][0-9]*):[1-9][0-9]*$");
 const CHAIN_EVIDENCE = evidenceSchema("chain_tx", "^chain:tx:solana:[1-9A-HJ-NP-Za-km-z]+$");
-const DISCORD_EVIDENCE = evidenceSchema("discord_message", "^discord:message:[0-9]{15,22}:[0-9]{15,22}:[0-9]{15,22}$");
-const DISCORD_SNOWFLAKE: JsonSchema = { type: "string", pattern: "^[0-9]{15,22}$", minLength: 15, maxLength: 22 };
+const DISCORD_EVIDENCE = evidenceSchema("discord_message", "^discord:message:[1-9][0-9]{14,21}:[1-9][0-9]{14,21}:[1-9][0-9]{14,21}$");
+const DISCORD_SNOWFLAKE: JsonSchema = { type: "string", pattern: "^[1-9][0-9]{14,21}$", minLength: 15, maxLength: 22 };
 const DISCORD_MESSAGE_REVISION_SCHEMA: JsonSchema = {
   type: "object", required: ["guildId", "channelId", "messageId", "revisionAt"],
   additionalProperties: false,
@@ -459,7 +459,7 @@ function validateLegacySemantics(identity: SchemaIdentity, payloadValue: unknown
       throw new TypeError("Telegram event source entity does not match message evidence");
     }
   } else if (identity.sourceSystem === "discord") {
-    const match = /^discord:message:([0-9]{15,22}):([0-9]{15,22}):([0-9]{15,22})$/.exec(evidenceRef.sourceId);
+    const match = /^discord:message:([1-9][0-9]{14,21}):([1-9][0-9]{14,21}):([1-9][0-9]{14,21})$/.exec(evidenceRef.sourceId);
     if (!match || entityRefs.length !== 1 || entityRefs[0]!.kind !== "source" ||
         entityRefs[0]!.canonicalId !== "discord:channel:" + match[2]) {
       throw new TypeError("Discord event must reference exactly its canonical channel source");
