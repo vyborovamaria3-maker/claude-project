@@ -328,7 +328,7 @@ test("Discord V2 message envelope validates source identity, channel provenance 
       registryEvent: { ...payload.registryEvent, evidenceRef: { ...evidenceRef, rawPointer: "private://message-body" } },
       timelineEvent: { ...payload.timelineEvent, evidenceRef: { ...evidenceRef, rawPointer: "private://message-body" } },
     },
-  }), /not an allowed field/);
+  }), /cannot carry raw content pointers or content hashes/);
   assert.throws(() => buildEventEnvelopeV2({
     sourceSystem: "discord", eventKind: "discord_message_observed", eventKey,
     schemaVersion: "discord-message-v1",
