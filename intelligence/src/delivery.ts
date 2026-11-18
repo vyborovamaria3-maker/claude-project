@@ -315,6 +315,32 @@ async function revokeRetiredTextSnapshots(
       event.sourceSystem,body.registryEvent.evidenceRef.sourceId,
     ]);
 }
+/** A Discord delete is a tombstone, not a timeline row. Retract the
+ * earlier metadata-only observed/edited rows and evidence in the SAME inbox
+ * transaction, while preserving the deletion evidence as an idempotent audit.
+ * No message text, author ID or content fingerprint is present in the target.
+ */
+async function retractDiscordMessage(
+  tx:PgTransaction,event:DeliveryEvent,body:RegistryOutboxPayload,
+):Promise<void>{
+  if(event.sourceSystem!=="discord"||event.eventKind!=="discord_message_deleted")return;
+  const sourceId=body.registryEvent.evidenceRef.sourceId;
+  await tx.query(`DELETE FROM timeline_event_entities AS e
+    USING timeline_events AS t
+    WHERE e.source_system=t.source_system
+      AND e.source_event_kind=t.source_event_kind
+      AND e.event_key=t.event_key
+      AND t.source_system='discord'
+      AND t.evidence_source_id=$1
+      AND t.source_event_kind IN ('discord_message_observed','discord_message_edited')`,[sourceId]);
+  await tx.query(`DELETE FROM timeline_events
+    WHERE source_system='discord' AND evidence_source_id=$1
+      AND source_event_kind IN ('discord_message_observed','discord_message_edited')`,[sourceId]);
+  await tx.query(`DELETE FROM entity_evidence
+    WHERE source_system='discord' AND evidence_source_id=$1
+      AND event_kind IN ('discord_message_observed','discord_message_edited')`,[sourceId]);
+}
+
 /** Reuse delivery's privacy/invalidation hooks for read-only legacy source
  * snapshots. Caller owns the transaction, including its durable watch cursor. */
 async function ingestPreparedDestinationEvent(
@@ -324,6 +350,9 @@ async function ingestPreparedDestinationEvent(
   const { event, body, envelopeSha256 } = prepared;
   const fresh = await ingestRegistryEvent(tx, body.registryEvent,
     envelopeSha256 === undefined ? {} : { envelopeSha256 });
+  // Run even for a duplicate tombstone: the retraction is idempotent and
+  // repairs any prior partial deployment that stored the tombstone first.
+  await retractDiscordMessage(tx,event,body);
   if(event.eventKind==="token_link_verified"||event.eventKind==="token_links_invalidated"){
     await ingestTokenLinkObservation(tx,{
       sourceSystem:event.sourceSystem as "x"|"tg",
