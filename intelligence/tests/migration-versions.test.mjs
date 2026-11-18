@@ -11,7 +11,7 @@ test("SQL migrations have unique sequential version numbers",async()=>{
       "duplicate migration version "+prefix+" in "+byVersion.get(prefix)+" and "+name);
     byVersion.set(prefix,name);
   }
-  for(let n=1;n<=20;n++)assert.ok(byVersion.has(n),
+  for(let n=1;n<=21;n++)assert.ok(byVersion.has(n),
     "missing migration "+String(n).padStart(3,"0"));
   const privacy=await readFile(new URL("014_privacy_evidence_indexes.sql",root),"utf8");
   assert.match(privacy,/idx_intelligence_inbox_evidence_source/);
@@ -36,4 +36,9 @@ test("SQL migrations have unique sequential version numbers",async()=>{
   assert.match(deadLetter,/token_alert_status_history_status_check/);
   assert.match(deadLetter,/status = 'sending'/);
   assert.match(deadLetter,/INTERVAL '10 minutes'/);
+  const fencing=await readFile(new URL("021_alert_claim_fencing.sql",root),"utf8");
+  assert.match(fencing,/ADD COLUMN IF NOT EXISTS claim_token uuid/);
+  assert.match(fencing,/needs_review/);
+  assert.match(fencing,/delivery_attempts >= 10/);
+  assert.match(fencing,/INTERVAL '10 minutes'/);
 });
