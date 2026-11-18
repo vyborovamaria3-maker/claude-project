@@ -4,9 +4,10 @@ import {randomBytes} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import pg from "pg";
 import {
-  buildEvidenceRef,buildEntityRef,buildTimelineEvent,buildEventEnvelopeV2,formatSourceId,
+  buildEvidenceRef,buildEntityRef,buildTimelineEvent,buildEventEnvelopeV2,formatSourceId,validateEventEnvelopeV2,
 } from "@claude-project/contracts";
 import {runDeliveryBatch} from "../dist/index.js";
+import {validateRegistryEvent} from "../dist/entity-registry.js";
 
 const DB_URL=process.env.INTELLIGENCE_TEST_DB_URL;
 const guildId="123456789012345678";
@@ -95,15 +96,32 @@ test("Discord V2 delivery stores metadata and a delete tombstone retracts earlie
       };
       return {...await runDeliveryBatch(source,pool,{workerId:"discord-test",batchSize:1,leaseMs:5000}),failureCodes};
     };
+    const validateBeforeDelivery=event=>{
+      const envelope=validateEventEnvelopeV2(event.payload);
+      const body=envelope.payload;
+      const registry=validateRegistryEvent(body.registryEvent);
+      if(body.timelineEvent){
+        const timeline=buildTimelineEvent(body.timelineEvent);
+        assert.equal(timeline.eventKey,registry.eventKey,"timeline and registry event keys");
+        assert.deepEqual(timeline.entityRefs,registry.entityRefs,"timeline and registry entity refs");
+        assert.equal(timeline.evidenceRef.sourceId,registry.evidenceRef.sourceId,"timeline and registry evidence source");
+        assert.equal(timeline.evidenceRef.observedAt,registry.evidenceRef.observedAt,"timeline and registry observedAt");
+        assert.equal(timeline.evidenceRef.occurredAt,registry.evidenceRef.occurredAt,"timeline and registry occurredAt");
+      }
+    };
     const createdAt="2026-11-18T18:00:00.000Z";
     const observedAt="2026-11-18T18:00:02.000Z";
     const emittedAt="2026-11-18T18:00:03.000Z";
-    const observedResult=await deliver(discordEvent("observed",createdAt,observedAt,emittedAt));
+    const observedEvent=discordEvent("observed",createdAt,observedAt,emittedAt);
+    validateBeforeDelivery(observedEvent);
+    const observedResult=await deliver(observedEvent);
     assert.equal(observedResult.delivered,1,JSON.stringify(observedResult));
     const editedAt="2026-11-18T18:05:00.000Z";
     const editedObservedAt="2026-11-18T18:05:01.000Z";
     const editedEmittedAt="2026-11-18T18:05:02.000Z";
-    const editedResult=await deliver(discordEvent("edited",editedAt,editedObservedAt,editedEmittedAt));
+    const editedEvent=discordEvent("edited",editedAt,editedObservedAt,editedEmittedAt);
+    validateBeforeDelivery(editedEvent);
+    const editedResult=await deliver(editedEvent);
     assert.equal(editedResult.delivered,1,JSON.stringify(editedResult));
     let rows=await pool.query(
       "SELECT COUNT(*)::int AS n FROM timeline_events WHERE source_system='discord' AND evidence_source_id=$1",
@@ -117,6 +135,7 @@ test("Discord V2 delivery stores metadata and a delete tombstone retracts earlie
     const deletedObservedAt="2026-11-18T18:06:00.000Z";
     const deletedEmittedAt="2026-11-18T18:06:01.000Z";
     const tombstone=discordEvent("deleted",undefined,deletedObservedAt,deletedEmittedAt);
+    validateBeforeDelivery(tombstone);
     const deletedResult=await deliver(tombstone);
     assert.equal(deletedResult.delivered,1,JSON.stringify(deletedResult));
     rows=await pool.query(
