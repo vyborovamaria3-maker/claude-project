@@ -8,7 +8,7 @@ import {
 } from "@claude-project/contracts";
 import {runDeliveryBatch} from "../dist/index.js";
 
-const URL=process.env.INTELLIGENCE_TEST_DB_URL;
+const DB_URL=process.env.INTELLIGENCE_TEST_DB_URL;
 const guildId="123456789012345678";
 const channelId="223456789012345678";
 const messageId="323456789012345678";
@@ -62,10 +62,10 @@ function discordEvent(kind,occurredAt,observedAt,emittedAt){
 }
 
 test("Discord V2 delivery stores metadata and a delete tombstone retracts earlier timeline/evidence atomically",{
-  skip:!URL,
+  skip:!DB_URL,
 },async()=>{
   const schema="discord_delivery_"+randomBytes(5).toString("hex");
-  const admin=new pg.Client({connectionString:URL});
+  const admin=new pg.Client({connectionString:DB_URL});
   let pool;
   await admin.connect();
   try{

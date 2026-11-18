@@ -81,15 +81,16 @@ export async function assertEnvelopeFingerprintContract(pool,definition){
       +"missing or non-CHECK constraint",
     );
   }
-  await pool.query("CREATE TEMP TABLE intelligence_inbox_envelope_probe (envelope_sha256 text)");
+  const client=typeof pool.connect==="function"?await pool.connect():pool;
   try{
-    await pool.query(
+    await client.query("CREATE TEMP TABLE intelligence_inbox_envelope_probe (envelope_sha256 text)");
+    await client.query(
       "ALTER TABLE intelligence_inbox_envelope_probe "
       +"ADD CONSTRAINT intelligence_inbox_envelope_probe_check "+definition,
     );
     for(const [value,mustReject] of ENVELOPE_PROBE_VALUES){
       try{
-        await pool.query(
+        await client.query(
           "INSERT INTO intelligence_inbox_envelope_probe(envelope_sha256) VALUES ($1)",
           [value],
         );
@@ -110,7 +111,8 @@ export async function assertEnvelopeFingerprintContract(pool,definition){
       }
     }
   }finally{
-    await pool.query("DROP TABLE IF EXISTS intelligence_inbox_envelope_probe");
+    try{await client.query("DROP TABLE IF EXISTS intelligence_inbox_envelope_probe");}
+    finally{if(client!==pool)client.release();}
   }
 }
 
