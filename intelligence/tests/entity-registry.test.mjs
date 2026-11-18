@@ -154,3 +154,31 @@ test("Discord registry events are accepted only with canonical channel provenanc
     })],
   }), /canonical channel source/);
 });
+
+
+test("Discord registry rejects Snowflake values outside the unsigned 64-bit range", () => {
+  const guildId = "12345678901234567";
+  const channelId = "22345678901234567";
+  const messageId = "32345678901234567";
+  const observedAt = "2026-11-18T18:00:02Z";
+  const valid = {
+    sourceSystem: "discord", eventKind: "discord_message_observed",
+    eventKey: "discord:message:" + guildId + ":" + channelId + ":" + messageId + ":observed",
+    schemaVersion: "discord-message-v1",
+    entityRefs: [buildEntityRef({
+      kind: "source", canonicalId: formatSourceId("discord", channelId),
+      firstSeenAt: observedAt, lastSeenAt: observedAt,
+    })],
+    evidenceRef: buildEvidenceRef({
+      sourceKind: "discord_message", guildId, channelId, messageId,
+      occurredAt: "2026-11-18T18:00:00Z", observedAt,
+    }),
+  };
+  assert.throws(() => validateRegistryEvent({
+    ...valid,
+    evidenceRef: {
+      ...valid.evidenceRef,
+      sourceId: "discord:message:18446744073709551616:" + channelId + ":" + messageId,
+    },
+  }), /Invalid Discord Snowflake evidence/);
+});

@@ -390,3 +390,75 @@ test("Discord delete event is a tombstone and cannot carry text or a timeline bo
   });
   assert.equal(validateEventEnvelopeV2(JSON.parse(JSON.stringify(event))).eventKind, "discord_message_deleted");
 });
+
+
+test("Discord edits use the revision timestamp as occurredAt and a revision-specific event key", () => {
+  const guildId = "12345678901234567";
+  const channelId = "22345678901234567";
+  const messageId = "32345678901234567";
+  const revisionAt = "2026-11-18T18:00:01.000Z";
+  const observedAt = "2026-11-18T18:00:02.000Z";
+  const emittedAt = "2026-11-18T18:00:03.000Z";
+  const sourceId = "discord:message:" + guildId + ":" + channelId + ":" + messageId;
+  const eventKey = sourceId + ":edited:" + revisionAt;
+  const evidenceRef = {
+    sourceKind: "discord_message", sourceId, observedAt, occurredAt: revisionAt,
+    provider: "discord-gateway", parserVersion: "discord-collector-v1",
+  };
+  const entityRefs = [{
+    kind: "source", canonicalId: "discord:channel:" + channelId,
+    firstSeenAt: observedAt, lastSeenAt: observedAt,
+  }];
+  const payload = {
+    registryEvent: {
+      sourceSystem: "discord", eventKind: "discord_message_edited", eventKey,
+      schemaVersion: "discord-message-v1", entityRefs, evidenceRef,
+    },
+    timelineEvent: {
+      schemaVersion: "timeline-v1", eventKey, kind: "discord_message_edited",
+      occurredAt: revisionAt, observedAt, entityRefs, evidenceRef, payload: {},
+    },
+    discordMessage: { guildId, channelId, messageId, revisionAt },
+  };
+  const event = buildEventEnvelopeV2({
+    sourceSystem: "discord", eventKind: "discord_message_edited", eventKey,
+    schemaVersion: "discord-message-v1",
+    producer: { name: "discord-collector", version: "test-v1" },
+    clocks: { occurredAt: revisionAt, observedAt, emittedAt },
+    entityRefs: [{ kind: "source", canonicalId: "discord:channel:" + channelId }],
+    evidenceRefs: [evidenceRef], payload,
+  });
+  assert.equal(event.clocks.occurredAt, revisionAt);
+  assert.equal(validateEventEnvelopeV2(JSON.parse(JSON.stringify(event))).eventKind, "discord_message_edited");
+
+  const wrongKey = sourceId + ":edited";
+  assert.throws(() => buildEventEnvelopeV2({
+    sourceSystem: "discord", eventKind: "discord_message_edited", eventKey: wrongKey,
+    schemaVersion: "discord-message-v1",
+    producer: { name: "discord-collector", version: "test-v1" },
+    clocks: { occurredAt: revisionAt, observedAt, emittedAt },
+    entityRefs: [{ kind: "source", canonicalId: "discord:channel:" + channelId }],
+    evidenceRefs: [evidenceRef],
+    payload: {
+      ...payload,
+      registryEvent: { ...payload.registryEvent, eventKey: wrongKey },
+      timelineEvent: { ...payload.timelineEvent, eventKey: wrongKey },
+    },
+  }), /event key must uniquely identify/);
+
+  const staleOccurredAt = "2026-11-18T18:00:00.000Z";
+  const staleEvidence = { ...evidenceRef, occurredAt: staleOccurredAt };
+  assert.throws(() => buildEventEnvelopeV2({
+    sourceSystem: "discord", eventKind: "discord_message_edited", eventKey,
+    schemaVersion: "discord-message-v1",
+    producer: { name: "discord-collector", version: "test-v1" },
+    clocks: { occurredAt: staleOccurredAt, observedAt, emittedAt },
+    entityRefs: [{ kind: "source", canonicalId: "discord:channel:" + channelId }],
+    evidenceRefs: [staleEvidence],
+    payload: {
+      ...payload,
+      registryEvent: { ...payload.registryEvent, evidenceRef: staleEvidence },
+      timelineEvent: { ...payload.timelineEvent, evidenceRef: staleEvidence, occurredAt: staleOccurredAt },
+    },
+  }), /revision clock must equal source occurredAt/);
+});

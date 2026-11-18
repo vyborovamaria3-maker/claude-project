@@ -632,3 +632,50 @@ test("V1 to V2 same-key replay promotes the envelope hash without replacing the 
   assert.equal(v1Replay.duplicates,1,
     "V2-to-V1 replay must continue to use the stable registry fingerprint");
 });
+
+
+test("Discord source events cannot bypass the V2 privacy contract through a V1 payload", async () => {
+  const guildId = "12345678901234567";
+  const channelId = "22345678901234567";
+  const messageId = "32345678901234567";
+  const observedAt = "2026-11-18T18:00:02.000Z";
+  const occurredAt = "2026-11-18T18:00:00.000Z";
+  const eventKey = "discord:message:" + guildId + ":" + channelId + ":" + messageId + ":observed";
+  const evidenceRef = buildEvidenceRef({
+    sourceKind: "discord_message", guildId, channelId, messageId, observedAt, occurredAt,
+  });
+  const entityRef = buildEntityRef({
+    kind: "source", canonicalId: formatSourceId("discord", channelId),
+    firstSeenAt: observedAt, lastSeenAt: observedAt,
+  });
+  const claimed = {
+    id: "discord-v1-claim", sourceSystem: "discord",
+    eventKind: "discord_message_observed", eventKey,
+    schemaVersion: "discord-message-v1",
+    payload: {
+      registryEvent: {
+        sourceSystem: "discord", eventKind: "discord_message_observed", eventKey,
+        schemaVersion: "discord-message-v1", entityRefs: [entityRef], evidenceRef,
+      },
+      discordMessage: {
+        guildId, channelId, messageId, revisionAt: occurredAt,
+        authorId: "42345678901234567",
+      },
+    },
+    createdAt: "2026-11-18T18:00:03.000Z",
+    attempts: 0, leaseOwner: "worker1", leaseUntil: "2026-11-18T18:30:00Z",
+  };
+  const log = [];
+  let destinationOpens = 0;
+  const result = await runDeliveryBatch({
+    claim: async () => [claimed],
+    ack: async () => { log.push("ACK"); return true; },
+    fail: async (_event, code) => { log.push("FAIL:" + code); return true; },
+  }, {
+    connect: async () => { destinationOpens++; throw new Error("must not open destination"); },
+  }, { workerId: "worker1", batchSize: 1, leaseMs: 5000 });
+  assert.equal(result.failed, 1);
+  assert.equal(result.delivered, 0);
+  assert.equal(destinationOpens, 0);
+  assert.deepEqual(log, ["FAIL:payload_invalid"]);
+});

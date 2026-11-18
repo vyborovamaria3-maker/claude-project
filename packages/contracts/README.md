@@ -133,8 +133,12 @@ and discord_message_deleted, all under discord-message-v1.
 - A message edit has its own stable event identity; do not overwrite the original
   observed event. A delete is a separate event and downstream retraction work is
   required before production delivery.
-- Snowflakes are validated as decimal strings (15–22 digits); never coerce them
-  to JavaScript Number.
+- Snowflakes are validated as unsigned 64-bit decimal strings (nonzero and no
+  greater than 18446744073709551615); never coerce them to JavaScript Number.
+- Observed event keys end in :observed; delete tombstones end in :deleted.
+  Each edit key includes its canonical UTC revisionAt. For edits, evidence
+  occurredAt and timeline occurredAt are the edit timestamp, not original
+  message creation time.
 - Discord coverage may be partial/unknown. A bounded restart scan is not proof
   of complete historical coverage.
 
