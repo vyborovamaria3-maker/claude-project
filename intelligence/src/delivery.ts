@@ -3,7 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import {
   adaptLegacyOutboxEventToV2, buildTimelineEvent, getSchemaDefinition, toUtcIso,
   validateEventEnvelopeV2, validateVerifiedTokenLinkEvent, validateTokenLinksInvalidatedEvent,
-  type EventSource, type TimelineEvent,
+  type EventSource, type LegacyEventSource, type TimelineEvent,
 } from "@claude-project/contracts";
 import { ingestRegistryEvent, validateRegistryEvent, type PgTransaction, type RegistryEvent } from "./entity-registry.js";
 import { ingestTimelineEvent } from "./timeline.js";
@@ -158,7 +158,7 @@ function prepareDeliveryEvent(event: DeliveryEvent): PreparedDeliveryEvent {
         event.schemaVersion,
       )) {
     const adapted = adaptLegacyOutboxEventToV2({
-      sourceSystem: event.sourceSystem as EventSource,
+      sourceSystem: event.sourceSystem as LegacyEventSource,
       eventKind: event.eventKind,
       eventKey: event.eventKey,
       schemaVersion: event.schemaVersion,
