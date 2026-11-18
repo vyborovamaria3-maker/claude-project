@@ -1,7 +1,7 @@
 # Discord Collector — opt-in research proof of concept
 
 Uses official Discord bot Gateway + bounded REST backfill. Not a selfbot, not
-global Discord search, and **not integrated** with central Intelligence.
+global Discord search, and emits privacy-minimized V2 events to the central Intelligence source outbox when the consumer is explicitly run.
 Both Discord platform permission for the proposed use AND the affected
 communities' permission must exist; configuration is merely an audit record.
 
@@ -63,7 +63,9 @@ strictly positive DISCORD_BACKFILL_MAX_MESSAGES. Never set an unbounded budget.
 - Access removal at Discord itself is not detected/reconciled automatically.
 - Missing robust live gap catch-up and event retry/DLQ.
 - No rights expiry revalidation or full DSAR/audit cleanup of derived content.
-- No event outbox, V2 Discord contracts, token verification, coverage, scoring or UI.
+- No automatic live consumer activation; use the explicit Intelligence ETL opt-in and migration 022.
+- No token verification/linking, complete coverage model, feature scoring or UI.
+- Deletion tombstones retract prior Intelligence timeline/evidence, but retention expiry and channel revocation still require destination-side erasure before production.
 - No deployment without separate approval of exact Discord Developer Policy usage.
 - Service tests use fake data; a PostgreSQL integration test runs in CI only.
 

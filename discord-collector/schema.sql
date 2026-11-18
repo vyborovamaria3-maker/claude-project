@@ -33,3 +33,45 @@ CREATE TABLE IF NOT EXISTS discord_recovery_checks (
 );
 ALTER TABLE discord_recovery_checks ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS discord_recovery_status ON discord_recovery_checks(channel_id,checked_at DESC);
+
+
+-- Additive, idempotent source-side Snowflake bounds. IDs stay TEXT so no
+-- JavaScript Number/SQL integer coercion can corrupt a 64-bit identifier.
+DO $discord_snowflake_constraints$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='discord_messages'::regclass AND conname='discord_messages_snowflake_ids_check') THEN
+  ALTER TABLE discord_messages ADD CONSTRAINT discord_messages_snowflake_ids_check CHECK (
+   CASE WHEN message_id ~ '^[1-9][0-9]{14,21}$' AND guild_id ~ '^[1-9][0-9]{14,21}$' AND channel_id ~ '^[1-9][0-9]{14,21}$'
+   THEN message_id::numeric <= 18446744073709551615 AND guild_id::numeric <= 18446744073709551615 AND channel_id::numeric <= 18446744073709551615
+   ELSE false END
+  ) NOT VALID;
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='discord_message_revisions'::regclass AND conname='discord_message_revisions_snowflake_ids_check') THEN
+  ALTER TABLE discord_message_revisions ADD CONSTRAINT discord_message_revisions_snowflake_ids_check CHECK (
+   CASE WHEN message_id ~ '^[1-9][0-9]{14,21}$' AND guild_id ~ '^[1-9][0-9]{14,21}$' AND channel_id ~ '^[1-9][0-9]{14,21}$'
+   THEN message_id::numeric <= 18446744073709551615 AND guild_id::numeric <= 18446744073709551615 AND channel_id::numeric <= 18446744073709551615
+   ELSE false END
+  ) NOT VALID;
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='discord_backfill_cursors'::regclass AND conname='discord_backfill_cursors_snowflake_ids_check') THEN
+  ALTER TABLE discord_backfill_cursors ADD CONSTRAINT discord_backfill_cursors_snowflake_ids_check CHECK (
+   CASE WHEN channel_id ~ '^[1-9][0-9]{14,21}$' AND guild_id ~ '^[1-9][0-9]{14,21}$' AND before_message_id ~ '^[1-9][0-9]{14,21}$'
+   THEN channel_id::numeric <= 18446744073709551615 AND guild_id::numeric <= 18446744073709551615 AND before_message_id::numeric <= 18446744073709551615
+   ELSE false END
+  ) NOT VALID;
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='discord_recovery_checks'::regclass AND conname='discord_recovery_checks_snowflake_ids_check') THEN
+  ALTER TABLE discord_recovery_checks ADD CONSTRAINT discord_recovery_checks_snowflake_ids_check CHECK (
+   CASE WHEN guild_id ~ '^[1-9][0-9]{14,21}$' AND channel_id ~ '^[1-9][0-9]{14,21}$'
+   THEN guild_id::numeric <= 18446744073709551615 AND channel_id::numeric <= 18446744073709551615
+    AND (baseline_message_id IS NULL OR CASE WHEN baseline_message_id ~ '^[1-9][0-9]{14,21}$' THEN baseline_message_id::numeric <= 18446744073709551615 ELSE false END)
+   ELSE false END
+  ) NOT VALID;
+ END IF;
+END;
+$discord_snowflake_constraints$;
+
+ALTER TABLE discord_messages VALIDATE CONSTRAINT discord_messages_snowflake_ids_check;
+ALTER TABLE discord_message_revisions VALIDATE CONSTRAINT discord_message_revisions_snowflake_ids_check;
+ALTER TABLE discord_backfill_cursors VALIDATE CONSTRAINT discord_backfill_cursors_snowflake_ids_check;
+ALTER TABLE discord_recovery_checks VALIDATE CONSTRAINT discord_recovery_checks_snowflake_ids_check;

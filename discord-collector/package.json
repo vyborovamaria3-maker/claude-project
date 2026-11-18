@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "discord.js": "^14.19.3",
-    "pg": "^8.13.1"
+    "pg": "^8.13.1",
+    "@claude-project/contracts": "file:../packages/contracts",
+    "@claude-project/event-outbox": "file:../packages/event-outbox"
   }
 }

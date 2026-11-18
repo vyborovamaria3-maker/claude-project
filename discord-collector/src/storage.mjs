@@ -1,6 +1,7 @@
 import {readFile} from "node:fs/promises";
 import {fileURLToPath} from "node:url";
 import {dirname,resolve} from "node:path";
+import {POSTGRES_OUTBOX_DDL} from "@claude-project/event-outbox";
 
 const here=dirname(fileURLToPath(import.meta.url));
 const DAY_MS=86_400_000;
@@ -8,6 +9,7 @@ const DAY_MS=86_400_000;
 export async function installSchema(pool){
   const sql=await readFile(resolve(here,"../schema.sql"),"utf8");
   await pool.query(sql);
+  await pool.query(POSTGRES_OUTBOX_DDL);
 }
 
 function requireRetention(days){
@@ -26,7 +28,7 @@ export function isExpiredObservation(observation,retentionDays,clock=new Date())
   return published < clock.getTime()-retentionDays*DAY_MS;
 }
 
-export async function storeObservation(pool, o, retentionDays, clock=new Date()){
+export async function storeObservation(pool, o, retentionDays, clock=new Date(), emitOutbox=null){
   if(isExpiredObservation(o,retentionDays,clock))return {status:"expired"};
   const client=await pool.connect();
   try{
@@ -88,8 +90,14 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date())
         [o.messageId,o.guildId,o.channelId,o.authorId,o.occurredAt,o.observedAt,
          o.editedAt,o.content,o.contentSha,o.revisionAt]);
     }
+    const status=stale?"stale":o.kind==="deleted"?"deleted":"stored";
+    // The source row/revision and its V2 outbox event commit atomically. A failed
+    // envelope build or outbox write rolls back the source mutation as well.
+    if(emitOutbox && (status==="stored" || status==="deleted")) {
+      await emitOutbox(client,o);
+    }
     await client.query("COMMIT");
-    return {status:stale?"stale":o.kind==="deleted"?"deleted":"stored"};
+    return {status};
   }catch(e){await client.query("ROLLBACK");throw e}
   finally{client.release()}
 }
@@ -103,6 +111,12 @@ export async function purgeExpired(pool,allowed){
     await client.query("BEGIN");
     let removed=0;
     const revoked=[...allowed.keys()];
+    const allowedSourceEntities=revoked.map(channelId=>"discord:channel:"+channelId);
+    const revokedOutbox=await client.query(
+      "DELETE FROM outbox_events WHERE source_system='discord' "+
+      "AND COALESCE(payload #>> '{entityRefs,0,canonicalId}','') <> ALL($1::text[])",
+      [allowedSourceEntities]);
+    removed+=revokedOutbox.rowCount??0;
     const r=await client.query(
       "DELETE FROM discord_message_revisions WHERE message_id IN "+
       "(SELECT message_id FROM discord_messages WHERE NOT (channel_id=ANY($1::text[])))",[revoked]);
@@ -111,16 +125,30 @@ export async function purgeExpired(pool,allowed){
       "DELETE FROM discord_messages WHERE NOT (channel_id=ANY($1::text[]))",[revoked]);
     removed+=revokedMsg.rowCount;
     await client.query("DELETE FROM discord_backfill_cursors WHERE NOT (channel_id=ANY($1::text[]))",[revoked]);
+    const revokedChecks=await client.query("DELETE FROM discord_recovery_checks WHERE NOT (channel_id=ANY($1::text[]))",[revoked]);
+    removed+=revokedChecks.rowCount??0;
     for(const [channelId,permission] of allowed){
       requireRetention(permission.retentionDays);
       const args=[channelId,permission.retentionDays];
       const expired="SELECT message_id FROM discord_messages WHERE channel_id=$1 "+
         "AND COALESCE(occurred_at,observed_at)<NOW()-($2::integer*INTERVAL '1 day')";
+      const expiredRows=await client.query(
+        "SELECT 'discord:message:'||guild_id||':'||channel_id||':'||message_id AS source_id "+
+        "FROM discord_messages WHERE channel_id=$1 "+
+        "AND COALESCE(occurred_at,observed_at)<NOW()-($2::integer*INTERVAL '1 day')",args);
+      if(expiredRows.rows.length){
+        const sourceIds=expiredRows.rows.map(row=>row.source_id);
+        const expiredOutbox=await client.query(
+          "DELETE FROM outbox_events WHERE source_system='discord' "+
+          "AND payload #>> '{payload,registryEvent,evidenceRef,sourceId}' = ANY($1::text[])",
+          [sourceIds]);
+        removed+=expiredOutbox.rowCount??0;
+      }
       const revisions=await client.query(
         "DELETE FROM discord_message_revisions WHERE message_id IN ("+expired+")",args);
       const messages=await client.query(
         "DELETE FROM discord_messages WHERE message_id IN ("+expired+")",args);
-      removed+=revisions.rowCount+messages.rowCount;
+      removed+=(revisions.rowCount??0)+(messages.rowCount??0);
     }
     await client.query("COMMIT");
     return {rowsErased:removed};

@@ -4,6 +4,7 @@ import pg from "pg";
 import {validateAuthorization,normalizeMessage,allowedObservation} from "./events.mjs";
 import {installSchema,storeObservation,getBackfillCursor,advanceBackfillCursor,purgeExpired,getRecoveryBaseline,recordRecoveryCheck} from "./storage.mjs";
 import {scanRecentGap} from "./reconcile.mjs";
+import {emitDiscordOutbox} from "./outbox.mjs";
 
 if(process.env.DISCORD_COLLECTOR_ENABLED!=="true"){
   console.error("Disabled: DISCORD_COLLECTOR_ENABLED is not true");
@@ -37,7 +38,7 @@ async function record(message,kind){
   if(!permission)return {status:"not-allowed"};
   const observation=normalizeMessage(message,kind,new Date().toISOString(),permission.guildId);
   if(!allowedObservation(allowed,observation))return {status:"not-allowed"};
-  return await storeObservation(pool,observation,permission.retentionDays);
+  return await storeObservation(pool,observation,permission.retentionDays,new Date(),emitDiscordOutbox);
 }
 function safeRecord(message,kind){
   void record(message,kind).catch(error=>{

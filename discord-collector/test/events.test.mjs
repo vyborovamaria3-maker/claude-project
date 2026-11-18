@@ -43,3 +43,10 @@ test("invalid IDs, event types and timestamps rejected",()=>{
  assert.throws(()=>normalizeMessage(mock,"unknown"));
  assert.throws(()=>normalizeMessage(mock,"observed","2024-05-01T10:00:00"));
 });
+
+
+test("collector rejects Discord IDs outside the unsigned 64-bit Snowflake range",()=>{
+ assert.throws(()=>normalizeMessage({...mock,id:"18446744073709551616"},"observed"),/snowflake/i);
+ assert.throws(()=>normalizeMessage({...mock,author:{id:"18446744073709551616"}},"observed"),/author/i);
+ assert.throws(()=>validateAuthorization({guilds:[{...valid.guilds[0],guild_id:"18446744073709551616"}]}),/guild/i);
+});
