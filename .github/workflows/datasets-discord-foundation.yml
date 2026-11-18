@@ -49,4 +49,5 @@ jobs:
         run: |
           node --check discord-collector/src/events.mjs
           node --check discord-collector/src/storage.mjs
+          node --check discord-collector/src/reconcile.mjs
           node --check discord-collector/src/index.mjs

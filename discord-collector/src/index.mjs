@@ -2,7 +2,8 @@ import {readFile} from "node:fs/promises";
 import {Client,GatewayIntentBits,Events,Partials} from "discord.js";
 import pg from "pg";
 import {validateAuthorization,normalizeMessage,allowedObservation} from "./events.mjs";
-import {installSchema,storeObservation,getBackfillCursor,advanceBackfillCursor,purgeExpired} from "./storage.mjs";
+import {installSchema,storeObservation,getBackfillCursor,advanceBackfillCursor,purgeExpired,getRecoveryBaseline,recordRecoveryCheck} from "./storage.mjs";
+import {scanRecentGap} from "./reconcile.mjs";
 
 if(process.env.DISCORD_COLLECTOR_ENABLED!=="true"){
   console.error("Disabled: DISCORD_COLLECTOR_ENABLED is not true");
@@ -13,9 +14,18 @@ for(const key of ["DISCORD_BOT_TOKEN","DISCORD_SOURCE_DATABASE_URL","DISCORD_AUT
 }
 const doc=JSON.parse(await readFile(process.env.DISCORD_AUTHORIZATION_PATH,"utf8"));
 const allowed=validateAuthorization(doc);
+const recoveryMaxPages=Number(process.env.DISCORD_GAP_RECOVERY_MAX_PAGES||5);
+if(process.env.DISCORD_GAP_RECOVERY_ENABLED==="true" &&
+   (!Number.isInteger(recoveryMaxPages)||recoveryMaxPages<1||recoveryMaxPages>50))
+  throw new RangeError("DISCORD_GAP_RECOVERY_MAX_PAGES must be in 1..50");
 const pool=new pg.Pool({connectionString:process.env.DISCORD_SOURCE_DATABASE_URL,max:4});
 await installSchema(pool);
 await purgeExpired(pool,allowed); // Startup retention/revocation control, fail-closed if unavailable.
+// Snapshot BEFORE Gateway login; live events must not hide missed downtime messages.
+const recoveryBaselines=new Map();
+for(const channelId of allowed.keys()){
+  recoveryBaselines.set(channelId,await getRecoveryBaseline(pool,channelId));
+}
 const client=new Client({
   intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent],
   partials:[Partials.Message,Partials.Channel]
@@ -64,6 +74,31 @@ async function backfill(guildId,channelId,maxMessages){
 }
 client.once(Events.ClientReady,async()=>{
   console.log("Collector connected",{channels:allowed.size});
+  if(process.env.DISCORD_GAP_RECOVERY_ENABLED==="true"){
+    for(const [channelId,permission] of allowed){
+      const baseline=recoveryBaselines.get(channelId)??null;
+      try{
+        const channel=await client.channels.fetch(channelId);
+        const result=await scanRecentGap({
+          channel,baselineMessageId:baseline,maxPages:recoveryMaxPages,
+          onMessage:message=>record(message,"observed")
+        });
+        await recordRecoveryCheck(pool,permission.guildId,channelId,baseline,result);
+        console.log("Discord recovery window",{channelId,status:result.status,
+          pages:result.pagesScanned,processed:result.messagesProcessed});
+      }catch(error){
+        failures++;
+        try{
+          await recordRecoveryCheck(pool,permission.guildId,channelId,baseline,{status:"failed"});
+        }catch(persistError){
+          console.error("Recovery failure status could not be saved",channelId,persistError?.message);
+          process.exitCode=1;
+          void shutdown(); // Fail closed rather than continue with invisible gaps.
+        }
+        console.error("Discord gap recovery failed",channelId,error?.message);
+      }
+    }
+  }
   const max=Number(process.env.DISCORD_BACKFILL_MAX_MESSAGES||0);
   if(process.env.DISCORD_BACKFILL_ENABLED!=="true"||!Number.isInteger(max)||max<=0)return;
   for(const [channelId,permission] of allowed){
