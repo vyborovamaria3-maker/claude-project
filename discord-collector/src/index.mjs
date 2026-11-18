@@ -2,7 +2,7 @@ import {readFile} from "node:fs/promises";
 import {Client,GatewayIntentBits,Events,Partials} from "discord.js";
 import pg from "pg";
 import {validateAuthorization,normalizeMessage,allowedObservation} from "./events.mjs";
-import {installSchema,storeObservation,getBackfillCursor,advanceBackfillCursor} from "./storage.mjs";
+import {installSchema,storeObservation,getBackfillCursor,advanceBackfillCursor,purgeExpired} from "./storage.mjs";
 
 if(process.env.DISCORD_COLLECTOR_ENABLED!=="true"){
   console.error("Disabled: DISCORD_COLLECTOR_ENABLED is not true");
@@ -15,19 +15,23 @@ const doc=JSON.parse(await readFile(process.env.DISCORD_AUTHORIZATION_PATH,"utf8
 const allowed=validateAuthorization(doc);
 const pool=new pg.Pool({connectionString:process.env.DISCORD_SOURCE_DATABASE_URL,max:4});
 await installSchema(pool);
+await purgeExpired(pool,allowed); // Startup retention/revocation control, fail-closed if unavailable.
 const client=new Client({
   intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent],
   partials:[Partials.Message,Partials.Channel]
 });
-let errors=0;
+let failures=0;
 async function record(message,kind){
-  const observation=normalizeMessage(message,kind);
-  if(!allowedObservation(allowed,observation))return;
-  await storeObservation(pool,observation);
+  const channelId=String(message.channelId??message.channel?.id??"");
+  const permission=allowed.get(channelId);
+  if(!permission)return {status:"not-allowed"};
+  const observation=normalizeMessage(message,kind,new Date().toISOString(),permission.guildId);
+  if(!allowedObservation(allowed,observation))return {status:"not-allowed"};
+  return await storeObservation(pool,observation,permission.retentionDays);
 }
 function safeRecord(message,kind){
   void record(message,kind).catch(error=>{
-    errors++;
+    failures++;
     console.error("Discord event handling failed",kind,error?.message);
   });
 }
@@ -36,7 +40,7 @@ client.on(Events.MessageUpdate,(_before,after)=>{
   void (async()=>{
     if(after.partial)after=await after.fetch();
     await record(after,"edited");
-  })().catch(error=>{errors++;console.error("Discord update failed",error?.message)});
+  })().catch(error=>{failures++;console.error("Discord update failed",error?.message)});
 });
 client.on(Events.MessageDelete,msg=>safeRecord(msg,"deleted"));
 
@@ -52,7 +56,7 @@ async function backfill(guildId,channelId,maxMessages){
     const ordered=[...page.values()].sort((a,b)=>BigInt(a.id)<BigInt(b.id)?-1:1);
     for(const message of ordered){await record(message,"observed");count++}
     cursor=ordered[0].id;
-    // Checkpoint only after a complete, successfully persisted page.
+    // Cursor never advances past a failed page; successful rows replay idempotently.
     await advanceBackfillCursor(pool,guildId,channelId,cursor);
     if(page.size<requested)break;
   }
@@ -64,14 +68,27 @@ client.once(Events.ClientReady,async()=>{
   if(process.env.DISCORD_BACKFILL_ENABLED!=="true"||!Number.isInteger(max)||max<=0)return;
   for(const [channelId,permission] of allowed){
     try{await backfill(permission.guildId,channelId,max)}
-    catch(error){errors++;console.error("History backfill failed",channelId,error?.message)}
+    catch(error){failures++;console.error("History backfill failed",channelId,error?.message)}
   }
 });
-async function close(){
-  await client.destroy();
-  await pool.end();
-  process.exit(errors?1:0);
+const sweepTimer=setInterval(()=>{
+  void purgeExpired(pool,allowed).then(result=>{
+    if(result.rowsErased>0)console.log("Expired/revoked data erased",{rows:result.rowsErased});
+  }).catch(error=>{
+    console.error("Fatal retention enforcement failure",error?.message);
+    process.exitCode=1;
+    void shutdown();
+  });
+},15*60_000);
+sweepTimer.unref();
+let stopping=false;
+async function shutdown(){
+  if(stopping)return;
+  stopping=true;
+  clearInterval(sweepTimer);
+  try{await client.destroy()}finally{await pool.end()}
+  if(failures)process.exitCode=1;
 }
-process.on("SIGINT",()=>void close());
-process.on("SIGTERM",()=>void close());
+process.on("SIGINT",()=>void shutdown());
+process.on("SIGTERM",()=>void shutdown());
 await client.login(process.env.DISCORD_BOT_TOKEN);

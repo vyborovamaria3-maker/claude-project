@@ -24,23 +24,28 @@ export function validateAuthorization(document) {
   return allowed;
 }
 
-export function normalizeMessage(message, kind, observedAt=new Date().toISOString()){
+export function normalizeMessage(message, kind, observedAt=new Date().toISOString(), fallbackGuildId=null){
   if(!["observed","edited","deleted"].includes(kind))throw new TypeError("Unsupported event kind");
   const id=String(message.id??"");
-  const guildId=String(message.guildId??"");
-  const channelId=String(message.channelId??"");
+  const guildId=String(message.guildId??message.guild?.id??fallbackGuildId??"");
+  const channelId=String(message.channelId??message.channel?.id??"");
   if(!SNOWFLAKE.test(id)||!SNOWFLAKE.test(guildId)||!SNOWFLAKE.test(channelId))
     throw new TypeError("Message, guild and channel need valid snowflake ids");
+  if(!Number.isFinite(Date.parse(observedAt)) || !/(Z|[+-]\d\d:\d\d)$/i.test(observedAt))
+    throw new TypeError("observedAt must be an aware ISO timestamp");
   const authorId=message.author?.id ? String(message.author.id) : null;
   if(authorId&&!SNOWFLAKE.test(authorId))throw new TypeError("Invalid author id");
   const content=kind==="deleted"?null:(typeof message.content==="string"?message.content:null);
   const contentSha=content===null?null:createHash("sha256").update(content).digest("hex");
   const editedAt=message.editedAt instanceof Date ? message.editedAt.toISOString() : null;
   const occurredAt=message.createdAt instanceof Date ? message.createdAt.toISOString() : null;
+  // A partial edit without a Discord source edit timestamp cannot order revisions safely.
+  if(kind==="edited" && !editedAt)throw new TypeError("Edited event needs a source editedAt timestamp");
+  const revisionAt=editedAt??occurredAt;
   const revisionKey=createHash("sha256")
-    .update([id,kind,editedAt??"",contentSha??""].join("|")).digest("hex");
+    .update([guildId,channelId,id,kind,editedAt??"",contentSha??""].join("|")).digest("hex");
   return {messageId:id,guildId,channelId,authorId,kind,content,contentSha,
-    occurredAt,editedAt,observedAt,revisionKey};
+    occurredAt,editedAt,revisionAt,observedAt,revisionKey};
 }
 
 export function allowedObservation(allowed, observation){
