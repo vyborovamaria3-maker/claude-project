@@ -23,6 +23,8 @@ test("Discord observed event is V2 metadata-only and does not leak message or au
   assert.equal(event.payload.envelopeVersion,2);
   assert.equal(event.payload.clocks.occurredAt,createdAt.toISOString());
   assert.equal(event.payload.clocks.emittedAt,emittedAt);
+  assert.equal(event.payload.coverageRef.status,"partial");
+  assert.equal(event.payload.coverageRef.scope,"guild:"+guildId+"/channel:"+channelId);
   assert.equal(event.payload.payload.discordMessage.revisionAt,createdAt.toISOString());
   const serialized=JSON.stringify(event);
   for(const secret of ["PRIVATE MESSAGE TEXT","423456789012345678","cdn.discordapp.com","authorId","attachments","contentSha256","rawPointer"])

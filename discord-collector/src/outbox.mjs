@@ -1,3 +1,4 @@
+import {randomUUID} from "node:crypto";
 import {
   buildEvidenceRef, buildEntityRef, buildEventEnvelopeV2, buildTimelineEvent,
   formatSourceId, toUtcIso,
@@ -5,13 +6,14 @@ import {
 import {emitPostgres} from "@claude-project/event-outbox";
 
 const SCHEMA_VERSION="discord-message-v1";
+const COLLECTOR_RUN_ID=process.env.DISCORD_COLLECTOR_RUN_ID||randomUUID();
 const EVENT_KIND={
   observed:"discord_message_observed",
   edited:"discord_message_edited",
   deleted:"discord_message_deleted",
 };
 
-export function buildDiscordOutboxEvent(observation,emittedAt,producerVersion="0.1.0"){
+export function buildDiscordOutboxEvent(observation,emittedAt,producerVersion="0.1.0",coverageRunId=COLLECTOR_RUN_ID){
   const eventKind=EVENT_KIND[observation.kind];
   if(!eventKind)throw new TypeError("Unsupported Discord outbox observation kind");
   const observedAt=toUtcIso(observation.observedAt);
@@ -49,12 +51,21 @@ export function buildDiscordOutboxEvent(observation,emittedAt,producerVersion="0
     ...(timelineEvent?{timelineEvent}:{}),
     discordMessage,
   };
+  const coverageRef={
+    sourceSystem:"discord",
+    scope:"guild:"+observation.guildId+"/channel:"+observation.channelId,
+    windowStart:occurredAt??observedAt,
+    windowEnd:observedAt,
+    status:"partial",
+    coverageId:"discord:"+coverageRunId+":"+observation.channelId,
+  };
   const envelope=buildEventEnvelopeV2({
     sourceSystem:"discord",eventKind,eventKey,schemaVersion:SCHEMA_VERSION,
     producer:{name:"discord-collector",version:producerVersion},
     clocks:{occurredAt:occurredAt??null,observedAt,emittedAt:toUtcIso(emittedAt)},
     entityRefs:[{kind:"source",canonicalId:channelRef.canonicalId}],
     evidenceRefs:[evidenceRef],
+    coverageRef,
     payload,
   });
   return {sourceSystem:"discord",eventKind,eventKey,schemaVersion:SCHEMA_VERSION,payload:envelope};

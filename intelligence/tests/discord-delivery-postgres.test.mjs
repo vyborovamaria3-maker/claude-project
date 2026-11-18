@@ -52,7 +52,13 @@ function discordEvent(kind,occurredAt,observedAt,emittedAt){
     producer:{name:"discord-collector",version:"integration-test"},
     clocks:{occurredAt:occurredAt??null,observedAt,emittedAt},
     entityRefs:[{kind:"source",canonicalId:channelRef.canonicalId}],
-    evidenceRefs:[evidenceRef],payload,
+    evidenceRefs:[evidenceRef],
+    coverageRef:{
+      sourceSystem:"discord",scope:"guild:"+guildId+"/channel:"+channelId,
+      windowStart:occurredAt??observedAt,windowEnd:observedAt,
+      status:"partial",coverageId:"discord-integration:"+channelId,
+    },
+    payload,
   });
   return {
     id:randomBytes(8).toString("hex"),sourceSystem:"discord",eventKind,eventKey,
