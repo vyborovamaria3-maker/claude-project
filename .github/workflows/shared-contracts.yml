@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "packages/contracts/**"
+      - "discord-collector/**"
       - ".github/workflows/shared-contracts.yml"
   push:
     branches: [main]
@@ -16,6 +17,21 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: potapoff_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      DISCORD_TEST_DATABASE_URL: postgresql://postgres:test@127.0.0.1:5432/potapoff_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,3 +41,13 @@ jobs:
         run: npm install --prefix packages/contracts --ignore-scripts --no-package-lock --no-audit
       - name: Strict typecheck, build, and regression tests
         run: npm --prefix packages/contracts run check
+      - name: Install Discord collector and local contracts package
+        run: npm install --prefix discord-collector --ignore-scripts --no-audit --no-fund
+      - name: Run Discord collector and contract integration tests
+        run: node --test discord-collector/test/*.test.mjs
+      - name: Check Discord collector syntax
+        run: |
+          node --check discord-collector/src/events.mjs
+          node --check discord-collector/src/storage.mjs
+          node --check discord-collector/src/reconcile.mjs
+          node --check discord-collector/src/index.mjs
