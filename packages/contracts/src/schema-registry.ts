@@ -6,7 +6,7 @@ import { parseTokenId, parseWalletId, isSolanaSignature } from "./canonical-ids.
 import { validateVerifiedTokenLinkEvent } from "./token-link.js";
 import { validateTokenLinksInvalidatedEvent } from "./token-link-invalidation.js";
 
-export type EventSource = "x" | "tg" | "blockchain";
+export type EventSource = "x" | "tg" | "blockchain" | "discord";
 export type CompatibilityMode = "backward" | "forward" | "full";
 
 export type JsonSchema = Readonly<{
@@ -33,7 +33,7 @@ export type SchemaDefinition = Readonly<{
   sourceSystem: EventSource;
   eventKind: string;
   schemaVersion: string;
-  producerName: "x-collector" | "tg-collector" | "solana-launcher";
+  producerName: "x-collector" | "tg-collector" | "solana-launcher" | "discord-collector";
   consumers: readonly ["node-intelligence"];
   compatibilityMode: CompatibilityMode;
   deprecatedAt: null;
@@ -85,6 +85,18 @@ function evidenceSchema(sourceKind: EvidenceSourceKind, sourceIdPattern: string)
 const X_EVIDENCE = evidenceSchema("x_tweet", "^x:tweet:[1-9][0-9]*$");
 const TG_EVIDENCE = evidenceSchema("tg_message", "^tg:message:-?(?:[1-9][0-9]*):[1-9][0-9]*$");
 const CHAIN_EVIDENCE = evidenceSchema("chain_tx", "^chain:tx:solana:[1-9A-HJ-NP-Za-km-z]+$");
+const DISCORD_EVIDENCE = evidenceSchema("discord_message", "^discord:message:[0-9]{15,22}:[0-9]{15,22}:[0-9]{15,22}$");
+const DISCORD_SNOWFLAKE: JsonSchema = { type: "string", pattern: "^[0-9]{15,22}$", minLength: 15, maxLength: 22 };
+const DISCORD_MESSAGE_REVISION_SCHEMA: JsonSchema = {
+  type: "object", required: ["guildId", "channelId", "messageId", "revisionAt"],
+  additionalProperties: false,
+  properties: { guildId: DISCORD_SNOWFLAKE, channelId: DISCORD_SNOWFLAKE, messageId: DISCORD_SNOWFLAKE, revisionAt: TIME },
+};
+const DISCORD_MESSAGE_DELETED_SCHEMA: JsonSchema = {
+  type: "object", required: ["guildId", "channelId", "messageId"],
+  additionalProperties: false,
+  properties: { guildId: DISCORD_SNOWFLAKE, channelId: DISCORD_SNOWFLAKE, messageId: DISCORD_SNOWFLAKE },
+};
 
 function registryEventSchema(
   sourceSystem: EventSource,
@@ -178,6 +190,8 @@ const TG_REGISTRY = (kind: string, version: string) =>
   registryEventSchema("tg", kind, version, TG_EVIDENCE);
 const CHAIN_REGISTRY = (kind: string, version: string) =>
   registryEventSchema("blockchain", kind, version, CHAIN_EVIDENCE);
+const DISCORD_REGISTRY = (kind: string, version: string) =>
+  registryEventSchema("discord", kind, version, DISCORD_EVIDENCE);
 
 const TOKEN_LINK_SCHEMA: JsonSchema = {
   type: "object",
@@ -285,6 +299,20 @@ const DEFINITIONS: readonly SchemaDefinition[] = Object.freeze([
     payloadSchema(TG_REGISTRY("token_links_invalidated", "token-link-v1"), {
       tokenLinksInvalidation: INVALIDATION_SCHEMA,
     }, ["tokenLinksInvalidation"])),
+  define("discord", "discord_message_observed", "discord-message-v1", "discord-collector",
+    payloadSchema(DISCORD_REGISTRY("discord_message_observed", "discord-message-v1"), {
+      discordMessage: DISCORD_MESSAGE_REVISION_SCHEMA,
+      timelineEvent: timelineEventSchema("discord_message_observed", DISCORD_EVIDENCE),
+    }, ["discordMessage", "timelineEvent"])),
+  define("discord", "discord_message_edited", "discord-message-v1", "discord-collector",
+    payloadSchema(DISCORD_REGISTRY("discord_message_edited", "discord-message-v1"), {
+      discordMessage: DISCORD_MESSAGE_REVISION_SCHEMA,
+      timelineEvent: timelineEventSchema("discord_message_edited", DISCORD_EVIDENCE),
+    }, ["discordMessage", "timelineEvent"])),
+  define("discord", "discord_message_deleted", "discord-message-v1", "discord-collector",
+    payloadSchema(DISCORD_REGISTRY("discord_message_deleted", "discord-message-v1"), {
+      discordMessage: DISCORD_MESSAGE_DELETED_SCHEMA,
+    }, ["discordMessage"])),
 ]);
 
 const INDEX = new Map(DEFINITIONS.map((definition) => [
