@@ -124,7 +124,7 @@ export const EVENT_ENVELOPE_V2_JSON_SCHEMA: JsonSchema = Object.freeze({
         required: ["sourceKind", "sourceId", "observedAt"],
         additionalProperties: false,
         properties: {
-          sourceKind: { type: "string", enum: ["x_tweet", "tg_message", "chain_tx"] },
+          sourceKind: { type: "string", enum: ["x_tweet", "tg_message", "chain_tx", "discord_message"] },
           sourceId: { type: "string", minLength: 1, maxLength: 512 },
           observedAt: { type: "string", minLength: 20, maxLength: 40 },
           occurredAt: { type: "string", minLength: 20, maxLength: 40 },
@@ -216,7 +216,7 @@ function normalizeEvidenceRefs(value: unknown, sourceSystem: EventSource): Event
     throw new TypeError("Event requires 1..100 evidenceRefs");
   }
   const expected: Record<EventSource, EvidenceSourceKind> = {
-    x: "x_tweet", tg: "tg_message", blockchain: "chain_tx",
+    x: "x_tweet", tg: "tg_message", blockchain: "chain_tx", discord: "discord_message",
   };
   return value.map((item) => {
     const raw = record(item, "evidenceRef");
@@ -280,7 +280,7 @@ function normalizeInput<TPayload extends Record<string, unknown>>(
     "clocks", "entityRefs", "evidenceRefs", "coverageRef", "payload",
   ], "event envelope input");
   const sourceSystem = input.sourceSystem as EventSource;
-  if (!["x", "tg", "blockchain"].includes(sourceSystem)) {
+  if (!["x", "tg", "blockchain", "discord"].includes(sourceSystem)) {
     throw new TypeError("Unsupported V2 sourceSystem");
   }
   const eventKind = nonempty(input.eventKind, "eventKind");
