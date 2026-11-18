@@ -49,6 +49,8 @@ test("CLI forbids duplicate, missing or unknown sources and unsafe numeric value
   ])assert.throws(()=>parseArguments(args),Error);
   assert.deepEqual(parseArguments(["--sources","x,tg","--max-batches","10"]).sources,["x","tg"]);
   assert.equal(parseArguments(["--source","blockchain","--lease-ms=60000"]).leaseMs,60000);
+  assert.deepEqual(parseArguments(["--sources","discord"]).sources,["discord"]);
+  assert.deepEqual(parseArguments(["--sources","x,discord"]).sources,["x","discord"]);
 });
 
 test("foreground loop claims sequentially and respects bounded run",async()=>{

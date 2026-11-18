@@ -18,7 +18,7 @@ test("CLI --help does not open any provider or DB",()=>{
   const r=child(["--help"]);
   assert.equal(r.status,0,r.stderr);
   assert.match(r.stdout,/local ETL/);
-  assert.match(r.stdout,/--source x\|tg\|blockchain/);
+  assert.match(r.stdout,/--source x\|tg\|blockchain\|discord/);
 });
 test("CLI delivery refuses missing explicit opt-in for both Telegram and Discord",()=>{
   const r=child(["--source","tg","--once"]);

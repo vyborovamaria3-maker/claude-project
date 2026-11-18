@@ -90,3 +90,34 @@ a later scan reaches that same watermark. No status ever claims that missed
 edits or deletes during downtime were fully reconstructed. This is NOT
 complete Discord source coverage and does not authorize scraping. A separate
 coverage model, durable retry queue, and full reconciliation are still required.
+
+
+## V2 transactional outbox integration
+
+The collector now installs the shared PostgreSQL outbox schema and emits three
+registered Event Envelope V2 event kinds: discord_message_observed,
+discord_message_edited and discord_message_deleted. The source message/revision
+mutation and outbox insert run in the same PostgreSQL transaction. The envelope
+emittedAt is pinned to the exact source outbox created_at timestamp.
+
+Shared events contain only guild/channel/message Snowflakes and source clocks.
+They never contain message text, author IDs/handles, attachment URLs, raw
+pointers or content fingerprints. The source-local store may retain content
+only under the reviewed allowlist and retention period.
+
+To consume events, configure the Intelligence ETL with
+DISCORD_SOURCE_DATABASE_URL pointing to this source database and
+INTELLIGENCE_DATABASE_URL pointing to the separate destination database.
+Apply destination migrations 001, 002, 004, 017, 019 and 022. Then explicitly
+run INTELLIGENCE_ETL_ENABLED=true node scripts/run.mjs --source discord --once
+--limit 50, or add discord to the explicitly enabled supervisor source list.
+No bot token is required by the Intelligence consumer. Both the collector and
+consumer remain disabled unless their separate opt-ins are set.
+
+A Discord delete tombstone removes prior metadata-only timeline rows and
+observed/edited evidence in the destination transaction while retaining the
+tombstone and inbox identity for replay safety. Source-side expiry/revocation
+removes pending outbox rows, but full destination-side erasure for retention
+expiry, channel revocation, backups and derived features remains a production
+blocker. Do not enable a live collector or commercial use without current
+Discord Developer Policy, community permission and data-rights review.
