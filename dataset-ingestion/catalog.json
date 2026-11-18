@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "id": "coin-meme",
+      "url": "https://github.com/hwlongCUHK/Coin-Meme",
+      "period": "2024-01/2024-11",
+      "formats": [
+        "csv",
+        "zip"
+      ],
+      "rights": "review_required",
+      "notes": "MIT repository license does not alone prove redistribution rights for user comments"
+    },
+    {
+      "id": "melt",
+      "url": "https://huggingface.co/datasets/Zinteck/MELT",
+      "period": "2024-12/2025-03",
+      "formats": [
+        "parquet"
+      ],
+      "rights": "review_required",
+      "notes": "CC BY-NC: no commercial ingestion without permission"
+    },
+    {
+      "id": "memechain",
+      "url": "https://zenodo.org/records/18246856",
+      "period": "verify_per_file",
+      "formats": [
+        "csv",
+        "zip"
+      ],
+      "rights": "review_required",
+      "notes": "Check license and source-content permissions"
+    },
+    {
+      "id": "trenches-forward-2026",
+      "url": "https://huggingface.co/datasets/hussxamg04/trenches-pumpfun-forward-2026-08",
+      "period": "2026-08",
+      "formats": [
+        "parquet"
+      ],
+      "rights": "review_required",
+      "notes": "Noncommercial restrictions"
+    },
+    {
+      "id": "solana-memecoin-calls",
+      "url": "https://github.com/Smurfetc/solana-memecoin-calls-dataset",
+      "period": "verify_per_file",
+      "formats": [
+        "csv",
+        "jsonl"
+      ],
+      "rights": "review_required",
+      "notes": "Validate original provenance and source rights"
+    },
+    {
+      "id": "reddit-36",
+      "url": "https://huggingface.co/datasets/arrmlet/reddit_dataset_36",
+      "period": "2024",
+      "formats": [
+        "parquet"
+      ],
+      "rights": "review_required",
+      "notes": "Reddit data use restrictions may apply"
+    }
+  ]
+}
