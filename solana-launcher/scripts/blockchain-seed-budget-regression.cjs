@@ -29,6 +29,11 @@ assert.throws(()=>collector.parseArgs(["--mode","pilot"]),/requires --seed-token
 assert.throws(()=>collector.parseArgs(["--mode","pilot","--seed-token","not-a-mint"]),/valid Solana mint/);
 assert.throws(()=>collector.parseArgs(["--mode","pilot","--seed-token",SEED,"--monthly-credits-used","0","--run-budget-credits","0"]),/Invalid numeric flag/);
 function dbFixture(){const db=new Database(":memory:");collector.initDb(db);return db;}
+// One controlled clock for the whole regression: real wall-clock time must
+// never decide which billing period a fixture run belongs to, otherwise the
+// test only passes while the real period coincides with the simulated one
+// (this broke on the 2026-11-16 rollover).
+const T0=Date.UTC(2026,9,20);
 const missingBillingDayDb=dbFixture();
 try {
  const unsafeStart=collector.parseArgs(["--seed-token",SEED,"--monthly-credits-used","0"]);
@@ -44,7 +49,7 @@ function args(runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate=110){
   const firstArgs=collector.parseArgs(["--seed-token",SEED,"--monthly-credits-used","123","--monthly-budget-credits","1000","--budget-period-start-day","16"]);
   collector.resolveBudgetSettings(configDb,firstArgs,true,Date.UTC(2026,9,20));
   const configScope=collector.ensurePilotScope(configDb,SEED);
-  const configRun=collector.startCollectionRun(configDb,firstArgs,configScope);
+  const configRun=collector.startCollectionRun(configDb,firstArgs,configScope,T0);
   collector.finishCollectionRun(configDb,configRun,"completed");
   const resumedArgs=collector.parseArgs(["--seed-token",SEED]);
   collector.resolveBudgetSettings(configDb,resumedArgs,true,Date.UTC(2026,9,21));
@@ -74,7 +79,7 @@ function args(runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate=110){
 
   // Budget reservations are serialized and count estimates until a provider
   // reports actual credits. This models two concurrent workers sharing SQLite.
-  const run1=collector.startCollectionRun(db,args(300,300),scopeId);
+  const run1=collector.startCollectionRun(db,args(300,300),scopeId,T0);
   const request1=collector.reserveHeliusCredits(db,{runId:run1,taskKind:"token",taskAddress:SEED,
     endpoint:"enhanced-address-transactions",estimatedCredits:110});
   collector.recordHeliusResponse(db,request1,{status:200,actualCredits:150});
@@ -84,14 +89,14 @@ function args(runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate=110){
   assert.throws(()=>collector.reserveHeliusCredits(db,{runId:run1,taskKind:"wallet",taskAddress:WALLET,
     endpoint:"enhanced-address-transactions",estimatedCredits:110}),e=>e.code==="HELIUS_BUDGET_EXCEEDED" && /Run Helius/.test(e.message));
   collector.finishCollectionRun(db,run1,"completed");
-  const run2=collector.startCollectionRun(db,args(500,300),scopeId);
+  const run2=collector.startCollectionRun(db,args(500,300),scopeId,T0);
   assert.throws(()=>collector.reserveHeliusCredits(db,{runId:run2,taskKind:"token",taskAddress:SEED,
     endpoint:"enhanced-address-transactions",estimatedCredits:110}),e=>e.code==="HELIUS_BUDGET_EXCEEDED" && /Monthly Helius/.test(e.message));
   collector.finishCollectionRun(db,run2,"budget_paused","monthly budget reached");
   const usage=collector.usageStatus(db,{monthlyBudgetCredits:300});
   assert.equal(usage.usedCredits,260);
   assert.equal(collector.usageStatus(db,{monthlyBudgetCredits:300,monthlyCreditsUsedBaseline:25,monthlyCreditsBaselineConfigured:true}).usedCredits,285);
-  const baselineRun=collector.startCollectionRun(db,{...args(500,300),monthlyCreditsUsedBaseline:290},scopeId);
+  const baselineRun=collector.startCollectionRun(db,{...args(500,300),monthlyCreditsUsedBaseline:290},scopeId,T0);
   assert.throws(()=>collector.reserveHeliusCredits(db,{runId:baselineRun,taskKind:"token",taskAddress:SEED,
     endpoint:"enhanced-address-transactions",estimatedCredits:110}),e=>e.code==="HELIUS_BUDGET_EXCEEDED" && /Monthly Helius/.test(e.message));
   collector.finishCollectionRun(db,baselineRun,"budget_paused","dashboard baseline reached monthly cap");
@@ -158,7 +163,7 @@ function args(runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate=110){
  try {
   const scopeId=collector.ensurePilotScope(capped,SEED);
   const task=collector.claimOne(capped,true,scopeId);
-  const run=collector.startCollectionRun(capped,args(100,1000),scopeId);
+  const run=collector.startCollectionRun(capped,args(100,1000),scopeId,T0);
   assert.throws(()=>collector.reserveHeliusCredits(capped,{runId:run,taskKind:"token",taskAddress:SEED,
     endpoint:"enhanced-address-transactions",estimatedCredits:110}),e=>e.code==="HELIUS_BUDGET_EXCEEDED" && /Run Helius/.test(e.message));
   collector.releaseTaskForBudget(capped,task);
@@ -173,13 +178,13 @@ function args(runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate=110){
  const alchemyDb=dbFixture();
  try {
    const scopeId=collector.ensurePilotScope(alchemyDb,SEED,1000000,false,150,true);
-   const run1=collector.startCollectionRun(alchemyDb,{...args(10000,10000),alchemyRunCuBudget:1000},scopeId);
+   const run1=collector.startCollectionRun(alchemyDb,{...args(10000,10000),alchemyRunCuBudget:1000},scopeId,T0);
    const req=collector.reserveAlchemyCu(alchemyDb,{runId:run1,taskKind:"wallet",taskAddress:WALLET,
      accountId:"alchemy-1",method:"getTransactionsForAddress",estimatedCu:100,
      monthlyBudgetCu:30000,baselineCu:0,billingResetDay:1,runBudgetCu:1000});
    collector.recordAlchemyResponse(alchemyDb,req,{status:200,actualCu:null});
    collector.finishCollectionRun(alchemyDb,run1,"completed");
-   const run2=collector.startCollectionRun(alchemyDb,{...args(10000,10000),alchemyRunCuBudget:1000},scopeId);
+   const run2=collector.startCollectionRun(alchemyDb,{...args(10000,10000),alchemyRunCuBudget:1000},scopeId,T0);
    assert.throws(()=>collector.reserveAlchemyCu(alchemyDb,{runId:run2,taskKind:"token",taskAddress:SEED,
      accountId:"alchemy-2",method:"getTransactionsForAddress",estimatedCu:100,
      monthlyBudgetCu:30000,baselineCu:0,billingResetDay:1,runBudgetCu:1000}),
@@ -199,7 +204,7 @@ function args(runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate=110){
  const lifetime=dbFixture();
  try {
    const scopeId=collector.ensurePilotScope(lifetime,SEED,1000,true);
-   const run1=collector.startCollectionRun(lifetime,{...args(700,10000),monthlyCreditsUsedBaseline:0},scopeId);
+   const run1=collector.startCollectionRun(lifetime,{...args(700,10000),monthlyCreditsUsedBaseline:0},scopeId,T0);
    const req1=collector.reserveHeliusCredits(lifetime,{runId:run1,taskKind:"token",taskAddress:SEED,
      endpoint:"enhanced-address-transactions",estimatedCredits:600});
    collector.recordHeliusResponse(lifetime,req1,{status:200,actualCredits:600});
@@ -207,7 +212,7 @@ function args(runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate=110){
    collector.ensurePilotScope(lifetime,SEED,1000000,false);
    assert.equal(lifetime.prepare("SELECT pilot_budget_credits FROM chain_collection_scopes WHERE scope_id=?").get(scopeId).pilot_budget_credits,1000,
      "resume without an explicit override must preserve the persisted pilot cap");
-   const run2=collector.startCollectionRun(lifetime,{...args(700,10000),monthlyCreditsUsedBaseline:0},scopeId);
+   const run2=collector.startCollectionRun(lifetime,{...args(700,10000),monthlyCreditsUsedBaseline:0},scopeId,T0);
    assert.throws(()=>collector.reserveHeliusCredits(lifetime,{runId:run2,taskKind:"wallet",taskAddress:WALLET,
      endpoint:"enhanced-address-transactions",estimatedCredits:401}),
      e=>e.code==="HELIUS_BUDGET_EXCEEDED" && /Pilot lifetime/.test(e.message));
