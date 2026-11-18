@@ -134,7 +134,7 @@ export async function getRecoveryBaseline(pool,channelId){
   // newly ingested Gateway messages.
   const pending=await pool.query(
     "SELECT baseline_message_id FROM discord_recovery_checks "+
-    "WHERE channel_id=$1 AND status='gap_unresolved' AND resolved_at IS NULL "+
+    "WHERE channel_id=$1 AND status IN ('gap_unresolved','failed') AND resolved_at IS NULL "+
     "AND baseline_message_id IS NOT NULL ORDER BY checked_at ASC LIMIT 1",[channelId]);
   if(pending.rows[0])return pending.rows[0].baseline_message_id;
   const latest=await pool.query(
@@ -159,7 +159,7 @@ export async function recordRecoveryCheck(pool,guildId,channelId,baseline,result
       await client.query(
         "UPDATE discord_recovery_checks SET resolved_at=NOW() "+
         "WHERE channel_id=$1 AND baseline_message_id IS NOT DISTINCT FROM $2 "+
-        "AND status='gap_unresolved' AND resolved_at IS NULL",
+        "AND status IN ('gap_unresolved','failed') AND resolved_at IS NULL",
         [channelId,baseline]);
     }
     await client.query("COMMIT");
