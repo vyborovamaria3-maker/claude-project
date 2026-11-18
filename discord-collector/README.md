@@ -66,3 +66,25 @@ strictly positive DISCORD_BACKFILL_MAX_MESSAGES. Never set an unbounded budget.
 - No event outbox, V2 Discord contracts, token verification, coverage, scoring or UI.
 - No deployment without separate approval of exact Discord Developer Policy usage.
 - Service tests use fake data; a PostgreSQL integration test runs in CI only.
+
+
+## Optional bounded restart gap scan
+
+Set DISCORD_GAP_RECOVERY_ENABLED=true and optionally
+DISCORD_GAP_RECOVERY_MAX_PAGES=5 (1..50), in addition to the existing live
+collector flags. At startup, before Gateway login, the collector snapshots
+the last message ID in each authorized channel. Once connected, it walks
+authorized recent history backwards with REST until the old watermark is
+found or a strict request budget is reached.
+
+Results are persisted in discord_recovery_checks with statuses:
+- initial_unverified: never seen before; no claim of prior completeness.
+- bounded_recovery: the old watermark was reached in the bounded pass.
+- gap_unresolved: page budget exhausted or old watermark not reached.
+- failed: REST access, permissions or storage encountered errors.
+
+A persisted unresolved baseline survives restarts and is only resolved after
+a later scan reaches that same watermark. No status ever claims that missed
+edits or deletes during downtime were fully reconstructed. This is NOT
+complete Discord source coverage and does not authorize scraping. A separate
+coverage model, durable retry queue, and full reconciliation are still required.

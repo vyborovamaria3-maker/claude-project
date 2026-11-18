@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {normalizeMessage,validateAuthorization} from "../src/events.mjs";
-import {installSchema,storeObservation,purgeExpired} from "../src/storage.mjs";
+import {installSchema,storeObservation,purgeExpired,getRecoveryBaseline,recordRecoveryCheck} from "../src/storage.mjs";
 
 const URL=process.env.DISCORD_TEST_DATABASE_URL;
 const guildId="123456789012345678";
@@ -50,6 +50,16 @@ test("PostgreSQL revisions, stale history, deletions and revoke/retention", {ski
     await purgeExpired(pool,reduced);
     const removed=await pool.query("SELECT COUNT(*)::int AS n FROM discord_messages WHERE channel_id=$1",[otherChannel]);
     assert.equal(removed.rows[0].n,0);
+    // Incomplete recovery checkpoints must survive service restarts.
+    await recordRecoveryCheck(pool,guildId,channelId,messageId,
+      {status:"gap_unresolved",pagesScanned:1,messagesProcessed:100});
+    assert.equal(await getRecoveryBaseline(pool,channelId),messageId);
+    await recordRecoveryCheck(pool,guildId,channelId,messageId,
+      {status:"bounded_recovery",pagesScanned:2,messagesProcessed:140});
+    const status=await pool.query(
+      "SELECT resolved_at FROM discord_recovery_checks WHERE channel_id=$1 "+
+      "AND status='gap_unresolved' ORDER BY id DESC LIMIT 1",[channelId]);
+    assert.ok(status.rows[0].resolved_at);
   }finally{
     await pool.end();
   }

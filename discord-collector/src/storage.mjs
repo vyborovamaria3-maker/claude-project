@@ -128,6 +128,45 @@ export async function purgeExpired(pool,allowed){
   finally{client.release()}
 }
 
+export async function getRecoveryBaseline(pool,channelId){
+  // A previous bounded scan may have exhausted its page budget; preserve that
+  // unresolved low watermark across restarts rather than concealing a gap behind
+  // newly ingested Gateway messages.
+  const pending=await pool.query(
+    "SELECT baseline_message_id FROM discord_recovery_checks "+
+    "WHERE channel_id=$1 AND status IN ('gap_unresolved','failed') AND resolved_at IS NULL "+
+    "AND baseline_message_id IS NOT NULL ORDER BY checked_at ASC LIMIT 1",[channelId]);
+  if(pending.rows[0])return pending.rows[0].baseline_message_id;
+  const latest=await pool.query(
+    "SELECT message_id FROM discord_messages WHERE channel_id=$1 "+
+    "ORDER BY message_id::numeric DESC LIMIT 1",[channelId]);
+  return latest.rows[0]?.message_id??null;
+}
+
+export async function recordRecoveryCheck(pool,guildId,channelId,baseline,results){
+  const status=results.status;
+  if(!["initial_unverified","bounded_recovery","gap_unresolved","failed"].includes(status))
+    throw new TypeError("Unrecognized recovery status");
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    await client.query(
+      "INSERT INTO discord_recovery_checks "+
+      "(guild_id,channel_id,baseline_message_id,status,pages_scanned,messages_processed) "+
+      "VALUES($1,$2,$3,$4,$5,$6)",
+      [guildId,channelId,baseline,status,results.pagesScanned??0,results.messagesProcessed??0]);
+    if(status==="bounded_recovery"){
+      await client.query(
+        "UPDATE discord_recovery_checks SET resolved_at=NOW() "+
+        "WHERE channel_id=$1 AND baseline_message_id IS NOT DISTINCT FROM $2 "+
+        "AND status IN ('gap_unresolved','failed') AND resolved_at IS NULL",
+        [channelId,baseline]);
+    }
+    await client.query("COMMIT");
+  }catch(e){await client.query("ROLLBACK");throw e}
+  finally{client.release()}
+}
+
 export async function getBackfillCursor(pool,channelId){
   const {rows}=await pool.query(
     "SELECT before_message_id FROM discord_backfill_cursors WHERE channel_id=$1",[channelId]);

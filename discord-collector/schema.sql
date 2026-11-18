@@ -7,7 +7,6 @@ CREATE TABLE IF NOT EXISTS discord_messages (
  deleted_at TIMESTAMPTZ,
  revision_at TIMESTAMPTZ
 );
--- Additive upgrade for experimental databases created by foundation PR #220.
 ALTER TABLE discord_messages ADD COLUMN IF NOT EXISTS revision_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS discord_messages_channel_time ON discord_messages(channel_id,occurred_at);
 CREATE TABLE IF NOT EXISTS discord_message_revisions (
@@ -22,3 +21,15 @@ CREATE TABLE IF NOT EXISTS discord_backfill_cursors (
  channel_id TEXT PRIMARY KEY, guild_id TEXT NOT NULL,
  before_message_id TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL
 );
+CREATE TABLE IF NOT EXISTS discord_recovery_checks (
+ id BIGSERIAL PRIMARY KEY,
+ guild_id TEXT NOT NULL, channel_id TEXT NOT NULL,
+ checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ baseline_message_id TEXT,
+ status TEXT NOT NULL CHECK(status IN ('initial_unverified','bounded_recovery','gap_unresolved','failed')),
+ pages_scanned INTEGER NOT NULL DEFAULT 0,
+ messages_processed INTEGER NOT NULL DEFAULT 0,
+ resolved_at TIMESTAMPTZ
+);
+ALTER TABLE discord_recovery_checks ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS discord_recovery_status ON discord_recovery_checks(channel_id,checked_at DESC);
