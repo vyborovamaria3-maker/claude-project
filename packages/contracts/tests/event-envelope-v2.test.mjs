@@ -316,13 +316,22 @@ test("Discord V2 message envelope validates source identity, channel provenance 
     evidenceRefs: [evidenceRef],
     payload: { ...payload, discordMessage: { ...payload.discordMessage, content: "private raw message" } },
   }), /not an allowed field/);
+  const wrongChannelEntity = [{
+    kind: "source", canonicalId: "discord:channel:99999999999999999",
+    firstSeenAt: observedAt, lastSeenAt: observedAt,
+  }];
+  const wrongChannelPayload = {
+    ...payload,
+    registryEvent: { ...payload.registryEvent, entityRefs: wrongChannelEntity },
+    timelineEvent: { ...payload.timelineEvent, entityRefs: wrongChannelEntity },
+  };
   assert.throws(() => buildEventEnvelopeV2({
     sourceSystem: "discord", eventKind: "discord_message_observed", eventKey,
     schemaVersion: "discord-message-v1",
     producer: { name: "discord-collector", version: "test-v1" },
     clocks: { occurredAt, observedAt, emittedAt },
     entityRefs: [{ kind: "source", canonicalId: "discord:channel:99999999999999999" }],
-    evidenceRefs: [evidenceRef], payload,
+    evidenceRefs: [evidenceRef], payload: wrongChannelPayload,
   }), /channel source/);
 });
 
