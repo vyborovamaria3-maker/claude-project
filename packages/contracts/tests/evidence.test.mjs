@@ -59,3 +59,22 @@ test("Discord evidence identity binds guild, channel and message Snowflakes", ()
   }), /Snowflakes/);
   assert.throws(() => validateEvidenceRef({...ref, sourceId: "discord:message:1:2:3"}), /Discord message evidence/);
 });
+
+
+test("Discord evidence rejects Snowflake values above uint64 max", () => {
+  const valid = "18446744073709551615";
+  assert.doesNotThrow(() => buildEvidenceRef({
+    sourceKind:"discord_message",guildId:valid,channelId:valid,messageId:valid,observedAt:NOW,
+  }));
+  assert.throws(() => buildEvidenceRef({
+    sourceKind:"discord_message",guildId:"18446744073709551616",
+    channelId:"22345678901234567",messageId:"32345678901234567",observedAt:NOW,
+  }), /Snowflakes/);
+  const ref = buildEvidenceRef({
+    sourceKind:"discord_message",guildId:"12345678901234567",
+    channelId:"22345678901234567",messageId:"32345678901234567",observedAt:NOW,
+  });
+  assert.throws(() => validateEvidenceRef({...ref,
+    sourceId:"discord:message:18446744073709551616:22345678901234567:32345678901234567",
+  }), /Snowflakes/);
+});

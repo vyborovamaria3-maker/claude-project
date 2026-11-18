@@ -5,6 +5,7 @@ import { buildTimelineEvent, type JsonValue, type TimelineEventKind } from "./ti
 import { parseTokenId, parseWalletId, isSolanaSignature } from "./canonical-ids.js";
 import { validateVerifiedTokenLinkEvent } from "./token-link.js";
 import { validateTokenLinksInvalidatedEvent } from "./token-link-invalidation.js";
+import { toUtcIso } from "./time.js";
 
 export type EventSource = "x" | "tg" | "blockchain" | "discord";
 export type CompatibilityMode = "backward" | "forward" | "full";
@@ -483,23 +484,35 @@ function validateLegacySemantics(identity: SchemaIdentity, payloadValue: unknown
     if (message.guildId !== match[1] || message.channelId !== match[2] || message.messageId !== match[3]) {
       throw new TypeError("Discord message metadata does not match evidence identity");
     }
+    const eventPrefix = "discord:message:" + match[1] + ":" + match[2] + ":" + match[3] + ":";
     if (identity.eventKind === "discord_message_deleted") {
       if (payload.timelineEvent !== undefined) throw new TypeError("Deleted Discord messages cannot publish a content timeline event");
+      if (identity.eventKey !== eventPrefix + "deleted") {
+        throw new TypeError("Discord delete event key must be stable for the message tombstone");
+      }
     } else {
       const revisionAt = message.revisionAt;
       if (typeof revisionAt !== "string" || !/(Z|[+-][0-9]{2}:[0-9]{2})$/i.test(revisionAt) || !Number.isFinite(Date.parse(revisionAt))) {
         throw new TypeError("Discord revisionAt must be an aware ISO timestamp");
       }
-      if (!evidenceRef.occurredAt) throw new TypeError("Discord observed/edited events require original occurredAt");
-      const revisionMs = Date.parse(revisionAt);
+      const canonicalRevisionAt = toUtcIso(revisionAt);
+      if (revisionAt !== canonicalRevisionAt) {
+        throw new TypeError("Discord revisionAt must use canonical UTC ISO format");
+      }
+      if (!evidenceRef.occurredAt) throw new TypeError("Discord observed/edited events require revision occurredAt");
+      const revisionMs = Date.parse(canonicalRevisionAt);
       const occurredMs = Date.parse(evidenceRef.occurredAt);
       const observedMs = Date.parse(evidenceRef.observedAt);
-      if (revisionMs < occurredMs || revisionMs > observedMs ||
-          (identity.eventKind === "discord_message_observed" && revisionMs !== occurredMs)) {
-        throw new TypeError("Discord revision clock is outside the source event window");
+      if (revisionMs !== occurredMs || revisionMs > observedMs) {
+        throw new TypeError("Discord revision clock must equal source occurredAt and not exceed observedAt");
       }
       const expectedTimeline = identity.eventKind === "discord_message_observed"
         ? "discord_message_observed" : "discord_message_edited";
+      const expectedKey = identity.eventKind === "discord_message_observed"
+        ? eventPrefix + "observed" : eventPrefix + "edited:" + canonicalRevisionAt;
+      if (identity.eventKey !== expectedKey) {
+        throw new TypeError("Discord event key must uniquely identify its source revision");
+      }
       const timeline = record(payload.timelineEvent, "$.payload.timelineEvent");
       if (timeline.kind !== expectedTimeline) throw new TypeError("Discord timeline kind does not match source event");
     }

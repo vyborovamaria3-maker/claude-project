@@ -81,3 +81,12 @@ test("Discord canonical source IDs use strict Snowflakes", () => {
   }
   assert.throws(() => formatSourceId("discord", "123"), /Stable numeric/);
 });
+
+
+test("Discord Snowflakes reject values outside the unsigned 64-bit range", () => {
+  const max = "18446744073709551615";
+  assert.equal(formatSourceId("discord", max), "discord:channel:" + max);
+  assert.throws(() => formatSourceId("discord", "18446744073709551616"), /Stable numeric/);
+  assert.throws(() => formatAuthorId("discord", "18446744073709551616"), /Stable numeric/);
+  assert.equal(parseSourceId("discord:channel:18446744073709551616"), null);
+});

@@ -6,8 +6,10 @@ import { validateRegisteredPayload, type EventSource } from "./schema-registry.j
 import { toUtcIso } from "./time.js";
 
 /** The V1 shape persisted by the existing X, TG and Solana source outboxes. */
+export type LegacyEventSource = Exclude<EventSource, "discord">;
+
 export type LegacyOutboxEvent = Readonly<{
-  sourceSystem: EventSource;
+  sourceSystem: LegacyEventSource;
   eventKind: string;
   eventKey: string;
   schemaVersion: string;

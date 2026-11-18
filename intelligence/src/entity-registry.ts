@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import {
-  buildEntityRef, isSolanaSignature, toUtcIso, type EntityRef, type EvidenceRef,
+  buildEntityRef, isSolanaSignature, isDiscordSnowflake, toUtcIso, type EntityRef, type EvidenceRef,
 } from "@claude-project/contracts";
 
 export type RegistryEvent = {
@@ -41,6 +41,12 @@ function validateEvidence(evidence: EvidenceRef): EvidenceRef {
     const match = /^chain:tx:solana:(.+)$/.exec(id);
     if (!match || !isSolanaSignature(match[1])) {
       throw new TypeError("Invalid chain transaction evidence");
+    }
+  }
+  if (evidence.sourceKind === "discord_message") {
+    const match = /^discord:message:([1-9][0-9]{14,21}):([1-9][0-9]{14,21}):([1-9][0-9]{14,21})$/.exec(id);
+    if (!match || !match.slice(1).every(isDiscordSnowflake)) {
+      throw new TypeError("Invalid Discord Snowflake evidence");
     }
   }
   const provider = evidence.provider === undefined ? undefined : limited(evidence.provider, "provider", 4096);

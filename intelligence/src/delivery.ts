@@ -143,6 +143,12 @@ function prepareDeliveryEvent(event: DeliveryEvent): PreparedDeliveryEvent {
     };
   }
 
+  // Discord has no V1 wire contract. Never allow a legacy payload to bypass
+  // the registered privacy-minimized V2 schema and semantic invariants.
+  if (event.sourceSystem === "discord") {
+    throw new TypeError("Discord delivery requires a validated Event Envelope V2");
+  }
+
   if (event.createdAt !== undefined &&
       (event.sourceSystem === "x" || event.sourceSystem === "tg" ||
        event.sourceSystem === "blockchain") &&

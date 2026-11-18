@@ -9,6 +9,15 @@ export const CHAINS = ["solana"] as const;
 export type Chain = (typeof CHAINS)[number];
 export type SocialPlatform = "x" | "tg" | "discord";
 
+const MAX_DISCORD_SNOWFLAKE = (1n << 64n) - 1n;
+
+/** Discord IDs are unsigned 64-bit Snowflakes; keep them as decimal strings. */
+export function isDiscordSnowflake(value: unknown): value is string {
+  if (typeof value !== "string" || !/^[1-9][0-9]{14,21}$/.test(value)) return false;
+  try { return BigInt(value) <= MAX_DISCORD_SNOWFLAKE; }
+  catch { return false; }
+}
+
 declare const tokenIdBrand: unique symbol;
 declare const walletIdBrand: unique symbol;
 declare const authorIdBrand: unique symbol;
@@ -115,7 +124,7 @@ function validateAccountId(platform: SocialPlatform, accountId: unknown): string
   if (typeof accountId !== "string") throw new TypeError("Account ID must be a string");
   if (platform === "x" && DIGITS.test(accountId)) return accountId;
   if (platform === "tg" && TG_DIGITS.test(accountId)) return accountId;
-  if (platform === "discord" && /^[1-9][0-9]{14,21}$/.test(accountId)) return accountId;
+  if (platform === "discord" && isDiscordSnowflake(accountId)) return accountId;
   throw new TypeError("Stable numeric X/TG/Discord ID required; do not use a handle");
 }
 
