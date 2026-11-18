@@ -85,7 +85,7 @@ test("Discord V2 delivery stores metadata and a delete tombstone retracts earlie
     ]){
       await admin.query(await readFile(new URL("../migrations/"+name,import.meta.url),"utf8"));
     }
-    pool=new pg.Pool({connectionString:URL,options:"-c search_path="+schema,max:2});
+    pool=new pg.Pool({connectionString:DB_URL,options:"-c search_path="+schema,max:2});
     const deliver=async event=>{
       let claimed=false;
       const failureCodes=[];
