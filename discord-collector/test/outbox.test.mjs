@@ -51,6 +51,7 @@ test("Discord delete is a content-free tombstone without a timeline row",()=>{
   assert.equal(event.eventKind,"discord_message_deleted");
   assert.equal(event.eventKey,"discord:message:"+guildId+":"+channelId+":"+messageId+":deleted");
   assert.equal(event.payload.clocks.occurredAt,null);
+  assert.ok(event.payload.coverageRef.windowStart<event.payload.coverageRef.windowEnd);
   assert.equal(Object.hasOwn(event.payload.payload,"timelineEvent"),false);
   assert.deepEqual(event.payload.payload.discordMessage,{guildId,channelId,messageId});
 });

@@ -56,7 +56,7 @@ function discordEvent(kind,occurredAt,observedAt,emittedAt){
     evidenceRefs:[evidenceRef],
     coverageRef:{
       sourceSystem:"discord",scope:"guild:"+guildId+"/channel:"+channelId,
-      windowStart:occurredAt??observedAt,windowEnd:observedAt,
+      windowStart:occurredAt??new Date(Date.parse(observedAt)-1).toISOString(),windowEnd:observedAt,
       status:"partial",coverageId:"discord-integration:"+channelId,
     },
     payload,

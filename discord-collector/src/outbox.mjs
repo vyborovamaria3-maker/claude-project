@@ -51,10 +51,13 @@ export function buildDiscordOutboxEvent(observation,emittedAt,producerVersion="0
     ...(timelineEvent?{timelineEvent}:{}),
     discordMessage,
   };
+  // A delete has no trustworthy occurredAt. Represent its observation as a
+  // minimal positive coverage interval without inventing a message timestamp.
+  const coverageWindowStart=occurredAt??new Date(Date.parse(observedAt)-1).toISOString();
   const coverageRef={
     sourceSystem:"discord",
     scope:"guild:"+observation.guildId+"/channel:"+observation.channelId,
-    windowStart:occurredAt??observedAt,
+    windowStart:coverageWindowStart,
     windowEnd:observedAt,
     status:"partial",
     coverageId:"discord:"+coverageRunId+":"+observation.channelId,
