@@ -65,6 +65,12 @@ jobs:
       - name: Production dependency audit
         env:
           ALLOW_BIGINT_BUFFER_UNTIL: "2026-10-01"
+          # Unfixed picomatch ReDoS (GHSA-fc5q-39xc-vjpf): no patched release
+          # exists upstream; reachable in this production graph only via the
+          # @solana/wallet-adapter-mobile -> react-native -> metro tooling
+          # chain inside the wallet SDK. Acceptance is explicit, dated and
+          # fail-closed in security/audit/npm-audit-policy.mjs.
+          ALLOW_PICOMATCH_UNTIL: "2027-01-15"
         run: |
           npm audit --omit=dev --json > "$RUNNER_TEMP/frontend-npm-audit.json" || true
           node ../security/audit/npm-audit-policy.mjs "$RUNNER_TEMP/frontend-npm-audit.json"
@@ -153,6 +159,12 @@ jobs:
       - name: Production dependency audit
         env:
           ALLOW_BIGINT_BUFFER_UNTIL: "2026-10-01"
+          # Unfixed picomatch ReDoS (GHSA-fc5q-39xc-vjpf): no patched release
+          # exists upstream; reachable in this production graph only via the
+          # @solana/wallet-adapter-mobile -> react-native -> metro tooling
+          # chain inside the wallet SDK. Acceptance is explicit, dated and
+          # fail-closed in security/audit/npm-audit-policy.mjs.
+          ALLOW_PICOMATCH_UNTIL: "2027-01-15"
         run: |
           npm audit --omit=dev --json > "$RUNNER_TEMP/subscription-npm-audit.json" || true
           node ../security/audit/npm-audit-policy.mjs "$RUNNER_TEMP/subscription-npm-audit.json"
