@@ -7,7 +7,7 @@
  */
 export const CHAINS = ["solana"] as const;
 export type Chain = (typeof CHAINS)[number];
-export type SocialPlatform = "x" | "tg";
+export type SocialPlatform = "x" | "tg" | "discord";
 
 declare const tokenIdBrand: unique symbol;
 declare const walletIdBrand: unique symbol;
@@ -115,7 +115,8 @@ function validateAccountId(platform: SocialPlatform, accountId: unknown): string
   if (typeof accountId !== "string") throw new TypeError("Account ID must be a string");
   if (platform === "x" && DIGITS.test(accountId)) return accountId;
   if (platform === "tg" && TG_DIGITS.test(accountId)) return accountId;
-  throw new TypeError("Stable numeric X/TG account ID required; do not use a handle");
+  if (platform === "discord" && /^[0-9]{15,22}$/.test(accountId)) return accountId;
+  throw new TypeError("Stable numeric X/TG/Discord ID required; do not use a handle");
 }
 
 export function formatAuthorId(platform: SocialPlatform, accountId: string): AuthorId {
@@ -124,7 +125,7 @@ export function formatAuthorId(platform: SocialPlatform, accountId: string): Aut
 
 export function parseAuthorId(input: unknown): (ParsedAuthorId & { id: AuthorId }) | null {
   if (typeof input !== "string") return null;
-  const match = /^(x|tg):(-?[0-9]+)$/.exec(input);
+  const match = /^(x|tg|discord):(-?[0-9]+)$/.exec(input);
   if (!match) return null;
   const platform = match[1] as SocialPlatform;
   const accountId = match[2] as string;
@@ -140,15 +141,15 @@ export function parseAuthorId(input: unknown): (ParsedAuthorId & { id: AuthorId 
  * X: x:account:123; Telegram: tg:source:-100123.
  */
 export function formatSourceId(platform: SocialPlatform, accountId: string): SourceId {
-  const role = platform === "x" ? "account" : "source";
+  const role = platform === "x" ? "account" : platform === "tg" ? "source" : "channel";
   return (platform + ":" + role + ":" + validateAccountId(platform, accountId)) as SourceId;
 }
 
 export function parseSourceId(input: unknown): (ParsedSourceId & { id: SourceId }) | null {
   if (typeof input !== "string") return null;
-  const match = /^(x:account|tg:source):(-?[0-9]+)$/.exec(input);
+  const match = /^(x:account|tg:source|discord:channel):(-?[0-9]+)$/.exec(input);
   if (!match) return null;
-  const platform: SocialPlatform = match[1] === "x:account" ? "x" : "tg";
+  const platform: SocialPlatform = match[1] === "x:account" ? "x" : match[1] === "tg:source" ? "tg" : "discord";
   const accountId = match[2] as string;
   try {
     return { platform, accountId, id: formatSourceId(platform, accountId) };

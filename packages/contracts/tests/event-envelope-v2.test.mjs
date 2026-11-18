@@ -261,3 +261,101 @@ test("coverage metadata is source-scoped and has a positive time window", () => 
     payload,
   }), /Coverage source does not match/);
 });
+
+
+test("Discord V2 message envelope validates source identity, channel provenance and privacy-minimized payload", () => {
+  const guildId = "12345678901234567";
+  const channelId = "22345678901234567";
+  const messageId = "32345678901234567";
+  const occurredAt = "2026-11-18T18:00:00.000Z";
+  const observedAt = "2026-11-18T18:00:02.000Z";
+  const emittedAt = "2026-11-18T18:00:03.000Z";
+  const eventKey = "discord:message:" + guildId + ":" + channelId + ":" + messageId + ":observed";
+  const evidenceRef = {
+    sourceKind: "discord_message",
+    sourceId: "discord:message:" + guildId + ":" + channelId + ":" + messageId,
+    observedAt, occurredAt, provider: "discord-gateway", parserVersion: "discord-collector-v1",
+  };
+  const entityRefs = [{
+    kind: "source", canonicalId: "discord:channel:" + channelId,
+    firstSeenAt: observedAt, lastSeenAt: observedAt,
+  }];
+  const payload = {
+    registryEvent: {
+      sourceSystem: "discord", eventKind: "discord_message_observed", eventKey,
+      schemaVersion: "discord-message-v1", entityRefs, evidenceRef,
+    },
+    timelineEvent: {
+      schemaVersion: "timeline-v1", eventKey, kind: "discord_message_observed",
+      occurredAt, observedAt, entityRefs, evidenceRef, payload: {},
+    },
+    discordMessage: { guildId, channelId, messageId, revisionAt: occurredAt },
+  };
+  const event = buildEventEnvelopeV2({
+    sourceSystem: "discord", eventKind: "discord_message_observed", eventKey,
+    schemaVersion: "discord-message-v1",
+    producer: { name: "discord-collector", version: "test-v1" },
+    clocks: { occurredAt, observedAt, emittedAt },
+    entityRefs: [{ kind: "source", canonicalId: "discord:channel:" + channelId }],
+    evidenceRefs: [evidenceRef],
+    coverageRef: {
+      sourceSystem: "discord", scope: "guild:" + guildId + "/channel:" + channelId,
+      windowStart: "2026-11-18T17:00:00Z", windowEnd: "2026-11-18T19:00:00Z",
+      status: "partial", coverageId: "discord-fixture-coverage-1",
+    },
+    payload,
+  });
+  assert.equal(validateEventEnvelopeV2(JSON.parse(JSON.stringify(event))).sourceSystem, "discord");
+  assert.equal(event.entityRefs[0].canonicalId, "discord:channel:" + channelId);
+  assert.throws(() => buildEventEnvelopeV2({
+    sourceSystem: "discord", eventKind: "discord_message_observed", eventKey,
+    schemaVersion: "discord-message-v1",
+    producer: { name: "discord-collector", version: "test-v1" },
+    clocks: { occurredAt, observedAt, emittedAt },
+    entityRefs: [{ kind: "source", canonicalId: "discord:channel:" + channelId }],
+    evidenceRefs: [evidenceRef],
+    payload: { ...payload, discordMessage: { ...payload.discordMessage, content: "private raw message" } },
+  }), /not an allowed field/);
+  assert.throws(() => buildEventEnvelopeV2({
+    sourceSystem: "discord", eventKind: "discord_message_observed", eventKey,
+    schemaVersion: "discord-message-v1",
+    producer: { name: "discord-collector", version: "test-v1" },
+    clocks: { occurredAt, observedAt, emittedAt },
+    entityRefs: [{ kind: "source", canonicalId: "discord:channel:99999999999999999" }],
+    evidenceRefs: [evidenceRef], payload,
+  }), /channel source/);
+});
+
+test("Discord delete event is a tombstone and cannot carry text or a timeline body", () => {
+  const guildId = "12345678901234567";
+  const channelId = "22345678901234567";
+  const messageId = "32345678901234567";
+  const observedAt = "2026-11-18T18:01:00.000Z";
+  const emittedAt = "2026-11-18T18:01:01.000Z";
+  const eventKey = "discord:message:" + guildId + ":" + channelId + ":" + messageId + ":deleted";
+  const evidenceRef = {
+    sourceKind: "discord_message",
+    sourceId: "discord:message:" + guildId + ":" + channelId + ":" + messageId,
+    observedAt, provider: "discord-gateway", parserVersion: "discord-collector-v1",
+  };
+  const entityRefs = [{
+    kind: "source", canonicalId: "discord:channel:" + channelId,
+    firstSeenAt: observedAt, lastSeenAt: observedAt,
+  }];
+  const payload = {
+    registryEvent: {
+      sourceSystem: "discord", eventKind: "discord_message_deleted", eventKey,
+      schemaVersion: "discord-message-v1", entityRefs, evidenceRef,
+    },
+    discordMessage: { guildId, channelId, messageId },
+  };
+  const event = buildEventEnvelopeV2({
+    sourceSystem: "discord", eventKind: "discord_message_deleted", eventKey,
+    schemaVersion: "discord-message-v1",
+    producer: { name: "discord-collector", version: "test-v1" },
+    clocks: { occurredAt: null, observedAt, emittedAt },
+    entityRefs: [{ kind: "source", canonicalId: "discord:channel:" + channelId }],
+    evidenceRefs: [evidenceRef], payload,
+  });
+  assert.equal(validateEventEnvelopeV2(JSON.parse(JSON.stringify(event))).eventKind, "discord_message_deleted");
+});

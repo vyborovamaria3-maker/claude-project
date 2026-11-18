@@ -34,3 +34,11 @@ No source DB is modified by this package and no collectors are rewired.
 
 Run `npm install --prefix packages/event-outbox --ignore-scripts --no-package-lock`
 and `npm --prefix packages/event-outbox run check`.
+
+
+## Discord source
+
+OutboxEvent.sourceSystem accepts discord for the isolated Discord source
+database. The generic adapter still requires the producer to insert the outbox
+row in the same transaction as its source write. Raw Discord message text,
+author IDs, handles, and attachment URLs must not be placed in shared events.

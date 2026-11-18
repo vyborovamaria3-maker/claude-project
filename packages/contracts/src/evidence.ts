@@ -4,7 +4,7 @@ import {
 } from "./canonical-ids.js";
 import { toUtcIso } from "./time.js";
 
-export type EvidenceSourceKind = "x_tweet" | "tg_message" | "chain_tx";
+export type EvidenceSourceKind = "x_tweet" | "tg_message" | "chain_tx" | "discord_message";
 export type EvidenceRef = {
   sourceKind: EvidenceSourceKind;
   sourceId: string;
@@ -27,9 +27,11 @@ export type EvidenceInput = EvidenceMetadata & (
   | { sourceKind: "x_tweet"; tweetId: string }
   | { sourceKind: "tg_message"; sourceAccountId: string; messageId: string }
   | { sourceKind: "chain_tx"; chain: Chain; transactionId: string }
+  | { sourceKind: "discord_message"; guildId: string; channelId: string; messageId: string }
 );
 
 const POSITIVE_ID = /^[1-9][0-9]*$/;
+const DISCORD_SNOWFLAKE = /^[0-9]{15,22}$/;
 
 function optionalMetadata(value: string | undefined, label: string): string | undefined {
   if (value === undefined) return undefined;
@@ -58,6 +60,12 @@ export function buildEvidenceRef(input: EvidenceInput): EvidenceRef {
         throw new TypeError("Invalid Solana transaction signature");
       }
       sourceId = "chain:tx:solana:" + input.transactionId;
+      break;
+    case "discord_message":
+      if (!DISCORD_SNOWFLAKE.test(input.guildId) || !DISCORD_SNOWFLAKE.test(input.channelId) || !DISCORD_SNOWFLAKE.test(input.messageId)) {
+        throw new TypeError("Discord guild, channel and message IDs must be valid Snowflakes");
+      }
+      sourceId = "discord:message:" + input.guildId + ":" + input.channelId + ":" + input.messageId;
       break;
     default:
       throw new TypeError("Invalid evidence source");
@@ -125,6 +133,11 @@ export function validateEvidenceRef(input: unknown): EvidenceRef {
       ...metadata, sourceKind: "chain_tx", chain: "solana",
       transactionId: match[1]!,
     });
+  }
+  if (raw.sourceKind === "discord_message") {
+    const match = /^discord:message:([0-9]{15,22}):([0-9]{15,22}):([0-9]{15,22})$/.exec(raw.sourceId);
+    if (!match) throw new TypeError("Invalid Discord message evidence ID");
+    return buildEvidenceRef({...metadata,sourceKind:"discord_message",guildId:match[1]!,channelId:match[2]!,messageId:match[3]!});
   }
   throw new TypeError("Unsupported evidence source kind");
 }

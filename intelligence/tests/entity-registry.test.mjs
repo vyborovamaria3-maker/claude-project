@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {buildEntityRef, buildEvidenceRef, formatTokenId} from "@claude-project/contracts";
+import {buildEntityRef, buildEvidenceRef, formatTokenId, formatSourceId} from "@claude-project/contracts";
 import {ingestRegistryEvent,validateRegistryEvent,registryEventFingerprint} from "../dist/index.js";
 
 const T="2026-10-18T00:00:00Z";
@@ -124,4 +124,33 @@ test("on-chain evidence accepts only valid Solana signatures",()=>{
       ...evidence,sourceKind:"chain_tx",sourceId:"chain:tx:ethereum:0x"+"a".repeat(64)
     }
   }),/Evidence\/source identity mismatch/);
+});
+
+
+test("Discord registry events are accepted only with canonical channel provenance", () => {
+  const guildId = "12345678901234567";
+  const channelId = "22345678901234567";
+  const messageId = "32345678901234567";
+  const observedAt = "2026-11-18T18:00:02Z";
+  const discordEvent = {
+    sourceSystem: "discord", eventKind: "discord_message_observed",
+    eventKey: "discord:message:" + guildId + ":" + channelId + ":" + messageId + ":observed",
+    schemaVersion: "discord-message-v1",
+    entityRefs: [buildEntityRef({
+      kind: "source", canonicalId: formatSourceId("discord", channelId),
+      firstSeenAt: observedAt, lastSeenAt: observedAt,
+    })],
+    evidenceRef: buildEvidenceRef({
+      sourceKind: "discord_message", guildId, channelId, messageId,
+      occurredAt: "2026-11-18T18:00:00Z", observedAt,
+    }),
+  };
+  assert.equal(validateRegistryEvent(discordEvent).evidenceRef.sourceKind, "discord_message");
+  assert.throws(() => validateRegistryEvent({
+    ...discordEvent,
+    entityRefs: [buildEntityRef({
+      kind: "source", canonicalId: formatSourceId("discord", "32345678901234567"),
+      firstSeenAt: observedAt, lastSeenAt: observedAt,
+    })],
+  }), /canonical channel source/);
 });

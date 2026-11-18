@@ -4,7 +4,7 @@ import {
 } from "@claude-project/contracts";
 
 export type RegistryEvent = {
-  sourceSystem: "x" | "tg" | "blockchain" | "twitter_research";
+  sourceSystem: "x" | "tg" | "blockchain" | "twitter_research" | "discord";
   eventKind: string;
   eventKey: string;
   schemaVersion: string;
@@ -24,7 +24,7 @@ function limited(value: unknown, name: string, maxLength = 512): string {
 }
 
 function validateEvidence(evidence: EvidenceRef): EvidenceRef {
-  if (!evidence || !["x_tweet", "tg_message", "chain_tx"].includes(evidence.sourceKind)) {
+  if (!evidence || !["x_tweet", "tg_message", "chain_tx", "discord_message"].includes(evidence.sourceKind)) {
     throw new TypeError("Unknown evidence type");
   }
   const id = limited(evidence.sourceId, "evidence source ID");
@@ -32,6 +32,7 @@ function validateEvidence(evidence: EvidenceRef): EvidenceRef {
     x_tweet: /^x:tweet:[1-9][0-9]*$/,
     tg_message: /^tg:message:(?:[1-9][0-9]*|-[1-9][0-9]*):[1-9][0-9]*$/,
     chain_tx: /^chain:tx:solana:[A-Za-z0-9]+$/,
+    discord_message: /^discord:message:[0-9]{15,22}:[0-9]{15,22}:[0-9]{15,22}$/,
   };
   if (!patterns[evidence.sourceKind].test(id)) {
     throw new TypeError("Evidence/source identity mismatch");
@@ -57,7 +58,7 @@ function validateEvidence(evidence: EvidenceRef): EvidenceRef {
 
 export function validateRegistryEvent(input: RegistryEvent): RegistryEvent {
   const kindForSource: Record<RegistryEvent["sourceSystem"], EvidenceRef["sourceKind"]> = {
-    x: "x_tweet", tg: "tg_message", blockchain: "chain_tx", twitter_research: "x_tweet",
+    x: "x_tweet", tg: "tg_message", blockchain: "chain_tx", twitter_research: "x_tweet", discord: "discord_message",
   };
   if (!Object.hasOwn(kindForSource, input.sourceSystem)) {
     throw new TypeError("Unsupported sourceSystem");
@@ -76,6 +77,12 @@ export function validateRegistryEvent(input: RegistryEvent): RegistryEvent {
     kind: ref.kind, canonicalId: ref.canonicalId,
     firstSeenAt: ref.firstSeenAt, lastSeenAt: ref.lastSeenAt,
   }));
+  if (input.sourceSystem === "discord") {
+    const match = /^discord:message:([0-9]{15,22}):([0-9]{15,22}):([0-9]{15,22})$/.exec(evidenceRef.sourceId);
+    if (!match || entityRefs.length !== 1 || entityRefs[0]!.kind !== "source" || entityRefs[0]!.canonicalId !== "discord:channel:" + match[2]) {
+      throw new TypeError("Discord evidence must resolve to exactly its canonical channel source");
+    }
+  }
   return {...input, entityRefs, evidenceRef};
 }
 

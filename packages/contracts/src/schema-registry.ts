@@ -429,6 +429,39 @@ function validateLegacySemantics(identity: SchemaIdentity, payloadValue: unknown
         entityRefs[0]!.canonicalId !== "tg:source:" + match[1]) {
       throw new TypeError("Telegram event source entity does not match message evidence");
     }
+  } else if (identity.sourceSystem === "discord") {
+    const match = /^discord:message:([0-9]{15,22}):([0-9]{15,22}):([0-9]{15,22})$/.exec(evidenceRef.sourceId);
+    if (!match || entityRefs.length !== 1 || entityRefs[0]!.kind !== "source" ||
+        entityRefs[0]!.canonicalId !== "discord:channel:" + match[2]) {
+      throw new TypeError("Discord event must reference exactly its canonical channel source");
+    }
+    if (!["discord_message_observed", "discord_message_edited", "discord_message_deleted"].includes(identity.eventKind)) {
+      throw new TypeError("Unsupported Discord event kind");
+    }
+    const message = record(payload.discordMessage, "$.payload.discordMessage");
+    if (message.guildId !== match[1] || message.channelId !== match[2] || message.messageId !== match[3]) {
+      throw new TypeError("Discord message metadata does not match evidence identity");
+    }
+    if (identity.eventKind === "discord_message_deleted") {
+      if (payload.timelineEvent !== undefined) throw new TypeError("Deleted Discord messages cannot publish a content timeline event");
+    } else {
+      const revisionAt = message.revisionAt;
+      if (typeof revisionAt !== "string" || !/(Z|[+-][0-9]{2}:[0-9]{2})$/i.test(revisionAt) || !Number.isFinite(Date.parse(revisionAt))) {
+        throw new TypeError("Discord revisionAt must be an aware ISO timestamp");
+      }
+      if (!evidenceRef.occurredAt) throw new TypeError("Discord observed/edited events require original occurredAt");
+      const revisionMs = Date.parse(revisionAt);
+      const occurredMs = Date.parse(evidenceRef.occurredAt);
+      const observedMs = Date.parse(evidenceRef.observedAt);
+      if (revisionMs < occurredMs || revisionMs > observedMs ||
+          (identity.eventKind === "discord_message_observed" && revisionMs !== occurredMs)) {
+        throw new TypeError("Discord revision clock is outside the source event window");
+      }
+      const expectedTimeline = identity.eventKind === "discord_message_observed"
+        ? "discord_message_observed" : "discord_message_edited";
+      const timeline = record(payload.timelineEvent, "$.payload.timelineEvent");
+      if (timeline.kind !== expectedTimeline) throw new TypeError("Discord timeline kind does not match source event");
+    }
   } else if (identity.eventKind === "wallet_transaction_observed") {
     if (entityRefs.length !== 1 || entityRefs[0]!.kind !== "wallet") {
       throw new TypeError("Solana wallet observation requires exactly one wallet entity");

@@ -8,9 +8,9 @@ import {
   EVENT_ENVELOPE_V2_JSON_SCHEMA,
 } from "../dist/index.js";
 
-test("registry contains the existing X, TG and Solana V1 producer event kinds", () => {
+test("registry contains the existing X, TG, Solana and Discord producer event kinds", () => {
   const definitions = listSchemaDefinitions();
-  assert.equal(definitions.length, 10);
+  assert.equal(definitions.length, 13);
   assert.equal(new Set(definitions.map((item) => item.schemaId)).size, definitions.length);
   assert.ok(getSchemaDefinition("x", "tweet_observed", "x-tweet-v1"));
   assert.ok(getSchemaDefinition("tg", "message_observed", "tg-message-v1"));
@@ -136,4 +136,16 @@ test("a published schema ID cannot be reused for changed wire semantics", () => 
     ...definition,
     producerName: "tg-collector",
   }), /immutable/);
+});
+
+
+test("Discord message schemas are explicit, versioned and source-owned", () => {
+  const observed = getSchemaDefinition("discord", "discord_message_observed", "discord-message-v1");
+  const edited = getSchemaDefinition("discord", "discord_message_edited", "discord-message-v1");
+  const deleted = getSchemaDefinition("discord", "discord_message_deleted", "discord-message-v1");
+  assert.ok(observed && edited && deleted);
+  assert.equal(observed.producerName, "discord-collector");
+  assert.equal(observed.compatibilityMode, "backward");
+  assert.ok(observed.schemaId.includes("discord:discord_message_observed"));
+  assert.equal(getSchemaDefinition("discord", "message_observed", "tg-message-v1"), undefined);
 });
