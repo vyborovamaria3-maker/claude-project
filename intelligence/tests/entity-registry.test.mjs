@@ -138,5 +138,5 @@ test("Discord registry events accept only channel-bound message evidence",()=>{
   kind:"source",canonicalId:formatSourceId("discord","423456789012345678"),firstSeenAt:when,lastSeenAt:when
  })]}),/channel/);
  assert.throws(()=>validateRegistryEvent({...discord,eventKind:"wallet_transaction_observed"}),/channel/);
- assert.throws(()=>validateRegistryEvent({...discord,evidenceRef:{...discord.evidenceRef,sourceKind:"tg_message"}}),/Evidence does not belong/);
+ assert.throws(()=>validateRegistryEvent({...discord,evidenceRef:{...discord.evidenceRef,sourceKind:"tg_message"}}),/Evidence\/source identity mismatch/);
 });
