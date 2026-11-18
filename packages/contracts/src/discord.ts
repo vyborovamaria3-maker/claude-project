@@ -15,6 +15,7 @@ export type DiscordMessageEnvelopeInput = Readonly<{
   emittedAt: Date | string;
   occurredAt?: Date | string | null;
   contentSha256?: string | null;
+  contentErased?: boolean;
   producerVersion: string;
 }>;
 
@@ -28,7 +29,7 @@ export function buildDiscordMessageEnvelope(input: DiscordMessageEnvelopeInput):
   }
   const allowed = new Set([
     "kind", "channelId", "messageId", "revisionKey", "observedAt",
-    "emittedAt", "occurredAt", "contentSha256", "producerVersion",
+    "emittedAt", "occurredAt", "contentSha256", "contentErased", "producerVersion",
   ]);
   for (const key of Object.keys(input)) {
     if (!allowed.has(key)) throw new TypeError("Unknown Discord envelope input field: " + key);
@@ -47,6 +48,12 @@ export function buildDiscordMessageEnvelope(input: DiscordMessageEnvelopeInput):
   const deleted = input.kind === "deleted";
   if (deleted && input.contentSha256 != null) {
     throw new TypeError("Deleted Discord event cannot retain a content hash");
+  }
+  if (deleted && input.contentErased !== true) {
+    throw new TypeError("Discord deletion requires confirmed content erasure");
+  }
+  if (!deleted && input.contentErased === true) {
+    throw new TypeError("Content erasure flag is only valid for deletion events");
   }
   if (!deleted && input.contentSha256 != null && !SHA256.test(input.contentSha256)) {
     throw new TypeError("Invalid Discord content SHA-256");
@@ -82,7 +89,7 @@ export function buildDiscordMessageEnvelope(input: DiscordMessageEnvelopeInput):
       entityRefs: [entityRef],
       evidenceRef,
     },
-    ...(deleted ? { messageDeletion: { contentErased: true } } : {
+    ...(deleted ? { messageDeletion: { contentErased: input.contentErased === true } } : {
       timelineEvent: buildTimelineEvent({
         eventKey,
         kind: input.kind === "observed" ? "discord_message_published" : "discord_message_edited",

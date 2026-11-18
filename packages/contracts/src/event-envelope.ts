@@ -347,6 +347,16 @@ function normalizeInput<TPayload extends Record<string, unknown>>(
       normalizedClocks.occurredAt !== (sourceEvidence.occurredAt ?? null)) {
     throw new TypeError("Envelope evidenceRefs/clocks differ from source registry evidence");
   }
+  const envelopeContentHash = evidenceRefs[0]!.contentSha256;
+  if (envelopeContentHash !== undefined) {
+    const timelineValue = payloadRecord.timelineEvent;
+    if (timelineValue === undefined) throw new TypeError("Evidence content hash requires a timeline event");
+    const timelineRecord = record(timelineValue, "payload.timelineEvent");
+    const timelinePayload = record(timelineRecord.payload, "payload.timelineEvent.payload");
+    if (timelinePayload.contentSha256 !== envelopeContentHash) {
+      throw new TypeError("Evidence content hash differs from timeline content hash");
+    }
+  }
 
   return {
     envelopeVersion: "event-envelope-v2",

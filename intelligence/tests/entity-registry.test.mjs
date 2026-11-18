@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {buildEntityRef, buildEvidenceRef, formatTokenId} from "@claude-project/contracts";
+import {buildEntityRef, buildEvidenceRef, formatTokenId, formatSourceId} from "@claude-project/contracts";
 import {ingestRegistryEvent,validateRegistryEvent,registryEventFingerprint} from "../dist/index.js";
 
 const T="2026-10-18T00:00:00Z";
@@ -124,4 +124,19 @@ test("on-chain evidence accepts only valid Solana signatures",()=>{
       ...evidence,sourceKind:"chain_tx",sourceId:"chain:tx:ethereum:0x"+"a".repeat(64)
     }
   }),/Evidence\/source identity mismatch/);
+});
+
+
+test("Discord registry events accept only channel-bound message evidence",()=>{
+ const channelId="223456789012345678",messageId="323456789012345678",when="2026-11-18T10:00:00Z";
+ const discord={sourceSystem:"discord",eventKind:"message_observed",eventKey:"discord:message:"+channelId+":"+messageId,
+  schemaVersion:"discord-message-v1",
+  entityRefs:[buildEntityRef({kind:"source",canonicalId:formatSourceId("discord",channelId),firstSeenAt:when,lastSeenAt:when})],
+  evidenceRef:buildEvidenceRef({sourceKind:"discord_message",channelId,messageId,observedAt:when,occurredAt:when,provider:"discord"})};
+ assert.equal(validateRegistryEvent(discord).sourceSystem,"discord");
+ assert.throws(()=>validateRegistryEvent({...discord,entityRefs:[buildEntityRef({
+  kind:"source",canonicalId:formatSourceId("discord","423456789012345678"),firstSeenAt:when,lastSeenAt:when
+ })]}),/channel/);
+ assert.throws(()=>validateRegistryEvent({...discord,eventKind:"wallet_transaction_observed"}),/channel/);
+ assert.throws(()=>validateRegistryEvent({...discord,evidenceRef:{...discord.evidenceRef,sourceKind:"tg_message"}}),/Evidence does not belong/);
 });

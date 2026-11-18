@@ -137,3 +137,5 @@ This PR adds contracts and a tested adapter, not delivery or production
 activation. Outbox writes, Inbox integration, verified mint linking, coverage
 and scoring remain separate gates. Collection stays default-off and requires
 separate platform and community authorization.
+
+Deletion envelopes require explicit content-erasure confirmation from the source storage path; the adapter does not infer that a delete was durably applied.

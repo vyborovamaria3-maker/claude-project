@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  buildEntityRef,buildEvidenceRef,buildTimelineEvent,formatTokenId,
+  buildEntityRef,buildEvidenceRef,buildTimelineEvent,formatTokenId,formatSourceId,
 } from "@claude-project/contracts";
 import {ingestTimelineEvent,queryTokenTimeline} from "../dist/index.js";
 
@@ -41,4 +41,18 @@ test("observedAt must be identical to source evidence time",async()=>{
   await assert.rejects(ingestTimelineEvent(tx,"x","tweet_created",{
     ...event,observedAt:"2026-10-18T00:07:00Z"
   }),/observedAt/);
+});
+
+
+test("Discord message timeline events use canonical channel evidence",async()=>{
+ const channelId="223456789012345678",messageId="323456789012345678";
+ const observedAt="2026-11-18T10:00:01Z",occurredAt="2026-11-18T10:00:00Z";
+ const source=buildEntityRef({kind:"source",canonicalId:formatSourceId("discord",channelId),firstSeenAt:observedAt,lastSeenAt:observedAt});
+ const proof=buildEvidenceRef({sourceKind:"discord_message",channelId,messageId,observedAt,occurredAt,provider:"discord"});
+ const e=buildTimelineEvent({kind:"discord_message_published",eventKey:"discord:message:"+channelId+":"+messageId,
+  entityRefs:[source],evidenceRef:proof,occurredAt,observedAt,payload:{contentAvailable:false}});
+ const calls=[];
+ const tx={query:async(sql,params)=>{calls.push({sql,params});return{rows:sql.includes("RETURNING event_key")?[{event_key:e.eventKey}]:[]};}};
+ assert.equal(await ingestTimelineEvent(tx,"discord","message_observed",e),true);
+ assert.equal(calls[0].params[0],"discord");assert.equal(calls[0].params[3],"discord_message_published");
 });
