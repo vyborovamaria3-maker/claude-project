@@ -1,12 +1,21 @@
-# Permission-gated historical dataset staging (first vertical slice)
+# Rights-gated historical dataset staging and normalized research projections
 
-This is a local research importer, not a collector or a producer into Node Intelligence.
-It does not download data, connect to accounts, or perform SPL mint verification.
+No data downloads, network access, automatic license approval, mint verification,
+production delivery or AI training. All candidates start rights=review_required.
 
-The JSON catalog lists candidate datasets; ALL start with rights=review_required.
-Repository code license does not automatically license user comments or third-party content.
-Obtain a legitimate right to your proposed use, check data terms and privacy,
-then create a private operator-reviewed authorization JSON outside the repository:
+## Source registry
+
+- Coin-Meme: real published metadata columns are token_name, token_ticker,
+  token_address, description, mCap, createdAt, bonding_completeTime.
+  The actual createdAt sample is DD/MM/YYYY, HH:mm:ss, with no timezone.
+- MemeChain: source join key (address, platform); social_info.csv supplies
+  website, twitter, telegram and discord endpoints. Multi-chain records are
+  filtered to Solana only, and all links are treated as unverified assertions.
+- MELT, Trenches and Reddit use Parquet and remain unimplemented in this slice.
+
+Repository code license does not automatically license third-party user comments.
+Conduct a separate review of original data conditions, privacy, erasure and
+intended use. Keep the operator authorization JSON OUTSIDE this repository:
 
 ~~~json
 {
@@ -14,32 +23,59 @@ then create a private operator-reviewed authorization JSON outside the repositor
     "status": "approved",
     "allowed_uses": ["research"],
     "reviewed_by": "operator",
-    "evidence_reference": "internal-permission-record"
+    "evidence_reference": "actual-rights-review-reference"
   }
 }
 ~~~
 
-The approval record is an audit control, not independent proof of legal permission.
+This file records the operator's review; it does not itself create permission.
+
+## Offline usage
 
 ~~~sh
 python3 dataset-ingestion/ingest.py catalog
-python3 dataset-ingestion/ingest.py inspect --input /private/comments.csv.zip
+python3 dataset-ingestion/ingest.py inspect --input /private/destription+finance.csv
 python3 dataset-ingestion/ingest.py import --source coin-meme \
-  --input /private/comments.csv.zip --db /private/staging.sqlite \
-  --authorization /private/rights.json --purpose research --limit 1000
+  --input /private/destription+finance.csv \
+  --authorization /private/rights.json \
+  --db /private/datasets.sqlite --purpose research
+python3 dataset-ingestion/normalize.py --source coin-meme --db /private/datasets.sqlite
+python3 dataset-ingestion/normalize.py --source memechain --db /private/datasets.sqlite
 python3 -m unittest discover -s dataset-ingestion/tests -v
 ~~~
 
-Supported now: CSV, JSONL and ZIP containing CSV/JSONL. Parquet-based MELT/Trenches
-and Reddit are registered but fail closed until a streaming schema-aware adapter exists.
+Supported raw staging: CSV, JSONL and ZIP containing these. Explicitly rejects
+unsupported Parquet until bounded streaming adapters are reviewed.
 
-The staging SQLite database may contain raw user-generated text; store privately and
-enforce source-specific retention and deletion requirements before any live deployment.
-No data is promoted to central Intelligence; no regex-based address is verified.
-A source event from 2024 first imported in 2026 has available_at=2026, not 2024.
-Day-only timestamps remain day precision, and timezone-naive dates are rejected.
-Duplicate imports of the same source file preserve the original available_at.
+Staging records file digest and sizes, raw payload digest, import run status,
+timestamp precision, observed/ingested/available time and rights reference.
+Reimporting the same file preserves its original per-row availability.
+A source event from 2024 first imported in 2026 is NOT treated as available in 2024.
 
-Next phases: rights/retention enforcement, schema-specific validators, Parquet streaming,
-verified mint evidence, explicit research replay, Discord permissions, transactional outbox,
-contract V2 and central source coverage / scoring. See architecture roadmap.
+## Research-only source projections
+
+normalize.py refuses arbitrary dataset IDs, creates source-specific tables and
+never writes to the central Intelligence database:
+
+1. token_metadata_projections: Coin-Meme mint CANDIDATE, name, ticker, description,
+   original createdAt string with unknown timezone, real first availability.
+2. token_outcomes_research_only: mCap and bonding_completeTime, both NOT safe
+   launch-time features because measurement availability is not proven.
+3. token_social_link_projections: Solana-only MemeChain source-asserted URLs,
+   no automatic crawling; mint candidate NOT chain-verified.
+
+Coin-Meme comments.csv.zip header layout is not yet verified. Comment rows without
+verified token_address join fields are deliberately not projected.
+
+Every candidate must be independently linked to an actual SPL mint through
+trusted Solana evidence. Base58 32-byte decoding only proves syntactic plausibility.
+Do not join candidates by ticker/name or expose raw descriptions, author data or
+URLs as verified evidence.
+
+## Production blockers
+
+Retention and erasure across raw files, SQLite, normalized tables, backups, and
+derived indices are not yet implemented. Do not serve this staging database as
+production content. Dataset-specific file manifests and schema changes must be
+reviewed before large imports. Research replay must be separate from actual
+knownAt and must disclose missing historical coverage and selection bias.
