@@ -7,7 +7,7 @@ import { toUtcIso } from "./time.js";
 
 /** The V1 shape persisted by the existing X, TG and Solana source outboxes. */
 export type LegacyOutboxEvent = Readonly<{
-  sourceSystem: EventSource;
+  sourceSystem: Exclude<EventSource, "discord">;
   eventKind: string;
   eventKey: string;
   schemaVersion: string;

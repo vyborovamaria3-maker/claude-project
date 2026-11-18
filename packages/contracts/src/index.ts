@@ -9,3 +9,4 @@ export * from "./canonical-json.js";
 export * from "./event-envelope.js";
 export * from "./schema-registry.js";
 export * from "./v1-compat.js";
+export * from "./discord.js";

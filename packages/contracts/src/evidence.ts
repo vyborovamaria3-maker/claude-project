@@ -4,7 +4,7 @@ import {
 } from "./canonical-ids.js";
 import { toUtcIso } from "./time.js";
 
-export type EvidenceSourceKind = "x_tweet" | "tg_message" | "chain_tx";
+export type EvidenceSourceKind = "x_tweet" | "tg_message" | "chain_tx" | "discord_message";
 export type EvidenceRef = {
   sourceKind: EvidenceSourceKind;
   sourceId: string;
@@ -27,9 +27,11 @@ export type EvidenceInput = EvidenceMetadata & (
   | { sourceKind: "x_tweet"; tweetId: string }
   | { sourceKind: "tg_message"; sourceAccountId: string; messageId: string }
   | { sourceKind: "chain_tx"; chain: Chain; transactionId: string }
+  | { sourceKind: "discord_message"; channelId: string; messageId: string }
 );
 
 const POSITIVE_ID = /^[1-9][0-9]*$/;
+const DISCORD_SNOWFLAKE = /^[1-9][0-9]{14,21}$/;
 
 function optionalMetadata(value: string | undefined, label: string): string | undefined {
   if (value === undefined) return undefined;
@@ -52,6 +54,10 @@ export function buildEvidenceRef(input: EvidenceInput): EvidenceRef {
       sourceId = "tg:message:" + source.slice("tg:source:".length) + ":" + input.messageId;
       break;
     }
+    case "discord_message":
+      if (!DISCORD_SNOWFLAKE.test(input.channelId) || !DISCORD_SNOWFLAKE.test(input.messageId)) throw new TypeError("Discord channel and message IDs must be valid Snowflakes");
+      sourceId = "discord:message:" + input.channelId + ":" + input.messageId;
+      break;
     case "chain_tx":
       if (!isChain(input.chain)) throw new TypeError("Invalid chain");
       if (!isSolanaSignature(input.transactionId)) {
@@ -115,6 +121,11 @@ export function validateEvidenceRef(input: unknown): EvidenceRef {
       ...metadata, sourceKind: "tg_message",
       sourceAccountId: match[1]!, messageId: match[2]!,
     });
+  }
+  if (raw.sourceKind === "discord_message") {
+    const match = /^discord:message:([1-9][0-9]{14,21}):([1-9][0-9]{14,21})$/.exec(raw.sourceId);
+    if (!match) throw new TypeError("Invalid Discord message evidence ID");
+    return buildEvidenceRef({...metadata,sourceKind:"discord_message",channelId:match[1]!,messageId:match[2]!});
   }
   if (raw.sourceKind === "chain_tx") {
     const match = /^chain:tx:solana:([1-9A-HJ-NP-Za-km-z]+)$/.exec(raw.sourceId);

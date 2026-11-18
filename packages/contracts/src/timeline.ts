@@ -3,7 +3,8 @@ import type { EvidenceRef } from "./evidence.js";
 import { toUtcIso } from "./time.js";
 
 export const TIMELINE_EVENT_KINDS = [
-  "tweet_published", "tg_message_published", "chain_transaction",
+  "tweet_published", "tg_message_published", "discord_message_published",
+  "discord_message_edited", "chain_transaction",
   "trade_executed", "signal_detected", "signal_outcome",
 ] as const;
 
