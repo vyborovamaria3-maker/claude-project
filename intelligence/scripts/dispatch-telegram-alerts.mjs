@@ -148,6 +148,12 @@ async function main() {
       try{await client.query("ROLLBACK");}catch{}
       throw error;
     } finally {client.release();}
+    // Test/injection knob (production default 0): pauses between the claim
+    // transaction and the pre-send lease renewal so a test can interleave
+    // ownership changes - worker pause, lease loss, re-claim -
+    // deterministically. It never alters claim or fencing semantics.
+    const claimDelayMs=Number(process.env.INTELLIGENCE_TELEGRAM_CLAIM_DELAY_MS??"0");
+    if(claimDelayMs>0)await new Promise((resolve)=>setTimeout(resolve,claimDelayMs));
     let delivered=0,failed=0,fenced=0,ambiguous=0;
     for(const row of rows) {
       // Atomically renew the lease immediately before the outbound call.
@@ -179,9 +185,17 @@ async function main() {
         if(response.ok) {
           const payload=await response.json();
           outcome=payload?.ok===true?"delivered":"failed";
+        } else if(response.status>=500||response.status===408) {
+          // A server-side error or request timeout does NOT prove the
+          // message was not processed: the upstream may have accepted and
+          // delivered it before failing the response. Automatic retries
+          // after such an outcome could duplicate the alert, so the row is
+          // parked for operator review like any other ambiguous outcome.
+          outcome="ambiguous";
         } else {
-          // A definite HTTP answer means the request reached Telegram and
-          // was not accepted: safe to classify as a normal failure.
+          // A definite client-side rejection (4xx) proves the request was
+          // received and refused without a send: safe to classify as a
+          // normal retryable failure.
           outcome="failed";
         }
       } catch(error) {

@@ -18,15 +18,20 @@
 --     per-claim claim_token, and each worker atomically renews its lease
 --     immediately before the outbound call - a worker that lost ownership
 --     affects zero rows there and never reaches the API.
---   * A crash AFTER a successful send but BEFORE the ACK, or a worker
+--   * A crash AFTER a successful send but BEFORE the ACK, a worker
 --     stalling longer than a full lease window between the renewal and
---     the fetch, can still produce one duplicate after the lease expires
---     (at-least-once, bounded by the 10 minute lease). This is NOT
---     exactly-once delivery - the Telegram Bot API has no idempotency
---     key - and the residual window is reported to the operator, not
---     hidden.
---   * Ambiguous outcomes (network timeout, unknown transport failure) are
---     parked in 'needs_review' and never retried automatically.
+--     the fetch, or an HTTP 5xx/408 response from the upstream (which
+--     does not prove the message was not processed) can still produce
+--     one duplicate or an unresolved delivery attempt. These outcomes
+--     are at-least-once, bounded by the 10 minute lease, and parked in
+--     'needs_review' when the upstream cannot prove non-delivery. This
+--     is NOT exactly-once delivery - the Telegram Bot API has no
+--     idempotency key - and the residual window is reported to the
+--     operator, not hidden.
+--   * Ambiguous outcomes (network timeout, unknown transport failure,
+--     HTTP 5xx/408) are parked in 'needs_review' and never retried
+--     automatically. Only 4xx rejections prove the request was received
+--     and refused without a send, so only they are retried.
 --   * Rows that were already stale and exhausted BEFORE this migration
 --     shipped were terminalized by migration 020 as an explicit
 --     failure-assumption (they remain operator-visible and reprocessable

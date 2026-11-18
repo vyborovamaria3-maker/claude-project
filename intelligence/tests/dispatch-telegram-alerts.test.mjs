@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {execFileSync} from "node:child_process";
+import {execFileSync, spawn} from "node:child_process";
 import {randomBytes} from "node:crypto";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
@@ -53,6 +53,36 @@ function runDispatcherRaw(databaseUrl,extraEnv){
   }catch(error){
     return {stdout:error.stdout??"",stderr:error.stderr??"",status:error.status??1};
   }
+}
+
+
+// Async dispatcher harness: unlike execFileSync, spawning keeps the test
+// process event loop alive, which is required for every fixture that runs
+// an HTTP server in-process (a blocking exec would freeze the server and
+// turn every fixture response into a client-side timeout).
+function spawnDispatcher(envOverrides,connectionUrl){
+  return new Promise((resolve,reject)=>{
+    const child=spawn(process.execPath,[script],{
+      env:{
+        ...process.env,
+        INTELLIGENCE_DATABASE_URL:connectionUrl,
+        TELEGRAM_BOT_TOKEN:"123456:"+("A".repeat(40)),
+        TELEGRAM_CHAT_ID:"1999999999",
+        INTELLIGENCE_ALERT_BATCH_SIZE:"10",
+        ...(envOverrides??{}),
+      },
+      stdio:["ignore","pipe","pipe"],
+    });
+    let stdout="";
+    let dbgstderr="";
+    child.stdout.on("data",(d)=>{stdout+=d;});
+    child.stderr.on("data",(d)=>{dbgstderr+=d;});
+    child.on("error",reject);
+    child.on("close",(code)=>{
+      const summary=stdout.split("\n").filter((l)=>l.startsWith("{")).pop();
+      resolve({code,summary:summary?JSON.parse(summary):null,stderr:dbgstderr});
+    });
+  });
 }
 
 test("telegram alert dispatcher: retry budget, open-row backoff and dead-letter terminal state",{
@@ -557,5 +587,185 @@ test("overlapping dispatcher workers claim every alert exactly once via SKIP LOC
     await admin.query("SET search_path TO public");
     await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
     await admin.end();
+  }
+});
+
+test("telegram alert dispatcher classifies HTTP 5xx/408 as ambiguous and 4xx as a definite failure",{
+  skip:!url,
+},async()=>{
+  const http=await import("node:http");
+  // Local, hermetic Telegram-shaped fixture server. The response code is
+  // selected from the message body ("Token: <canonical_token_id>") so a
+  // single server can model three different upstream behaviours: a server
+  // error AFTER possibly processing the send (500), a request timeout
+  // (408) and a definite client-side rejection (400). No external service
+  // is contacted and no real message can be delivered.
+  const server=http.createServer((req,res)=>{
+    let body="";
+    req.on("data",(chunk)=>{body+=chunk;});
+    req.on("end",()=>{
+      const code=body.includes("http408_probe")?408
+        :body.includes("http500_probe")?500:400;
+      res.writeHead(code,{"content-type":"application/json"});
+      res.end(JSON.stringify({ok:false,error_code:code,description:"fixture envelope"}));
+    });
+  });
+  await new Promise((resolve)=>server.listen(0,"127.0.0.1",resolve));
+  const base="http://127.0.0.1:"+server.address().port;
+  const admin=new pg.Client({connectionString:url});
+  await admin.connect();
+  const schema="alert_http_class_"+randomBytes(5).toString("hex");
+  const {readFile}=await import("node:fs/promises");
+  try{
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    await admin.query("SET search_path TO "+schema);
+    for(const name of ["006_cross_platform_analytics.sql","008_alert_status_history.sql"]){
+      await admin.query(await readFile(new URL("../migrations/"+name,import.meta.url),"utf8"));
+    }
+    await admin.query(await readFile(new URL("../migrations/020_alert_dead_letter.sql",import.meta.url),"utf8"));
+    await admin.query(await readFile(new URL("../migrations/021_alert_claim_fencing.sql",import.meta.url),"utf8"));
+    const connectionUrl=url+(url.includes("?")?"&":"?")+"options="+encodeURIComponent(`-c search_path=${schema}`);
+    const pool=new pg.Pool({connectionString:connectionUrl,max:2});
+    for(const probe of ["http500_probe","http408_probe","http400_probe"]){
+      await pool.query(
+        `INSERT INTO token_alerts
+           (canonical_token_id,alert_type,severity,triggered_at,as_of,status,delivery_attempts,delivery_attempted_at)
+         VALUES ($1,'score_threshold','info',NOW(),NOW()-INTERVAL '1 minute','open',0,NULL)`,[probe]);
+    }
+    const result=(await spawnDispatcher({INTELLIGENCE_TELEGRAM_API_BASE:base},connectionUrl)).summary;
+    assert.equal(result.claimed,3);
+    // 500 and 408 do NOT prove the message was not processed: the upstream
+    // may have accepted and delivered it before failing the response.
+    // Automatic retries could duplicate the alert, so both park in
+    // needs_review.
+    assert.equal(result.ambiguous,2,"5xx and 408 must be ambiguous, not retryable failures");
+    // A 4xx rejection proves the request was received and refused without
+    // a send: a normal retryable failure.
+    assert.equal(result.failed,1,"4xx must remain a definite failure");
+    const rows=Object.fromEntries((await pool.query("SELECT canonical_token_id,status,delivery_attempts FROM token_alerts"))
+      .rows.map((r)=>[r.canonical_token_id,r]));
+    assert.equal(rows.http500_probe.status,"needs_review");
+    assert.equal(rows.http408_probe.status,"needs_review");
+    assert.equal(rows.http400_probe.status,"open");
+    assert.equal(rows.http400_probe.delivery_attempts,1);
+    // needs_review rows never re-enter the automatic queue; the 4xx row is
+    // inside its backoff window, so the immediate second run claims only
+    // after the backoff is cleared.
+    const second=(await spawnDispatcher({INTELLIGENCE_TELEGRAM_API_BASE:base},connectionUrl)).summary;
+    assert.equal(second.claimed,0,"needs_review rows and backoff must keep the queue still");
+    // Clear the backoff: the 4xx row is retryable and fails again.
+    await pool.query(
+      "UPDATE token_alerts SET delivery_attempted_at=NOW()-INTERVAL '2 minutes' WHERE canonical_token_id='http400_probe'");
+    const third=(await spawnDispatcher({INTELLIGENCE_TELEGRAM_API_BASE:base},connectionUrl)).summary;
+    assert.equal(third.claimed,1);
+    assert.equal(third.failed,1);
+    const retry=(await pool.query(
+      "SELECT status,delivery_attempts FROM token_alerts WHERE canonical_token_id='http400_probe'")).rows[0];
+    assert.equal(retry.status,"open");
+    assert.equal(retry.delivery_attempts,2,"4xx failures keep consuming the retry budget");
+    await pool.end();
+  }finally{
+    await admin.query("SET search_path TO public");
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+    server.close();
+  }
+});
+
+test("pre-send lease renewal fences a stolen claim before any HTTP request and blocks re-claim during an in-flight send",{
+  skip:!url,
+},async()=>{
+  const http=await import("node:http");
+  let hits=0;
+  // Hermetic upstream: counts every request that reaches it and holds the
+  // answer for requests whose body contains the in-flight probe, so the
+  // test can observe the send window while it is open.
+  const server=http.createServer((req,res)=>{
+    let body="";
+    req.on("data",(chunk)=>{body+=chunk;});
+    req.on("end",()=>{
+      hits++;
+      const hold=body.includes("inflight_probe");
+      setTimeout(()=>{
+        res.writeHead(200,{"content-type":"application/json"});
+        res.end(JSON.stringify({ok:true,result:{message_id:1}}));
+      },hold?2500:0);
+    });
+  });
+  await new Promise((resolve)=>server.listen(0,"127.0.0.1",resolve));
+  const base="http://127.0.0.1:"+server.address().port;
+  const admin=new pg.Client({connectionString:url});
+  await admin.connect();
+  const schema="alert_fence_presend_"+randomBytes(5).toString("hex");
+  const {readFile}=await import("node:fs/promises");
+  const sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms));
+  const connectionUrl=url+(url.includes("?")?"&":"?")+"options="+encodeURIComponent(`-c search_path=${schema}`);
+  const waitUntil=(client,sql,args)=>new Promise(async(resolve,reject)=>{
+    for(let i=0;i<100;i++){
+      const row=(await client.query(sql,args)).rows[0];
+      if(row&&row.ready)resolve(row);
+      else await sleep(100);
+    }
+    reject(new Error("condition not reached"));
+  });
+  try{
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    await admin.query("SET search_path TO "+schema);
+    for(const name of ["006_cross_platform_analytics.sql","008_alert_status_history.sql"]){
+      await admin.query(await readFile(new URL("../migrations/"+name,import.meta.url),"utf8"));
+    }
+    await admin.query(await readFile(new URL("../migrations/020_alert_dead_letter.sql",import.meta.url),"utf8"));
+    await admin.query(await readFile(new URL("../migrations/021_alert_claim_fencing.sql",import.meta.url),"utf8"));
+
+    // Part 1: a worker that claimed the row loses ownership before its
+    // pre-send lease renewal (simulated lease expiry and re-claim by
+    // worker B while A is paused). The renewal must fail and the stale
+    // worker must NEVER reach the HTTP API.
+    await admin.query(
+      `INSERT INTO token_alerts
+         (canonical_token_id,alert_type,severity,triggered_at,as_of,status,delivery_attempts,delivery_attempted_at)
+       VALUES ('stolen_probe','score_threshold','info',NOW(),NOW()-INTERVAL '1 minute','open',0,NULL)`);
+    const workerA=spawnDispatcher({INTELLIGENCE_TELEGRAM_CLAIM_DELAY_MS:"1500",INTELLIGENCE_TELEGRAM_API_BASE:base},connectionUrl);
+    await waitUntil(admin,"SELECT status='sending' AND claim_token IS NOT NULL AS ready FROM token_alerts WHERE canonical_token_id='stolen_probe'");
+    // Worker B re-claims after the (simulated) lease expiry: a new fencing
+    // token and a bumped attempt counter, exactly what a real claim does.
+    await admin.query(
+      "UPDATE token_alerts SET claim_token=gen_random_uuid(),delivery_attempts=2,"
+      +"delivery_attempted_at=NOW() WHERE canonical_token_id='stolen_probe'");
+    const stolen=(await admin.query(
+      "SELECT claim_token FROM token_alerts WHERE canonical_token_id='stolen_probe'")).rows[0].claim_token;
+    const summaryA=await workerA;
+    assert.deepEqual(summaryA.summary,{claimed:1,delivered:0,failed:0,fenced:1,ambiguous:0},
+      "the stale worker must park its claim as fenced");
+    assert.equal(hits,0,"a worker whose renewal found zero owned rows must never perform the HTTP request");
+    const stolenRow=(await admin.query(
+      "SELECT status,delivery_attempts,claim_token FROM token_alerts WHERE canonical_token_id='stolen_probe'")).rows[0];
+    assert.equal(stolenRow.status,"sending");
+    assert.equal(stolenRow.claim_token,stolen,"the winning token is untouched by the stale worker");
+    assert.equal(stolenRow.delivery_attempts,2);
+
+    // Part 2: while a healthy worker holds an in-flight send on a renewed
+    // lease, a concurrent dispatcher run cannot re-claim the row.
+    await admin.query(
+      `INSERT INTO token_alerts
+         (canonical_token_id,alert_type,severity,triggered_at,as_of,status,delivery_attempts,delivery_attempted_at)
+       VALUES ('inflight_probe','score_threshold','info',NOW(),NOW()-INTERVAL '1 minute','open',0,NULL)`);
+    const workerA2=spawnDispatcher({INTELLIGENCE_TELEGRAM_API_BASE:base},connectionUrl);
+    await waitUntil(admin,"SELECT status='sending' AND delivery_attempts=1 AS ready FROM token_alerts WHERE canonical_token_id='inflight_probe'");
+    const workerB2=spawnDispatcher({INTELLIGENCE_TELEGRAM_API_BASE:base},connectionUrl);
+    const summaryB2=await workerB2;
+    assert.equal(summaryB2.summary.claimed,0,
+      "the renewed lease must keep concurrent workers off the row while the send is in flight");
+    const summaryA2=await workerA2;
+    assert.equal(summaryA2.summary.delivered,1,"the healthy worker completes its in-flight send");
+    assert.equal(hits,1,"exactly one HTTP request is performed across both scenarios");
+    const inflightRow=(await admin.query(
+      "SELECT status,claim_token FROM token_alerts WHERE canonical_token_id='inflight_probe'")).rows[0];
+    assert.equal(inflightRow.status,"delivered");
+  }finally{
+    await admin.query("SET search_path TO public");
+    await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await admin.end();
+    server.close();
   }
 });
