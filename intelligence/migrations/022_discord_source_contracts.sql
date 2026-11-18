@@ -16,7 +16,7 @@ ALTER TABLE timeline_events
   ADD CONSTRAINT timeline_events_timeline_kind_check
   CHECK (timeline_kind IN (
     'tweet_published','tg_message_published','discord_message_published',
-    'discord_message_edited','chain_transaction','trade_executed',
+    'discord_message_edited','discord_message_deleted','chain_transaction','trade_executed',
     'signal_detected','signal_outcome'
   )) NOT VALID;
 ALTER TABLE timeline_events

@@ -89,7 +89,18 @@ export function buildDiscordMessageEnvelope(input: DiscordMessageEnvelopeInput):
       entityRefs: [entityRef],
       evidenceRef,
     },
-    ...(deleted ? { messageDeletion: { contentErased: input.contentErased === true } } : {
+    ...(deleted ? {
+      messageDeletion: { contentErased: input.contentErased === true },
+      timelineEvent: buildTimelineEvent({
+        eventKey,
+        kind: "discord_message_deleted",
+        occurredAt: evidenceRef.observedAt,
+        observedAt: evidenceRef.observedAt,
+        entityRefs: [entityRef],
+        evidenceRef,
+        payload: { contentErased: true },
+      }),
+    } : {
       timelineEvent: buildTimelineEvent({
         eventKey,
         kind: input.kind === "observed" ? "discord_message_published" : "discord_message_edited",

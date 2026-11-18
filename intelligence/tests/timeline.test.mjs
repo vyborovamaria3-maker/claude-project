@@ -56,3 +56,16 @@ test("Discord message timeline events use canonical channel evidence",async()=>{
  assert.equal(await ingestTimelineEvent(tx,"discord","message_observed",e),true);
  assert.equal(calls[0].params[0],"discord");assert.equal(calls[0].params[3],"discord_message_published");
 });
+
+
+test("Discord deletion tombstone is recorded as a distinct timeline event",async()=>{
+ const channelId="223456789012345678",messageId="323456789012345678",observedAt="2026-11-18T10:10:00Z";
+ const source=buildEntityRef({kind:"source",canonicalId:formatSourceId("discord",channelId),firstSeenAt:observedAt,lastSeenAt:observedAt});
+ const proof=buildEvidenceRef({sourceKind:"discord_message",channelId,messageId,observedAt,provider:"discord"});
+ const e=buildTimelineEvent({kind:"discord_message_deleted",eventKey:"discord:message:"+channelId+":"+messageId+":deleted",
+  entityRefs:[source],evidenceRef:proof,occurredAt:observedAt,observedAt,payload:{contentErased:true}});
+ const calls=[];
+ const tx={query:async(sql,params)=>{calls.push({sql,params});return{rows:sql.includes("RETURNING event_key")?[{event_key:e.eventKey}]:[]};}};
+ assert.equal(await ingestTimelineEvent(tx,"discord","message_deleted",e),true);
+ assert.equal(calls[0].params[3],"discord_message_deleted");
+});

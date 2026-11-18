@@ -292,7 +292,8 @@ const DEFINITIONS: readonly SchemaDefinition[] = Object.freeze([
   define("discord", "message_deleted", "discord-message-v1", "discord-collector",
     payloadSchema(DISCORD_REGISTRY("message_deleted", "discord-message-v1"), {
       messageDeletion: DISCORD_MESSAGE_DELETION,
-    }, ["messageDeletion"])),
+      timelineEvent: timelineEventSchema("discord_message_deleted", DISCORD_EVIDENCE, DISCORD_MESSAGE_DELETION),
+    }, ["messageDeletion", "timelineEvent"])),
   define("x", "token_link_verified", "token-link-v1", "x-collector",
     payloadSchema(X_REGISTRY("token_link_verified", "token-link-v1"), {
       tokenLink: TOKEN_LINK_SCHEMA,

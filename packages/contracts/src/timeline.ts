@@ -4,7 +4,7 @@ import { toUtcIso } from "./time.js";
 
 export const TIMELINE_EVENT_KINDS = [
   "tweet_published", "tg_message_published", "discord_message_published",
-  "discord_message_edited", "chain_transaction",
+  "discord_message_edited", "discord_message_deleted", "chain_transaction",
   "trade_executed", "signal_detected", "signal_outcome",
 ] as const;
 

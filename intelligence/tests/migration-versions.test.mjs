@@ -47,5 +47,5 @@ test("SQL migrations have unique sequential version numbers",async()=>{
 test("Discord evidence and timeline kinds are enabled by additive migration 022",async()=>{
  const sql=await readFile(new URL("022_discord_source_contracts.sql",root),"utf8");
  assert.match(sql,/discord_message/);assert.match(sql,/discord_message_published/);
- assert.match(sql,/discord_message_edited/);assert.match(sql,/VALIDATE CONSTRAINT/);
+ assert.match(sql,/discord_message_edited/);assert.match(sql,/discord_message_deleted/);assert.match(sql,/VALIDATE CONSTRAINT/);
 });

@@ -18,7 +18,8 @@ test("Discord edit event uses source edit timestamp",()=>{
 test("Discord deletion contains no body hash or timeline text",()=>{
  const e=buildDiscordMessageEnvelope({kind:"deleted",channelId,messageId,revisionKey:revision,observedAt,emittedAt,contentErased:true,producerVersion:"0.1.0"});
  assert.equal(e.clocks.occurredAt,null);assert.deepEqual(e.payload.messageDeletion,{contentErased:true});
- assert.equal(e.evidenceRefs[0].contentSha256,undefined);assert.equal(e.payload.timelineEvent,undefined);
+ assert.equal(e.evidenceRefs[0].contentSha256,undefined);assert.equal(e.payload.timelineEvent.kind,"discord_message_deleted");
+ assert.deepEqual(e.payload.timelineEvent.payload,{contentErased:true});
  assert.throws(()=>buildDiscordMessageEnvelope({kind:"deleted",channelId,messageId,revisionKey:revision,observedAt,emittedAt,producerVersion:"0.1.0"}),/confirmed content erasure/);
 });
 test("Discord V2 builder rejects raw text, author IDs and malformed identity",()=>{
