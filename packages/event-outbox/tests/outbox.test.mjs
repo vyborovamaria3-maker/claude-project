@@ -176,7 +176,7 @@ test("Postgres emit pins created_at to the V2 envelope emittedAt when requested"
     eventKey:"discord:message:12345678901234567:22345678901234567:32345678901234567:observed",
     schemaVersion:"discord-message-v1"},emittedAt);
   assert.equal(calls.length,1);
-  assert.match(calls[0].sql,/created_at=\$6::timestamptz/);
+  assert.match(calls[0].sql,/VALUES \(\$1,\$2,\$3,\$4,\$5::jsonb,\$6::timestamptz\)/);
   assert.equal(calls[0].values[5],emittedAt);
   assert.doesNotMatch(calls[0].sql,/clock_timestamp\(\)/);
   await assert.rejects(emitPostgres({query:async()=>({rows:[]})},E,"2026-11-18T18:00:03"),/created_at timestamp/);

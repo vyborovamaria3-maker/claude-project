@@ -45,6 +45,10 @@ jobs:
         run: |
           npm install --prefix packages/event-outbox --no-package-lock --no-audit --no-fund
           npm --prefix packages/event-outbox run build
+      - name: Install and build AI gateway
+        run: |
+          npm install --prefix packages/ai-gateway --no-package-lock --no-audit --no-fund
+          npm --prefix packages/ai-gateway run build
       - name: Install and build Intelligence
         run: |
           npm install --prefix intelligence --no-package-lock --no-audit --no-fund
