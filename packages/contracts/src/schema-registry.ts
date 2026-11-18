@@ -410,6 +410,7 @@ function validateLegacySemantics(identity: SchemaIdentity, payloadValue: unknown
     x: "x_tweet",
     tg: "tg_message",
     blockchain: "chain_tx",
+    discord: "discord_message",
   } as const;
   if (evidenceRef.sourceKind !== evidenceForSource[identity.sourceSystem]) {
     throw new TypeError("Evidence kind does not match sourceSystem");

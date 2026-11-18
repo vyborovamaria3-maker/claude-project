@@ -140,7 +140,7 @@ export const EVENT_ENVELOPE_V2_JSON_SCHEMA: JsonSchema = Object.freeze({
       required: ["sourceSystem", "scope", "windowStart", "windowEnd", "status", "coverageId"],
       additionalProperties: false,
       properties: {
-        sourceSystem: { type: "string", enum: ["x", "tg", "blockchain"] },
+        sourceSystem: { type: "string", enum: ["x", "tg", "blockchain", "discord"] },
         scope: { type: "string", minLength: 1, maxLength: 512 },
         windowStart: { type: "string", minLength: 20, maxLength: 40 },
         windowEnd: { type: "string", minLength: 20, maxLength: 40 },
