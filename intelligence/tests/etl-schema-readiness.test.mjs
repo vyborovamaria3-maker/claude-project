@@ -141,6 +141,16 @@ test("temporary PostgreSQL target requires additive 004, 005, 017 and 019 before
     await admin.query(await readFile(new URL(
       "../migrations/005_blockchain_swap_evidence_revisions.sql",import.meta.url),"utf8"));
     await admin.query("INSERT INTO intelligence_inbox(source_system,event_kind,event_key,schema_version,evidence_source_id) VALUES('x','tweet_observed','snapshot-1','x-unattributed-snapshot-v1','x:tweet:1')");
+    await assert.rejects(checkDestination(pool,{
+      requireEnvelopeFingerprint:true,requireDiscordContracts:true,
+    }),/migration 022/,"Discord claims must fail closed before migration 022");
+    const migration022=await readFile(new URL(
+      "../migrations/022_discord_message_contracts.sql",import.meta.url),"utf8");
+    await admin.query(migration022);
+    await assert.doesNotReject(checkDestination(pool,{
+      requireBlockchainRevisions:true,requireEnvelopeFingerprint:true,
+      requireDiscordContracts:true,
+    }),"migration 022 must enable only the registered Discord evidence/timeline values");
     await assert.doesNotReject(checkDestination(pool,{
       requireBlockchainRevisions:true,requireEnvelopeFingerprint:true,
     }),"destination-only unattributed snapshots are not source-outbox fingerprint backfill candidates");

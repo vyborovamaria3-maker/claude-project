@@ -14,7 +14,7 @@ test("supervisor --help is offline and does not require credentials",()=>{
   });
   assert.equal(run.status,0,run.stderr);
   assert.match(run.stdout,/foreground process/);
-  assert.match(run.stdout,/--sources x,tg,blockchain/);
+  assert.match(run.stdout,/--sources x,tg,blockchain,discord/);
 });
 
 test("supervisor refuses to start without both explicit opt-ins",()=>{

@@ -60,3 +60,20 @@ test("fingerprint gate does not mask missing required migrations",async()=>{
   }]})};
   await assert.rejects(checkDestination(pool,{allowLegacyFingerprints:true}),/migration 017 required/);
 });
+
+
+test("Discord source uses its dedicated PostgreSQL DSN and source-writer role",()=>{
+  const write=postgresSourcePoolOptions("discord",true,{DISCORD_SOURCE_DATABASE_URL:"postgres://example/discord"});
+  assert.equal(write.connectionString,"postgres://example/discord");
+  assert.equal(write.application_name,"potapoff-intelligence-source-writer");
+  assert.equal(Object.hasOwn(write,"options"),false);
+  const read=postgresSourcePoolOptions("discord",false,{DISCORD_SOURCE_DATABASE_URL:"postgres://example/discord"});
+  assert.equal(read.options,"-c default_transaction_read_only=on");
+});
+test("Discord readiness requires both validated migration 022 checks",async()=>{
+  const pool={query:async(sql)=>({rows:[{
+    inbox:true,registry:true,evidence:true,timeline:true,token_links:true,
+    inbox_fingerprint:true,discord_evidence_constraint:false,discord_timeline_constraint:false,
+  }]})};
+  await assert.rejects(checkDestination(pool,{requireDiscordContracts:true,allowLegacyFingerprints:true}),/migration 022/);
+});
