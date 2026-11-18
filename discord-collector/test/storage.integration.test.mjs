@@ -18,6 +18,10 @@ test("PostgreSQL revisions, stale history, deletions and revoke/retention", {ski
   const pool=new pg.Pool({connectionString:URL,max:2});
   try{
     await installSchema(pool);
+    await pool.query("DELETE FROM discord_message_revisions WHERE message_id=$1",[messageId]);
+    await pool.query("DELETE FROM discord_messages WHERE message_id=$1",[messageId]);
+    await pool.query("DELETE FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1",
+      ["discord:"+guildId+":"+channelId+":"+messageId+":%"]);
     const now=new Date();
     const createdAt=new Date(now.getTime()-60*60*1000);
     const editedAt=new Date(now.getTime()-30*60*1000);
@@ -41,6 +45,20 @@ test("PostgreSQL revisions, stale history, deletions and revoke/retention", {ski
     assert.equal(erased.rows[0].content,null);
     assert.equal(erased.rows[0].author_id,null);
     assert.ok(erased.rows[0].deleted_at);
+    const emitted=await pool.query(
+      "SELECT event_kind,event_key,payload::text AS payload FROM outbox_events "+
+      "WHERE source_system='discord' AND event_key LIKE $1 ORDER BY id",
+      ["discord:"+guildId+":"+channelId+":"+messageId+":%"]);
+    assert.deepEqual(emitted.rows.map(row=>row.event_kind),
+      ["message_observed","message_edited","message_deleted"]);
+    for(const row of emitted.rows){
+      assert.doesNotMatch(row.payload,/first message|edited message|423456789012345678/);
+      const payload=JSON.parse(row.payload);
+      assert.equal(payload.registryEvent.sourceSystem,"discord");
+      assert.equal(payload.registryEvent.evidenceRef.sourceKind,"discord_message");
+      assert.equal(payload.messageRevision.kind,row.event_kind==="message_observed"?"observed":
+        row.event_kind==="message_edited"?"edited":"deleted");
+    }
     const leaked=await pool.query("SELECT COUNT(*)::int AS n FROM discord_message_revisions WHERE message_id=$1 AND content IS NOT NULL",[messageId]);
     assert.equal(leaked.rows[0].n,0);
     // A source removed from the allowlist is erased on the next sweep.

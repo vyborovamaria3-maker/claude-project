@@ -22,7 +22,9 @@ export type SourceId = string & { readonly [sourceIdBrand]: true };
 
 export type ParsedChainId = { chain: Chain; address: string };
 export type ParsedAuthorId = { platform: SocialPlatform; accountId: string };
-export type ParsedSourceId = { platform: SocialPlatform; accountId: string };
+export type ParsedSourceId =
+  | { platform: SocialPlatform; accountId: string }
+  | { platform: "discord"; guildId: string; channelId: string };
 
 const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
@@ -148,8 +150,24 @@ export function formatSourceId(platform: SocialPlatform, accountId: string): Sou
   return (platform + ":" + role + ":" + validateAccountId(platform, accountId)) as SourceId;
 }
 
+const DISCORD_SNOWFLAKE = /^[1-9][0-9]{14,21}$/;
+
+/** Stable Discord channel identity is scoped by its immutable guild ID. */
+export function formatDiscordChannelId(guildId: string, channelId: string): SourceId {
+  if (!DISCORD_SNOWFLAKE.test(guildId) || !DISCORD_SNOWFLAKE.test(channelId)) {
+    throw new TypeError("Discord guild/channel IDs must be valid Snowflakes");
+  }
+  return ("discord:channel:" + guildId + ":" + channelId) as SourceId;
+}
+
 export function parseSourceId(input: unknown): (ParsedSourceId & { id: SourceId }) | null {
   if (typeof input !== "string") return null;
+  const discord = /^discord:channel:([1-9][0-9]{14,21}):([1-9][0-9]{14,21})$/.exec(input);
+  if (discord) {
+    const guildId = discord[1]!;
+    const channelId = discord[2]!;
+    return { platform: "discord", guildId, channelId, id: formatDiscordChannelId(guildId, channelId) };
+  }
   const match = /^(x:account|tg:source):(-?[0-9]+)$/.exec(input);
   if (!match) return null;
   const platform: SocialPlatform = match[1] === "x:account" ? "x" : "tg";

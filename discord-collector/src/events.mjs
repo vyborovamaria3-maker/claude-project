@@ -1,3 +1,4 @@
+import { buildEvidenceRef, buildEntityRef, formatDiscordChannelId, validateRegisteredPayload } from "../../packages/contracts/dist/index.js";
 import {createHash} from "node:crypto";
 const SNOWFLAKE=/^[0-9]{15,22}$/;
 
@@ -51,4 +52,56 @@ export function normalizeMessage(message, kind, observedAt=new Date().toISOStrin
 export function allowedObservation(allowed, observation){
   const permission=allowed.get(observation.channelId);
   return Boolean(permission&&permission.guildId===observation.guildId);
+}
+
+/**
+ * Build a privacy-minimized V1 source outbox event. The Intelligence consumer
+ * adapts it to Event Envelope V2 using the immutable outbox created_at clock.
+ * Raw message text, author IDs, handles and attachments are never exported.
+ */
+export function buildDiscordOutboxEvent(observation) {
+  const eventKind = {
+    observed: "message_observed",
+    edited: "message_edited",
+    deleted: "message_deleted",
+  }[observation?.kind];
+  if (!eventKind) throw new TypeError("Unsupported Discord outbox event kind");
+  const observedAt = observation.observedAt;
+  const schemaVersion = "discord-message-v1";
+  const eventKey = "discord:" + observation.guildId + ":" + observation.channelId +
+    ":" + observation.messageId + ":" + observation.revisionKey;
+  const evidenceRef = buildEvidenceRef({
+    sourceKind: "discord_message",
+    guildId: observation.guildId,
+    channelId: observation.channelId,
+    messageId: observation.messageId,
+    observedAt,
+    ...(observation.occurredAt ? { occurredAt: observation.occurredAt } : {}),
+    provider: "discord-api",
+    parserVersion: "discord-collector/0.1.0",
+  });
+  const sourceEntity = buildEntityRef({
+    kind: "source",
+    canonicalId: formatDiscordChannelId(observation.guildId, observation.channelId),
+    firstSeenAt: observedAt,
+    lastSeenAt: observedAt,
+  });
+  const payload = {
+    registryEvent: {
+      sourceSystem: "discord",
+      eventKind,
+      eventKey,
+      schemaVersion,
+      entityRefs: [sourceEntity],
+      evidenceRef,
+    },
+    messageRevision: {
+      revisionKey: observation.revisionKey,
+      revisionAt: observation.revisionAt ?? null,
+      kind: observation.kind,
+      contentSha256: observation.contentSha ?? null,
+    },
+  };
+  validateRegisteredPayload({ sourceSystem: "discord", eventKind, eventKey, schemaVersion }, payload);
+  return { sourceSystem: "discord", eventKind, eventKey, schemaVersion, payload };
 }

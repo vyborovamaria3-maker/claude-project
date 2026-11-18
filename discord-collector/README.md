@@ -88,3 +88,30 @@ a later scan reaches that same watermark. No status ever claims that missed
 edits or deletes during downtime were fully reconstructed. This is NOT
 complete Discord source coverage and does not authorize scraping. A separate
 coverage model, durable retry queue, and full reconciliation are still required.
+
+
+## Shared contracts and source-local transactional Outbox
+
+Before running the collector or its tests, build the shared contract packages:
+
+~~~sh
+npm --prefix packages/contracts install
+npm --prefix packages/contracts run check
+npm --prefix packages/event-outbox install
+npm --prefix packages/event-outbox run build
+npm --prefix discord-collector install
+node --test discord-collector/test/*.test.mjs
+~~~
+
+Each accepted Discord create/edit/delete writes the message/revision and one
+idempotent `sourceSystem=discord` event into the same PostgreSQL transaction.
+The shared Event Envelope V2 registry validates a privacy-minimized source
+payload. The outbox contains stable guild/channel/message evidence IDs, source
+clocks, revision hash and content hash only: no raw message body, author ID,
+handle, attachment or invite. Deletes produce tombstone events; stale history
+revisions do not become fresh outbox events.
+
+The source outbox is durable, but this phase does NOT deliver it to the central
+Intelligence inbox. Delivery/ACK/retry/DLQ is the next phase. Collector and
+recovery flags remain disabled by default; no live Discord credentials belong
+in CI.

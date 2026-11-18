@@ -4,6 +4,8 @@ on:
     paths:
       - 'dataset-ingestion/**'
       - 'discord-collector/**'
+      - 'packages/contracts/**'
+      - 'packages/event-outbox/**'
       - 'docs/architecture/DISCORD_DATASETS_ROADMAP.md'
       - '.github/workflows/datasets-discord-foundation.yml'
   workflow_dispatch:
@@ -41,6 +43,15 @@ jobs:
         run: python3 -m unittest discover -s dataset-ingestion/tests -v
       - name: Dataset catalog JSON validation
         run: python3 -m json.tool dataset-ingestion/catalog.json >/dev/null
+      - name: Build and test shared Event Envelope V2 contracts
+        run: |
+          npm --prefix packages/contracts install --ignore-scripts --no-package-lock --no-audit --no-fund
+          npm --prefix packages/contracts run check
+      - name: Build shared transactional outbox
+        run: |
+          npm --prefix packages/event-outbox install --no-package-lock --no-audit --no-fund
+          npm --prefix packages/event-outbox run build
+          node --test packages/event-outbox/tests/outbox.test.mjs
       - name: Discord dependency install (no live connections)
         run: npm --prefix discord-collector install --ignore-scripts --no-audit --no-fund
       - name: Discord unit and PostgreSQL integration tests

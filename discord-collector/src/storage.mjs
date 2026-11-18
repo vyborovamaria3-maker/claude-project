@@ -1,3 +1,5 @@
+import { POSTGRES_OUTBOX_DDL, emitPostgres } from "../../packages/event-outbox/dist/index.js";
+import { buildDiscordOutboxEvent } from "./events.mjs";
 import {readFile} from "node:fs/promises";
 import {fileURLToPath} from "node:url";
 import {dirname,resolve} from "node:path";
@@ -8,6 +10,8 @@ const DAY_MS=86_400_000;
 export async function installSchema(pool){
   const sql=await readFile(resolve(here,"../schema.sql"),"utf8");
   await pool.query(sql);
+  // Shared source-local outbox; installed idempotently in the SAME Discord DB.
+  await pool.query(POSTGRES_OUTBOX_DDL);
 }
 
 function requireRetention(days){
@@ -88,6 +92,10 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date())
         [o.messageId,o.guildId,o.channelId,o.authorId,o.occurredAt,o.observedAt,
          o.editedAt,o.content,o.contentSha,o.revisionAt]);
     }
+    // Source row, revision history and outbox event share one transaction.
+    // A failed outbox insert rolls back the source write; stale REST history
+    // is audit metadata only and must not be re-emitted as a fresh observation.
+    if (!stale) await emitPostgres(client, buildDiscordOutboxEvent(o));
     await client.query("COMMIT");
     return {status:stale?"stale":o.kind==="deleted"?"deleted":"stored"};
   }catch(e){await client.query("ROLLBACK");throw e}

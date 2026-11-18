@@ -1,5 +1,5 @@
 export type OutboxEvent = Readonly<{
-  sourceSystem: "x" | "tg" | "blockchain" | "twitter_research";
+  sourceSystem: "x" | "tg" | "blockchain" | "discord" | "twitter_research";
   eventKind: string;
   eventKey: string;
   schemaVersion: string;
@@ -14,7 +14,7 @@ export type ClaimedEvent = OutboxEvent & Readonly<{
 }>;
 
 export function validateOutboxEvent(event: OutboxEvent): void {
-  if (!["x","tg","blockchain","twitter_research"].includes(event.sourceSystem)) {
+  if (!["x","tg","blockchain","discord","twitter_research"].includes(event.sourceSystem)) {
     throw new TypeError("Unsupported outbox source");
   }
   for (const [name, value] of Object.entries({
