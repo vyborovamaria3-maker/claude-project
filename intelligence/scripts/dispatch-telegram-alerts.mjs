@@ -35,14 +35,67 @@ async function main() {
   });
   // Fail fast when the terminal dead-letter status has not been provisioned
   // yet (migration 020); otherwise the first exhausted alert would crash the
-  // dispatch loop mid-run on the CHECK constraint violation.
-  const statusCheck=await pool.query(
-    "SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint "
-    +"WHERE conrelid='token_alerts'::regclass "
-    +"AND conname='token_alerts_status_check'");
-  if(!/dead_lettered/.test(String(statusCheck.rows[0]?.def ?? ""))){
-    await pool.end();
-    throw new Error("intelligence_migration_020_required");
+  // dispatch loop mid-run on the CHECK constraint violation. The deployed
+  // CHECK is verified behaviorally (same replay discipline as
+  // assertEnvelopeFingerprintContract): a substring match would accept
+  // malformed variants such as CHECK (status <> 'dead_lettered') or a
+  // domain missing required statuses, and the run would still crash later.
+  const probeClient=await pool.connect();
+  let probeReleased=false;
+  const releaseProbe=()=>{
+    if(!probeReleased){probeReleased=true;probeClient.release();}
+  };
+  try {
+    const statusCheck=await probeClient.query(
+      "SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint "
+      +"WHERE conrelid='token_alerts'::regclass "
+      +"AND conname='token_alerts_status_check' "
+      +"AND contype='c'");
+    const constraintDef=String(statusCheck.rows[0]?.def ?? "");
+    if(!/^CHECK\s*\(/i.test(constraintDef)){
+      throw new Error("intelligence_migration_020_required");
+    }
+    // Replay the exact deployed expression on a probe table so the accepted
+    // status domain is exercised, not inferred from definition text.
+    await probeClient.query(
+      "CREATE TEMP TABLE token_alerts_status_preflight_probe(status text NOT NULL, "
+      +constraintDef+")");
+    // All six statuses migration 020 provisions must be accepted.
+    for(const status of ["open","sending","delivered","acknowledged","resolved","dead_lettered"]){
+      try {
+        await probeClient.query(
+          "INSERT INTO token_alerts_status_preflight_probe(status) VALUES($1)",[status]);
+      } catch(error) {
+        // Error surfaces as the snake_case code via the top-level handler;
+        // the rejected status is encoded in the code itself.
+        throw new Error("token_alerts_status_check_rejects_required_status_"+status);
+      }
+    }
+    // Plausible out-of-domain values must be rejected by the same constraint.
+    for(const status of ["closed","zprobeinvalid"]){
+      let rejected=false;
+      try {
+        await probeClient.query(
+          "INSERT INTO token_alerts_status_preflight_probe(status) VALUES($1)",[status]);
+      } catch(error) {
+        if(error && error.code==="23514")rejected=true;
+        else throw error;
+      }
+      if(!rejected){
+        throw new Error("token_alerts_status_check_accepts_invalid_status_"+status);
+      }
+    }
+    await probeClient.query("DROP TABLE token_alerts_status_preflight_probe");
+  } catch(error) {
+    // Mirror the old fail-fast contract: close the pool before surfacing the
+    // preflight error so the process exits promptly instead of hanging.
+    releaseProbe();
+    await pool.end().catch(()=>{});
+    throw error;
+  } finally {
+    // The probe table lives in this pooled session only; make sure it never
+    // leaks into later claim work even when a preflight error was thrown.
+    releaseProbe();
   }
   try {
     const client=await pool.connect();

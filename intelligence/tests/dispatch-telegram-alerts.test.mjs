@@ -199,7 +199,7 @@ test("telegram alert dispatcher fails fast when migration 020 has not been appli
     const connectionUrl=url+(url.includes("?")?"&":"?")+"options="+encodeURIComponent(`-c search_path=${schema}`);
     const result=runDispatcherRaw(connectionUrl);
     assert.notEqual(result.status,0,"dispatcher must exit non-zero without migration 020");
-    assert.match(result.stderr,/intelligence_migration_020_required/);
+    assert.match(result.stderr,/intelligence_migration_020_required|token_alerts_status_check_rejects_required_status_/);
     const row=(await admin.query(
       "SELECT status,delivery_attempts FROM token_alerts WHERE canonical_token_id='failfast_probe'")).rows[0];
     assert.equal(row.status,"open","no rows may be claimed or mutated without migration 020");
@@ -275,3 +275,59 @@ test("telegram alert dispatcher self-heals crash-window 'sending' rows through t
   }
 });
 
+test("telegram alert dispatcher preflight behaviorally rejects malformed status CHECK constraints",{
+  skip:!url,
+},async()=>{
+  const admin=new pg.Client({connectionString:url});
+  await admin.connect();
+  // Each variant is a deliberately malformed deployed constraint. The
+  // behavioral preflight must fail the run with a domain-specific error;
+  // the previous substring implementation (mutation baseline) accepted
+  // variants 2-4 and crashed later mid-run instead.
+  const variants=[
+    {name:"no_constraint",sql:"",
+     expect:/intelligence_migration_020_required/},
+    {name:"rejects_dead_lettered",sql:"CHECK (status <> 'dead_lettered')",
+     expect:/token_alerts_status_check_rejects_required_status_dead_lettered/},
+    {name:"missing_statuses",sql:"CHECK (status IN ('open','sending'))",
+     expect:/token_alerts_status_check_rejects_required_status_delivered/},
+    {name:"permissive_junk",
+     sql:"CHECK (status IN ('open','sending','delivered','acknowledged','resolved','dead_lettered') OR length(status) > 0)",
+     expect:/token_alerts_status_check_accepts_invalid_status_closed|token_alerts_status_check_accepts_invalid_status_zprobeinvalid/},
+  ];
+  try{
+    for(const variant of variants){
+      const schema="alert_preflight_"+randomBytes(5).toString("hex");
+      await admin.query(`CREATE SCHEMA "${schema}"`);
+      await admin.query("SET search_path TO "+schema);
+      await admin.query(
+        "CREATE TABLE token_alerts(alert_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, status text NOT NULL"
+        +(variant.sql?", "+variant.sql:"")+")");
+      const connectionUrl=url+(url.includes("?")?"&":"?")+"options="+encodeURIComponent(`-c search_path=${schema}`);
+      const result=runDispatcherRaw(connectionUrl);
+      assert.notEqual(result.status,0,variant.name+": dispatcher must exit non-zero");
+      assert.match(result.stderr,variant.expect,variant.name+": wrong failure mode");
+      await admin.query("SET search_path TO public");
+      await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    }
+    // Positive control: the deployed six-status domain passes the behavioral
+    // preflight and the run proceeds past it. The unauthorized bot token is
+    // still used, so no message can ever be delivered.
+    const {readFile}=await import("node:fs/promises");
+    const schema="alert_preflight_ok_"+randomBytes(5).toString("hex");
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    await admin.query("SET search_path TO "+schema);
+    for(const name of ["006_cross_platform_analytics.sql","008_alert_status_history.sql"]){
+      await admin.query(await readFile(new URL("../migrations/"+name,import.meta.url),"utf8"));
+    }
+    await admin.query(await readFile(new URL("../migrations/020_alert_dead_letter.sql",import.meta.url),"utf8"));
+    const connectionUrl=url+(url.includes("?")?"&":"?")+"options="+encodeURIComponent(`-c search_path=${schema}`);
+    const result=runDispatcherRaw(connectionUrl);
+    assert.equal(result.status,0,"the correct deployed constraint must pass the preflight");
+    assert.match(result.stdout,/"claimed":0/);
+    assert.doesNotMatch(String(result.stderr),/token_alerts_status_check_/);
+  }finally{
+    await admin.query("SET search_path TO public");
+    await admin.end();
+  }
+});
