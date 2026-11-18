@@ -2,22 +2,6 @@ name: Intelligence CI
 
 on:
   pull_request:
-    paths:
-      - "intelligence/**"
-      - "scripts/verify_intelligence.py"
-      - "admin-site/app/intelligence_view.py"
-      - "admin-site/app/intelligence_view_factory.py"
-      - "admin-site/app/main_admin.py"
-      - "admin-site/app/config.py"
-      - "admin-site/tests/test_intelligence_*.py"
-      - "admin-site/docker-compose.yml"
-      - "admin-site/.env.example"
-      - "admin-site/.env.intelligence.example"
-      - "admin-site/.env.runtime.example"
-      - "admin-site/deploy/refresh-runtime-env.sh"
-      - "admin-site/requirements.txt"
-      - ".gitignore"
-      - ".github/workflows/intelligence-ci.yml"
 
 permissions:
   contents: read
@@ -25,7 +9,7 @@ permissions:
 # Runner selection is controlled centrally by POTAPOFF_RUNNER; self-hosted is the default.
 jobs:
   intelligence-tests:
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 30
 
     services:
