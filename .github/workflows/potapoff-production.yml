@@ -15,7 +15,8 @@ jobs:
   require-main:
     name: Require released main SHA
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_branch == 'main' &&
@@ -59,11 +60,13 @@ jobs:
           echo "PRODUCTION_SOURCE_OK release_sha=$release_sha event=$EVENT_NAME"
 
   predeploy:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     name: Predeploy validation
     needs: require-main
     uses: ./.github/workflows/potapoff-predeploy-gate.yml
 
   deploy:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     needs:
       - require-main
       - predeploy

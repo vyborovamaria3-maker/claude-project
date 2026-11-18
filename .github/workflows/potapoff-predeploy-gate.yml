@@ -11,15 +11,15 @@ permissions:
   contents: read
 
 # Runner selection is controlled centrally by POTAPOFF_RUNNER; self-hosted is the default.
-# workflow_dispatch runs the default-branch workflow file, but an operator may pick any
-# ref; jobs below refuse non-main refs so untrusted branch code never reaches the runner.
+# workflow_call inherits the caller's ref and workflow_dispatch may target any ref:
+# both must be on main so untrusted branch code never reaches the runner.
 concurrency:
   group: potapoff-predeploy-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   backend-and-migrations:
-    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     name: Backend, Twitter tests and Alembic
     runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 25
@@ -74,7 +74,7 @@ jobs:
         run: pytest -q tests/test_twitter*.py tests/test_kol*.py tests/test_alembic_revision_ids.py
 
   frontend:
-    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     name: Frontend typecheck, regressions and build
     runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 30
@@ -102,7 +102,7 @@ jobs:
         run: npm run build
 
   admin-control-center:
-    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     name: Control Center regression and Compose
     runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 20
@@ -153,7 +153,7 @@ jobs:
           docker compose -f admin-site/docker-compose.yml config --quiet
 
   intelligence:
-    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     name: Qwen/intelligence typecheck, tests and build
     runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 30
@@ -183,7 +183,7 @@ jobs:
         run: docker compose -f docker-compose.production.yml config >/dev/null
 
   production-static:
-    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     name: Production Compose, Dockerfiles and deploy scripts
     runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 45
