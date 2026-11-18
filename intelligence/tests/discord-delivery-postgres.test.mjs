@@ -81,21 +81,24 @@ test("Discord V2 delivery stores metadata and a delete tombstone retracts earlie
     pool=new pg.Pool({connectionString:URL,options:"-c search_path="+schema,max:2});
     const deliver=async event=>{
       let claimed=false;
+      const failureCodes=[];
       const source={
         claim:async()=>claimed?[]:(claimed=true,[event]),
         ack:async()=>true,
-        fail:async()=>true,
+        fail:async(_event,code)=>{failureCodes.push(code);return true;},
       };
-      return runDeliveryBatch(source,pool,{workerId:"discord-test",batchSize:1,leaseMs:5000});
+      return {...await runDeliveryBatch(source,pool,{workerId:"discord-test",batchSize:1,leaseMs:5000}),failureCodes};
     };
     const createdAt="2026-11-18T18:00:00.000Z";
     const observedAt="2026-11-18T18:00:02.000Z";
     const emittedAt="2026-11-18T18:00:03.000Z";
-    assert.equal((await deliver(discordEvent("observed",createdAt,observedAt,emittedAt))).delivered,1);
+    const observedResult=await deliver(discordEvent("observed",createdAt,observedAt,emittedAt));
+    assert.equal(observedResult.delivered,1,JSON.stringify(observedResult));
     const editedAt="2026-11-18T18:05:00.000Z";
     const editedObservedAt="2026-11-18T18:05:01.000Z";
     const editedEmittedAt="2026-11-18T18:05:02.000Z";
-    assert.equal((await deliver(discordEvent("edited",editedAt,editedObservedAt,editedEmittedAt))).delivered,1);
+    const editedResult=await deliver(discordEvent("edited",editedAt,editedObservedAt,editedEmittedAt));
+    assert.equal(editedResult.delivered,1,JSON.stringify(editedResult));
     let rows=await pool.query(
       "SELECT COUNT(*)::int AS n FROM timeline_events WHERE source_system='discord' AND evidence_source_id=$1",
       [sourceId]);
@@ -108,7 +111,8 @@ test("Discord V2 delivery stores metadata and a delete tombstone retracts earlie
     const deletedObservedAt="2026-11-18T18:06:00.000Z";
     const deletedEmittedAt="2026-11-18T18:06:01.000Z";
     const tombstone=discordEvent("deleted",undefined,deletedObservedAt,deletedEmittedAt);
-    assert.equal((await deliver(tombstone)).delivered,1);
+    const deletedResult=await deliver(tombstone);
+    assert.equal(deletedResult.delivered,1,JSON.stringify(deletedResult));
     rows=await pool.query(
       "SELECT COUNT(*)::int AS n FROM timeline_events WHERE source_system='discord' AND evidence_source_id=$1",
       [sourceId]);
