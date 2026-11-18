@@ -12,6 +12,21 @@ permissions:
 jobs:
   source-foundation:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: potapoff_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      DISCORD_TEST_DATABASE_URL: postgresql://postgres:test@127.0.0.1:5432/potapoff_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,11 +37,13 @@ jobs:
           node-version: '22'
       - name: Dataset fixture tests
         run: python3 -m unittest discover -s dataset-ingestion/tests -v
-      - name: Dataset manifest JSON
+      - name: Dataset catalog JSON validation
         run: python3 -m json.tool dataset-ingestion/catalog.json >/dev/null
-      - name: Discord normalization and authorization tests
+      - name: Discord dependency install (no live connections)
+        run: npm --prefix discord-collector install --ignore-scripts --no-audit --no-fund
+      - name: Discord unit and PostgreSQL integration tests
         run: node --test discord-collector/test/*.test.mjs
-      - name: Discord syntax check (no credentials needed)
+      - name: Discord syntax check
         run: |
           node --check discord-collector/src/events.mjs
           node --check discord-collector/src/storage.mjs

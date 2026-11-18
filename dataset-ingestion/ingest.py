@@ -1,4 +1,4 @@
-"""Offline historical staging; no downloads, accounts, outbox or Intelligence writes."""
+"""Offline rights-gated historical staging. No downloads, credentials or Intelligence writes."""
 import argparse
 import csv
 import hashlib
@@ -26,6 +26,18 @@ CREATE TABLE IF NOT EXISTS staged_observations (
  PRIMARY KEY(dataset_id,file_sha256,member,row_number)
 );
 CREATE INDEX IF NOT EXISTS staged_source_time ON staged_observations(dataset_id,occurred_at);
+CREATE TABLE IF NOT EXISTS dataset_artifacts (
+ dataset_id TEXT NOT NULL, file_sha256 TEXT NOT NULL, original_filename TEXT NOT NULL,
+ file_bytes INTEGER NOT NULL, first_imported_at TEXT NOT NULL, rights_evidence TEXT NOT NULL,
+ PRIMARY KEY(dataset_id,file_sha256)
+);
+CREATE TABLE IF NOT EXISTS dataset_import_runs (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, dataset_id TEXT NOT NULL, file_sha256 TEXT NOT NULL,
+ started_at TEXT NOT NULL, completed_at TEXT, status TEXT NOT NULL
+ CHECK(status IN ('running','completed','failed')),
+ rows_seen INTEGER NOT NULL DEFAULT 0, rows_added INTEGER NOT NULL DEFAULT 0,
+ error_type TEXT, rights_evidence TEXT NOT NULL
+);
 """
 
 
@@ -34,12 +46,15 @@ def now_utc():
 
 
 def catalog():
-    return {s["id"]: s for s in json.loads(CATALOG.read_text(encoding="utf-8"))["sources"]}
+    raw = json.loads(CATALOG.read_text(encoding="utf-8"))
+    if raw.get("schema_version") != 1:
+        raise ValueError("Unsupported dataset catalog version")
+    return {s["id"]: s for s in raw["sources"]}
 
 
 def authorize(source, path, purpose):
     if not path.is_file():
-        raise PermissionError("Authorization file is required; none of the candidate datasets is pre-approved")
+        raise PermissionError("Authorization file is required; all candidates begin unapproved")
     entry = json.loads(path.read_text(encoding="utf-8")).get(source)
     if not isinstance(entry, dict) or entry.get("status") != "approved":
         raise PermissionError("Dataset has no operator-approved rights review")
@@ -64,6 +79,10 @@ def parse_time(row):
         if not value:
             continue
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            try:
+                datetime.fromisoformat(value)
+            except ValueError:
+                continue
             return value, "day"
         try:
             if value.isdigit():
@@ -85,7 +104,10 @@ def parse_time(row):
 def iterate_rows(path):
     def read(handle, name):
         if name.lower().endswith(".csv"):
-            for number, row in enumerate(csv.DictReader(handle), start=2):
+            reader = csv.DictReader(handle)
+            if not reader.fieldnames:
+                raise ValueError("CSV has no header: " + name)
+            for number, row in enumerate(reader, start=2):
                 yield name, number, dict(row)
         elif name.lower().endswith(".jsonl"):
             for number, line in enumerate(handle, start=1):
@@ -100,6 +122,9 @@ def iterate_rows(path):
             members = sorted((i for i in archive.infolist() if not i.is_dir()), key=lambda x: x.filename)
             if sum(i.file_size for i in members) > ZIP_LIMIT:
                 raise ValueError("ZIP archive exceeds 2 GB uncompressed safety limit")
+            names = [i.filename for i in members]
+            if len(names) != len(set(names)):
+                raise ValueError("Ambiguous duplicate ZIP member names")
             for member in members:
                 if member.filename.lower().endswith((".csv", ".jsonl")):
                     with archive.open(member) as raw, io.TextIOWrapper(raw, encoding="utf-8-sig", newline="") as handle:
@@ -108,7 +133,7 @@ def iterate_rows(path):
         with path.open(encoding="utf-8-sig", newline="") as handle:
             yield from read(handle, path.name)
     else:
-        raise ValueError("Only CSV/JSONL and ZIP archives are implemented; Parquet must be added separately")
+        raise ValueError("Only CSV/JSONL and ZIP archives are implemented; Parquet adapter is separate")
 
 
 def import_file(source, input_file, db_file, authorization, purpose="research", limit=None):
@@ -119,35 +144,57 @@ def import_file(source, input_file, db_file, authorization, purpose="research", 
     extension = input_file.suffix.lower().lstrip(".")
     if extension not in registry[source]["formats"] or extension not in ("csv", "jsonl", "zip"):
         raise ValueError("Input format not supported for this dataset")
+    if limit is not None and limit <= 0:
+        raise ValueError("Import limit must be positive")
     digest = sha_file(input_file)
     imported = now_utc()
     db_file.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_file) as db:
         db.executescript(SCHEMA)
-        count = 0
-        for member, number, row in iterate_rows(input_file):
-            if limit is not None and count >= limit:
-                break
-            count += 1
-            payload = json.dumps(row, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":"))
-            occurred, precision = parse_time(row)
-            sample = next((str(row[k]) for k in ("mint", "mint_address", "token_address", "content", "text", "comment") if row.get(k)), "")
-            mint_match = BASE58.search(sample)
-            original_id = next((str(row[k]) for k in ("id", "message_id", "comment_id") if row.get(k) is not None), None)
-            db.execute("""INSERT OR IGNORE INTO staged_observations
-                (dataset_id,file_sha256,member,row_number,payload_sha256,source_record_id,
-                occurred_at,time_precision,observed_at,ingested_at,available_at,
-                mint_candidate,mint_verified,rights_evidence,payload_json)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)""",
-                (source,digest,member,number,hashlib.sha256(payload.encode()).hexdigest(),
-                 original_id,occurred,precision,imported,imported,imported,
-                 mint_match.group() if mint_match else None,rights["evidence_reference"],payload))
-            if count % 500 == 0:
-                db.commit()
+        db.execute("""INSERT OR IGNORE INTO dataset_artifacts
+           (dataset_id,file_sha256,original_filename,file_bytes,first_imported_at,rights_evidence)
+           VALUES(?,?,?,?,?,?)""",
+           (source,digest,input_file.name,input_file.stat().st_size,imported,rights["evidence_reference"]))
+        run_id = db.execute("""INSERT INTO dataset_import_runs
+           (dataset_id,file_sha256,started_at,status,rights_evidence)
+           VALUES(?,?,?,'running',?)""",
+           (source,digest,imported,rights["evidence_reference"])).lastrowid
         db.commit()
+        count = 0
+        added = 0
+        try:
+            for member, number, row in iterate_rows(input_file):
+                if limit is not None and count >= limit:
+                    break
+                count += 1
+                payload = json.dumps(row, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":"))
+                occurred, precision = parse_time(row)
+                sample = next((str(row[k]) for k in ("mint", "mint_address", "token_address", "content", "text", "comment") if row.get(k)), "")
+                mint_match = BASE58.search(sample)
+                original_id = next((str(row[k]) for k in ("id", "message_id", "comment_id") if row.get(k) is not None), None)
+                cursor=db.execute("""INSERT OR IGNORE INTO staged_observations
+                    (dataset_id,file_sha256,member,row_number,payload_sha256,source_record_id,
+                    occurred_at,time_precision,observed_at,ingested_at,available_at,
+                    mint_candidate,mint_verified,rights_evidence,payload_json)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)""",
+                    (source,digest,member,number,hashlib.sha256(payload.encode()).hexdigest(),
+                     original_id,occurred,precision,imported,imported,imported,
+                     mint_match.group() if mint_match else None,rights["evidence_reference"],payload))
+                added+=cursor.rowcount
+                if count % 500 == 0:
+                    db.commit()
+            db.execute("UPDATE dataset_import_runs SET status='completed',completed_at=?,rows_seen=?,rows_added=? WHERE id=?",
+                       (now_utc(),count,added,run_id))
+            db.commit()
+        except Exception as error:
+            db.rollback()
+            db.execute("UPDATE dataset_import_runs SET status='failed',completed_at=?,rows_seen=?,rows_added=?,error_type=? WHERE id=?",
+                       (now_utc(),count,added,type(error).__name__,run_id))
+            db.commit()
+            raise
         total = db.execute("SELECT COUNT(*) FROM staged_observations WHERE dataset_id=?", (source,)).fetchone()[0]
     return {"source":source,"file_sha256":digest,"rows_processed":count,
-            "total_staged":total,"earliest_system_availability":imported}
+            "rows_added":added,"total_staged":total,"earliest_system_availability":imported}
 
 
 def main(argv=None):
@@ -176,14 +223,12 @@ def main(argv=None):
                 break
         print(json.dumps({"sampled_rows":count,"columns":sorted(columns)}))
     else:
-        if args.limit is not None and args.limit <= 0:
-            parser.error("--limit must be positive")
         print(json.dumps(import_file(args.source,args.input,args.db,args.authorization,args.purpose,args.limit)))
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (PermissionError, ValueError, OSError, sqlite3.Error, zipfile.BadZipFile) as exc:
+    except (PermissionError, ValueError, OSError, sqlite3.Error, zipfile.BadZipFile, json.JSONDecodeError) as exc:
         print("Import rejected:", str(exc), file=sys.stderr)
         sys.exit(2)

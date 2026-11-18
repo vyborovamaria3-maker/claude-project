@@ -1,75 +1,54 @@
-# Discord + historical Pump.fun data architecture (staged rollout, 2026-11-18)
+# Discord + historical Pump.fun data architecture (staged rollout)
 
-## Scope and current PR
+## Branch isolation and scope
 
-Start on main, independently of the unmerged Draft PR #215. Keep all live producer
-flags disabled. Historical data, Discord bot collection, source-to-Intelligence event
-contracts and cross-platform scoring are separate rollout gates.
+- Draft PR #220 implements a permission-gated offline staging importer and
+  default-off Discord research collector. It targets main, independently of
+  Draft PR #215.
+- Follow-up stacked hardening PR adds import manifests/run audits, fail-closed
+  retention, source revision ordering, deletion tombstones, revoked-channel
+  cleanup, and real PostgreSQL integration tests.
+- The collectors remain default-off and are NOT production ready.
 
-**This PR implements foundation only**:
-- Registry of candidate Coin-Meme, MELT, MemeChain, Trenches, Calls, Reddit datasets.
-- Offline rights-gated CSV/JSONL/ZIP staging importer with file/row hashes, replay
-  idempotency and honest first availability timestamps.
-- Default-disabled official Discord bot source POC, message revisions, deletion
-  tombstones, bounded REST backfill, allowlisted guild/channels, isolated PostgreSQL.
-- Offline unit tests and CI for source normalization and permission gates.
+Historical datasets imported in 2026 are not evidence that the system had data
+in 2024. Research replay must be explicitly synthetic, clearly labelled and
+separate from operational first-known-at observations.
 
-None of these components is an operational production ingestion source yet.
-Do not report historical/social coverage from this POC as complete.
+## Follow-up architecture and PR gates
 
-## Planned independent follow-up PRs
+DATA-02: inspect Coin-Meme and MemeChain actual CSV/ZIP layouts; implement strict
+source-specific mappers and streaming Parquet for MELT/Trenches/Reddit with
+bounded memory, versioned source hashes, per-file errors, retention/DSAR and
+research-only license handling. No commercial import without proper permission.
 
-DATA-02 — Source-specific schema adapters, streaming Parquet imports for MELT/Trenches/
-Reddit, exact CSV/ZIP member mapping, row-level errors, persistent source/file
-manifest with provenance + dataset version. Enforce legal rights, erasure, TTL and
-data minimization before processing third-party user content. Verify actual source
-contents and timestamps: catalog metadata alone is not proof.
+DISCORD-02: authorized Gateway live + REST historical convergence, bounded
+retries/DLQ, 429 rate limit handling, restart gap reconciliation, thread
+discovery, permissions expiry and source revocation, content deletion/retention
+including derived and backup datasets. Backfill cursor does not prove complete
+coverage. No selfbots or scraping without platform authorization.
 
-DATA-03 — Historical Solana chain decoding and mint validation with per-program slot
-coverage, reorg/finality semantics and supervised quality checks. Never verify
-token identity from ticker, user ID, text similarity or base58 regex alone.
-Avoid lookahead and survivorship bias; Raydium-migrated samples are not representative
-of all Pump.fun launches.
+CONTRACT-01: typed Discord evidence and canonical guild/channel/user
+Snowflake IDs, message observed/deleted/revision and verified mint link
+invalidation. Source events committed transactionally with V2 envelopes and
+read-only compatibility checks. SQL CHECK changes additive, never mutate
+already-applied historical migrations.
 
-DISCORD-02 — Robust Discord backfill/live convergence: separate Gateway events from REST,
-per-channel cursors, retries and DLQ, partial-message updates/deletes, message
-content authorization checks, threads, 429 backoff, bounded concurrency, permission
-revocation, account-level erasure + retention schedules, encrypted and access-controlled
-storage, provider policy audit. No selfbots or third-party unauthorized scraping.
-Measure timestamp coverage and reconcile gaps using permitted API access only.
+INTEL-01: Discord source outbox to destination inbox, via existing ETL and
+supervisor, registry/timeline, evidence verification and recomputation. ACK
+only after destination commit. Replay, lease, collision and invalidation tests.
+No raw user messages in shared Event Envelope.
 
-CONTRACT-01 — Add Discord source, stable guild/channel/user Snowflake IDs,
-discord_message evidence, typed event schemas, source revision invalidation and V2
-producers to packages/contracts and packages/event-outbox. Use additive migrations
-for existing CHECK constraints, never rewrite applied migrations. All emitting
-source events must be transactional with source writes, immutable event keys, source
-created_at mapped to emittedAt, destination inbox SHA/identity collision checks
-and bounded lease/ACK handling.
+INTEL-02: versioned cross-platform features and coverage-aware nulls, verified
+Solana mints only, shadow scoring with held-out no-lookahead backtests, read-only
+token evidence UI. No implicit changes to production ranking.
 
-INTEL-01 — Wire Discord outbox to Intelligence destination through existing
-ETL and supervisor, registry, timeline, verified token links, revisions and
-retractions, backfill/recompute invalidation queue, per-source coverage windows.
-Raw messages NEVER belong in the shared event envelope.
+## Non-negotiable merge gates
 
-INTEL-02 — Versioned Discord feature schema (mentions 5m/1h, cross-channel spread,
-copypasta, narrative velocity and source lags), independent scoring versions,
-coverage-aware nulls, and research-only replay distinct from historically known-at
-live evidence. Shadow evaluation first; no silent production score changes.
-
-UI-01 — Per-token Discord provenance and coverage, operator source permission/
-health status, import manifests and disabled/read-only controls. No source flagged
-complete without proof.
-
-## Merge gates
-
-- Unit + integration tests for idempotency, lease expiry, event order, edits,
-  deletions, schema compatibility and transactional ACK after destination commit.
-- Offline synthetic data only in CI; no live Discord or paid API credentials.
-- Enforced source rights and deletion/retention obligations, proof of bot/channel
-  authorization, explicit data use purpose and audit trail.
-- Verified Solana token identity, source coverage and replayable source hashes.
-- No backdated knownAt: imported historical records first available today must
-  not be treated as 2024 live observations. Explicitly label reconstructed research
-  replay assumptions and exclude future-derived fields from early-token backtests.
-- Shadow scoring / held-out backtests show measurable uplift before weight changes.
-- Separate merge of hardening PR #215 and compatibility tests before sharing code.
+- Rights review independently approved for the intended use; community
+  consent is not an exemption from Discord Developer Policy.
+- User content minimized, access controlled, deletable; data retention also
+  enforced across backups and derived indexes before production use.
+- Strict timestamp precision and knownAt; no future-derived feature leak.
+- Backward compatibility with X, Telegram and blockchain producers tested.
+- Compatibility with separate unmerged PR #215 reviewed before stacking into main.
+- No external accounts, paid data downloads or production secrets in CI.
