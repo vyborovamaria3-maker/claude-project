@@ -20,7 +20,7 @@ test("Discord observed event is V2 metadata-only and does not leak message or au
   assert.equal(event.sourceSystem,"discord");
   assert.equal(event.eventKind,"discord_message_observed");
   assert.equal(event.eventKey,"discord:message:"+guildId+":"+channelId+":"+messageId+":observed");
-  assert.equal(event.payload.envelopeVersion,2);
+  assert.equal(event.payload.envelopeVersion,"event-envelope-v2");
   assert.equal(event.payload.clocks.occurredAt,createdAt.toISOString());
   assert.equal(event.payload.clocks.emittedAt,emittedAt);
   assert.equal(event.payload.coverageRef.status,"partial");
