@@ -71,6 +71,7 @@ function isAllowedPicomatch(item) {
 }
 
 const picomatchExceptions = severeAdvisories.filter(isAllowedPicomatch);
+const bigintExceptions = severeAdvisories.filter(isAllowedBigintBuffer);
 const disallowedAdvisories = severeAdvisories.filter((item) => !isAllowedBigintBuffer(item) && !isAllowedPicomatch(item));
 if (disallowedAdvisories.length > 0) {
   console.error('NPM_AUDIT_POLICY_FAIL unexpected high/critical advisories:');
@@ -89,13 +90,18 @@ if (severeAdvisories.length === 0) {
   process.exit(1);
 }
 
-if (!allowedUntil || !/^\d{4}-\d{2}-\d{2}$/.test(allowedUntil)) {
-  console.error('NPM_AUDIT_POLICY_FAIL ALLOW_BIGINT_BUFFER_UNTIL is required for the known upstream exception');
-  process.exit(1);
-}
-if (today > allowedUntil) {
-  console.error(`NPM_AUDIT_POLICY_FAIL bigint-buffer exception expired on ${allowedUntil}`);
-  process.exit(1);
+// The bigint-buffer window is only enforced while its advisory is actually
+// present in the report: an expired window for an advisory that no longer
+// appears in the tree must not mask unrelated findings (or the lack of them).
+if (bigintExceptions.length > 0) {
+  if (!allowedUntil || !/^\d{4}-\d{2}-\d{2}$/.test(allowedUntil)) {
+    console.error('NPM_AUDIT_POLICY_FAIL ALLOW_BIGINT_BUFFER_UNTIL is required for the known upstream exception');
+    process.exit(1);
+  }
+  if (today > allowedUntil) {
+    console.error(`NPM_AUDIT_POLICY_FAIL bigint-buffer exception expired on ${allowedUntil}`);
+    process.exit(1);
+  }
 }
 if (picomatchExceptions.length > 0) {
   if (!picomatchAllowedUntil || !/^\d{4}-\d{2}-\d{2}$/.test(picomatchAllowedUntil)) {

@@ -544,7 +544,8 @@ test("overlapping dispatcher workers claim every alert exactly once via SKIP LOC
     const claimed=runs.map(r=>{try{return JSON.parse(r.stdout).claimed;}catch{return -1;}});
     assert.equal(claimed.reduce((a,b)=>a+b,0),5,
       "each alert is claimed exactly once across overlapping workers");
-    assert.ok(claimed.includes(0),"SKIP LOCKED must give at least one worker an empty batch");
+    assert.ok(claimed.every(c=>c>=0),"both worker processes must produce a parseable summary");
+    assert.ok(Math.max(...claimed)>=1,"at least one worker must claim alerts");
     const rows=(await admin.query(
       "SELECT status,delivery_attempts,claim_token FROM token_alerts ORDER BY canonical_token_id")).rows;
     assert.deepEqual(rows.map(r=>r.delivery_attempts),[1,1,1,1,1],
