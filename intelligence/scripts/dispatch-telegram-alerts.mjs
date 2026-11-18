@@ -150,13 +150,21 @@ async function main() {
     } finally {client.release();}
     let delivered=0,failed=0,fenced=0,ambiguous=0;
     for(const row of rows) {
-      // Freshness check immediately before the outbound call: the row must
-      // still be owned by THIS claim's token. A token that lost ownership
-      // between the claim transaction and the send must never reach the API.
-      const ownership=await pool.query(
-        "SELECT status,claim_token FROM token_alerts WHERE alert_id=$1",[row.alert_id]);
-      const owner=ownership.rows[0];
-      if(!owner||owner.status!=="sending"||owner.claim_token!==row.claim_token){
+      // Atomically renew the lease immediately before the outbound call.
+      // This is both the freshness check and an ownership assertion: a
+      // worker whose token was replaced by another claim (lease expired,
+      // row re-claimed) affects zero rows here and must never reach the
+      // API. Renewing also pushes the claim lease out by a full window, so
+      // a concurrent worker cannot reclaim while this send is in flight.
+      // The residual duplicate window - a worker stalling longer than a
+      // full lease between this renewal and the fetch - is documented in
+      // migrations/021_alert_claim_fencing.sql and cannot be eliminated
+      // without an idempotency key on the Telegram side.
+      const renewal=await pool.query(
+        "UPDATE token_alerts SET delivery_attempted_at=NOW() "
+        +"WHERE alert_id=$1 AND status='sending' AND claim_token=$2",
+        [row.alert_id,row.claim_token]);
+      if(renewal.rowCount===0){
         fenced++;
         continue;
       }

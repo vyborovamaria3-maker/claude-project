@@ -98,6 +98,19 @@ test("policy fails closed when the acceptance window has expired", () => {
   assert.match(result.stderr, /picomatch ReDoS exception expired/);
 });
 
+test("policy fails closed when the npm report lacks the vulnerabilities object", () => {
+  const result = runPolicy(JSON.stringify({ error: { summary: "broken lockfile" } }), env);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /does not contain a vulnerabilities object/);
+});
+
+test("policy fails closed on a different picomatch advisory id (strict citation)", () => {
+  const otherPicomatchVia = [{ ...picomatchVia[0], url: "https://github.com/advisories/GHSA-fake-different", title: "some other picomatch ReDoS variant" }];
+  const result = runPolicy(auditJson([["picomatch", "high", otherPicomatchVia]]), env);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /NPM_AUDIT_POLICY_FAIL unexpected high\/critical advisories/);
+});
+
 test("policy fails closed when a severe finding has no resolvable advisory object", () => {
   const result = runPolicy(auditJson([["mystery-package", "high", ["indirect"]]]), {
     ALLOW_BIGINT_BUFFER_UNTIL: "2099-01-01",

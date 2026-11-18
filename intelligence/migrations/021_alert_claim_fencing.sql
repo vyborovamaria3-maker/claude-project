@@ -13,14 +13,25 @@
 --
 -- Honest delivery semantics (see also dispatch-telegram-alerts.mjs):
 --   * Workers never exceed the 10-attempt automatic retry budget.
---   * Concurrent double-send is prevented by FOR UPDATE SKIP LOCKED claims,
---     the per-claim token and a freshness check immediately before send.
---   * A crash AFTER a successful send but BEFORE the ACK can still produce
---     one duplicate after the lease expires (at-least-once, bounded by the
---     10 minute lease). This is NOT exactly-once delivery; the residual
---     duplicate window is reported to the operator, not hidden.
+--   * Live concurrent workers cannot double-send: claims are exclusive
+--     (FOR UPDATE SKIP LOCKED), terminal writes are fenced by the unique
+--     per-claim claim_token, and each worker atomically renews its lease
+--     immediately before the outbound call - a worker that lost ownership
+--     affects zero rows there and never reaches the API.
+--   * A crash AFTER a successful send but BEFORE the ACK, or a worker
+--     stalling longer than a full lease window between the renewal and
+--     the fetch, can still produce one duplicate after the lease expires
+--     (at-least-once, bounded by the 10 minute lease). This is NOT
+--     exactly-once delivery - the Telegram Bot API has no idempotency
+--     key - and the residual window is reported to the operator, not
+--     hidden.
 --   * Ambiguous outcomes (network timeout, unknown transport failure) are
 --     parked in 'needs_review' and never retried automatically.
+--   * Rows that were already stale and exhausted BEFORE this migration
+--     shipped were terminalized by migration 020 as an explicit
+--     failure-assumption (they remain operator-visible and reprocessable
+--     in 'dead_lettered'); this migration only re-classifies rows that
+--     are still 'sending'.
 --
 -- Idempotent: the column add and constraint swap converge on re-run, and
 -- the conversion below only touches rows still outside the terminal states.
