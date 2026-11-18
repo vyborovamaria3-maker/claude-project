@@ -16,9 +16,9 @@ export function requiredEnv(name,env=process.env) {
 }
 
 export function postgresSourcePoolOptions(source,write,env=process.env){
-  if(!["x","tg"].includes(source)||typeof write!=="boolean")throw new Error("invalid PostgreSQL source connection mode");
+  if(!["x","tg","discord"].includes(source)||typeof write!=="boolean")throw new Error("invalid PostgreSQL source connection mode");
   return {
-    connectionString:requiredEnv(source==="x"?"X_SOURCE_DATABASE_URL":"TG_SOURCE_DATABASE_URL",env),
+    connectionString:requiredEnv(source==="x"?"X_SOURCE_DATABASE_URL":source==="tg"?"TG_SOURCE_DATABASE_URL":"DISCORD_SOURCE_DATABASE_URL",env),
     max:2,connectionTimeoutMillis:5000,
     query_timeout:30_000,statement_timeout:30_000,
     application_name:write?"potapoff-intelligence-source-writer":"potapoff-intelligence-source-reader",
@@ -45,7 +45,7 @@ export function sourceConnection(source,write) {
       };
     }catch(error){db.close();throw error;}
   }
-  if(!["x","tg"].includes(source))throw new Error("unknown source");
+  if(!["x","tg","discord"].includes(source))throw new Error("unknown source");
   const pool=new pg.Pool(postgresSourcePoolOptions(source,write));
   return {
     kind:"pg",connection:pool,
@@ -81,15 +81,16 @@ export async function assertEnvelopeFingerprintContract(pool,definition){
       +"missing or non-CHECK constraint",
     );
   }
-  await pool.query("CREATE TEMP TABLE intelligence_inbox_envelope_probe (envelope_sha256 text)");
+  const client=typeof pool.connect==="function"?await pool.connect():pool;
   try{
-    await pool.query(
+    await client.query("CREATE TEMP TABLE intelligence_inbox_envelope_probe (envelope_sha256 text)");
+    await client.query(
       "ALTER TABLE intelligence_inbox_envelope_probe "
       +"ADD CONSTRAINT intelligence_inbox_envelope_probe_check "+definition,
     );
     for(const [value,mustReject] of ENVELOPE_PROBE_VALUES){
       try{
-        await pool.query(
+        await client.query(
           "INSERT INTO intelligence_inbox_envelope_probe(envelope_sha256) VALUES ($1)",
           [value],
         );
@@ -110,8 +111,43 @@ export async function assertEnvelopeFingerprintContract(pool,definition){
       }
     }
   }finally{
-    await pool.query("DROP TABLE IF EXISTS intelligence_inbox_envelope_probe");
+    try{await client.query("DROP TABLE IF EXISTS intelligence_inbox_envelope_probe");}
+    finally{if(client!==pool)client.release();}
   }
+}
+
+async function assertDiscordCheck(pool,table,column,constraint,definition,accepted,rejected){
+  if(typeof definition!=="string"||!definition.trimStart().toUpperCase().startsWith("CHECK")){
+    throw new Error("destination Intelligence migration 022 Discord contract violated: missing validated CHECK");
+  }
+  const client=typeof pool.connect==="function"?await pool.connect():pool;
+  const probe=table+"_probe";
+  try{
+    await client.query("CREATE TEMP TABLE "+probe+" ("+column+" TEXT)");
+    await client.query("ALTER TABLE "+probe+" ADD CONSTRAINT "+constraint+" "+definition);
+    for(const value of accepted){
+      try{await client.query("INSERT INTO "+probe+"("+column+") VALUES ($1)",[value]);}
+      catch{throw new Error("destination Intelligence migration 022 Discord contract violated: CHECK rejects "+value);}
+    }
+    let rejectedByCheck=false;
+    try{await client.query("INSERT INTO "+probe+"("+column+") VALUES ($1)",[rejected]);}
+    catch{rejectedByCheck=true;}
+    if(!rejectedByCheck)throw new Error("destination Intelligence migration 022 Discord contract violated: CHECK accepts "+rejected);
+  }finally{
+    try{await client.query("DROP TABLE IF EXISTS "+probe);}finally{if(client!==pool)client.release();}
+  }
+}
+
+export async function assertDiscordContracts(pool,row){
+  if(!row.discord_evidence_constraint||!row.discord_timeline_constraint){
+    throw new Error("destination Intelligence migration 022 required before Discord source claims");
+  }
+  await assertDiscordCheck(pool,"discord_evidence","evidence_kind","discord_evidence_check",
+    row.discord_evidence_definition,["x_tweet","tg_message","chain_tx","discord_message"],"discord_author");
+  await assertDiscordCheck(pool,"discord_timeline","timeline_kind","discord_timeline_check",
+    row.discord_timeline_definition,["tweet_published","tg_message_published","chain_transaction",
+      "trade_executed","signal_detected","signal_outcome","discord_message_observed","discord_message_edited"],
+    "discord_message_deleted");
 }
 
 export async function checkDestination(pool,options={}){
@@ -134,7 +170,19 @@ export async function checkDestination(pool,options={}){
     (SELECT pg_get_constraintdef(oid) FROM pg_constraint
       WHERE conrelid=to_regclass('intelligence_inbox')
         AND conname='intelligence_inbox_envelope_sha256_check')
-      AS inbox_envelope_fingerprint_definition`);
+      AS inbox_envelope_fingerprint_definition,
+    EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('entity_evidence')
+      AND conname='entity_evidence_evidence_kind_check' AND contype='c' AND convalidated)
+      AS discord_evidence_constraint,
+    (SELECT pg_get_constraintdef(oid) FROM pg_constraint
+      WHERE conrelid=to_regclass('entity_evidence')
+        AND conname='entity_evidence_evidence_kind_check') AS discord_evidence_definition,
+    EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('timeline_events')
+      AND conname='timeline_events_timeline_kind_check' AND contype='c' AND convalidated)
+      AS discord_timeline_constraint,
+    (SELECT pg_get_constraintdef(oid) FROM pg_constraint
+      WHERE conrelid=to_regclass('timeline_events')
+        AND conname='timeline_events_timeline_kind_check') AS discord_timeline_definition`);
   const row=result.rows[0];
   // Every consumer may encounter token-link events, so reject missing 004 before claiming.
   if(!row?.inbox||!row.registry||!row.evidence||!row.timeline||!row.token_links){
@@ -153,6 +201,7 @@ export async function checkDestination(pool,options={}){
       pool,row.inbox_envelope_fingerprint_definition,
     );
   }
+  if(options.requireDiscordContracts===true) await assertDiscordContracts(pool,row);
   if(options.requireBlockchainRevisions===true && !row.blockchain_revisions){
     throw new Error("destination Intelligence migration 005 required before Blockchain claim");
   }

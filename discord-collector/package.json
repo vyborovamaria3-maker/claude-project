@@ -1,0 +1,19 @@
+{
+  "name": "@potapoff/discord-collector",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "start": "node src/index.mjs"
+  },
+  "dependencies": {
+    "discord.js": "^14.19.3",
+    "pg": "^8.13.1",
+    "@claude-project/contracts": "file:../packages/contracts",
+    "@claude-project/event-outbox": "file:../packages/event-outbox"
+  }
+}

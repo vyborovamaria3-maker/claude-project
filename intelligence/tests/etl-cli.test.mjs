@@ -18,12 +18,15 @@ test("CLI --help does not open any provider or DB",()=>{
   const r=child(["--help"]);
   assert.equal(r.status,0,r.stderr);
   assert.match(r.stdout,/local ETL/);
-  assert.match(r.stdout,/--source x\|tg\|blockchain/);
+  assert.match(r.stdout,/--source x\|tg\|blockchain\|discord/);
 });
-test("CLI delivery refuses missing explicit opt-in",()=>{
+test("CLI delivery refuses missing explicit opt-in for both Telegram and Discord",()=>{
   const r=child(["--source","tg","--once"]);
   assert.equal(r.status,1);
   assert.match(r.stderr,/INTELLIGENCE_ETL_ENABLED=true/);
+  const discord=child(["--source","discord","--once"]);
+  assert.equal(discord.status,1);
+  assert.match(discord.stderr,/INTELLIGENCE_ETL_ENABLED=true/);
 });
 test("CLI invalid options fail without database credentials",()=>{
   for(const args of [["--source","x","--once","--limit","0"],["--source","reddit","--status"],["--source","tg","--once","--status"]]) {

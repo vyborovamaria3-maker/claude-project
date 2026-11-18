@@ -67,7 +67,7 @@ export function parseArguments(args){
       if(!value)throw new Error("missing sources");
       const sources=value.split(",").map(x=>x.trim());
       if(sources.length===0||new Set(sources).size!==sources.length||
-          sources.some(s=>!["x","tg","blockchain"].includes(s))){
+          sources.some(s=>!["x","tg","blockchain","discord"].includes(s))){
         throw new Error("invalid sources");
       }
       options.sources=sources;
@@ -85,7 +85,7 @@ export function parseArguments(args){
     }
     throw new Error("unknown CLI option");
   }
-  if(!options.help&&!options.sources.length)throw new Error("select --sources x,tg,blockchain");
+  if(!options.help&&!options.sources.length)throw new Error("select --sources x,tg,blockchain,discord");
   return options;
 }
 
@@ -93,13 +93,13 @@ function usage(){
   return [
     "Local Intelligence ETL supervisor (foreground process, no collectors started)",
     "  INTELLIGENCE_ETL_ENABLED=true INTELLIGENCE_SUPERVISOR_ENABLED=true \\",
-    "    node scripts/supervise.mjs --sources x,tg,blockchain",
+    "    node scripts/supervise.mjs --sources x,tg,blockchain,discord",
     "  Optional --poll-ms 2000 --pace-ms 100 --lease-ms 120000",
     "           --max-failures 5 --max-batches 0",
     "  --max-batches N is a per-source upper bound; 0 means until SIGINT/SIGTERM.",
-    "  Use --sources x or --sources tg,blockchain to run only configured sources.",
-    "  X_SOURCE_DATABASE_URL, TG_SOURCE_DATABASE_URL, SOLANA_TRADE_DB_PATH",
-    "  INTELLIGENCE_DATABASE_URL: separate target PostgreSQL with migrations 001+002+004+017+019 for V1/V2 delivery.",
+    "  Use --sources x or --sources tg,discord to run only configured sources.",
+    "  X_SOURCE_DATABASE_URL, TG_SOURCE_DATABASE_URL, DISCORD_SOURCE_DATABASE_URL, SOLANA_TRADE_DB_PATH",
+    "  INTELLIGENCE_DATABASE_URL: separate target PostgreSQL with migrations 001+002+004+017+019; +022 for Discord.",
     "  Optional INTELLIGENCE_INVALIDATION_WORKER_ENABLED=true requires migrations 010+013+018.",
     "  Requires existing source outbox schemas; does NOT apply migrations.",
     "  Preserve separate producer opt-ins; never point this at live DBs before backup/restore.",
@@ -133,11 +133,12 @@ async function main(){
     await checkDestination(destination,{
       requireBlockchainRevisions:options.sources.includes('blockchain'),
       requireEnvelopeFingerprint:true,
+      requireDiscordContracts:options.sources.includes('discord'),
     });
     const invalidationEnabled=process.env.INTELLIGENCE_INVALIDATION_WORKER_ENABLED==="true";
     const invalidationBatchSize=invalidationEnabled?parseInvalidationBatchSize():4;
     if(invalidationEnabled)await checkInvalidationDestination(destination);
-    const ai=await createAiRuntime(destination,Object.fromEntries(sources.filter(s=>s.connection.kind==='pg').map(s=>[s.name,s.connection.connection])));
+    const ai=await createAiRuntime(destination,Object.fromEntries(sources.filter(s=>s.connection.kind==='pg'&&['x','tg'].includes(s.name)).map(s=>[s.name,s.connection.connection])));
     const report=event=>console.log(JSON.stringify({
       timestamp:new Date().toISOString(),...event,
     }));
@@ -163,7 +164,7 @@ async function main(){
                 report({kind:"health",source:name,code:"health_snapshot_failed"});
               }
             }
-            if(ai&&name!=='blockchain'&&!stop.signal.aborted)try{report({kind:"ai",source:name,...(await ai.run(name,stop.signal))});}
+            if(ai&&['x','tg'].includes(name)&&!stop.signal.aborted)try{report({kind:"ai",source:name,...(await ai.run(name,stop.signal))});}
             catch{report({kind:"ai",source:name,code:"ai_batch_failed"});}
             return stats;
           },

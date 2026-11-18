@@ -30,14 +30,29 @@ function mapRow(row: Record<string, unknown>): ClaimedEvent {
   };
 }
 
-/** Call within SAME transaction/connection as primary write. Never independently commit. */
-export async function emitPostgres(client: PgQuery, event: OutboxEvent): Promise<void> {
+/** Call within SAME transaction/connection as primary write. Never independently commit.
+ * Pass createdAt when a V2 envelope's emittedAt must exactly equal the immutable
+ * source outbox timestamp observed by downstream consumers.
+ */
+export async function emitPostgres(
+  client: PgQuery, event: OutboxEvent, createdAt?: Date | string,
+): Promise<void> {
   validateOutboxEvent(event);
+  const payload=JSON.stringify(event.payload);
+  if(createdAt===undefined){
+    await client.query(`INSERT INTO outbox_events
+      (source_system,event_kind,event_key,schema_version,payload,created_at)
+      VALUES ($1,$2,$3,$4,$5::jsonb,clock_timestamp())
+      ON CONFLICT (source_system,event_kind,event_key) DO NOTHING`,
+      [event.sourceSystem,event.eventKind,event.eventKey,event.schemaVersion,payload]);
+    return;
+  }
+  const timestamp=databaseTimestampToIso(createdAt,"created_at");
   await client.query(`INSERT INTO outbox_events
     (source_system,event_kind,event_key,schema_version,payload,created_at)
-    VALUES ($1,$2,$3,$4,$5::jsonb,clock_timestamp())
+    VALUES ($1,$2,$3,$4,$5::jsonb,$6::timestamptz)
     ON CONFLICT (source_system,event_kind,event_key) DO NOTHING`,
-    [event.sourceSystem,event.eventKind,event.eventKey,event.schemaVersion,JSON.stringify(event.payload)]);
+    [event.sourceSystem,event.eventKind,event.eventKey,event.schemaVersion,payload,timestamp]);
 }
 
 /** Claims are committed before the consumer handles external writes. */

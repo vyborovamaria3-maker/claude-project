@@ -293,7 +293,8 @@ discord_message_deleted, all under discord-message-v1.
 
 Destination migration 022_discord_message_contracts.sql additively widens
 only the evidence-kind and timeline-kind checks. The consumer library can
-validate and ingest a Discord V2 envelope, but the CLI/supervisor source
-connection and source transactional outbox are not yet integrated. Those are
-the next implementation stage. This contract does not grant Discord platform
+validate and ingest a Discord V2 envelope, and the Discord collector now writes the V2 envelope to its source-local
+transactional outbox. The Intelligence CLI/supervisor can consume it only with
+an explicit Discord source selection, DISCORD_SOURCE_DATABASE_URL, migrations
+019+022 and the standard ETL opt-in. The consumer remains disabled by default. This contract does not grant Discord platform
 permission or community consent and does not enable a live collector.
