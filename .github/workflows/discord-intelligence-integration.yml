@@ -1,0 +1,75 @@
+name: Discord Intelligence Integration
+on:
+  pull_request:
+    paths:
+      - 'discord-collector/**'
+      - 'packages/contracts/**'
+      - 'packages/event-outbox/**'
+      - 'intelligence/src/**'
+      - 'intelligence/scripts/**'
+      - 'intelligence/migrations/**'
+      - 'intelligence/tests/**'
+      - '.github/workflows/discord-intelligence-integration.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  discord-intelligence:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: intelligence_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      INTELLIGENCE_TEST_DB_URL: postgresql://postgres:test@127.0.0.1:5432/intelligence_test
+      DISCORD_TEST_DATABASE_URL: postgresql://postgres:test@127.0.0.1:5432/intelligence_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install and build shared contracts
+        run: |
+          npm install --prefix packages/contracts --no-package-lock --no-audit --no-fund
+          npm --prefix packages/contracts run build
+      - name: Install and build transactional outbox
+        run: |
+          npm install --prefix packages/event-outbox --no-package-lock --no-audit --no-fund
+          npm --prefix packages/event-outbox run build
+      - name: Install and build Intelligence
+        run: |
+          npm install --prefix intelligence --no-package-lock --no-audit --no-fund
+          npm --prefix intelligence run build
+      - name: Install Discord collector and local package dependencies
+        run: npm install --prefix discord-collector --no-package-lock --no-audit --no-fund
+      - name: Shared contract and outbox unit tests
+        run: |
+          node --test packages/contracts/tests/*.test.mjs
+          node --test packages/event-outbox/tests/*.test.mjs
+      - name: Intelligence Discord readiness and PostgreSQL delivery tests
+        run: |
+          node --test \
+            intelligence/tests/delivery.test.mjs \
+            intelligence/tests/etl-connections.test.mjs \
+            intelligence/tests/etl-cli.test.mjs \
+            intelligence/tests/supervisor.test.mjs \
+            intelligence/tests/etl-schema-readiness.test.mjs \
+            intelligence/tests/discord-delivery-postgres.test.mjs
+      - name: Discord collector unit and PostgreSQL integration tests
+        run: node --test discord-collector/test/*.test.mjs
+      - name: Syntax checks
+        run: |
+          node --check discord-collector/src/events.mjs
+          node --check discord-collector/src/storage.mjs
+          node --check discord-collector/src/outbox.mjs
+          node --check discord-collector/src/reconcile.mjs
+          node --check discord-collector/src/index.mjs
