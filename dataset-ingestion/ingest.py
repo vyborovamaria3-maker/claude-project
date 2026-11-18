@@ -129,11 +129,24 @@ def iterate_rows(path):
                 if member.filename.lower().endswith((".csv", ".jsonl")):
                     with archive.open(member) as raw, io.TextIOWrapper(raw, encoding="utf-8-sig", newline="") as handle:
                         yield from read(handle, member.filename)
+    elif path.suffix.lower() == ".parquet":
+        try:
+            import pyarrow.parquet as pq
+        except ImportError as error:
+            raise ValueError("Optional PyArrow is required for streaming Parquet staging") from error
+        source = pq.ParquetFile(path)
+        row_number = 0
+        for batch in source.iter_batches(batch_size=512):
+            for row in batch.to_pylist():
+                row_number += 1
+                if not isinstance(row, dict):
+                    raise ValueError("Each Parquet row must be a record")
+                yield path.name, row_number, row
     elif path.suffix.lower() in (".csv", ".jsonl"):
         with path.open(encoding="utf-8-sig", newline="") as handle:
             yield from read(handle, path.name)
     else:
-        raise ValueError("Only CSV/JSONL and ZIP archives are implemented; Parquet adapter is separate")
+        raise ValueError("Supported types are CSV/JSONL/Parquet and ZIP containing CSV/JSONL")
 
 
 def import_file(source, input_file, db_file, authorization, purpose="research", limit=None):
@@ -142,10 +155,12 @@ def import_file(source, input_file, db_file, authorization, purpose="research", 
         raise ValueError("Unknown dataset ID")
     rights = authorize(source, authorization, purpose)
     extension = input_file.suffix.lower().lstrip(".")
-    if extension not in registry[source]["formats"] or extension not in ("csv", "jsonl", "zip"):
+    if extension not in registry[source]["formats"] or extension not in ("csv", "jsonl", "zip", "parquet"):
         raise ValueError("Input format not supported for this dataset")
     if limit is not None and limit <= 0:
         raise ValueError("Import limit must be positive")
+    if extension == "parquet" and (limit is None or limit > 100_000):
+        raise ValueError("Parquet research pilot requires --limit between 1 and 100000")
     digest = sha_file(input_file)
     imported = now_utc()
     db_file.parent.mkdir(parents=True, exist_ok=True)
@@ -171,7 +186,7 @@ def import_file(source, input_file, db_file, authorization, purpose="research", 
                 occurred, precision = parse_time(row)
                 sample = next((str(row[k]) for k in ("mint", "mint_address", "token_address", "content", "text", "comment") if row.get(k)), "")
                 mint_match = BASE58.search(sample)
-                original_id = next((str(row[k]) for k in ("id", "message_id", "comment_id") if row.get(k) is not None), None)
+                original_id = next((str(row[k]) for k in ("id", "message_id", "comment_id", "signature", "tx_hash", "tx_id") if row.get(k) is not None), None)
                 cursor=db.execute("""INSERT OR IGNORE INTO staged_observations
                     (dataset_id,file_sha256,member,row_number,payload_sha256,source_record_id,
                     occurred_at,time_precision,observed_at,ingested_at,available_at,

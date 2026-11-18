@@ -35,6 +35,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Install optional PyArrow for bounded Parquet pilot
+        run: python3 -m pip install --disable-pip-version-check -r dataset-ingestion/requirements-parquet.txt
       - name: Dataset fixture tests
         run: python3 -m unittest discover -s dataset-ingestion/tests -v
       - name: Dataset catalog JSON validation

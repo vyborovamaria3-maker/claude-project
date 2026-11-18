@@ -44,8 +44,12 @@ python3 dataset-ingestion/normalize.py --source memechain --db /private/datasets
 python3 -m unittest discover -s dataset-ingestion/tests -v
 ~~~
 
-Supported raw staging: CSV, JSONL and ZIP containing these. Explicitly rejects
-unsupported Parquet until bounded streaming adapters are reviewed.
+Supported raw staging: CSV, JSONL, ZIP containing CSV/JSONL, and Parquet through
+optional PyArrow. Parquet is a **bounded research pilot**, requiring --limit 1..100000;
+rows stream in batches of 512, with SHA-256 of the original input file and a
+replayable per-row identity. Never import the full 222-million-record MELT dataset
+into SQLite with this pilot; a partitioned production ingestion target and
+source-specific schema/rights review are still outstanding.
 
 Staging records file digest and sizes, raw payload digest, import run status,
 timestamp precision, observed/ingested/available time and rights reference.
