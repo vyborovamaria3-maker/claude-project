@@ -227,6 +227,9 @@ function normalizeEvidenceRefs(value: unknown, sourceSystem: EventSource): Event
     for (const key of Object.keys(raw)) {
       if (!allowed.has(key)) throw new TypeError("Unknown evidenceRef field: " + key);
     }
+    if (sourceSystem === "discord" && (raw.rawPointer !== undefined || raw.contentSha256 !== undefined)) {
+      throw new TypeError("Discord evidence cannot carry raw content pointers or content hashes");
+    }
     if (raw.contentSha256 !== undefined &&
         (typeof raw.contentSha256 !== "string" || !/^[a-f0-9]{64}$/.test(raw.contentSha256))) {
       throw new TypeError("Invalid evidence contentSha256");

@@ -45,6 +45,9 @@ function validateEvidence(evidence: EvidenceRef): EvidenceRef {
   }
   const provider = evidence.provider === undefined ? undefined : limited(evidence.provider, "provider", 4096);
   const parserVersion = evidence.parserVersion === undefined ? undefined : limited(evidence.parserVersion, "parserVersion", 4096);
+  if (evidence.sourceKind === "discord_message" && evidence.rawPointer !== undefined) {
+    throw new TypeError("Discord evidence cannot expose a raw content pointer");
+  }
   const rawPointer = evidence.rawPointer === undefined ? undefined : limited(evidence.rawPointer, "rawPointer", 4096);
   return {
     ...evidence,

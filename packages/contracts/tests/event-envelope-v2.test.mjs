@@ -313,6 +313,28 @@ test("Discord V2 message envelope validates source identity, channel provenance 
     producer: { name: "discord-collector", version: "test-v1" },
     clocks: { occurredAt, observedAt, emittedAt },
     entityRefs: [{ kind: "source", canonicalId: "discord:channel:" + channelId }],
+    evidenceRefs: [{ ...evidenceRef, contentSha256: "a".repeat(64) }],
+    payload,
+  }), /cannot carry raw content pointers or content hashes/);
+  assert.throws(() => buildEventEnvelopeV2({
+    sourceSystem: "discord", eventKind: "discord_message_observed", eventKey,
+    schemaVersion: "discord-message-v1",
+    producer: { name: "discord-collector", version: "test-v1" },
+    clocks: { occurredAt, observedAt, emittedAt },
+    entityRefs: [{ kind: "source", canonicalId: "discord:channel:" + channelId }],
+    evidenceRefs: [{ ...evidenceRef, rawPointer: "private://message-body" }],
+    payload: {
+      ...payload,
+      registryEvent: { ...payload.registryEvent, evidenceRef: { ...evidenceRef, rawPointer: "private://message-body" } },
+      timelineEvent: { ...payload.timelineEvent, evidenceRef: { ...evidenceRef, rawPointer: "private://message-body" } },
+    },
+  }), /not an allowed field/);
+  assert.throws(() => buildEventEnvelopeV2({
+    sourceSystem: "discord", eventKind: "discord_message_observed", eventKey,
+    schemaVersion: "discord-message-v1",
+    producer: { name: "discord-collector", version: "test-v1" },
+    clocks: { occurredAt, observedAt, emittedAt },
+    entityRefs: [{ kind: "source", canonicalId: "discord:channel:" + channelId }],
     evidenceRefs: [evidenceRef],
     payload: { ...payload, discordMessage: { ...payload.discordMessage, content: "private raw message" } },
   }), /not an allowed field/);
