@@ -17,6 +17,14 @@ try {
   process.exit(2);
 }
 
+// Fail closed on syntactically-valid-but-incomplete npm output (for example
+// an npm error envelope): the gate must never go green on a report that does
+// not actually contain the vulnerability table.
+if (!report || typeof report !== 'object' || !report.vulnerabilities || typeof report.vulnerabilities !== 'object' || Array.isArray(report.vulnerabilities)) {
+  console.error('NPM_AUDIT_POLICY_FAIL npm audit report does not contain a vulnerabilities object; audit output is incomplete or the command failed.');
+  process.exit(2);
+}
+
 const vulnerabilities = report?.vulnerabilities ?? {};
 const highOrCritical = Object.entries(vulnerabilities).filter(([, value]) =>
   value && (value.severity === 'high' || value.severity === 'critical')
@@ -65,9 +73,10 @@ const ALLOWED_PICOMATCH_GHSA = 'GHSA-fc5q-39xc-vjpf';
 const picomatchAllowedUntil = process.env.ALLOW_PICOMATCH_UNTIL ?? '';
 
 function isAllowedPicomatch(item) {
+  // Strictly cited by advisory id: a loose title/name fallback would also
+  // waive any FUTURE picomatch advisory, which the acceptance never covered.
   const haystack = `${item.packageName ?? ''} ${item.name ?? ''} ${item.title ?? ''} ${item.url ?? ''}`;
-  return haystack.includes(ALLOWED_PICOMATCH_GHSA) ||
-    (haystack.toLowerCase().includes('picomatch') && haystack.toLowerCase().includes('redos'));
+  return haystack.includes(ALLOWED_PICOMATCH_GHSA);
 }
 
 const picomatchExceptions = severeAdvisories.filter(isAllowedPicomatch);
@@ -141,7 +150,7 @@ for (const [packageName, value] of highOrCritical) {
   }
   for (const root of roots) {
     const allowedBigint = root.includes(ALLOWED_BIGINT_BUFFER_GHSA) || root.toLowerCase().includes('bigint-buffer');
-    const allowedPicomatch = root.includes(ALLOWED_PICOMATCH_GHSA) || (root.toLowerCase().includes('picomatch') && root.toLowerCase().includes('redos'));
+    const allowedPicomatch = root.includes(ALLOWED_PICOMATCH_GHSA);
     if (!allowedBigint && !allowedPicomatch) {
       console.error(`NPM_AUDIT_POLICY_FAIL ${packageName} traces to an unexpected severe advisory: ${root.split('|')[0]}`);
       process.exit(1);
