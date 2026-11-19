@@ -119,6 +119,17 @@ test("invalidation queue can run under the same bounded foreground loop",async()
   assert.equal(result.delivered,2);
 });
 
+test("Discord is accepted by the supervised source loop",async()=>{
+  let calls=0;
+  const result=await runSourceLoop({
+    source:"discord",signal:new AbortController().signal,
+    maxBatches:2,pollMs:100,paceMs:0,
+    runBatch:async()=>{calls++;return {claimed:1,delivered:1,duplicates:0,failed:0,lostLeases:0}},
+  });
+  assert.equal(calls,2);
+  assert.equal(result.delivered,2);
+});
+
 test("source errors are redacted, retried and cut off at safety threshold",async()=>{
   const messages=[];
   const stop=new AbortController();
