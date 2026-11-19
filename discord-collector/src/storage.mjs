@@ -1,3 +1,4 @@
+import {createHash} from "node:crypto";
 import {emitPostgres,POSTGRES_OUTBOX_DDL} from "@claude-project/event-outbox";
 import {readFile} from "node:fs/promises";
 import {fileURLToPath} from "node:url";
@@ -37,7 +38,7 @@ async function emitDiscordObservation(client,o){
     observedAt:o.observedAt,
     occurredAt:o.kind==="deleted"?null:o.kind==="edited"?o.editedAt:o.occurredAt,
     contentSha256:o.kind==="deleted"?null:o.contentSha,
-    ...(o.kind==="deleted"?{contentErased:true}:{}),
+    ...(o.kind==="deleted"?{contentErased:true,deletionReason:o.deletionReason??"deleted"}:{}),
     producerVersion:"0.1.0",
   };
   // The outbox insert uses the SAME transaction as message/revision storage.
@@ -45,6 +46,30 @@ async function emitDiscordObservation(client,o){
   await emitPostgres(client,{
     sourceSystem:"discord",eventKind,eventKey,schemaVersion:"discord-message-v1",payload,
   });
+}
+
+function erasureObservation(row,reason,observedAt){
+  const revisionKey=createHash("sha256")
+    .update([row.guild_id,row.channel_id,row.message_id,"deleted",reason].join("|"))
+    .digest("hex");
+  return {
+    kind:"deleted",guildId:row.guild_id,channelId:row.channel_id,messageId:row.message_id,
+    revisionKey,observedAt,occurredAt:null,editedAt:null,revisionAt:null,
+    content:null,contentSha:null,deletionReason:reason,
+  };
+}
+
+async function enqueueErasureTombstones(client,rows,reason){
+  const observedAt=new Date().toISOString();
+  for(const row of rows){
+    const inserted=await client.query(
+      "INSERT INTO discord_message_tombstones "+
+      "(message_id,guild_id,channel_id,deleted_at,deletion_reason) "+
+      "VALUES($1,$2,$3,$4,$5) ON CONFLICT(message_id) DO NOTHING RETURNING message_id",
+      [row.message_id,row.guild_id,row.channel_id,observedAt,reason],
+    );
+    if(inserted.rows.length)await emitDiscordObservation(client,erasureObservation(row,reason,observedAt));
+  }
 }
 
 export async function storeObservation(pool, o, retentionDays, clock=new Date()){
@@ -58,7 +83,24 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date())
     const old=previous.rows[0]??null;
     if(old&&(old.guild_id!==o.guildId||old.channel_id!==o.channelId))
       throw new Error("Discord message identity reused in another guild/channel");
+    const tombstones=await client.query(
+      "SELECT guild_id,channel_id FROM discord_message_tombstones WHERE message_id=$1 FOR UPDATE",
+      [o.messageId],
+    );
+    const tombstone=tombstones.rows[0]??null;
+    if(tombstone&&(tombstone.guild_id!==o.guildId||tombstone.channel_id!==o.channelId))
+      throw new Error("Discord tombstone identity reused in another guild/channel");
+    if(tombstone&&o.kind!=="deleted"){
+      await client.query("COMMIT");
+      return {status:"tombstoned"};
+    }
     if(old?.deleted_at&&o.kind!=="deleted"){
+      await client.query(
+        "INSERT INTO discord_message_tombstones "+
+        "(message_id,guild_id,channel_id,deleted_at,deletion_reason) "+
+        "VALUES($1,$2,$3,$4,'deleted') ON CONFLICT(message_id) DO NOTHING",
+        [o.messageId,old.guild_id,old.channel_id,old.deleted_at],
+      );
       await client.query("COMMIT");
       return {status:"tombstoned"};
     }
@@ -79,6 +121,14 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date())
       [o.messageId,o.guildId,o.channelId,o.revisionKey,o.kind,o.observedAt,
        retainedHash,retainedContent]);
     if(o.kind==="deleted"){
+      await client.query(
+        "INSERT INTO discord_message_tombstones "+
+        "(message_id,guild_id,channel_id,deleted_at,deletion_reason) "+
+        "VALUES($1,$2,$3,$4,$5) ON CONFLICT(message_id) DO UPDATE SET "+
+        "deleted_at=LEAST(discord_message_tombstones.deleted_at,EXCLUDED.deleted_at),"+
+        "deletion_reason=CASE WHEN EXCLUDED.deletion_reason='deleted' THEN 'deleted' "+
+        "ELSE discord_message_tombstones.deletion_reason END",
+        [o.messageId,o.guildId,o.channelId,o.observedAt,o.deletionReason??"deleted"]);
       await client.query(
         "INSERT INTO discord_messages "+
         "(message_id,guild_id,channel_id,author_id,occurred_at,observed_at,edited_at,content,content_sha256,deleted_at,revision_at) "+
@@ -117,35 +167,69 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date())
 }
 
 export async function purgeExpired(pool,allowed){
-  // Run at startup and on a recurring schedule. A missing authorization is a hard
-  // revocation: do not retain content from channels removed from the allowlist.
+  // Revocation and retention emit durable erasure tombstones BEFORE local rows
+  // are removed. The same transaction contains the source Outbox inserts.
   if(!(allowed instanceof Map)||allowed.size===0)throw new Error("No authorized channels");
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
     let removed=0;
-    const revoked=[...allowed.keys()];
-    const r=await client.query(
-      "DELETE FROM discord_message_revisions WHERE message_id IN "+
-      "(SELECT message_id FROM discord_messages WHERE NOT (channel_id=ANY($1::text[])))",[revoked]);
-    removed+=r.rowCount;
-    const revokedMsg=await client.query(
-      "DELETE FROM discord_messages WHERE NOT (channel_id=ANY($1::text[]))",[revoked]);
-    removed+=revokedMsg.rowCount;
-    await client.query("DELETE FROM discord_backfill_cursors WHERE NOT (channel_id=ANY($1::text[]))",[revoked]);
-    for(const [channelId,permission] of allowed){
+    const authorized=[...allowed.entries()].map(([channelId,permission])=>{
       requireRetention(permission.retentionDays);
-      const args=[channelId,permission.retentionDays];
-      const expired="SELECT message_id FROM discord_messages WHERE channel_id=$1 "+
-        "AND COALESCE(occurred_at,observed_at)<NOW()-($2::integer*INTERVAL '1 day')";
+      if(!permission.guildId)throw new Error("Authorized channel is missing its guild identity");
+      return {channelId,guildId:String(permission.guildId),retentionDays:permission.retentionDays};
+    });
+    const channelIds=authorized.map(item=>item.channelId);
+    const guildIds=authorized.map(item=>item.guildId);
+
+    const revokedRows=await client.query(
+      "SELECT message_id,guild_id,channel_id FROM discord_messages m "+
+      "WHERE m.deleted_at IS NULL AND NOT EXISTS ("+
+      "SELECT 1 FROM unnest($1::text[],$2::text[]) AS a(channel_id,guild_id) "+
+      "WHERE a.channel_id=m.channel_id AND a.guild_id=m.guild_id)",
+      [channelIds,guildIds],
+    );
+    await enqueueErasureTombstones(client,revokedRows.rows,"channel_revoked");
+    if(revokedRows.rows.length){
+      const ids=revokedRows.rows.map(row=>row.message_id);
       const revisions=await client.query(
-        "DELETE FROM discord_message_revisions WHERE message_id IN ("+expired+")",args);
+        "DELETE FROM discord_message_revisions WHERE message_id=ANY($1::text[])",[ids]);
       const messages=await client.query(
-        "DELETE FROM discord_messages WHERE message_id IN ("+expired+")",args);
+        "DELETE FROM discord_messages WHERE message_id=ANY($1::text[])",[ids]);
       removed+=revisions.rowCount+messages.rowCount;
     }
+    await client.query(
+      "DELETE FROM discord_backfill_cursors c WHERE NOT EXISTS ("+
+      "SELECT 1 FROM unnest($1::text[],$2::text[]) AS a(channel_id,guild_id) "+
+      "WHERE a.channel_id=c.channel_id AND a.guild_id=c.guild_id)",
+      [channelIds,guildIds],
+    );
+    await client.query(
+      "DELETE FROM discord_recovery_checks c WHERE NOT EXISTS ("+
+      "SELECT 1 FROM unnest($1::text[],$2::text[]) AS a(channel_id,guild_id) "+
+      "WHERE a.channel_id=c.channel_id AND a.guild_id=c.guild_id)",
+      [channelIds,guildIds],
+    );
+
+    for(const item of authorized){
+      const expired=await client.query(
+        "SELECT message_id,guild_id,channel_id FROM discord_messages "+
+        "WHERE channel_id=$1 AND guild_id=$2 AND deleted_at IS NULL "+
+        "AND COALESCE(occurred_at,observed_at)<NOW()-($3::integer*INTERVAL '1 day')",
+        [item.channelId,item.guildId,item.retentionDays],
+      );
+      await enqueueErasureTombstones(client,expired.rows,"retention_expired");
+      if(expired.rows.length){
+        const ids=expired.rows.map(row=>row.message_id);
+        const revisions=await client.query(
+          "DELETE FROM discord_message_revisions WHERE message_id=ANY($1::text[])",[ids]);
+        const messages=await client.query(
+          "DELETE FROM discord_messages WHERE message_id=ANY($1::text[])",[ids]);
+        removed+=revisions.rowCount+messages.rowCount;
+      }
+    }
     await client.query("COMMIT");
-    return {rowsErased:removed};
+    return {rowsErased:removed,tombstonesQueued:revokedRows.rows.length};
   }catch(e){await client.query("ROLLBACK");throw e}
   finally{client.release()}
 }
