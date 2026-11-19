@@ -11,7 +11,7 @@ test("SQL migrations have unique sequential version numbers",async()=>{
       "duplicate migration version "+prefix+" in "+byVersion.get(prefix)+" and "+name);
     byVersion.set(prefix,name);
   }
-  for(let n=1;n<=23;n++)assert.ok(byVersion.has(n),
+  for(let n=1;n<=24;n++)assert.ok(byVersion.has(n),
     "missing migration "+String(n).padStart(3,"0"));
   const privacy=await readFile(new URL("014_privacy_evidence_indexes.sql",root),"utf8");
   assert.match(privacy,/idx_intelligence_inbox_evidence_source/);
@@ -58,4 +58,11 @@ test("Discord message tombstones are durable and additive in migration 023",asyn
  assert.match(sql,/channel_revoked/);
  assert.match(sql,/evidence_source_id/);
  assert.match(sql,/no message body, author ID, or content fingerprint/i);
+});
+
+
+test("user-requested Discord erasure reason is additive in migration 024",async()=>{
+ const sql=await readFile(new URL("024_discord_user_requested_erasure.sql",root),"utf8");
+ assert.match(sql,/user_requested/);
+ assert.match(sql,/VALIDATE CONSTRAINT/);
 });
