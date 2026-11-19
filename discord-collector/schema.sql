@@ -93,3 +93,29 @@ ALTER TABLE discord_messages VALIDATE CONSTRAINT discord_messages_snowflake_ids_
 ALTER TABLE discord_message_revisions VALIDATE CONSTRAINT discord_message_revisions_snowflake_ids_check;
 ALTER TABLE discord_backfill_cursors VALIDATE CONSTRAINT discord_backfill_cursors_snowflake_ids_check;
 ALTER TABLE discord_recovery_checks VALIDATE CONSTRAINT discord_recovery_checks_snowflake_ids_check;
+
+-- Explicit record of source-coverage gaps. It contains only stable message/channel
+-- identifiers, event kind and a bounded reason code; never content or author IDs.
+CREATE TABLE IF NOT EXISTS discord_coverage_failures (
+ id BIGSERIAL PRIMARY KEY,
+ guild_id TEXT NOT NULL,
+ channel_id TEXT NOT NULL,
+ message_id TEXT NOT NULL,
+ event_kind TEXT NOT NULL CHECK(event_kind IN ('observed','edited','deleted')),
+ failure_code TEXT NOT NULL CHECK(failure_code IN (
+  'message_not_hydratable','message_content_missing','message_content_intent_suspected'
+ )),
+ spool_sequence NUMERIC(20,0) NOT NULL CHECK(spool_sequence>0),
+ detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ UNIQUE(message_id,event_kind,spool_sequence),
+ CHECK (
+  guild_id ~ '^[1-9][0-9]{14,21}$'
+  AND channel_id ~ '^[1-9][0-9]{14,21}$'
+  AND message_id ~ '^[1-9][0-9]{14,21}$'
+  AND guild_id::numeric <= 18446744073709551615
+  AND channel_id::numeric <= 18446744073709551615
+  AND message_id::numeric <= 18446744073709551615
+ )
+);
+CREATE INDEX IF NOT EXISTS discord_coverage_failures_detected
+ ON discord_coverage_failures(detected_at DESC);
