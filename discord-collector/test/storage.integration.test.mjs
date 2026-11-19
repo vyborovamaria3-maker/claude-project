@@ -75,7 +75,7 @@ test("PostgreSQL revisions, stale history, deletions and revoke/retention", {ski
     const origin=normalizeMessage(base,"observed",now.toISOString());
     assert.equal((await storeObservation(pool,origin,30)).status,"stored");
     assert.equal((await storeObservation(pool,origin,30)).status,"stored");
-    let queued=await pool.query("SELECT event_kind,event_key,payload FROM outbox_events WHERE source_system='discord' ORDER BY id");
+    let queued=await pool.query("SELECT event_kind,event_key,payload FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1 ORDER BY id",["discord:message:"+channelId+":"+messageId+":%"]);
     assert.equal(queued.rows.length,1,"duplicate observations must be idempotent in the source outbox");
     assert.equal(queued.rows[0].event_kind,"message_observed");
     assert.equal(queued.rows[0].payload.channelId,channelId);
@@ -86,7 +86,7 @@ test("PostgreSQL revisions, stale history, deletions and revoke/retention", {ski
     assert.equal((await storeObservation(pool,edited,30)).status,"stored");
     const stale=normalizeMessage(base,"observed",new Date(now.getTime()+1000).toISOString());
     assert.equal((await storeObservation(pool,stale,30)).status,"stale");
-    queued=await pool.query("SELECT event_kind,event_key,payload FROM outbox_events WHERE source_system='discord' ORDER BY id");
+    queued=await pool.query("SELECT event_kind,event_key,payload FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1 ORDER BY id",["discord:message:"+channelId+":"+messageId+":%"]);
     assert.equal(queued.rows.length,2,"stale REST history must not create a fresh source event");
     assert.equal(queued.rows[1].event_kind,"message_edited");
     assert.equal(queued.rows[1].payload.contentSha256,edited.contentSha);
@@ -96,7 +96,7 @@ test("PostgreSQL revisions, stale history, deletions and revoke/retention", {ski
     const deletePartial={id:messageId,channelId};
     const deletion=normalizeMessage(deletePartial,"deleted",now.toISOString(),guildId);
     assert.equal((await storeObservation(pool,deletion,30)).status,"deleted");
-    queued=await pool.query("SELECT event_kind,payload FROM outbox_events WHERE source_system='discord' ORDER BY id");
+    queued=await pool.query("SELECT event_kind,payload FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1 ORDER BY id",["discord:message:"+channelId+":"+messageId+":%"]);
     assert.equal(queued.rows.length,3);
     assert.equal(queued.rows[2].event_kind,"message_deleted");
     assert.equal(queued.rows[2].payload.contentErased,true);
