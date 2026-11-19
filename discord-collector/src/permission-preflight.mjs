@@ -161,9 +161,13 @@ function computeEffectivePermissions({guildId,member,roles,channel}){
 
   const overwrites=channel.permission_overwrites;
   const parsed=[];
+  const seenOverwrites=new Set();
   for(const overwrite of overwrites){
     if(!overwrite||typeof overwrite.id!=="string"||!isDiscordSnowflake(overwrite.id)||
        ![0,1].includes(overwrite.type))return null;
+    const key=overwrite.type+":"+overwrite.id;
+    if(seenOverwrites.has(key))return null;
+    seenOverwrites.add(key);
     const allow=decimalPermissionBits(overwrite.allow);
     const deny=decimalPermissionBits(overwrite.deny);
     if(allow===null||deny===null)return null;
