@@ -161,6 +161,7 @@ export class IngressSpool {
         if(!match)throw new Error("Unexpected file in dedicated ingress spool directory: "+name);
         const paddedSequence=match[1];
         const sequence=BigInt(paddedSequence).toString();
+        if(sequence==="0")throw new Error("Ingress spool sequence zero is invalid");
         const path=join(this.directory,name);
         const stat=lstatSync(path);
         if(stat.isSymbolicLink()||!stat.isFile())
@@ -169,6 +170,8 @@ export class IngressSpool {
         const securedFile=lstatSync(path);
         if((securedFile.mode&0o777)!==0o600)
           throw new Error("Ingress spool records must have exact mode 0600");
+        if(typeof process.getuid==="function"&&securedFile.uid!==process.getuid())
+          throw new Error("Ingress spool records must be owned by the collector user");
         if(securedFile.size<1||securedFile.size>MAX_EVENT_BYTES)
           throw new Error("Ingress spool record has an invalid size; refusing to discard it");
         const event=decryptRecord(readFileSync(path,"utf8"),sequence,this.key);
