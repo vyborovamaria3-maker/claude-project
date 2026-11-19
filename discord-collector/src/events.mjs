@@ -6,9 +6,20 @@ const MAX_AUTHORIZATION_DAYS=365;
 const AUTHORIZATION_TIMESTAMP=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/i;
 
 function authorizationExpiry(value,name,nowMs){
-  if(typeof value!=="string"||!AUTHORIZATION_TIMESTAMP.test(value)||!Number.isFinite(Date.parse(value)))
+  if(typeof value!=="string"||!AUTHORIZATION_TIMESTAMP.test(value))
     throw new Error(name+" must be an offset-aware ISO timestamp");
+  const [year,month,day,hour,minute,second]=value.slice(0,19).split(/[-T:]/).map(Number);
+  const localDate=new Date(Date.UTC(year,month-1,day,hour,minute,second));
+  if(year<2000||localDate.getUTCFullYear()!==year||localDate.getUTCMonth()!==month-1||
+     localDate.getUTCDate()!==day||localDate.getUTCHours()!==hour||
+     localDate.getUTCMinutes()!==minute||localDate.getUTCSeconds()!==second)
+    throw new Error(name+" contains an invalid calendar date or time");
+  const offset=/([+-])(\\d{2}):(\\d{2})$/.exec(value);
+  if(offset&&(Number(offset[2])>14||Number(offset[3])>59||
+     (Number(offset[2])===14&&Number(offset[3])!==0)))
+    throw new Error(name+" contains an invalid UTC offset");
   const timestamp=Date.parse(value);
+  if(!Number.isFinite(timestamp))throw new Error(name+" is not a valid ISO timestamp");
   if(timestamp>nowMs+MAX_AUTHORIZATION_DAYS*DAY_MS)
     throw new Error(name+" cannot extend more than 365 days without review");
   return new Date(timestamp).toISOString();
