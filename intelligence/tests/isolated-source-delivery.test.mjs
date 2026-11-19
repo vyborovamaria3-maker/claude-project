@@ -10,7 +10,7 @@ import {
 import {
   POSTGRES_OUTBOX_DDL,emitPostgres,claimPostgres,ackPostgres,failPostgres,
 } from "@claude-project/event-outbox";
-import {runDeliveryBatch,queryActiveTokenLinks} from "../dist/index.js";
+import {runDeliveryBatch,queryActiveTokenLinks,ingestDestinationEvent} from "../dist/index.js";
 
 const url=process.env.INTELLIGENCE_TEST_DB_URL;
 
@@ -137,6 +137,21 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
         observedAt:seen,occurredAt:seen,contentSha256:contentHash,producerVersion:"0.1.0"},
     };
     await emitInNativeTransaction(discordPool,discordEvent);
+    const discordSourceRow=(await discordPool.query(
+      "SELECT created_at,payload FROM outbox_events WHERE source_system='discord' AND event_kind='message_observed'")).rows[0];
+    const diagnosticClient=await destPool.connect();
+    try{
+      await diagnosticClient.query("BEGIN");
+      await ingestDestinationEvent(diagnosticClient,{
+        sourceSystem:"discord",eventKind:"message_observed",eventKey:discordEvent.eventKey,
+        schemaVersion:"discord-message-v1",payload:discordSourceRow.payload,createdAt:discordSourceRow.created_at,
+      });
+    }catch(error){
+      throw new Error("Discord destination preflight failed: "+(error instanceof Error?error.message:String(error)));
+    }finally{
+      await diagnosticClient.query("ROLLBACK");
+      diagnosticClient.release();
+    }
     const discordStats=await runDeliveryBatch(port(discordPool),destPool,
       {workerId:"discord-worker",batchSize:2,leaseMs:120000});
     const discordFailures=discordStats.failed?await discordPool.query(
