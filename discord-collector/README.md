@@ -113,7 +113,9 @@ committed `.env` file:
 - `DISCORD_INGRESS_SPOOL_DIR=/var/lib/potapoff/discord-ingress`
 - `DISCORD_INGRESS_SPOOL_KEY=<canonical base64 for exactly 32 random bytes>`
 - `DISCORD_INGRESS_SPOOL_MAX_BYTES=536870912` (default 512 MiB)
-- `DISCORD_INGRESS_SPOOL_MAX_EVENTS=100000` (default 100,000 events)\n- `DISCORD_AUTHORIZATION_RELOAD_MS=60000` (default 60 seconds)\n- `DISCORD_ALLOW_ERASURE_ONLY=true` only for an explicitly approved empty-allowlist erasure run
+- `DISCORD_INGRESS_SPOOL_MAX_EVENTS=100000` (default 100,000 events)
+- `DISCORD_AUTHORIZATION_RELOAD_MS=60000` (default 60 seconds)
+- `DISCORD_ALLOW_ERASURE_ONLY=true` only for an explicitly approved empty-allowlist erasure run
 
 Use a dedicated spool directory for this source database; do not share it with another Collector. A PostgreSQL session advisory lock enforces one Collector per source database.
 
