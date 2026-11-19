@@ -109,6 +109,14 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date())
         "VALUES($1,$2,$3,$4,'deleted') ON CONFLICT(message_id) DO NOTHING",
         [o.messageId,old.guild_id,old.channel_id,old.deleted_at],
       );
+      await client.query(
+        "UPDATE discord_messages SET content=NULL,content_sha256=NULL,author_id=NULL WHERE message_id=$1",
+        [o.messageId],
+      );
+      await client.query(
+        "UPDATE discord_message_revisions SET content=NULL,content_sha256=NULL WHERE message_id=$1",
+        [o.messageId],
+      );
       await client.query("COMMIT");
       return {status:"tombstoned"};
     }
