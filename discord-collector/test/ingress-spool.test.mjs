@@ -107,6 +107,38 @@ test("a different spool key cannot decrypt persisted events",()=>{
   }finally{f.cleanup()}
 });
 
+test("sequence order remains monotonic across restart and event kinds",()=>{
+  const f=fixture();
+  try{
+    f.spool.append(event());
+    f.spool.append(event({messageId:"623456789012345678",kind:"edited",
+      editedAt:"2026-11-19T12:01:00.000Z"}));
+    f.spool.append(event({messageId:"723456789012345678",kind:"deleted",
+      authorId:null,content:null}));
+    assert.deepEqual(f.spool.listPending().map(item=>item.sequence),["1","2","3"]);
+    f.spool.close();
+    const reopened=new IngressSpool({directory:f.directory,key:f.key}).open();
+    try{
+      assert.deepEqual(reopened.listPending().map(item=>item.sequence),["1","2","3"]);
+      reopened.ack("1");
+      reopened.ack("2");
+      reopened.ack("3");
+      reopened.flushAcks();
+      const next=reopened.append(event({messageId:"823456789012345678"}));
+      assert.equal(next.sequence,"4");
+    }finally{reopened.close()}
+  }finally{f.cleanup()}
+});
+
+test("byte capacity exhaustion leaves no partial ready event",()=>{
+  const f=fixture({maxBytes:100,maxEvents:100});
+  try{
+    assert.throws(()=>f.spool.append(event()),error=>error.code==="INGRESS_SPOOL_FULL");
+    assert.equal(f.spool.pendingCount,0);
+    assert.equal(readdirSync(f.directory).length,0);
+  }finally{f.cleanup()}
+});
+
 test("capacity limits apply backpressure without dropping the already durable event",()=>{
   const f=fixture({maxBytes:100_000,maxEvents:1});
   try{
