@@ -1,7 +1,7 @@
 import { buildEntityRef } from "./entity-registry.js";
 import { buildEvidenceRef } from "./evidence.js";
 import { buildEventEnvelopeV2, type EventEnvelopeV2 } from "./event-envelope.js";
-import { formatSourceId } from "./canonical-ids.js";
+import { formatSourceId, isDiscordSnowflake } from "./canonical-ids.js";
 import { buildTimelineEvent } from "./timeline.js";
 import { toUtcIso } from "./time.js";
 
@@ -16,6 +16,7 @@ export type DiscordMessageEnvelopeInput = Readonly<{
   occurredAt?: Date | string | null;
   contentSha256?: string | null;
   contentErased?: boolean;
+  deletionReason?: "deleted" | "retention_expired" | "channel_revoked";
   producerVersion: string;
 }>;
 
@@ -29,7 +30,7 @@ export function buildDiscordMessageEnvelope(input: DiscordMessageEnvelopeInput):
   }
   const allowed = new Set([
     "kind", "channelId", "messageId", "revisionKey", "observedAt",
-    "emittedAt", "occurredAt", "contentSha256", "contentErased", "producerVersion",
+    "emittedAt", "occurredAt", "contentSha256", "contentErased", "deletionReason", "producerVersion",
   ]);
   for (const key of Object.keys(input)) {
     if (!allowed.has(key)) throw new TypeError("Unknown Discord envelope input field: " + key);
@@ -37,7 +38,7 @@ export function buildDiscordMessageEnvelope(input: DiscordMessageEnvelopeInput):
   if (!["observed", "edited", "deleted"].includes(input.kind)) {
     throw new TypeError("Invalid Discord message kind");
   }
-  if (!SNOWFLAKE.test(input.channelId) || !SNOWFLAKE.test(input.messageId)) {
+  if (!isDiscordSnowflake(input.channelId) || !isDiscordSnowflake(input.messageId)) {
     throw new TypeError("Invalid Discord Snowflake identity");
   }
   if (!SHA256.test(input.revisionKey)) throw new TypeError("Invalid Discord revision SHA-256");
@@ -51,6 +52,13 @@ export function buildDiscordMessageEnvelope(input: DiscordMessageEnvelopeInput):
   }
   if (deleted && input.contentErased !== true) {
     throw new TypeError("Discord deletion requires confirmed content erasure");
+  }
+  if (deleted && input.deletionReason !== undefined &&
+      !["deleted", "retention_expired", "channel_revoked"].includes(input.deletionReason)) {
+    throw new TypeError("Invalid Discord deletion reason");
+  }
+  if (!deleted && input.deletionReason !== undefined) {
+    throw new TypeError("Discord deletion reason is only valid for deletion events");
   }
   if (!deleted && input.contentErased === true) {
     throw new TypeError("Content erasure flag is only valid for deletion events");
@@ -90,7 +98,7 @@ export function buildDiscordMessageEnvelope(input: DiscordMessageEnvelopeInput):
       evidenceRef,
     },
     ...(deleted ? {
-      messageDeletion: { contentErased: input.contentErased === true },
+      messageDeletion: { contentErased: input.contentErased === true, reason: input.deletionReason ?? "deleted" },
       timelineEvent: buildTimelineEvent({
         eventKey,
         kind: "discord_message_deleted",
@@ -98,7 +106,7 @@ export function buildDiscordMessageEnvelope(input: DiscordMessageEnvelopeInput):
         observedAt: evidenceRef.observedAt,
         entityRefs: [entityRef],
         evidenceRef,
-        payload: { contentErased: true },
+        payload: { contentErased: true, reason: input.deletionReason ?? "deleted" },
       }),
     } : {
       timelineEvent: buildTimelineEvent({
