@@ -348,7 +348,7 @@ export async function runDiscordPermissionPreflight({
       try{
         permissionResponse=await requestJson(
           "/channels/"+result.channelId+"/permissions/member/"+bot.id,
-          {token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep},
+          {token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep,scheduleRest},
         );
       }catch(error){
         const code=error instanceof DiscordApiError?error.code:"discord_api_unavailable";
