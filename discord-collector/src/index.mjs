@@ -7,6 +7,7 @@ import {replaySpoolEntry} from "./spool-replay.mjs";
 import {scanRecentGap} from "./reconcile.mjs";
 import {IngressSpool,parseIngressSpoolKey} from "./ingress-spool.mjs";
 import {runDiscordPermissionPreflight} from "./permission-preflight.mjs";
+import {DiscordRestScheduler} from "./rest-scheduler.mjs";
 
 if(process.env.DISCORD_COLLECTOR_ENABLED!=="true"){
   console.error("Disabled: DISCORD_COLLECTOR_ENABLED is not true");
@@ -45,6 +46,13 @@ if(!Number.isInteger(authorizationReloadMs)||authorizationReloadMs<5_000||author
 const permissionPreflightMaxChannels=Number(process.env.DISCORD_PERMISSION_PREFLIGHT_MAX_CHANNELS||1_000);
 if(!Number.isInteger(permissionPreflightMaxChannels)||permissionPreflightMaxChannels<1||permissionPreflightMaxChannels>10_000)
   throw new RangeError("DISCORD_PERMISSION_PREFLIGHT_MAX_CHANNELS must be in 1..10000");
+const restMinIntervalMs=Number(process.env.DISCORD_REST_MIN_INTERVAL_MS||25);
+if(!Number.isInteger(restMinIntervalMs)||restMinIntervalMs<0||restMinIntervalMs>1000)
+  throw new RangeError("DISCORD_REST_MIN_INTERVAL_MS must be in 0..1000");
+const restMaxQueue=Number(process.env.DISCORD_REST_MAX_QUEUE||20_000);
+if(!Number.isInteger(restMaxQueue)||restMaxQueue<1||restMaxQueue>100_000)
+  throw new RangeError("DISCORD_REST_MAX_QUEUE must be in 1..100000");
+const restScheduler=new DiscordRestScheduler({minIntervalMs:restMinIntervalMs,maxQueue:restMaxQueue});
 const permissionPreflightIntervalMs=Number(process.env.DISCORD_PERMISSION_PREFLIGHT_INTERVAL_MS||300_000);
 if(!Number.isInteger(permissionPreflightIntervalMs)||permissionPreflightIntervalMs<60_000||permissionPreflightIntervalMs>900_000)
   throw new RangeError("DISCORD_PERMISSION_PREFLIGHT_INTERVAL_MS must be in 60000..900000");
@@ -306,9 +314,9 @@ async function processSpoolEntry(entry,{allowHydration=true}={}){
   return replaySpoolEntry({
     entry,allowHydration,authorized,
     hydrate:async queued=>{
-      const channel=await client.channels.fetch(queued.channelId);
+      const channel=await restScheduler.run("ingress",()=>client.channels.fetch(queued.channelId));
       if(!channel?.messages)throw new Error("Authorized Discord channel history is unavailable");
-      return await channel.messages.fetch(queued.messageId);
+      return await restScheduler.run("ingress",()=>channel.messages.fetch(queued.messageId));
     },
     store:async(message,kind,queued)=>{
       const observation=normalizeMessage(message,kind,queued.receivedAt,queued.guildId);
@@ -386,7 +394,7 @@ async function backfill(guildId,channelId,maxMessages){
   let count=0;
   while(count<maxMessages&&!stopping){
     const requested=Math.min(100,maxMessages-count);
-    const page=await channel.messages.fetch({limit:requested,...(cursor?{before:cursor}:{})});
+    const page=await restScheduler.run("backfill",()=>channel.messages.fetch({limit:requested,...(cursor?{before:cursor}:{})}));
     if(page.size===0)break;
     const ordered=[...page.values()].sort((a,b)=>BigInt(a.id)<BigInt(b.id)?-1:1);
     for(const message of ordered){
@@ -548,7 +556,7 @@ client.once(Events.ClientReady,()=>{
         if(stopping)break;
         const baseline=recoveryBaselines.get(channelId)??null;
         try{
-          const channel=await client.channels.fetch(channelId);
+          const channel=await restScheduler.run("recovery",()=>client.channels.fetch(channelId));
           const result=await scanRecentGap({
             channel,baselineMessageId:baseline,maxPages:recoveryMaxPages,
             onMessage:message=>record(message,"observed")
