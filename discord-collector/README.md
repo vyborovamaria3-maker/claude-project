@@ -126,11 +126,13 @@ Before opening the Gateway, the Collector performs a read-only REST preflight:
    `READ_MESSAGE_HISTORY`.
 
 Only guild text (type 0) and announcement (type 5) channels are supported.
-Missing/hidden channels, missing permissions, unsupported channel types,
-invalid bot credentials, API errors and bounded rate-limit exhaustion all
-fail closed. The Collector does not request or store message bodies during
-preflight. It also rejects `ADMINISTRATOR` and `SEND_MESSAGES`: this service
-is read-only and must not be able to administer a server or post messages.
+The effective channel permission bitfield must contain exactly
+`VIEW_CHANNEL` and `READ_MESSAGE_HISTORY`; every other permission is rejected.
+This is intentionally strict: the Collector does not need to post, moderate,
+manage channels or roles, or administer a server. Missing/hidden channels,
+unsupported channel types, invalid bot credentials, API errors and bounded
+rate-limit exhaustion all fail closed. The Collector never requests or stores
+message bodies during preflight.
 
 The same check runs every five minutes by default (configurable from one to
 fifteen minutes). Newly added channels are checked before they enter the live
