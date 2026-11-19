@@ -90,7 +90,7 @@ external proof that a community has not withdrawn permission early. If
 permission is withdrawn before its recorded expiry, remove the channel from
 the authorization file; the running Collector detects that change on reload.
 Update the authorization file by writing a complete mode-0600 temporary
-file, fsyncing it, and atomically renaming it over the active file. A malformed
+file, fsyncing it, atomically renaming it over the active file, then fsyncing the parent directory. A malformed
 or unreadable policy stops collection rather than continuing under stale
 permissions. These leases enforce operator-recorded consent and review
 deadlines; they do not independently prove that a community has not withdrawn
