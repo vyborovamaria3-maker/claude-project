@@ -116,10 +116,12 @@ login may be rejected.
 Before opening the Gateway, the Collector performs a read-only REST preflight:
 
 1. `GET /users/@me` identifies the bot account.
-2. `GET /guilds/{guild.id}/channels` verifies guild access and enumerates
-   channels visible to the bot. The response is used only to look up IDs already
-   present in the private authorization file; it never expands the allowlist.
-3. `GET /channels/{channel.id}/permissions/member/{user.id}` reads Discord's
+2. `GET /guilds/{guild.id}` verifies that the bot can access each explicitly
+   authorized guild.
+3. `GET /channels/{channel.id}` fetches metadata only for each channel ID
+   already present in the private authorization file and verifies its guild
+   and supported type. No unlisted channel IDs are requested.
+4. `GET /channels/{channel.id}/permissions/member/{user.id}` reads Discord's
    computed permissions for the bot member, including role and channel
    overwrites. The preflight requires `VIEW_CHANNEL` and
    `READ_MESSAGE_HISTORY`.
