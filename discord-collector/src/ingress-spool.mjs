@@ -149,8 +149,8 @@ export class IngressSpool {
       throw new Error("Ingress spool path must be a real directory, not a symlink");
     chmodSync(this.directory,0o700);
     const secured=lstatSync(this.directory);
-    if((secured.mode&0o077)!==0)
-      throw new Error("Ingress spool directory permissions must be 0700");
+    if((secured.mode&0o777)!==0o700)
+      throw new Error("Ingress spool directory permissions must be exactly 0700");
     if(typeof process.getuid==="function"&&secured.uid!==process.getuid())
       throw new Error("Ingress spool directory must be owned by the collector user");
     this.directoryFd=openSync(this.directory,"r");
@@ -190,6 +190,7 @@ export class IngressSpool {
         if(next>this.nextSequence)this.nextSequence=next;
       }
       if(sawTemporary)fsyncSync(this.directoryFd);
+      fsyncSync(this.directoryFd);
       if(this.pendingBytes>this.maxBytes||this.pending.size>this.maxEvents)
         throw new Error("Existing ingress spool backlog exceeds configured capacity; refusing Gateway login");
       this.opened=true;
