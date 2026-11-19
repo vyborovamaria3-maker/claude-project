@@ -443,7 +443,7 @@ sweepTimer=setInterval(()=>{
   sweepRunning=true;
   sweepTask=(async()=>{
     const spoolResult=spool.sweepExpired(allowed);
-    const result=await purgeExpired(pool,allowed);
+    const result=await purgeExpired(pool,allowed,{allowEmpty:erasureOnly});
     if(result.rowsErased>0||spoolResult.eventsErased>0)
       console.log("Expired/revoked Discord data erased",{
         sourceRows:result.rowsErased,
