@@ -4,7 +4,8 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { runDeliveryBatch } from "../dist/index.js";
 import {
-  sourceConnection, checkPgOutbox, checkDestination, destinationConnection,
+  sourceConnection, checkPgOutbox, checkDestination, destinationConnection, outboxStatus,
+  MAX_EVENT_ATTEMPTS,
 } from "./etl-connections.mjs";
 import { runSourceLoop } from "./supervisor-core.mjs";
 import { createAiRuntime } from "./ai-runtime.mjs";
@@ -16,16 +17,20 @@ import { createAiRuntime } from "./ai-runtime.mjs";
  */
 export function parseArguments(args){
   const options={
-    sources:[],pollMs:2000,paceMs:100,leaseMs:120_000,maxFailures:5,
-    maxBatches:0,help:false,
+    sources:[],pollMs:2000,paceMs:100,leaseMs:120_000,maxConsecutiveFailures:5,
+    alertMaxAttempts:5,maxBatches:0,healthIntervalMs:30_000,alertOldestPendingMs:300_000,help:false,
   };
   let provided=false;
   const numeric={
     "--poll-ms":["pollMs",100,60_000],
     "--pace-ms":["paceMs",0,60_000],
     "--lease-ms":["leaseMs",1000,3_600_000],
-    "--max-failures":["maxFailures",1,100],
+    "--max-consecutive-failures":["maxConsecutiveFailures",1,100],
+    "--max-failures":["maxConsecutiveFailures",1,100],
+    "--alert-max-attempts":["alertMaxAttempts",1,MAX_EVENT_ATTEMPTS-1],
     "--max-batches":["maxBatches",0,1_000_000],
+    "--health-interval-ms":["healthIntervalMs",1000,3_600_000],
+    "--alert-oldest-pending-ms":["alertOldestPendingMs",0,86_400_000],
   };
   for(let i=0;i<args.length;i++){
     const raw=args[i];
@@ -66,7 +71,11 @@ function usage(){
     "  INTELLIGENCE_ETL_ENABLED=true INTELLIGENCE_SUPERVISOR_ENABLED=true \\",
     "    node scripts/supervise.mjs --sources x,tg,blockchain",
     "  Optional --poll-ms 2000 --pace-ms 100 --lease-ms 120000",
-    "           --max-failures 5 --max-batches 0",
+    "           --max-consecutive-failures 5 (legacy alias: --max-failures 5)",
+    "           --alert-max-attempts 5 (1..11; PostgreSQL DLQ threshold: 12)",
+    "           --max-batches 0 --health-interval-ms 30000 --alert-oldest-pending-ms 300000",
+    "  Health emits pending/ready/leased/retry/DLQ, oldest-pending lag and last progress.",
+    "  Set --alert-oldest-pending-ms 0 to disable the oldest-pending age alert.",
     "  --max-batches N is a per-source upper bound; 0 means until SIGINT/SIGTERM.",
     "  Use --sources x or --sources tg,blockchain to run only configured sources.",
     "  X_SOURCE_DATABASE_URL, TG_SOURCE_DATABASE_URL, SOLANA_TRADE_DB_PATH",
@@ -74,6 +83,70 @@ function usage(){
     "  Requires existing source outbox schemas; does NOT apply migrations.",
     "  Preserve separate producer opt-ins; never point this at live DBs before backup/restore.",
   ].join("\n");
+}
+
+export function classifyOutboxHealth(status,options={}){
+  if(!status||!Number.isSafeInteger(status.pending)||status.pending<0||
+     !Number.isSafeInteger(status.deadLetter)||status.deadLetter<0||
+     !Number.isSafeInteger(status.maxAttempts)||status.maxAttempts<0||
+     !Number.isSafeInteger(status.schemaVersionSkewKinds)||status.schemaVersionSkewKinds<0||
+     (status.oldestPendingAgeMs!==null&&
+       (!Number.isSafeInteger(status.oldestPendingAgeMs)||status.oldestPendingAgeMs<0))){
+    throw new TypeError("invalid outbox health snapshot");
+  }
+  const oldestPendingMs=options.alertOldestPendingMs??300_000;
+  const alertMaxAttempts=options.alertMaxAttempts??5;
+  if(!Number.isSafeInteger(oldestPendingMs)||oldestPendingMs<0||
+     !Number.isSafeInteger(alertMaxAttempts)||alertMaxAttempts<1||
+     alertMaxAttempts>=MAX_EVENT_ATTEMPTS){
+    throw new RangeError("invalid outbox health alert thresholds");
+  }
+  const alerts=[];
+  if(status.deadLetter>0)alerts.push("dead_letter_events_present");
+  if(oldestPendingMs>0&&status.oldestPendingAgeMs!==null&&status.oldestPendingAgeMs>oldestPendingMs){
+    alerts.push("oldest_pending_age_exceeded");
+  }
+  if(status.pending>0&&status.maxAttempts>=alertMaxAttempts)alerts.push("pending_retry_threshold_exceeded");
+  return alerts;
+}
+const HEALTH_ALERT_CODES=new Set([
+  "dead_letter_events_present","oldest_pending_age_exceeded",
+  "pending_retry_threshold_exceeded","health_probe_failed",
+]);
+export function createAlertTransitionTracker(){
+  const activeBySource=new Map();
+  const transition=(source,current)=>{
+    const previous=activeBySource.get(source)??new Set();
+    const raised=[...current].filter(code=>!previous.has(code));
+    const recovered=[...previous].filter(code=>!current.has(code));
+    activeBySource.set(source,current);
+    return {raised,recovered};
+  };
+  return {
+    update(source,codes){
+      if(typeof source!=="string"||!source||!Array.isArray(codes)||codes.some(code=>!HEALTH_ALERT_CODES.has(code))){
+        throw new TypeError("invalid health alert state");
+      }
+      return transition(source,new Set(codes));
+    },
+    probeFailed(source){
+      if(typeof source!=="string"||!source)throw new TypeError("invalid health source");
+      const current=new Set(activeBySource.get(source)??[]);
+      current.add("health_probe_failed");
+      return transition(source,current);
+    },
+  };
+}
+/** Health is advisory: a failed startup or periodic probe must not stop delivery. */
+export async function runHealthProbe({source,probe,report,tracker}){
+  if(typeof source!=="string"||!source||typeof probe!=="function"||typeof report!=="function"||
+     !tracker||typeof tracker.probeFailed!=="function")throw new TypeError("invalid health probe");
+  try{await probe();return true;}
+  catch{
+    const {raised}=tracker.probeFailed(source);
+    if(raised.includes("health_probe_failed"))report({kind:"alert",source,code:"health_probe_failed"});
+    return false;
+  }
 }
 
 async function main(){
@@ -105,16 +178,36 @@ async function main(){
     const report=event=>console.log(JSON.stringify({
       timestamp:new Date().toISOString(),...event,
     }));
+    const alertTracker=createAlertTransitionTracker();
+    const emitHealth=async(name,connection)=>{
+      const health=await outboxStatus(connection);
+      report({kind:"health",source:name,...health});
+      const {raised,recovered}=alertTracker.update(name,classifyOutboxHealth(health,options));
+      for(const code of raised)report({kind:"alert",source:name,code,
+        oldestPendingAgeMs:health.oldestPendingAgeMs,deadLetter:health.deadLetter,maxAttempts:health.maxAttempts});
+      for(const code of recovered)report({kind:"alert_recovered",source:name,code});
+    };
+    const probeHealth=(name,connection)=>runHealthProbe({
+      source:name,probe:()=>emitHealth(name,connection),report,tracker:alertTracker,
+    });
     report({kind:"startup",sources:options.sources,mode:"foreground",
-      perSourceClaimLimit:1,leaseMs:options.leaseMs});
+      perSourceClaimLimit:1,leaseMs:options.leaseMs,
+      healthIntervalMs:options.healthIntervalMs,
+      alertOldestPendingMs:options.alertOldestPendingMs});
+    for(const source of sources)await probeHealth(source.name,source.connection);
     const executions=sources.map(async({name,connection,workerId})=>{
+      let lastHealthAt=Date.now();
       try{
         return await runSourceLoop({
           source:name,signal:stop.signal,pollMs:options.pollMs,
-          paceMs:options.paceMs,maxFailures:options.maxFailures,
+          paceMs:options.paceMs,maxFailures:options.maxConsecutiveFailures,
           maxBatches:options.maxBatches,onReport:report,
           runBatch:async()=>{
             const stats=await runDeliveryBatch(connection.port,destination,{workerId,batchSize:1,leaseMs:options.leaseMs});
+            if(Date.now()-lastHealthAt>=options.healthIntervalMs||stats.failed>0||stats.lostLeases>0){
+              await probeHealth(name,connection);
+              lastHealthAt=Date.now();
+            }
             if(ai&&name!=='blockchain'&&!stop.signal.aborted)try{report({kind:"ai",source:name,...(await ai.run(name,stop.signal))});}
             catch{report({kind:"ai",source:name,code:"ai_batch_failed"});}
             return stats;

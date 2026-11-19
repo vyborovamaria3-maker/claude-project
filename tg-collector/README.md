@@ -313,7 +313,7 @@ Run:
 npm run backup
 ```
 
-The script creates a PostgreSQL custom-format archive under `TG_BACKUP_DIR` (default `./backups`), verifies it with `pg_restore --list`, writes a SHA-256 checksum when the platform provides `sha256sum` or `shasum`, and removes local archives older than `TG_BACKUP_RETENTION_DAYS` (default 7).
+The script creates a PostgreSQL custom-format archive under `TG_BACKUP_DIR` (default `./backups`), verifies it with `pg_restore --list`, writes a SHA-256 checksum when the platform provides `sha256sum` or `shasum`, and removes local archives older than `TG_BACKUP_RETENTION_DAYS` (default 7). The `pg_dump` and `pg_restore` client major versions must match the source server; the script checks this before writing a backup.
 
 Optional off-host replication can be enabled with `TG_BACKUP_RCLONE_REMOTE`. The script uses `rclone copy`; the remote itself must be configured outside Git.
 
@@ -323,7 +323,7 @@ Non-destructive archive validation:
 npm run backup:verify -- ./backups/tg-collector-YYYYMMDDTHHMMSSZ.dump
 ```
 
-The custom PostgreSQL format is compressed and designed for `pg_restore`. A real restore test must target a disposable database; `restore-check.sh` never mutates the source database.
+The custom PostgreSQL format is compressed and designed for `pg_restore`. A real restore test must target a disposable database; `restore-check.sh` never mutates the source database. Use `pg_restore` matching the target server major version. The archive may come from the same or an older PostgreSQL major, but not a newer one; the script rejects incompatible combinations before restoring. This avoids client-generated commands (such as PostgreSQL 17's `SET transaction_timeout`) that older servers do not recognize.
 
 **Do not commit `backups/*.dump`, session files, tokens, or database credentials.**
 

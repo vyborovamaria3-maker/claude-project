@@ -2,6 +2,13 @@
 set -euo pipefail
 
 : "${DATABASE_URL:?DATABASE_URL is required}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+# pg_dump/pg_restore from a newer major can emit restore commands unsupported
+# by an older server (for example transaction_timeout on PostgreSQL 16).
+source "$SCRIPT_DIR/postgres-client-compat.sh"
+require_postgres_tool_matches_server "$DATABASE_URL" pg_dump
+require_postgres_tool_matches_server "$DATABASE_URL" pg_restore
+
 BACKUP_DIR="${TG_BACKUP_DIR:-./backups}"
 RETENTION_DAYS="${TG_BACKUP_RETENTION_DAYS:-7}"
 RCLONE_REMOTE="${TG_BACKUP_RCLONE_REMOTE:-}"

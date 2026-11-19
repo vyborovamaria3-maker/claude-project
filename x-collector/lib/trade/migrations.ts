@@ -45,4 +45,5 @@ export const REQUIRED = [
   "048_signal_registry_versions.sql",
   "049_raw_retention_author_id.sql",
   "050_intelligence_source_outbox.sql",
+  "051_intelligence_outbox_health_indexes.sql",
 ];

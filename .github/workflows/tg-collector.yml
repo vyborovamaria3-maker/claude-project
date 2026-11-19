@@ -50,26 +50,42 @@ jobs:
         run: npm run typecheck
       - name: Unit and database integration tests
         run: npm test
+      - name: PostgreSQL backup compatibility unit tests
+        run: bash scripts/postgres-client-compat.test.sh
       - name: Backup and clean restore round-trip
         shell: bash
         run: |
           set -euo pipefail
-          command -v psql
-          command -v pg_dump
-          command -v pg_restore
+          command -v docker
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "INSERT INTO tg_sources(identifier,peer_id) VALUES('ci_backup_restore_fixture','9988776655')"
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "INSERT INTO tg_messages(source_id,message_id,text,posted_at,views) SELECT id,23,'Backup restoration fixture',now(),42 FROM tg_sources WHERE identifier='ci_backup_restore_fixture'"
           export TG_BACKUP_DIR="${RUNNER_TEMP}/tg-collector-backups"
-          bash scripts/backup.sh
+          mkdir -p "$TG_BACKUP_DIR"
+          docker run --rm --network host --entrypoint bash \
+            -e DATABASE_URL="$DATABASE_URL" -e TG_BACKUP_DIR=/backup \
+            -v "$PWD/scripts:/scripts:ro" -v "$TG_BACKUP_DIR:/backup" \
+            postgres:16 -euo pipefail -c 'bash /scripts/backup.sh'
           archive="$(find "$TG_BACKUP_DIR" -name 'tg-collector-*.dump' -type f -print -quit)"
           test -s "$archive"
           test -s "$archive.sha256"
-          sha256sum -c "$archive.sha256"
+          archive_name="$(basename "$archive")"
+          docker run --rm --network host --entrypoint bash \
+            -e TG_BACKUP_ARCHIVE_NAME="$archive_name" \
+            -v "$TG_BACKUP_DIR:/backup" \
+            postgres:16 -euo pipefail -c 'sha256sum -c "/backup/$TG_BACKUP_ARCHIVE_NAME.sha256"'
           psql "postgresql://tg:tg@127.0.0.1:5432/postgres" -v ON_ERROR_STOP=1 -c "CREATE DATABASE tg_collector_restore_ci"
           export TG_RESTORE_CHECK_DATABASE_URL="postgresql://tg:tg@127.0.0.1:5432/tg_collector_restore_ci"
-          bash scripts/restore-check.sh "$archive"
+          docker run --rm --network host --entrypoint bash \
+            -e TG_RESTORE_CHECK_DATABASE_URL="$TG_RESTORE_CHECK_DATABASE_URL" \
+            -e TG_BACKUP_ARCHIVE_NAME="$archive_name" \
+            -v "$PWD/scripts:/scripts:ro" -v "$TG_BACKUP_DIR:/backup" \
+            postgres:16 -euo pipefail -c 'bash /scripts/restore-check.sh "/backup/$TG_BACKUP_ARCHIVE_NAME"'
           DATABASE_URL="$TG_RESTORE_CHECK_DATABASE_URL" npm run migrate
-          if bash scripts/restore-check.sh "$archive"; then
+          if docker run --rm --network host --entrypoint bash \
+            -e TG_RESTORE_CHECK_DATABASE_URL="$TG_RESTORE_CHECK_DATABASE_URL" \
+            -e TG_BACKUP_ARCHIVE_NAME="$archive_name" \
+            -v "$PWD/scripts:/scripts:ro" -v "$TG_BACKUP_DIR:/backup" \
+            postgres:16 -euo pipefail -c 'bash /scripts/restore-check.sh "/backup/$TG_BACKUP_ARCHIVE_NAME"'; then
             echo "ERROR: restore must refuse a nonempty target database" >&2
             exit 1
           fi

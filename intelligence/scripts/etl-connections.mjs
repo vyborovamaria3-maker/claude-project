@@ -5,6 +5,8 @@ import {
   claimSqlite, ackSqlite, failSqlite, renewSqlite,
 } from "@claude-project/event-outbox";
 
+export const MAX_EVENT_ATTEMPTS = 12;
+
 /**
  * Reuse exactly the same source connections for the finite CLI and the local
  * supervisor. Never run migrations or open provider / browser connections.
@@ -28,7 +30,7 @@ export function sourceConnection(source,write) {
         port:{
           claim:async options=>claimSqlite(db,options),
           ack:async event=>ackSqlite(db,event.id,event.leaseOwner,event.leaseUntil),
-          fail:async(event,code,next)=>failSqlite(db,event.id,event.leaseOwner,event.leaseUntil,code,next),
+          fail:async(event,code,next)=>failSqlite(db,event.id,event.leaseOwner,event.leaseUntil,code,next,new Date(),MAX_EVENT_ATTEMPTS),
           renew:async(event,leaseMs)=>renewSqlite(db,event.id,event.leaseOwner,event.leaseUntil,leaseMs),
         },
       };
@@ -46,7 +48,7 @@ export function sourceConnection(source,write) {
     port:{
       claim:options=>claimPostgres(pool,options),
       ack:event=>ackPostgres(pool,event.id,event.leaseOwner,event.leaseUntil),
-      fail:(event,code,next,retryDelayMs)=>failPostgres(pool,event.id,event.leaseOwner,event.leaseUntil,code,next,12,retryDelayMs),
+      fail:(event,code,next,retryDelayMs)=>failPostgres(pool,event.id,event.leaseOwner,event.leaseUntil,code,next,MAX_EVENT_ATTEMPTS,retryDelayMs),
       renew:(event,leaseMs)=>renewPostgres(pool,event.id,event.leaseOwner,event.leaseUntil,leaseMs),
     }
   };
@@ -55,6 +57,124 @@ export function sourceConnection(source,write) {
 export async function checkPgOutbox(pool){
   const {rows}=await pool.query("SELECT to_regclass('outbox_events') IS NOT NULL AS present");
   if(!rows[0]?.present)throw new Error("source outbox schema is not installed");
+}
+
+async function checkPgOutboxHealthIndexes(pool){
+  const {rows}=await pool.query(`SELECT
+    to_regclass('outbox_pending_health_idx') IS NOT NULL AS pending_health_index,
+    to_regclass('outbox_dead_lettered_at_idx') IS NOT NULL AS dead_lettered_index,
+    to_regclass('outbox_processed_at_desc_idx') IS NOT NULL AS processed_at_index`);
+  if(!rows[0]?.pending_health_index||!rows[0]?.dead_lettered_index||!rows[0]?.processed_at_index){
+    throw new Error("source outbox health indexes are missing; apply the latest X/TG source migration");
+  }
+}
+
+function isoOrNull(value){
+  if(value===null||value===undefined)return null;
+  const date=value instanceof Date?value:new Date(String(value));
+  if(!Number.isFinite(date.getTime()))throw new TypeError("invalid outbox timestamp");
+  return date.toISOString();
+}
+
+/** Read-only queue health snapshot; does not claim, lease, ACK or mutate events. */
+export async function outboxStatus(source,now){
+  if(!source||!["pg","sqlite"].includes(source.kind)||!source.connection){
+    throw new TypeError("invalid outbox source");
+  }
+  if(now!==undefined&&(!(now instanceof Date)||!Number.isFinite(now.getTime()))){
+    throw new TypeError("invalid health timestamp");
+  }
+  let row;
+  let measuredAt;
+  if(source.kind==="sqlite"){
+    const requiredIndexes=[
+      "outbox_pending_health_idx","outbox_dead_lettered_at_idx","outbox_processed_at_desc_idx",
+    ];
+    const found=new Set(source.connection.prepare(`SELECT name FROM sqlite_master
+      WHERE type='index' AND name IN (?,?,?)`).all(...requiredIndexes).map(row=>row.name));
+    const missing=requiredIndexes.filter(name=>!found.has(name));
+    if(missing.length)throw new Error("source outbox health indexes are missing; restart the opt-in Blockchain collector");
+    const localNow=now??new Date();
+    const at=localNow.toISOString();
+    row=source.connection.prepare(`WITH pending_metrics AS (
+      SELECT
+        count(*) AS pending,
+        count(*) FILTER (WHERE next_attempt_at<=? AND (lease_until IS NULL OR lease_until<=?)) AS ready,
+        count(*) FILTER (WHERE lease_until>?) AS leased,
+        count(*) FILTER (WHERE attempts>0) AS retry_count,
+        coalesce(sum(attempts),0) AS retry_attempts_total,
+        count(*) FILTER (WHERE attempts>0 AND next_attempt_at>?) AS retry_delayed,
+        min(created_at) AS oldest_pending_at,
+        coalesce(max(attempts),0) AS max_attempts
+      FROM outbox_events INDEXED BY outbox_pending_health_idx
+      WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+    )
+    SELECT pending_metrics.*,
+      (SELECT count(*) FROM outbox_events WHERE dead_lettered_at IS NOT NULL) AS dead_letter,
+      (SELECT count(*) FROM (
+        SELECT event_kind FROM outbox_events INDEXED BY outbox_pending_health_idx
+        WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+        GROUP BY event_kind HAVING count(DISTINCT schema_version)>1
+      ) AS version_skew) AS schema_version_skew_kinds,
+      (SELECT processed_at FROM outbox_events
+        WHERE processed_at IS NOT NULL ORDER BY processed_at DESC LIMIT 1) AS last_progress_at
+    FROM pending_metrics`).get(at,at,at,at);
+    measuredAt=at;
+  }else{
+    await checkPgOutbox(source.connection);
+    await checkPgOutboxHealthIndexes(source.connection);
+    const explicitAt=now===undefined?null:now.toISOString();
+    const result=await source.connection.query(`WITH observation AS (
+      SELECT COALESCE($1::timestamptz, statement_timestamp()) AS measured_at
+    ), pending_metrics AS (
+      SELECT
+        count(*)::text AS pending,
+        count(*) FILTER (WHERE next_attempt_at<=observation.measured_at
+          AND (lease_until IS NULL OR lease_until<=observation.measured_at))::text AS ready,
+        count(*) FILTER (WHERE lease_until>observation.measured_at)::text AS leased,
+        count(*) FILTER (WHERE attempts>0)::text AS retry_count,
+        coalesce(sum(attempts),0)::text AS retry_attempts_total,
+        count(*) FILTER (WHERE attempts>0 AND next_attempt_at>observation.measured_at)::text AS retry_delayed,
+        min(created_at) AS oldest_pending_at,
+        coalesce(max(attempts),0)::text AS max_attempts
+      FROM outbox_events CROSS JOIN observation
+      WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+    ), version_skew AS (
+      SELECT count(*)::text AS schema_version_skew_kinds
+      FROM (
+        SELECT event_kind FROM outbox_events
+        WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+        GROUP BY event_kind HAVING count(DISTINCT schema_version)>1
+      ) AS skew
+    ), history_metrics AS (
+      SELECT
+        (SELECT count(*)::text FROM outbox_events WHERE dead_lettered_at IS NOT NULL) AS dead_letter,
+        (SELECT processed_at FROM outbox_events
+          WHERE processed_at IS NOT NULL ORDER BY processed_at DESC LIMIT 1) AS last_progress_at
+    )
+    SELECT pending_metrics.*,version_skew.schema_version_skew_kinds,
+      history_metrics.dead_letter,history_metrics.last_progress_at,observation.measured_at
+    FROM pending_metrics CROSS JOIN version_skew CROSS JOIN history_metrics CROSS JOIN observation`,[explicitAt]);
+    row=result.rows[0];
+    measuredAt=isoOrNull(row.measured_at);
+  }
+  if(!measuredAt||!Number.isFinite(Date.parse(measuredAt))){
+    throw new TypeError("invalid outbox observation timestamp");
+  }
+  const oldestPendingAt=isoOrNull(row.oldest_pending_at);
+  const lastProgressAt=isoOrNull(row.last_progress_at);
+  const measuredAtMs=Date.parse(measuredAt);
+  const age=(value)=>value===null?null:Math.max(0,measuredAtMs-Date.parse(value));
+  return {
+    measuredAt,
+    pending:Number(row.pending),ready:Number(row.ready),leased:Number(row.leased),
+    retryCount:Number(row.retry_count),retryAttemptsTotal:Number(row.retry_attempts_total),
+    retryDelayed:Number(row.retry_delayed),deadLetter:Number(row.dead_letter),
+    schemaVersionSkewKinds:Number(row.schema_version_skew_kinds),
+    oldestPendingAt,oldestPendingAgeMs:age(oldestPendingAt),
+    lastProgressAt,lastProgressAgeMs:age(lastProgressAt),
+    maxAttempts:Number(row.max_attempts??0),
+  };
 }
 
 export async function checkDestination(pool,options={}){

@@ -20,6 +20,12 @@ try{
   // for all persistEvents callers, not just the opt-in token event path.
   initDb(db);
   ensureSchema(db);
+  const healthIndexes=new Set(db.prepare(`SELECT name FROM sqlite_master
+    WHERE type='index' AND name IN ('outbox_pending_health_idx','outbox_dead_lettered_at_idx','outbox_processed_at_desc_idx')`)
+    .all().map(row=>row.name));
+  for(const name of ["outbox_pending_health_idx","outbox_dead_lettered_at_idx","outbox_processed_at_desc_idx"]){
+    assert(healthIndexes.has(name),`missing Blockchain outbox health index: ${name}`);
+  }
   process.env.BLOCKCHAIN_INTELLIGENCE_OUTBOX_ENABLED="true";
   assert.throws(()=>db.transaction(()=>{
     persistEvents(db,"wallet",wallet,[tx]);
