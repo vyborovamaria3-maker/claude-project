@@ -1,6 +1,6 @@
 # ARCH-05a — verified mint evidence from X / Telegram
 
-Status: implemented as a **historical evidence contract**, not an active token-link resolver or automatically populated cross-source token timeline. Changes are in draft PR #135, stacked on ARCH-04 PR #134 and ARCH-01/03 PR #133. No live database or source collector was accessed.
+Status: source contracts/adapters and destination handling are integrated into `main` through PR #133 (original PR #135) and offline-tested. Source activation remains opt-in: TG uses its explicit Alchemy mint resolver; X uses a separate bounded verification CLI requiring explicit execution. This is not proof of live source delivery or a continuously populated cross-source timeline. No live database or source collector was accessed.
 
 ## Verified against native source code
 

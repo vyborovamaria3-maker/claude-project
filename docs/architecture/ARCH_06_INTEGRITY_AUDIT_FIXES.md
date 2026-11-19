@@ -1,6 +1,6 @@
 # ARCH-06 integrity audit — remediation and explicit boundaries
 
-Draft PR stacked on #149 → #148 → #147. No production rollout, RPC requests, credential use or migrations were performed.
+Implementation integrated into `main` through PR #133 (original PR #150) → #148 → #147. No production rollout, RPC requests, credential use or migrations were performed.
 
 ## Findings and remediations
 
@@ -23,14 +23,14 @@ Draft PR stacked on #149 → #148 → #147. No production rollout, RPC requests,
 
 ## Key semantic boundaries
 
-`source observedAt` ≠ `destination ingestedAt` ≠ `when a signal was published`.
+`source observedAt` â‰  `destination ingestedAt` â‰  `when a signal was published`.
 
-`provider parsed swap evidence` ≠ `SPL Mint verified at swap slot` ≠ `finalized trade tape` ≠ `verified PnL`.
+`provider parsed swap evidence` â‰  `SPL Mint verified at swap slot` â‰  `finalized trade tape` â‰  `verified PnL`.
 
 Existing archived historic timeline remains historical and can show superseded revisions. Only the new **active** query excludes invalidated or conflicting claims, and only among the sources visible by `knownAt`.
 
 
-## Codex continuation � 2026-10-20
+## Codex continuation — 2026-10-20
 
 Review of current #150 HEAD 32bee1b0 and its stacked base (#149 -> #148 -> #147): all ten original workflows / fifteen jobs completed successfully. Separate code review covered RAW persistence, revision agreement, source/destination time filters, preclaim 005 readiness, receipt consistency and the read-only API allowlist/auth/session configuration.
 
