@@ -20,9 +20,8 @@ Intelligence AI runtime.
 - A persistent local POSIX filesystem for the spool. It must support durable
   file and directory `fsync` plus atomic same-filesystem rename. Do not use an
   ephemeral container layer or an untested network filesystem.
-- An installed Discord bot with only the channel-level read permissions needed
-  by the Collector: View Channel and Read Message History. Administrator and
-  Send Messages are explicitly rejected by preflight.
+- An installed Discord bot whose effective channel permissions are exactly
+  View Channel and Read Message History; all additional permissions are rejected.
 - Message Content privileged intent enabled and approved in the Discord
   Developer Portal where required; an operator must attest to this separately.
 - Written community permission, platform-policy review, retention schedule,
@@ -194,6 +193,8 @@ DISCORD_SOURCE_DATABASE_URL=postgresql://REDACTED \
 DISCORD_AUTHORIZATION_PATH=/private/guilds.json \
 DISCORD_INGRESS_SPOOL_DIR=/var/lib/potapoff/discord-ingress \
 DISCORD_INGRESS_SPOOL_KEY=REDACTED \
+DISCORD_PERMISSION_PREFLIGHT_ENABLED=true \\
+DISCORD_MESSAGE_CONTENT_INTENT_CONFIRMED=true \\
 npm start
 ~~~
 
