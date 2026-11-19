@@ -171,7 +171,7 @@ test("invalid event identifiers, content bounds, timestamps and extra fields are
     assert.throws(()=>f.spool.append({...event(),rawGatewayPayload:{}}),/unsupported field/i);
     assert.throws(()=>f.spool.append(event({kind:"deleted",content:"must not persist"})),/cannot retain/i);
     assert.throws(()=>f.spool.append(event({createdAt:null})),/publication timestamp/i);
-    assert.throws(()=>f.spool.append(event({kind:"deleted",authorId})),/author identifiers/i);
+    assert.throws(()=>f.spool.append(event({kind:"deleted",authorId,content:null})),/author identifiers/i);
     assert.doesNotThrow(()=>f.spool.append(event({createdAt:null,content:null,authorId:null})));
   }finally{f.cleanup()}
 });
