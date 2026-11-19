@@ -248,3 +248,30 @@ test("spool refuses symlink directories and unexpected files",()=>{
     assert.throws(()=>new IngressSpool({directory:f.directory,key:f.key}).open(),/Unexpected file/i);
   }finally{f.cleanup()}
 });
+
+test("user-requested erasure removes matching encrypted spool events durably",()=>{
+  const f=fixture();
+  try{
+    f.spool.append(event({messageId:"623456789012345678"}));
+    f.spool.append(event({messageId:"723456789012345678",authorId:"823456789012345678"}));
+    const result=f.spool.eraseAuthor(authorId);
+    assert.equal(result.eventsErased,1);
+    assert.equal(result.pendingEvents,1);
+    assert.equal(f.spool.pendingCount,1);
+    f.spool.close();
+    const reopened=new IngressSpool({directory:f.directory,key:f.key}).open();
+    try{
+      const pending=reopened.listPending();
+      assert.deepEqual(pending.map(item=>item.event.messageId),["723456789012345678"]);
+      assert.equal(pending[0].event.authorId,"823456789012345678");
+    }finally{reopened.close()}
+  }finally{f.cleanup()}
+});
+
+test("user-requested spool erasure rejects non-string or malformed author identifiers",()=>{
+  const f=fixture();
+  try{
+    assert.throws(()=>f.spool.eraseAuthor(123456789012345678),/author Snowflake/);
+    assert.throws(()=>f.spool.eraseAuthor("123"),/author Snowflake/);
+  }finally{f.cleanup()}
+});
