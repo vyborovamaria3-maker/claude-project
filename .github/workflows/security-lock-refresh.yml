@@ -13,7 +13,15 @@ permissions:
 
 jobs:
   refresh-lockfiles:
-    if: github.head_ref == 'security/full-audit-20260818'
+    # Explicit trust boundary for a write-capable workflow on a PR code
+    # path: the branch-name equality check alone is NOT authorization -
+    # any account can create a fork branch with the same name. The PR
+    # must additionally be opened by the repository owner (the only
+    # account allowed to run this maintainer automation), and every step
+    # below executes only branch code that the owner authored.
+    if: >-
+      github.head_ref == 'security/full-audit-20260818' &&
+      github.event.pull_request.user.login == 'vyborovamaria3-maker'
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 20
     steps:
