@@ -158,9 +158,13 @@ export class IngressSpool {
         const sequence=BigInt(paddedSequence).toString();
         const path=join(this.directory,name);
         const stat=lstatSync(path);
-        if(stat.isSymbolicLink()||!stat.isFile()||(stat.mode&0o077)!==0)
-          throw new Error("Ingress spool records must be regular files with mode 0600");
-        if(stat.size<1||stat.size>MAX_EVENT_BYTES)
+        if(stat.isSymbolicLink()||!stat.isFile())
+          throw new Error("Ingress spool records must be regular files, not symlinks");
+        chmodSync(path,0o600);
+        const securedFile=lstatSync(path);
+        if((securedFile.mode&0o777)!==0o600)
+          throw new Error("Ingress spool records must have exact mode 0600");
+        if(securedFile.size<1||securedFile.size>MAX_EVENT_BYTES)
           throw new Error("Ingress spool record has an invalid size; refusing to discard it");
         const event=decryptRecord(readFileSync(path,"utf8"),sequence,this.key);
         if(this.pending.has(sequence))throw new Error("Duplicate ingress spool sequence");
@@ -185,6 +189,7 @@ export class IngressSpool {
     }catch(error){
       closeSync(this.directoryFd);
       this.directoryFd=null;
+      this.key.fill(0);
       throw error;
     }
   }
