@@ -80,14 +80,14 @@ async function enqueueErasureTombstones(client,rows,reason){
 
 export async function storeObservation(pool, o, retentionDays, clock=new Date(), authorizationExpiresAt=null){
   if(isExpiredObservation(o,retentionDays,clock))return {status:"expired"};
-  if(authorizationExpiresAt&&(!Number.isFinite(Date.parse(authorizationExpiresAt))||
+  if(authorizationExpiresAt!==null&&authorizationExpiresAt!==undefined&&(!Number.isFinite(Date.parse(authorizationExpiresAt))||
      Date.parse(authorizationExpiresAt)<=Date.now()))return {status:"authorization-expired"};
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
     // Serialize create/edit/delete races for one globally unique Discord message.
     await client.query("SELECT pg_advisory_xact_lock(hashtext('discord'),hashtext($1))",[o.messageId]);
-    if(authorizationExpiresAt&&(!Number.isFinite(Date.parse(authorizationExpiresAt))||
+    if(authorizationExpiresAt!==null&&authorizationExpiresAt!==undefined&&(!Number.isFinite(Date.parse(authorizationExpiresAt))||
        Date.parse(authorizationExpiresAt)<=Date.now())){
       await client.query("ROLLBACK");
       return {status:"authorization-expired"};
@@ -183,7 +183,7 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date(),
          o.editedAt,o.content,o.contentSha,o.revisionAt]);
     }
     if(!stale)await emitDiscordObservation(client,o);
-    if(authorizationExpiresAt&&(!Number.isFinite(Date.parse(authorizationExpiresAt))||
+    if(authorizationExpiresAt!==null&&authorizationExpiresAt!==undefined&&(!Number.isFinite(Date.parse(authorizationExpiresAt))||
        Date.parse(authorizationExpiresAt)<=Date.now())){
       await client.query("ROLLBACK");
       return {status:"authorization-expired"};
