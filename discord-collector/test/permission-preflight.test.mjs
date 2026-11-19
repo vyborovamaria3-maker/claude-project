@@ -27,7 +27,7 @@ function jsonResponse(value,status=200,headers={}){
   });
 }
 
-function successfulFetch({permissions=VIEW|HISTORY,channelTypes={}}={}){
+function successfulFetch({permissions=VIEW|HISTORY,channelTypes={},overwrites=[],roles=null,memberRoles=[roleId]}={}){
   const calls=[];
   const fetchImpl=async(url,options)=>{
     const parsed=new URL(url);
@@ -36,14 +36,14 @@ function successfulFetch({permissions=VIEW|HISTORY,channelTypes={}}={}){
     if(parsed.pathname===`/api/v10/guilds/${guildId}`)
       return jsonResponse({id:guildId});
     if(parsed.pathname===`/api/v10/guilds/${guildId}/roles`)
-      return jsonResponse([
+      return jsonResponse(roles??[
         {id:guildId,permissions:"0"},
         {id:roleId,permissions:String(permissions)},
       ]);
     if(parsed.pathname===`/api/v10/guilds/${guildId}/members/${botId}`)
-      return jsonResponse({user:{id:botId},roles:[roleId]});
+      return jsonResponse({user:{id:botId},roles:memberRoles});
     if(parsed.pathname===`/api/v10/channels/${channelId}`)
-      return jsonResponse({id:channelId,guild_id:guildId,type:channelTypes[channelId]??0,permission_overwrites:[]});
+      return jsonResponse({id:channelId,guild_id:guildId,type:channelTypes[channelId]??0,permission_overwrites:overwrites});
     return jsonResponse({message:"unexpected route"},404);
   };
   return {fetchImpl,calls};
@@ -109,6 +109,55 @@ test("SEND_MESSAGES is rejected because the Collector is read-only",async()=>{
   });
   assert.equal(report.ok,false);
   assert.equal(report.guilds[0].channels[0].errorCode,"unnecessary_permissions_granted");
+});
+
+test("channel overwrites are applied in Discord order: everyone, roles, member",async()=>{
+  const roleTwo="623456789012345678";
+  const fake=successfulFetch({
+    permissions:VIEW|HISTORY,
+    roles:[
+      {id:guildId,permissions:String(VIEW|HISTORY)},
+      {id:roleId,permissions:"0"},
+      {id:roleTwo,permissions:"0"},
+    ],
+    memberRoles:[roleId,roleTwo],
+    overwrites:[
+      {id:guildId,type:0,deny:String(HISTORY),allow:"0"},
+      {id:roleId,type:0,deny:"0",allow:String(HISTORY)},
+      {id:roleTwo,type:0,deny:String(VIEW),allow:"0"},
+      {id:botId,type:1,deny:String(VIEW),allow:String(VIEW)},
+    ],
+  });
+  const report=await runDiscordPermissionPreflight({
+    authorization:authorization(),token:"token",fetchImpl:fake.fetchImpl,now,
+  });
+  assert.equal(report.ok,true);
+});
+
+test("administrator role remains rejected even if channel overwrites would restrict it",async()=>{
+  const fake=successfulFetch({
+    roles:[{id:guildId,permissions:"0"},{id:roleId,permissions:String(ADMIN)}],
+    overwrites:[{id:roleId,type:0,deny:String(ADMIN),allow:"0"}],
+  });
+  const report=await runDiscordPermissionPreflight({
+    authorization:authorization(),token:"token",fetchImpl:fake.fetchImpl,now,
+  });
+  assert.equal(report.ok,false);
+  assert.equal(report.guilds[0].channels[0].errorCode,"excessive_administrator_permission");
+});
+
+test("malformed and duplicate channel overwrites fail closed",async()=>{
+  const fake=successfulFetch({
+    overwrites:[
+      {id:guildId,type:0,deny:"0",allow:"0"},
+      {id:guildId,type:0,deny:"0",allow:"0"},
+    ],
+  });
+  const report=await runDiscordPermissionPreflight({
+    authorization:authorization(),token:"token",fetchImpl:fake.fetchImpl,now,
+  });
+  assert.equal(report.ok,false);
+  assert.equal(report.guilds[0].channels[0].errorCode,"invalid_permission_response");
 });
 
 test("missing or hidden authorized channel fails without a permission probe",async()=>{
