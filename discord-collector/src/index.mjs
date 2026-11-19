@@ -2,7 +2,8 @@ import {readAuthorizationFile} from "./authorization-file.mjs";
 import {Client,GatewayIntentBits,Events,Partials} from "discord.js";
 import pg from "pg";
 import {validateAuthorization,normalizeMessage,allowedObservation} from "./events.mjs";
-import {installSchema,storeObservation,getBackfillCursor,advanceBackfillCursor,purgeExpired,getRecoveryBaseline,recordRecoveryCheck} from "./storage.mjs";
+import {installSchema,storeObservation,getBackfillCursor,advanceBackfillCursor,purgeExpired,getRecoveryBaseline,recordRecoveryCheck,recordCoverageFailure} from "./storage.mjs";
+import {replaySpoolEntry} from "./spool-replay.mjs";
 import {scanRecentGap} from "./reconcile.mjs";
 import {IngressSpool,parseIngressSpoolKey} from "./ingress-spool.mjs";
 import {runDiscordPermissionPreflight} from "./permission-preflight.mjs";
@@ -301,50 +302,33 @@ function isUnknownDiscordMessage(error){
 async function processSpoolEntry(entry,{allowHydration=true}={}){
   const event=entry.event;
   const permission=allowed.get(event.channelId);
-  if(!permissionActive(permission)||permission.guildId!==event.guildId)return; // Current allowlist wins over queued data.
-
-  let message={
-    id:event.messageId,
-    guildId:event.guildId,
-    channelId:event.channelId,
-    author:event.authorId?{id:event.authorId}:null,
-    content:event.content,
-    createdAt:event.createdAt?new Date(event.createdAt):null,
-    editedAt:event.editedAt?new Date(event.editedAt):null,
-  };
-  const needsHydration=event.kind!=="deleted"&&
-    (!event.createdAt||(event.kind==="edited"&&(!event.editedAt||event.content===null)));
-  if(needsHydration&&!allowHydration){
-    await recordRecoveryCheck(pool,permission.guildId,event.channelId,
-      recoveryBaselines.get(event.channelId)??null,{status:"failed"});
-    failures++;
-    process.exitCode=1;
-    console.error("Pre-login Discord event lacks enough source fields; coverage marked failed",event.kind);
-    return;
-  }
-  if(needsHydration){
-    try{
-      const channel=await client.channels.fetch(event.channelId);
+  const authorized=permissionActive(permission)&&permission.guildId===event.guildId;
+  return replaySpoolEntry({
+    entry,allowHydration,authorized,
+    hydrate:async queued=>{
+      const channel=await client.channels.fetch(queued.channelId);
       if(!channel?.messages)throw new Error("Authorized Discord channel history is unavailable");
-      message=await channel.messages.fetch(event.messageId);
-    }catch(error){
-      if(!isUnknownDiscordMessage(error))throw error;
-      // A deleted message may no longer be fetchable. Record the coverage gap,
-      // then continue so a queued delete event behind it can still be applied.
-      await recordRecoveryCheck(pool,permission.guildId,event.channelId,
-        recoveryBaselines.get(event.channelId)??null,{status:"failed"});
+      return await channel.messages.fetch(queued.messageId);
+    },
+    store:async(message,kind,queued)=>{
+      const observation=normalizeMessage(message,kind,queued.receivedAt,queued.guildId);
+      if(!allowedObservation(allowed,observation))return;
+      const currentPermission=allowed.get(queued.channelId);
+      if(!permissionActive(currentPermission)||currentPermission.guildId!==queued.guildId)return;
+      await storeObservation(pool,observation,currentPermission.retentionDays,
+        new Date(),currentPermission.expiresAt);
+    },
+    recordCoverageFailure:async(queued,reason,sequence)=>{
+      await recordCoverageFailure(pool,queued,reason,sequence);
+      await recordRecoveryCheck(pool,queued.guildId,queued.channelId,
+        recoveryBaselines.get(queued.channelId)??null,{status:"failed"});
       failures++;
       process.exitCode=1;
-      console.error("Discord ingress event could not be hydrated; coverage marked failed",event.kind);
-      return;
-    }
-  }
-  const observation=normalizeMessage(message,event.kind,event.receivedAt,event.guildId);
-  if(!allowedObservation(allowed,observation))return;
-  const currentPermission=allowed.get(event.channelId);
-  if(!permissionActive(currentPermission)||currentPermission.guildId!==event.guildId)return;
-  await storeObservation(pool,observation,currentPermission.retentionDays,
-    new Date(),currentPermission.expiresAt);
+      console.error("Discord ingress coverage gap recorded",{
+        eventKind:queued.kind,reason,
+      });
+    },
+  });
 }
 
 function drainSpool({allowHydration=true}={}){
@@ -354,12 +338,22 @@ function drainSpool({allowHydration=true}={}){
       const batch=spool.listPending(100);
       for(const entry of batch){
         if(!acceptingEvents)break;
-        await processSpoolEntry(entry,{allowHydration});
+        const outcome=await processSpoolEntry(entry,{allowHydration});
+        if(outcome?.ack!==true){
+          // Keep the original encrypted event until Gateway/REST hydration is
+          // available. The ClientReady replay will retry this exact sequence.
+          break;
+        }
         // PostgreSQL commits before the local event is acknowledged. If the
         // process crashes before unlink, the idempotent source transaction replays.
         spool.ack(entry.sequence);
       }
       spool.flushAcks();
+      if(!allowHydration&&spool.pendingCount>0&&
+         batch.some(entry=>entry.event.kind!=="deleted"&&
+           (!entry.event.createdAt||(entry.event.kind==="edited"&&(!entry.event.editedAt||entry.event.content===null))))){
+        break;
+      }
       if(spool.pendingCount>0)await new Promise(resolve=>setImmediate(resolve));
     }
   })().catch(error=>{
