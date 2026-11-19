@@ -10,7 +10,7 @@ import {
 import {
   POSTGRES_OUTBOX_DDL,emitPostgres,claimPostgres,ackPostgres,failPostgres,
 } from "@claude-project/event-outbox";
-import {runDeliveryBatch,queryActiveTokenLinks,ingestDestinationEvent} from "../dist/index.js";
+import {runDeliveryBatch,queryActiveTokenLinks} from "../dist/index.js";
 
 const url=process.env.INTELLIGENCE_TEST_DB_URL;
 
@@ -137,26 +137,9 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
         observedAt:seen,occurredAt:seen,contentSha256:contentHash,producerVersion:"0.1.0"},
     };
     await emitInNativeTransaction(discordPool,discordEvent);
-    const discordSourceRow=(await discordPool.query(
-      "SELECT created_at,payload FROM outbox_events WHERE source_system='discord' AND event_kind='message_observed'")).rows[0];
-    const diagnosticClient=await destPool.connect();
-    try{
-      await diagnosticClient.query("BEGIN");
-      await ingestDestinationEvent(diagnosticClient,{
-        sourceSystem:"discord",eventKind:"message_observed",eventKey:discordEvent.eventKey,
-        schemaVersion:"discord-message-v1",payload:discordSourceRow.payload,createdAt:discordSourceRow.created_at,
-      });
-    }catch(error){
-      throw new Error("Discord destination preflight failed: "+(error instanceof Error?error.message:String(error)));
-    }finally{
-      await diagnosticClient.query("ROLLBACK");
-      diagnosticClient.release();
-    }
     const discordStats=await runDeliveryBatch(port(discordPool),destPool,
       {workerId:"discord-worker",batchSize:2,leaseMs:120000});
-    const discordFailures=discordStats.failed?await discordPool.query(
-      "SELECT last_error FROM outbox_events WHERE source_system='discord' AND event_kind='message_observed'"):null;
-    assert.equal(discordStats.delivered,1,JSON.stringify({stats:discordStats,failures:discordFailures?.rows??[]}));
+    assert.equal(discordStats.delivered,1,JSON.stringify(discordStats));
     assert.equal(discordStats.failed,0);
     const discordInbox=await destPool.query(
       "SELECT source_system,evidence_source_id,envelope_sha256 FROM intelligence_inbox WHERE source_system='discord'");
@@ -185,26 +168,9 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
         observedAt:deletedAt,occurredAt:null,contentSha256:null,contentErased:true,deletionReason:"deleted",producerVersion:"0.1.0"},
     };
     await emitInNativeTransaction(discordPool,deletion);
-    const deletionSourceRow=(await discordPool.query(
-      "SELECT created_at,payload FROM outbox_events WHERE source_system='discord' AND event_kind='message_deleted'")).rows[0];
-    const deletionDiagnosticClient=await destPool.connect();
-    try{
-      await deletionDiagnosticClient.query("BEGIN");
-      await ingestDestinationEvent(deletionDiagnosticClient,{
-        sourceSystem:"discord",eventKind:"message_deleted",eventKey:deletion.eventKey,
-        schemaVersion:"discord-message-v1",payload:deletionSourceRow.payload,createdAt:deletionSourceRow.created_at,
-      });
-    }catch(error){
-      throw new Error("Discord deletion destination preflight failed: "+(error instanceof Error?error.message:String(error)));
-    }finally{
-      await deletionDiagnosticClient.query("ROLLBACK");
-      deletionDiagnosticClient.release();
-    }
     const deletedStats=await runDeliveryBatch(port(discordPool),destPool,
       {workerId:"discord-delete",batchSize:1,leaseMs:120000});
-    const deletionFailures=deletedStats.failed?await discordPool.query(
-      "SELECT last_error FROM outbox_events WHERE source_system='discord' AND event_kind='message_deleted'"):null;
-    assert.equal(deletedStats.delivered,1,JSON.stringify({stats:deletedStats,failures:deletionFailures?.rows??[]}));
+    assert.equal(deletedStats.delivered,1,JSON.stringify(deletedStats));
     assert.equal(deletedStats.failed,0);
     const kinds=await destPool.query("SELECT timeline_kind FROM timeline_events WHERE source_system='discord' ORDER BY occurred_at");
     assert.deepEqual(kinds.rows.map(r=>r.timeline_kind),["discord_message_deleted"],
