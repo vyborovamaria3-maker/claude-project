@@ -358,5 +358,5 @@ export async function runDiscordPermissionPreflight({
     group.errorCode=group.channels.find(channel=>channel.status!=="passed")?.errorCode??null;
   }
 
-  return makeReport({checkedAt,botId:bot.id,groups});
+  return makeReport({checkedAt,botId:bot.id,groups,topLevelError:stopAfterApiFailure});
 }
