@@ -28,7 +28,7 @@ if(process.env.DISCORD_GAP_RECOVERY_ENABLED==="true" &&
    (!Number.isInteger(recoveryMaxPages)||recoveryMaxPages<1||recoveryMaxPages>50))
   throw new RangeError("DISCORD_GAP_RECOVERY_MAX_PAGES must be in 1..50");
 
-const pool=new pg.Pool({connectionString:process.env.DISCORD_SOURCE_DATABASE_URL,max:4,connectionTimeoutMillis:10_000,keepAlive:true});
+const pool=new pg.Pool({connectionString:process.env.DISCORD_SOURCE_DATABASE_URL,max:4,connectionTimeoutMillis:10_000,keepAlive:true,application_name:"potapoff-discord-collector"});
 const singletonClient=await pool.connect().catch(async error=>{spoolKey.fill(0);await pool.end();throw error});
 let singletonLockHeld=false;
 let spool=null;
