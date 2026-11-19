@@ -1,4 +1,4 @@
-import {readFile} from "node:fs/promises";
+import {readAuthorizationFile} from "./authorization-file.mjs";
 import {Client,GatewayIntentBits,Events,Partials} from "discord.js";
 import pg from "pg";
 import {validateAuthorization,normalizeMessage,allowedObservation} from "./events.mjs";
@@ -19,7 +19,7 @@ const sourceDatabaseUrl=process.env.DISCORD_SOURCE_DATABASE_URL;
 const authorizationPath=process.env.DISCORD_AUTHORIZATION_PATH;
 const spoolDirectory=process.env.DISCORD_INGRESS_SPOOL_DIR;
 const allowErasureOnly=process.env.DISCORD_ALLOW_ERASURE_ONLY==="true";
-const doc=JSON.parse(await readFile(authorizationPath,"utf8"));
+const doc=await readAuthorizationFile(authorizationPath);
 let allowed=validateAuthorization(doc,{allowErasureOnly});
 let erasureOnly=allowed.erasureOnly||(allowed.size===0&&allowed.expiredChannels.length>0);
 if(allowed.size>0&&!botToken)throw new Error("DISCORD_BOT_TOKEN is required while authorized channels are active");
@@ -345,7 +345,7 @@ function authorizationStateFingerprint(snapshot){
 let authorizationState=authorizationStateFingerprint(allowed);
 
 async function reloadAuthorization(){
-  const nextDocument=JSON.parse(await readFile(authorizationPath,"utf8"));
+  const nextDocument=await readAuthorizationFile(authorizationPath);
   const next=validateAuthorization(nextDocument,{allowErasureOnly});
   const nextErasureOnly=next.erasureOnly||(next.size===0&&next.expiredChannels.length>0);
   const nextDocumentFingerprint=JSON.stringify(nextDocument);
