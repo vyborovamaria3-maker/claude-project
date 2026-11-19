@@ -39,8 +39,8 @@ export function validateAuthorization(document,{allowErasureOnly=false,now=new D
   const nowMs=now instanceof Date?now.getTime():Date.parse(now);
   if(!Number.isFinite(nowMs))throw new TypeError("Authorization validation time is invalid");
   if(document.mode==="erasure_only"){
-    if(!allowErasureOnly)throw new Error("Erasure-only mode requires DISCORD_ALLOW_ERASURE_ONLY=true");
     if(document.guilds.length!==0)throw new Error("Erasure-only mode must not contain authorized guilds");
+    if(!allowErasureOnly)throw new Error("Erasure-only mode requires DISCORD_ALLOW_ERASURE_ONLY=true");
     allowed.mode="erasure_only";
     allowed.erasureOnly=true;
     allowed.expiredChannels=expiredChannels;
