@@ -38,6 +38,7 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
       assert.equal((await pool.query("SELECT current_schema() AS name")).rows[0].name,schema);
     }
     const when="2026-10-18T01:00:00Z";
+    const seen="2026-10-22T13:00:00Z";
     const fixtures=[
       {pool:xPool,platform:"x",eventKind:"tweet_observed",eventKey:"x:tweet:900000:v1",
         kind:"author",canonicalId:formatAuthorId("x","9999"),
@@ -78,6 +79,25 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
       ack:event=>ackPostgres(pool,event.id,event.leaseOwner,event.leaseUntil),
       fail:(event,reason,next)=>failPostgres(pool,event.id,event.leaseOwner,event.leaseUntil,reason,next),
     });
+    const emitInNativeTransaction=async(pool,event)=>{
+      const tx=await pool.connect();
+      try{
+        await tx.query("BEGIN");
+        await emitPostgres(tx,event);
+        const queued=await tx.query(
+          "UPDATE outbox_events SET next_attempt_at=NOW()-interval '1 minute' "+
+          "WHERE source_system=$1 AND event_kind=$2 AND event_key=$3 "+
+          "RETURNING id",
+          [event.sourceSystem,event.eventKind,event.eventKey],
+        );
+        assert.equal(queued.rows.length,1,"fixture event must be enqueued before COMMIT");
+        await tx.query("COMMIT");
+      }catch(error){
+        try{await tx.query("ROLLBACK")}catch{}
+        throw error;
+      }finally{tx.release()}
+    };
+
     const xStats=await runDeliveryBatch(port(xPool),destPool,{workerId:"x-worker",batchSize:5,leaseMs:120000});
     assert.equal(xStats.delivered,1);
     assert.equal(xStats.failed,0);
@@ -157,7 +177,6 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
 
     const mint="So11111111111111111111111111111111111111112";
     const token=formatTokenId("solana",mint);
-    const seen="2026-10-22T13:00:00Z";
     const cutoff="2026-10-18T02:00:00Z";
     // The destination ingests now. A fixed 2026-10-23 knownAt must NOT see
     // a later (2026-10-24) CI ingestion, even if source evidence was seen on 22nd.
@@ -190,24 +209,6 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
         revision:"b".repeat(64),
       },
     ];
-    const emitInNativeTransaction=async(pool,event)=>{
-      const tx=await pool.connect();
-      try{
-        await tx.query("BEGIN");
-        await emitPostgres(tx,event);
-        const queued=await tx.query(
-          "UPDATE outbox_events SET next_attempt_at=NOW()-interval '1 minute' "+
-          "WHERE source_system=$1 AND event_kind=$2 AND event_key=$3 "+
-          "RETURNING id",
-          [event.sourceSystem,event.eventKind,event.eventKey],
-        );
-        assert.equal(queued.rows.length,1,"fixture event must be enqueued before COMMIT");
-        await tx.query("COMMIT");
-      }catch(error){
-        try{await tx.query("ROLLBACK")}catch{}
-        throw error;
-      }finally{tx.release()}
-    };
     for(const item of inputs){
       const verified=buildVerifiedTokenLinkEvent({
         sourceSystem:item.sourceSystem,
