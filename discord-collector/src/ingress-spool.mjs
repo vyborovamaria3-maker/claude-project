@@ -191,8 +191,8 @@ export class IngressSpool {
       }
       if(sawTemporary)fsyncSync(this.directoryFd);
       fsyncSync(this.directoryFd);
-      if(this.pendingBytes>this.maxBytes||this.pending.size>this.maxEvents)
-        throw new Error("Existing ingress spool backlog exceeds configured capacity; refusing Gateway login");
+      // Existing durable backlog is always allowed to open so it can be drained
+      // before Gateway reconnect. Capacity limits apply to new appends only.
       this.opened=true;
       return this;
     }catch(error){
