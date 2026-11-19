@@ -39,10 +39,10 @@ export async function runPermissionPreflightCli({
       independentlyVerified:false,
     },
     preflightGateEnabled,
-    readyForGateway:report.ok&&messageContentIntentAttested&&preflightGateEnabled,
+    preflightReady:report.ok&&messageContentIntentAttested&&preflightGateEnabled,
   };
   write(JSON.stringify(result,null,2));
-  return {exitCode:result.readyForGateway?0:1,result};
+  return {exitCode:result.preflightReady?0:1,result};
 }
 
 const invokedPath=process.argv[1]?pathToFileURL(resolve(process.argv[1])).href:null;
