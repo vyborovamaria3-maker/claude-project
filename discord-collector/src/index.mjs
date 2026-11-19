@@ -79,6 +79,7 @@ let sweepTask=Promise.resolve();
 let coverageTask=Promise.resolve();
 let drainPromise=null;
 let sweepTimer;
+let backlogTimer;
 let sweepRunning=false;
 
 async function record(message,kind){
@@ -312,6 +313,12 @@ client.once(Events.ClientReady,()=>{
   });
 });
 
+backlogTimer=setInterval(()=>{
+  if(spool.pendingCount>0)
+    console.warn("Discord durable ingress backlog",{events:spool.pendingCount,bytes:spool.pendingBytes});
+},60_000);
+backlogTimer.unref();
+
 sweepTimer=setInterval(()=>{
   if(sweepRunning||stopping)return;
   sweepRunning=true;
@@ -339,6 +346,7 @@ async function shutdown(){
   stopping=true;
   acceptingEvents=false;
   clearInterval(sweepTimer);
+  clearInterval(backlogTimer);
   shutdownPromise=(async()=>{
     try{await client.destroy()}finally{
       await Promise.allSettled([startupTask,sweepTask,coverageTask,drainPromise??Promise.resolve()]);
