@@ -29,7 +29,7 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
       await admin.query(POSTGRES_OUTBOX_DDL);
     }
     await admin.query('SET search_path TO "'+sources.dst+'"');
-    for (const name of ["001_entity_registry.sql","017_inbox_payload_fingerprint.sql","002_timeline.sql","004_token_link_observations.sql","019_inbox_envelope_fingerprint.sql","022_discord_source_contracts.sql"]) {
+    for (const name of ["001_entity_registry.sql","017_inbox_payload_fingerprint.sql","002_timeline.sql","004_token_link_observations.sql","019_inbox_envelope_fingerprint.sql","022_discord_source_contracts.sql","023_discord_message_tombstones.sql"]) {
       await admin.query(await readFile(new URL("../migrations/"+name,import.meta.url),"utf8"));
     }
     const poolFor=(schema)=>new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:3});
@@ -165,7 +165,7 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
       eventKey:["discord:message",channelId,messageId,deleteRevision].join(":"),
       schemaVersion:"discord-message-v1",
       payload:{kind:"deleted",channelId,messageId,revisionKey:deleteRevision,
-        observedAt:deletedAt,occurredAt:null,contentSha256:null,contentErased:true,producerVersion:"0.1.0"},
+        observedAt:deletedAt,occurredAt:null,contentSha256:null,contentErased:true,deletionReason:"deleted",producerVersion:"0.1.0"},
     };
     await emitInNativeTransaction(discordPool,deletion);
     const deletedStats=await runDeliveryBatch(port(discordPool),destPool,
@@ -173,7 +173,44 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
     assert.equal(deletedStats.delivered,1,JSON.stringify(deletedStats));
     assert.equal(deletedStats.failed,0);
     const kinds=await destPool.query("SELECT timeline_kind FROM timeline_events WHERE source_system='discord' ORDER BY occurred_at");
-    assert.deepEqual(kinds.rows.map(r=>r.timeline_kind),["discord_message_published","discord_message_deleted"]);
+    assert.deepEqual(kinds.rows.map(r=>r.timeline_kind),["discord_message_deleted"],
+      "deletion must retract earlier observed/edited timeline rows");
+    const retainedEvidence=await destPool.query(
+      "SELECT event_kind FROM entity_evidence WHERE source_system='discord' AND evidence_source_id=$1",
+      ["discord:message:"+channelId+":"+messageId]);
+    assert.deepEqual(retainedEvidence.rows.map(r=>r.event_kind),["message_deleted"],
+      "only the metadata-only deletion audit evidence may remain");
+
+    // A late ACK-loss replay of the original observation must not resurrect it.
+    await discordPool.query("UPDATE outbox_events SET processed_at=NULL,lease_owner=NULL,lease_until=NULL "+
+      "WHERE source_system='discord' AND event_kind='message_observed'");
+    const lateReplay=await runDeliveryBatch(port(discordPool),destPool,
+      {workerId:"discord-late-replay",batchSize:1,leaseMs:120000});
+    assert.equal(lateReplay.duplicates,1);
+    assert.deepEqual((await destPool.query(
+      "SELECT timeline_kind FROM timeline_events WHERE source_system='discord'")).rows.map(r=>r.timeline_kind),
+      ["discord_message_deleted"]);
+
+    // Even a distinct late edit is suppressed by the durable message tombstone.
+    const lateEditRevision="f".repeat(64);
+    const lateEdit={
+      sourceSystem:"discord",eventKind:"message_edited",
+      eventKey:["discord:message",channelId,messageId,lateEditRevision].join(":"),
+      schemaVersion:"discord-message-v1",
+      payload:{kind:"edited",channelId,messageId,revisionKey:lateEditRevision,
+        observedAt:deletedAt,occurredAt:deletedAt,contentSha256:"c".repeat(64),producerVersion:"0.1.0"},
+    };
+    await emitInNativeTransaction(discordPool,lateEdit);
+    const lateEditStats=await runDeliveryBatch(port(discordPool),destPool,
+      {workerId:"discord-late-edit",batchSize:1,leaseMs:120000});
+    assert.equal(lateEditStats.delivered,1);
+    assert.deepEqual((await destPool.query(
+      "SELECT timeline_kind FROM timeline_events WHERE source_system='discord'")).rows.map(r=>r.timeline_kind),
+      ["discord_message_deleted"]);
+    const finalEvidence=await destPool.query(
+      "SELECT event_kind FROM entity_evidence WHERE source_system='discord' AND evidence_source_id=$1",
+      ["discord:message:"+channelId+":"+messageId]);
+    assert.deepEqual(finalEvidence.rows.map(r=>r.event_kind),["message_deleted"]);
 
     const mint="So11111111111111111111111111111111111111112";
     const token=formatTokenId("solana",mint);
