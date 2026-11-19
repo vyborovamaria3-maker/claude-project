@@ -17,8 +17,11 @@ function authorizationExpiry(value,name,nowMs){
 export function validateAuthorization(document,{allowErasureOnly=false,now=new Date()}={}) {
   if(!document||typeof document!=="object"||Array.isArray(document)||document.version!==2)
     throw new Error("Authorization document version 2 is mandatory");
-  if(!["collect","erasure_only"].includes(document.mode)||!Array.isArray(document.guilds))
-    throw new Error("Authorization mode and guild list are mandatory");
+  if(Object.keys(document).some(key=>!["version","mode","guilds"].includes(key)))
+    throw new Error("Authorization document contains an unsupported field");
+  if(!["collect","erasure_only"].includes(document.mode)||!Array.isArray(document.guilds)||
+     document.guilds.length>1000)
+    throw new Error("Authorization mode and bounded guild list are mandatory");
   const allowed=new Map();
   const expiredChannels=[];
   const expiredGuildIds=[];
@@ -38,16 +41,22 @@ export function validateAuthorization(document,{allowErasureOnly=false,now=new D
   const seenGuilds=new Set();
   const seenChannels=new Set();
   for(const item of document.guilds){
-    if(!item||typeof item!=="object"||!isDiscordSnowflake(String(item.guild_id))||
-       !Array.isArray(item.channel_ids)||item.channel_ids.length===0)
-      throw new Error("Guild id and explicit channel_ids are required");
-    const guildId=String(item.guild_id);
+    if(!item||typeof item!=="object"||Array.isArray(item)||
+       Object.keys(item).some(key=>!["guild_id","channel_ids","community_permission_reference",
+         "community_permission_expires_at","policy_review_reference","policy_review_expires_at",
+         "reviewed_by","retention_days"].includes(key))||
+       typeof item.guild_id!=="string"||!isDiscordSnowflake(item.guild_id)||
+       !Array.isArray(item.channel_ids)||item.channel_ids.length===0||item.channel_ids.length>500)
+      throw new Error("Guild id and bounded explicit channel_ids are required");
+    const guildId=item.guild_id;
     if(seenGuilds.has(guildId))throw new Error("Duplicate authorized guild");
     seenGuilds.add(guildId);
     if(typeof item.policy_review_reference!=="string"||!item.policy_review_reference.trim()||
+       item.policy_review_reference.length>1024||
        typeof item.community_permission_reference!=="string"||!item.community_permission_reference.trim()||
-       typeof item.reviewed_by!=="string"||!item.reviewed_by.trim())
-      throw new Error("Policy and community permissions must be recorded");
+       item.community_permission_reference.length>1024||
+       typeof item.reviewed_by!=="string"||!item.reviewed_by.trim()||item.reviewed_by.length>128)
+      throw new Error("Bounded policy and community permission references and reviewer are mandatory");
     if(!Number.isInteger(item.retention_days)||item.retention_days<1||item.retention_days>365)
       throw new Error("Retention must be explicitly bounded to 1..365 days");
     const permissionExpiresAt=authorizationExpiry(
@@ -57,8 +66,8 @@ export function validateAuthorization(document,{allowErasureOnly=false,now=new D
     const expiresAt=Math.min(Date.parse(permissionExpiresAt),Date.parse(policyReviewExpiresAt));
     const isExpired=expiresAt<=nowMs;
     for(const rawId of item.channel_ids){
-      const channelId=String(rawId);
-      if(!isDiscordSnowflake(channelId))throw new Error("Invalid channel snowflake");
+      if(typeof rawId!=="string"||!isDiscordSnowflake(rawId))throw new Error("Invalid channel snowflake");
+      const channelId=rawId;
       if(seenChannels.has(channelId))throw new Error("Ambiguous duplicate channel");
       seenChannels.add(channelId);
       if(isExpired){
