@@ -44,7 +44,7 @@ try{
   // One Collector per source database. A session advisory lock is released by
   // PostgreSQL automatically if the process or connection dies.
   const lock=await singletonClient.query(
-    "SELECT pg_try_advisory_lock(137987614,20261119) AS acquired");
+    "SELECT pg_try_advisory_lock(hashtextextended('potapoff:discord-collector:singleton',0)) AS acquired");
   if(lock.rows[0]?.acquired!==true)throw new Error("Another Discord Collector already holds the source lock");
   singletonLockHeld=true;
   spool=new IngressSpool({
@@ -67,7 +67,7 @@ try{
   spoolKey.fill(0);
   try{spool?.close()}catch{}
   if(singletonLockHeld){
-    try{await singletonClient.query("SELECT pg_advisory_unlock(137987614,20261119)")}catch{}
+    try{await singletonClient.query("SELECT pg_advisory_unlock(hashtextextended('potapoff:discord-collector:singleton',0))")}catch{}
   }
   singletonClient.release();
   await pool.end();
@@ -359,7 +359,7 @@ async function shutdown(){
       await Promise.allSettled([startupTask,sweepTask,coverageTask,drainPromise??Promise.resolve()]);
       try{spool.close()}finally{
         try{
-          if(singletonLockHeld)await singletonClient.query("SELECT pg_advisory_unlock(137987614,20261119)");
+          if(singletonLockHeld)await singletonClient.query("SELECT pg_advisory_unlock(hashtextextended('potapoff:discord-collector:singleton',0))");
           singletonLockHeld=false;
           singletonClient.release();
         }catch(error){
