@@ -151,16 +151,17 @@ prints a report containing IDs, check results and error codes only.
 cd discord-collector
 DISCORD_BOT_TOKEN=REDACTED \
 DISCORD_AUTHORIZATION_PATH=/private/guilds.json \
-DISCORD_MESSAGE_CONTENT_INTENT_CONFIRMED=true \\
+DISCORD_MESSAGE_CONTENT_INTENT_CONFIRMED=true \
 DISCORD_PERMISSION_PREFLIGHT_ENABLED=true \
 npm run preflight
 ~~~
 
 The command exits 0 only when every authorized channel passes the exact
 read-only permission check, the runtime preflight gate is enabled, and the
-operator has attested to Message Content intent. It does not independently verify the Developer Portal setting. The
-standalone command is an explicit live API operation; CI tests use mocked
-responses and do not execute it against Discord.
+operator has attested to Message Content intent. It does not independently
+verify the Developer Portal setting. The standalone command is an explicit
+live API operation; CI tests use mocked responses and do not execute it against
+Discord.
 
 The preflight is bounded to 1,000 authorized channels by default. An operator
 may raise `DISCORD_PERMISSION_PREFLIGHT_MAX_CHANNELS` up to 10,000 only after
