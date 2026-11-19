@@ -3,7 +3,7 @@ import {isDiscordSnowflake} from "@claude-project/contracts";
 
 const DAY_MS=86_400_000;
 const MAX_AUTHORIZATION_DAYS=365;
-const AUTHORIZATION_TIMESTAMP=/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$/i;
+const AUTHORIZATION_TIMESTAMP=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/i;
 
 function authorizationExpiry(value,name,nowMs){
   if(typeof value!=="string"||!AUTHORIZATION_TIMESTAMP.test(value)||!Number.isFinite(Date.parse(value)))
