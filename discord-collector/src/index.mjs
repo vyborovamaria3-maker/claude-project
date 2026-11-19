@@ -99,6 +99,11 @@ function singletonConnectionLost(){
 }
 singletonClient.on("error",singletonConnectionLost);
 singletonClient.on("end",singletonConnectionLost);
+try{await singletonClient.query("SELECT 1")}
+catch{
+  await shutdown();
+  throw new Error("Discord singleton lock connection is not healthy");
+}
 
 async function record(message,kind){
   const channelId=String(message.channelId??message.channel?.id??"");
