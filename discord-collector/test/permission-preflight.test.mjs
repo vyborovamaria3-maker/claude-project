@@ -88,13 +88,22 @@ test("a channel missing READ_MESSAGE_HISTORY is rejected",async()=>{
   assert.equal(report.guilds[0].channels[0].errorCode,"read_message_history_missing");
 });
 
-test("administrator permission satisfies both read-only permission checks",async()=>{
+test("administrator permission is rejected as excessive",async()=>{
   const fake=successfulFetch({permissions:ADMIN});
   const report=await runDiscordPermissionPreflight({
     authorization:authorization(),token:"token",fetchImpl:fake.fetchImpl,now,
   });
-  assert.equal(report.ok,true);
+  assert.equal(report.ok,false);
   assert.equal(report.guilds[0].channels[0].errorCode,"excessive_administrator_permission");
+});
+
+test("SEND_MESSAGES is rejected because the Collector is read-only",async()=>{
+  const fake=successfulFetch({permissions:VIEW|HISTORY|(1n<<11n)});
+  const report=await runDiscordPermissionPreflight({
+    authorization:authorization(),token:"token",fetchImpl:fake.fetchImpl,now,
+  });
+  assert.equal(report.ok,false);
+  assert.equal(report.guilds[0].channels[0].errorCode,"unnecessary_send_messages_permission");
 });
 
 test("channel omitted from visible guild channels fails without probing it",async()=>{
