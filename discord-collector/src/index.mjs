@@ -28,26 +28,42 @@ if(process.env.DISCORD_GAP_RECOVERY_ENABLED==="true" &&
    (!Number.isInteger(recoveryMaxPages)||recoveryMaxPages<1||recoveryMaxPages>50))
   throw new RangeError("DISCORD_GAP_RECOVERY_MAX_PAGES must be in 1..50");
 
-const spool=new IngressSpool({
-  directory:process.env.DISCORD_INGRESS_SPOOL_DIR,
-  key:spoolKey,
-  maxBytes:spoolMaxBytes,
-  maxEvents:spoolMaxEvents,
-}).open();
-// Remove revoked or expired pending payloads before Gateway login.
-const startupSpoolSweep=spool.sweepExpired(allowed);
-if(startupSpoolSweep.eventsErased>0)
-  console.log("Expired/revoked ingress events erased",{events:startupSpoolSweep.eventsErased});
 const pool=new pg.Pool({connectionString:process.env.DISCORD_SOURCE_DATABASE_URL,max:4});
-// Schema, retention controls and recovery watermarks must all be ready before Gateway login.
+const singletonClient=await pool.connect().catch(async error=>{await pool.end();throw error});
+let singletonLockHeld=false;
+let spool=null;
 const recoveryBaselines=new Map();
 try{
+  // One Collector per source database. A session advisory lock is released by
+  // PostgreSQL automatically if the process or connection dies.
+  const lock=await singletonClient.query(
+    "SELECT pg_try_advisory_lock(137987614,20261119) AS acquired");
+  if(lock.rows[0]?.acquired!==true)throw new Error("Another Discord Collector already holds the source lock");
+  singletonLockHeld=true;
+  spool=new IngressSpool({
+    directory:process.env.DISCORD_INGRESS_SPOOL_DIR,
+    key:spoolKey,
+    maxBytes:spoolMaxBytes,
+    maxEvents:spoolMaxEvents,
+  }).open();
+  spoolKey.fill(0);
+  // Remove revoked or expired pending payloads before Gateway login.
+  const startupSpoolSweep=spool.sweepExpired(allowed);
+  if(startupSpoolSweep.eventsErased>0)
+    console.log("Expired/revoked ingress events erased",{events:startupSpoolSweep.eventsErased});
+  // Schema, retention controls and recovery watermarks must be ready before Gateway login.
   await installSchema(pool);
   await purgeExpired(pool,allowed);
   for(const channelId of allowed.keys())
     recoveryBaselines.set(channelId,await getRecoveryBaseline(pool,channelId));
 }catch(error){
-  try{spool.close()}finally{await pool.end()}
+  spoolKey.fill(0);
+  try{spool?.close()}catch{}
+  if(singletonLockHeld){
+    try{await singletonClient.query("SELECT pg_advisory_unlock(137987614,20261119)")}catch{}
+  }
+  singletonClient.release();
+  await pool.end();
   throw error;
 }
 const client=new Client({
