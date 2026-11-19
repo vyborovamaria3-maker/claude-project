@@ -41,6 +41,7 @@ test("durable spool replay after source commit does not duplicate the transactio
     spool.append(snapshot);
     const [first]=spool.listPending();
     const observation=normalizeMessage(message,"observed",snapshot.receivedAt,guildId);
+    eventKey=["discord:message",channelId,messageId,observation.revisionKey].join(":");
     assert.equal((await storeObservation(pool,observation,30)).status,"stored");
     // Simulate a hard crash after PostgreSQL COMMIT but before local ACK.
     spool.close();
@@ -48,7 +49,6 @@ test("durable spool replay after source commit does not duplicate the transactio
     const [replayed]=spool.listPending();
     assert.equal(replayed.event.messageId,messageId);
     assert.equal((await storeObservation(pool,observation,30)).status,"stored");
-    eventKey=["discord:message",channelId,messageId,observation.revisionKey].join(":");
     const rows=await pool.query(
       "SELECT COUNT(*)::int AS n FROM outbox_events WHERE source_system='discord' AND event_key=$1",
       [eventKey]);
