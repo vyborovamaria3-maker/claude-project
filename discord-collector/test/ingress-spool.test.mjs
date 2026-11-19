@@ -130,6 +130,24 @@ test("sequence order remains monotonic across restart and event kinds",()=>{
   }finally{f.cleanup()}
 });
 
+test("a smaller configured cap does not prevent replay of an older durable backlog",()=>{
+  const f=fixture({maxBytes:100_000,maxEvents:2});
+  try{
+    f.spool.append(event());
+    f.spool.append(event({messageId:"623456789012345678"}));
+    f.spool.close();
+    const reopened=new IngressSpool({directory:f.directory,key:f.key,maxBytes:100_000,maxEvents:1}).open();
+    try{
+      assert.equal(reopened.pendingCount,2);
+      assert.throws(()=>reopened.append(event({messageId:"723456789012345678"})),
+        error=>error.code==="INGRESS_SPOOL_FULL");
+      reopened.ack("1");
+      reopened.flushAcks();
+      assert.doesNotThrow(()=>reopened.append(event({messageId:"723456789012345678"})));
+    }finally{reopened.close()}
+  }finally{f.cleanup()}
+});
+
 test("byte capacity exhaustion leaves no partial ready event",()=>{
   const f=fixture({maxBytes:100,maxEvents:100});
   try{
