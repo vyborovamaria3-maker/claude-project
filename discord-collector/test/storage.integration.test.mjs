@@ -6,7 +6,7 @@ import {mkdtempSync,rmSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {randomBytes} from "node:crypto";
-import {installSchema,storeObservation,purgeExpired,getRecoveryBaseline,recordRecoveryCheck,recordCoverageFailure,eraseUserMessages} from "../src/storage.mjs";
+import {installSchema,storeObservation,purgeExpired,getRecoveryBaseline,recordRecoveryCheck,recordCoverageFailure,findUserMessageIds,eraseUserMessages} from "../src/storage.mjs";
 
 const URL=process.env.DISCORD_TEST_DATABASE_URL;
 const guildId="123456789012345678";
@@ -293,7 +293,6 @@ test("user-requested erasure removes all author content and emits content-free t
   const pool=new pg.Pool({connectionString:URL,max:2});
   const authorId="423456789012345689";
   const ids=["923456789012345682","923456789012345683"];
-  const eventPattern="discord:message:%:"+ids[0]+":%";
   try{
     await installSchema(pool);
     const now=new Date();
@@ -310,6 +309,8 @@ test("user-requested erasure removes all author content and emits content-free t
       kind:"edited",guildId,channelId,messageId:ids[0],authorId,
       receivedAt:now.toISOString(),
     },30);
+    assert.deepEqual(await findUserMessageIds(pool,authorId),ids.slice().sort());
+    await assert.rejects(eraseUserMessages(pool,Number(authorId)),/Invalid Discord author Snowflake/);
     const result=await eraseUserMessages(pool,authorId);
     assert.deepEqual(result,{
       messagesErased:2,revisionsErased:2,tombstonesQueued:2,coverageFailuresErased:1,
