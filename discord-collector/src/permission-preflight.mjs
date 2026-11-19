@@ -5,6 +5,7 @@ const USER_VIEW_CHANNEL=1n<<10n;
 const USER_READ_MESSAGE_HISTORY=1n<<16n;
 const USER_ADMINISTRATOR=1n<<3n;
 const USER_SEND_MESSAGES=1n<<11n;
+const REQUIRED_READ_PERMISSIONS=USER_VIEW_CHANNEL|USER_READ_MESSAGE_HISTORY;
 const SUPPORTED_CHANNEL_TYPES=new Set([0,5]); // Guild text and announcement channels.
 const MAX_AUTHORIZATION_CHANNELS=10_000;
 
@@ -134,15 +135,16 @@ function channelResult(channelId,channelType,bits){
   const sendMessages=(bits&USER_SEND_MESSAGES)!==0n;
   const viewChannel=(bits&USER_VIEW_CHANNEL)!==0n;
   const readMessageHistory=(bits&USER_READ_MESSAGE_HISTORY)!==0n;
+  const hasUnnecessaryPermissions=(bits&~REQUIRED_READ_PERMISSIONS)!==0n;
   const errorCode=administrator?"excessive_administrator_permission":
-    sendMessages?"unnecessary_send_messages_permission":
+    hasUnnecessaryPermissions?"unnecessary_permissions_granted":
     !viewChannel?"view_channel_missing":
     !readMessageHistory?"read_message_history_missing":null;
   return {
     channelId,
     status:errorCode?"failed":"passed",
     channelType,
-    checks:{viewChannel,readMessageHistory,administrator,sendMessages},
+    checks:{viewChannel,readMessageHistory,administrator,sendMessages,leastPrivilege:!hasUnnecessaryPermissions},
     errorCode,
   };
 }
