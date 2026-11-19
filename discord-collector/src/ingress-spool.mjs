@@ -1,5 +1,5 @@
 import {
-  closeSync, existsSync, fsyncSync, lstatSync, mkdirSync,
+  chmodSync, closeSync, existsSync, fchmodSync, fsyncSync, lstatSync, mkdirSync,
   openSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -141,13 +141,17 @@ export class IngressSpool {
 
   open(){
     if(this.opened)throw new Error("Ingress spool is already open");
-    mkdirSync(this.directory,{recursive:true,mode:0o700});
+    let createdDirectory=false;
+    try{mkdirSync(this.directory,{mode:0o700});createdDirectory=true}
+    catch(error){if(error.code!=="EEXIST")throw error}
     const initial=lstatSync(this.directory);
     if(initial.isSymbolicLink()||!initial.isDirectory())
       throw new Error("Ingress spool path must be a real directory, not a symlink");
-    if((initial.mode&0o777)!==0o700)
+    if(createdDirectory)chmodSync(this.directory,0o700);
+    const securedDirectory=lstatSync(this.directory);
+    if((securedDirectory.mode&0o777)!==0o700)
       throw new Error("Ingress spool directory must already have exact mode 0700");
-    if(typeof process.getuid==="function"&&initial.uid!==process.getuid())
+    if(typeof process.getuid==="function"&&securedDirectory.uid!==process.getuid())
       throw new Error("Ingress spool directory must be owned by the collector user");
     this.directoryFd=openSync(this.directory,"r");
     try{
@@ -216,6 +220,7 @@ export class IngressSpool {
     const finalPath=join(this.directory,padded+".evt");
     const fd=openSync(temporary,"wx",0o600);
     try{
+      fchmodSync(fd,0o600);
       writeFileSync(fd,encoded,{encoding:"utf8"});
       fsyncSync(fd);
     }finally{closeSync(fd)}
