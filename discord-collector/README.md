@@ -222,7 +222,9 @@ DISCORD_SOURCE_DATABASE_URL=REDACTED \
 npm run erase-user
 ```
 
-The operation takes source-table locks to serialize against concurrent
+The command first acquires the Collector's singleton advisory lock, then
+removes matching encrypted events from the persistent Spool and fsyncs the
+directory. It takes source-table locks to serialize against concurrent
 observation/edit/delete and coverage writes. It deletes matching message
 content, revisions and associated coverage failures, and writes one
 metadata-only `user_requested` tombstone per message in the same transaction
@@ -285,10 +287,11 @@ default.
   later events out of order. Transient REST/storage failures leave the event
   pending; only Discord's explicit Unknown Message response is terminal.
 - A terminally unhydratable event is written to
-  `discord_coverage_failures` with guild/channel/message identity, event kind,
-  receive time and a bounded failure code. It contains no message text or
-  author ID, is idempotent across replay, and expires with the channel's
-  retention policy. A channel-level unresolved recovery check is also recorded.
+  `discord_coverage_failures` with guild/channel/message identity, optional
+  source-local author ID, event kind, receive time and a bounded failure code.
+  The table contains no message text; author IDs never enter the Outbox or
+  central Intelligence. Rows are idempotent across replay and expire with the
+  channel's retention policy. A channel-level unresolved recovery check is also recorded.
 - Message edits are hydrated from Discord only after the original Gateway
   dispatch is durably spooled. If an edit can no longer be fetched, the
   per-message coverage failure is committed before ACK so a following
