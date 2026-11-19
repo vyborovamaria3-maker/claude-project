@@ -103,7 +103,7 @@ test("PostgreSQL revisions, stale history, deletions and revoke/retention", {ski
     assert.ok(status.rows[0].resolved_at);
 
     // If the outbox insert fails, the message and revision must roll back too.
-    await pool.query("CREATE OR REPLACE FUNCTION fail_discord_outbox_fixture() RETURNS trigger LANGUAGE plpgsql AS $ BEGIN RAISE EXCEPTION 'fixture outbox failure'; END $");
+    await pool.query("CREATE OR REPLACE FUNCTION fail_discord_outbox_fixture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture outbox failure'; END $$");
     await pool.query("CREATE TRIGGER fail_discord_outbox_fixture BEFORE INSERT ON outbox_events FOR EACH ROW EXECUTE FUNCTION fail_discord_outbox_fixture()");
     const atomic=normalizeMessage({...base,id:"723456789012345678",content:"must roll back"},"observed",now.toISOString());
     await assert.rejects(storeObservation(pool,atomic,30),/fixture outbox failure/);
