@@ -295,6 +295,23 @@ export class IngressSpool {
     return {eventsErased:erased,pendingEvents:this.pending.size,pendingBytes:this.pendingBytes};
   }
 
+  eraseAuthor(authorId){
+    if(!this.opened)throw new Error("Ingress spool is not open");
+    if(!isDiscordSnowflake(authorId))throw new TypeError("Invalid Discord author Snowflake");
+    let eventsErased=0;
+    // Decrypt one record at a time; never materialize the entire backlog's
+    // message bodies or author identifiers while processing a user request.
+    for(const entry of [...this.pending.values()]){
+      const event=decryptRecord(readFileSync(entry.path,"utf8"),entry.sequence,this.key);
+      if(event.authorId===authorId){
+        this.ack(entry.sequence);
+        eventsErased++;
+      }
+    }
+    this.flushAcks();
+    return {eventsErased,pendingEvents:this.pending.size,pendingBytes:this.pendingBytes};
+  }
+
   get pendingCount(){return this.pending.size}
 
   get oldestPending(){return this.listPending(1)[0]??null}
