@@ -1,6 +1,6 @@
 import pg from "pg";
 import {IngressSpool,parseIngressSpoolKey} from "./ingress-spool.mjs";
-import {eraseUserMessages,installSchema} from "./storage.mjs";
+import {eraseUserMessages,findUserMessageIds,installSchema} from "./storage.mjs";
 
 const authorId=process.env.DISCORD_ERASURE_AUTHOR_ID;
 if(process.env.DISCORD_USER_ERASURE_ENABLED!=="true")
@@ -25,13 +25,14 @@ try{
     throw new Error("collector_already_running");
 
   await installSchema(pool);
+  const knownMessageIds=await findUserMessageIds(pool,authorId);
   const key=parseIngressSpoolKey(process.env.DISCORD_INGRESS_SPOOL_KEY);
   try{
     spool=new IngressSpool({
       directory:process.env.DISCORD_INGRESS_SPOOL_DIR,key,
     }).open();
   }finally{key.fill(0)}
-  const spoolResult=spool.eraseAuthor(authorId);
+  const spoolResult=spool.eraseAuthor(authorId,knownMessageIds);
 
   const schema=await pool.query(
     "SELECT to_regclass('discord_messages') IS NOT NULL AS messages,"+
