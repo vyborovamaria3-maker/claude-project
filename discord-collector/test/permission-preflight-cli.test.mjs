@@ -70,7 +70,7 @@ test("standalone preflight runs without collector, database, spool or Gateway se
       now,
     });
     assert.equal(result.exitCode,0);
-    assert.equal(result.result.readyForGateway,true);
+    assert.equal(result.result.preflightReady,true);
     assert.equal(result.result.ok,true);
     assert.equal(result.result.messageContentIntent.operatorAttested,true);
     assert.equal(result.result.messageContentIntent.independentlyVerified,false);
@@ -92,7 +92,7 @@ test("channel permission success is not reported as Gateway-ready without Messag
       fetchImpl:fake.fetchImpl,write:value=>output.push(value),now,
     });
     assert.equal(result.result.ok,true);
-    assert.equal(result.result.readyForGateway,false);
+    assert.equal(result.result.preflightReady,false);
     assert.equal(result.result.messageContentIntent.operatorAttested,false);
     assert.equal(result.exitCode,1);
   }finally{f.cleanup()}
@@ -112,7 +112,7 @@ test("standalone preflight is not Gateway-ready when runtime gate is disabled",a
     });
     assert.equal(result.result.ok,true);
     assert.equal(result.result.preflightGateEnabled,false);
-    assert.equal(result.result.readyForGateway,false);
+    assert.equal(result.result.preflightReady,false);
     assert.equal(result.exitCode,1);
   }finally{f.cleanup()}
 });
@@ -131,7 +131,7 @@ test("permission denial makes standalone preflight fail without returning API bo
       fetchImpl:fake.fetchImpl,write:value=>output.push(value),now,
     });
     assert.equal(result.result.ok,false);
-    assert.equal(result.result.readyForGateway,false);
+    assert.equal(result.result.preflightReady,false);
     assert.equal(result.exitCode,1);
     assert.ok(!output.join("\n").includes("never-print-this"));
   }finally{f.cleanup()}
