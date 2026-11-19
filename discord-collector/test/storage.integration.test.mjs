@@ -18,6 +18,26 @@ const allowed=validateAuthorization({guilds:[{
   policy_review_reference:"test",community_permission_reference:"test",reviewed_by:"ci"
 }]});
 
+test("only one Discord Collector can hold the source database advisory lock",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const first=await pool.connect();
+  const second=await pool.connect();
+  const lockSql="SELECT pg_try_advisory_lock(hashtextextended('potapoff:discord-collector:singleton',0)) AS acquired";
+  const unlockSql="SELECT pg_advisory_unlock(hashtextextended('potapoff:discord-collector:singleton',0))";
+  try{
+    assert.equal((await first.query(lockSql)).rows[0].acquired,true);
+    assert.equal((await second.query(lockSql)).rows[0].acquired,false);
+    await first.query(unlockSql);
+    assert.equal((await second.query(lockSql)).rows[0].acquired,true);
+    await second.query(unlockSql);
+  }finally{
+    first.release();
+    second.release();
+    await pool.end();
+  }
+});
+
 test("durable spool replay after source commit does not duplicate the transactional outbox",{skip:!URL},async()=>{
   const {default:pg}=await import("pg");
   const pool=new pg.Pool({connectionString:URL,max:2});
