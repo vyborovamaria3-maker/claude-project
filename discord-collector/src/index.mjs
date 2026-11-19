@@ -98,6 +98,7 @@ function singletonConnectionLost(){
   void shutdown();
 }
 singletonClient.on("error",singletonConnectionLost);
+singletonClient.on("end",singletonConnectionLost);
 
 async function record(message,kind){
   const channelId=String(message.channelId??message.channel?.id??"");
