@@ -141,7 +141,7 @@ catch{
 
 function permissionActive(permission){
   if(!permission)return false;
-  if(!permission.expiresAt)return true; // Legacy in-memory fixtures only.
+  if(permission.expiresAt===undefined||permission.expiresAt===null)return true; // Legacy in-memory fixtures only.
   const expiry=Date.parse(permission.expiresAt);
   return Number.isFinite(expiry)&&expiry>Date.now();
 }
