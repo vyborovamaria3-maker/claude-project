@@ -115,3 +115,27 @@ Producer-specific V2 builders, all-source V1/V2 parity fixtures, and the operato
 
 
 **Historical Solana SQLite clock gate:** older Solana outbox writers copied `observedAt` into `created_at`. New writers now stamp wall-clock insertion time. Existing rows are not rewritten; inspect pending legacy Solana rows before enabling V1→V2 delivery because their stored `created_at` may be equal to (rather than later than) `observedAt`, and the old and new same-millisecond cases cannot be distinguished from the timestamp alone.
+
+
+## Discord source contracts — additive V2 extension
+
+The registry now includes discord:message_observed, discord:message_edited,
+and discord:message_deleted under discord-message-v1. Discord Snowflake IDs
+remain decimal strings. Evidence keys include both channel and message IDs;
+the entity reference is the canonical channel source ID.
+
+buildDiscordMessageEnvelope accepts only IDs, revision hashes, source clocks,
+content hashes and producer version. It rejects raw message text, author IDs
+and unknown fields. Shared envelopes contain no raw Discord text, author
+identity, guild ID, attachment URLs or mention targets. Observed/edit events
+expose only a SHA-256 content fingerprint and availability boolean; deletion
+events expose a body-erasure assertion and no content hash.
+
+emittedAt MUST be the immutable created_at value of the source outbox row
+after claim. The V1 adapter remains limited to legacy X/TG/Solana producers.
+This PR adds contracts and a tested adapter, not delivery or production
+activation. Outbox writes, Inbox integration, verified mint linking, coverage
+and scoring remain separate gates. Collection stays default-off and requires
+separate platform and community authorization.
+
+Deletion envelopes require explicit content-erasure confirmation from the source storage path; the adapter does not infer that a delete was durably applied.

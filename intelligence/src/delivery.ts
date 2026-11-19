@@ -3,7 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import {
   adaptLegacyOutboxEventToV2, buildTimelineEvent, getSchemaDefinition, toUtcIso,
   validateEventEnvelopeV2, validateVerifiedTokenLinkEvent, validateTokenLinksInvalidatedEvent,
-  type EventSource, type TimelineEvent,
+  type TimelineEvent,
 } from "@claude-project/contracts";
 import { ingestRegistryEvent, validateRegistryEvent, type PgTransaction, type RegistryEvent } from "./entity-registry.js";
 import { ingestTimelineEvent } from "./timeline.js";
@@ -147,12 +147,12 @@ function prepareDeliveryEvent(event: DeliveryEvent): PreparedDeliveryEvent {
       (event.sourceSystem === "x" || event.sourceSystem === "tg" ||
        event.sourceSystem === "blockchain") &&
       getSchemaDefinition(
-        event.sourceSystem as EventSource,
+        event.sourceSystem,
         event.eventKind,
         event.schemaVersion,
       )) {
     const adapted = adaptLegacyOutboxEventToV2({
-      sourceSystem: event.sourceSystem as EventSource,
+      sourceSystem: event.sourceSystem,
       eventKind: event.eventKind,
       eventKey: event.eventKey,
       schemaVersion: event.schemaVersion,

@@ -11,7 +11,7 @@ test("SQL migrations have unique sequential version numbers",async()=>{
       "duplicate migration version "+prefix+" in "+byVersion.get(prefix)+" and "+name);
     byVersion.set(prefix,name);
   }
-  for(let n=1;n<=21;n++)assert.ok(byVersion.has(n),
+  for(let n=1;n<=22;n++)assert.ok(byVersion.has(n),
     "missing migration "+String(n).padStart(3,"0"));
   const privacy=await readFile(new URL("014_privacy_evidence_indexes.sql",root),"utf8");
   assert.match(privacy,/idx_intelligence_inbox_evidence_source/);
@@ -41,4 +41,11 @@ test("SQL migrations have unique sequential version numbers",async()=>{
   assert.match(fencing,/needs_review/);
   assert.match(fencing,/delivery_attempts >= 10/);
   assert.match(fencing,/INTERVAL '10 minutes'/);
+});
+
+
+test("Discord evidence and timeline kinds are enabled by additive migration 022",async()=>{
+ const sql=await readFile(new URL("022_discord_source_contracts.sql",root),"utf8");
+ assert.match(sql,/discord_message/);assert.match(sql,/discord_message_published/);
+ assert.match(sql,/discord_message_edited/);assert.match(sql,/discord_message_deleted/);assert.match(sql,/VALIDATE CONSTRAINT/);
 });

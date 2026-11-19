@@ -38,3 +38,10 @@ test("malformed provenance or ambiguous clocks are rejected", () => {
   assert.throws(() => buildEvidenceRef({sourceKind:"x_tweet",tweetId:"12",observedAt:"2026-10-17T20:00:00"}), /timezone/);
   assert.throws(() => buildEvidenceRef({sourceKind:"x_tweet",tweetId:"12",observedAt:NOW,provider:" "}), /Invalid provider/);
 });
+
+
+test("Discord message evidence binds a Snowflake message to its channel", () => {
+ const ref=buildEvidenceRef({sourceKind:"discord_message",channelId:"223456789012345678",messageId:"323456789012345678",observedAt:NOW,occurredAt:"2026-10-17T20:00:00Z",provider:"discord"});
+ assert.equal(ref.sourceId,"discord:message:223456789012345678:323456789012345678");
+ assert.throws(()=>buildEvidenceRef({sourceKind:"discord_message",channelId:"123",messageId:"323456789012345678",observedAt:NOW}),/Snowflakes/);
+});

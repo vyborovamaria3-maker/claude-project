@@ -78,7 +78,7 @@ export const EVENT_ENVELOPE_V2_JSON_SCHEMA: JsonSchema = Object.freeze({
   properties: {
     envelopeVersion: { const: "event-envelope-v2" },
     eventId: { type: "string", pattern: "^evt_v2_[a-f0-9]{64}$" },
-    sourceSystem: { type: "string", enum: ["x", "tg", "blockchain"] },
+    sourceSystem: { type: "string", enum: ["x", "tg", "blockchain", "discord"] },
     eventKind: { type: "string", minLength: 1, maxLength: 512 },
     eventKey: { type: "string", minLength: 1, maxLength: 512 },
     schemaVersion: { type: "string", minLength: 1, maxLength: 128 },
@@ -124,7 +124,7 @@ export const EVENT_ENVELOPE_V2_JSON_SCHEMA: JsonSchema = Object.freeze({
         required: ["sourceKind", "sourceId", "observedAt"],
         additionalProperties: false,
         properties: {
-          sourceKind: { type: "string", enum: ["x_tweet", "tg_message", "chain_tx"] },
+          sourceKind: { type: "string", enum: ["x_tweet", "tg_message", "chain_tx", "discord_message"] },
           sourceId: { type: "string", minLength: 1, maxLength: 512 },
           observedAt: { type: "string", minLength: 20, maxLength: 40 },
           occurredAt: { type: "string", minLength: 20, maxLength: 40 },
@@ -140,7 +140,7 @@ export const EVENT_ENVELOPE_V2_JSON_SCHEMA: JsonSchema = Object.freeze({
       required: ["sourceSystem", "scope", "windowStart", "windowEnd", "status", "coverageId"],
       additionalProperties: false,
       properties: {
-        sourceSystem: { type: "string", enum: ["x", "tg", "blockchain"] },
+        sourceSystem: { type: "string", enum: ["x", "tg", "blockchain", "discord"] },
         scope: { type: "string", minLength: 1, maxLength: 512 },
         windowStart: { type: "string", minLength: 20, maxLength: 40 },
         windowEnd: { type: "string", minLength: 20, maxLength: 40 },
@@ -216,7 +216,7 @@ function normalizeEvidenceRefs(value: unknown, sourceSystem: EventSource): Event
     throw new TypeError("Event requires 1..100 evidenceRefs");
   }
   const expected: Record<EventSource, EvidenceSourceKind> = {
-    x: "x_tweet", tg: "tg_message", blockchain: "chain_tx",
+    x: "x_tweet", tg: "tg_message", blockchain: "chain_tx", discord: "discord_message",
   };
   return value.map((item) => {
     const raw = record(item, "evidenceRef");
@@ -280,7 +280,7 @@ function normalizeInput<TPayload extends Record<string, unknown>>(
     "clocks", "entityRefs", "evidenceRefs", "coverageRef", "payload",
   ], "event envelope input");
   const sourceSystem = input.sourceSystem as EventSource;
-  if (!["x", "tg", "blockchain"].includes(sourceSystem)) {
+  if (!["x", "tg", "blockchain", "discord"].includes(sourceSystem)) {
     throw new TypeError("Unsupported V2 sourceSystem");
   }
   const eventKind = nonempty(input.eventKind, "eventKind");
@@ -346,6 +346,16 @@ function normalizeInput<TPayload extends Record<string, unknown>>(
       normalizedClocks.observedAt !== sourceEvidence.observedAt ||
       normalizedClocks.occurredAt !== (sourceEvidence.occurredAt ?? null)) {
     throw new TypeError("Envelope evidenceRefs/clocks differ from source registry evidence");
+  }
+  const envelopeContentHash = evidenceRefs[0]!.contentSha256;
+  if (envelopeContentHash !== undefined) {
+    const timelineValue = payloadRecord.timelineEvent;
+    if (timelineValue === undefined) throw new TypeError("Evidence content hash requires a timeline event");
+    const timelineRecord = record(timelineValue, "payload.timelineEvent");
+    const timelinePayload = record(timelineRecord.payload, "payload.timelineEvent.payload");
+    if (timelinePayload.contentSha256 !== envelopeContentHash) {
+      throw new TypeError("Evidence content hash differs from timeline content hash");
+    }
   }
 
   return {

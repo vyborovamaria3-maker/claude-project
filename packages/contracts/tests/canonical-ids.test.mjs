@@ -67,3 +67,14 @@ test("stable social identities never use username, and huge IDs remain text", ()
   assert.throws(() => formatAuthorId("tg", "0"), /Stable numeric/);
   assert.throws(() => formatAuthorId("tg", "-0"), /Stable numeric/);
 });
+
+
+test("Discord Snowflake author and channel identities are stable and strict", () => {
+ const user="423456789012345678",channel="223456789012345678";
+ assert.equal(formatAuthorId("discord",user),"discord:"+user);
+ assert.equal(parseAuthorId("discord:"+user)?.platform,"discord");
+ assert.equal(formatSourceId("discord",channel),"discord:channel:"+channel);
+ assert.equal(parseSourceId("discord:channel:"+channel)?.accountId,channel);
+ for(const invalid of ["discord:001234567890123","discord:abc","discord:0"])assert.equal(parseAuthorId(invalid),null);
+ assert.equal(parseSourceId("discord:channel:123"),null);
+});

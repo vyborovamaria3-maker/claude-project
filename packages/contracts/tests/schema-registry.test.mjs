@@ -10,11 +10,14 @@ import {
 
 test("registry contains the existing X, TG and Solana V1 producer event kinds", () => {
   const definitions = listSchemaDefinitions();
-  assert.equal(definitions.length, 10);
+  assert.equal(definitions.length, 13);
   assert.equal(new Set(definitions.map((item) => item.schemaId)).size, definitions.length);
   assert.ok(getSchemaDefinition("x", "tweet_observed", "x-tweet-v1"));
   assert.ok(getSchemaDefinition("tg", "message_observed", "tg-message-v1"));
   assert.ok(getSchemaDefinition("tg", "message_deleted", "tg-message-v1"));
+  assert.ok(getSchemaDefinition("discord", "message_observed", "discord-message-v1"));
+  assert.ok(getSchemaDefinition("discord", "message_edited", "discord-message-v1"));
+  assert.ok(getSchemaDefinition("discord", "message_deleted", "discord-message-v1"));
   assert.ok(getSchemaDefinition("blockchain", "wallet_transaction_observed", "chain-raw-v1"));
   assert.ok(getSchemaDefinition("blockchain", "token_swap_evidence_observed", "chain-token-evidence-v1"));
   assert.ok(getSchemaDefinition("blockchain", "token_swap_evidence_revision", "chain-token-revision-v1"));
