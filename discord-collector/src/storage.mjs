@@ -383,7 +383,7 @@ export async function eraseUserMessages(pool,authorIdInput){
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('potapoff:discord-source-write',0))");
     const selected=await client.query(
       "SELECT message_id,guild_id,channel_id FROM discord_messages "+
-      "WHERE author_id=$1 AND deleted_at IS NULL ORDER BY message_id FOR UPDATE",
+      "WHERE author_id=$1 ORDER BY message_id FOR UPDATE",
       [authorId],
     );
     const rows=selected.rows;
