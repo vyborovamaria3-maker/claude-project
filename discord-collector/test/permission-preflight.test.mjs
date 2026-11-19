@@ -346,9 +346,13 @@ test("channel metadata returned for another guild invalidates the preflight resp
     const path=new URL(url).pathname;
     if(path==="/api/v10/users/@me")return jsonResponse({id:botId});
     if(path===`/api/v10/guilds/${guildId}`)return jsonResponse({id:guildId});
+    if(path===`/api/v10/guilds/${guildId}/roles`)
+      return jsonResponse([{id:guildId,permissions:"0"},{id:roleId,permissions:String(VIEW|HISTORY)}]);
+    if(path===`/api/v10/guilds/${guildId}/members/${botId}`)
+      return jsonResponse({user:{id:botId},roles:[roleId]});
     if(path===`/api/v10/channels/${channelId}`)
-      return jsonResponse({id:channelId,guild_id:otherChannelId,type:0});
-    return jsonResponse({permissions:String(VIEW|HISTORY)});
+      return jsonResponse({id:channelId,guild_id:otherChannelId,type:0,permission_overwrites:[]});
+    return jsonResponse({message:"unexpected route"},404);
   };
   const report=await runDiscordPermissionPreflight({
     authorization:authorization(),token:"token",fetchImpl,now,
