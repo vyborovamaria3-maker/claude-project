@@ -387,7 +387,9 @@ async function applyDiscordMessageTombstone(
       VALUES($1,$2,$3,$4,$5,$6)
       ON CONFLICT(evidence_source_id) DO UPDATE SET
         deleted_at=LEAST(discord_message_tombstones.deleted_at,EXCLUDED.deleted_at),
-        deletion_reason=CASE WHEN EXCLUDED.deletion_reason='deleted' THEN 'deleted'
+        deletion_reason=CASE
+          WHEN discord_message_tombstones.deletion_reason='deleted' THEN 'deleted'
+          WHEN EXCLUDED.deletion_reason='deleted' THEN 'deleted'
           WHEN EXCLUDED.deletion_reason='user_requested' THEN 'user_requested'
           ELSE discord_message_tombstones.deletion_reason END,
         deletion_event_key=EXCLUDED.deletion_event_key`,[
