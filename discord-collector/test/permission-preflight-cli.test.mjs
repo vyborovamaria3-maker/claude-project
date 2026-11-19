@@ -97,6 +97,25 @@ test("channel permission success is not reported as Gateway-ready without Messag
   }finally{f.cleanup()}
 });
 
+test("standalone preflight is not Gateway-ready when runtime gate is disabled",async()=>{
+  const f=fixture();
+  const fake=fakeFetch();
+  try{
+    const result=await runPermissionPreflightCli({
+      env:{
+        DISCORD_AUTHORIZATION_PATH:f.path,
+        DISCORD_BOT_TOKEN:"token",
+        DISCORD_MESSAGE_CONTENT_INTENT_CONFIRMED:"true",
+      },
+      fetchImpl:fake.fetchImpl,write:()=>{},now,
+    });
+    assert.equal(result.result.ok,true);
+    assert.equal(result.result.preflightGateEnabled,false);
+    assert.equal(result.result.readyForGateway,false);
+    assert.equal(result.exitCode,1);
+  }finally{f.cleanup()}
+});
+
 test("permission denial makes standalone preflight fail without returning API body or token",async()=>{
   const f=fixture();
   const fake=fakeFetch("1024");
