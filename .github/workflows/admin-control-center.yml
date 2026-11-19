@@ -1,10 +1,9 @@
 name: Admin Control Center CI & Security
 
+# P1 runner isolation: pull_request events execute untrusted PR code and are not
+# allowed on the shared self-hosted runner. CI for PRs runs in the dedicated
+# PR-safe workflows instead (repository-hygiene, security-gates).
 on:
-  pull_request:
-    paths:
-      - "admin-site/**"
-      - ".github/workflows/admin-control-center.yml"
   push:
     branches:
       - main

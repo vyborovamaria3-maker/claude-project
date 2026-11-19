@@ -24,6 +24,7 @@ concurrency:
 
 jobs:
   require-main:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     name: Require main branch
     runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 5
@@ -38,11 +39,13 @@ jobs:
           fi
 
   predeploy:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     name: Validate release source
     needs: require-main
     uses: ./.github/workflows/potapoff-predeploy-gate.yml
 
   publish:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     name: Build and publish immutable SHA images
     needs:
       - require-main
