@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {mkdtempSync,mkdirSync,readFileSync,readdirSync,renameSync,rmSync,statSync} from "node:fs";
+import {mkdtempSync,mkdirSync,readFileSync,readdirSync,renameSync,rmSync,statSync,writeFileSync,symlinkSync,unlinkSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {randomBytes} from "node:crypto";
@@ -61,7 +61,7 @@ test("valid fsynced temporary records are recovered after a crash before rename"
     f.spool.append(event());
     f.spool.close();
     const finalPath=join(f.directory,"00000000000000000001.evt");
-    renameSync(finalPath,finalPath+".tmp");
+    renameSync(finalPath,join(f.directory,"00000000000000000001.tmp"));
     const recovered=new IngressSpool({directory:f.directory,key:f.key}).open();
     try{
       assert.equal(recovered.pendingCount,1);
@@ -76,16 +76,12 @@ test("partial or corrupt temporary records fail closed instead of being silently
   try{
     f.spool.close();
     const path=join(f.directory,"00000000000000000001.tmp");
-    requireWrite(path);
+    writeFileSync(path,"{partial",{mode:0o600});
     assert.throws(()=>new IngressSpool({directory:f.directory,key:f.key}).open(),/malformed JSON|authentication|record header/i);
     assert.equal(readdirSync(f.directory).includes("00000000000000000001.tmp"),true);
   }finally{f.cleanup()}
 });
 
-function requireWrite(path){
-  const {writeFileSync}=require("node:fs");
-  writeFileSync(path,"{partial", {mode:0o600});
-}
 
 test("tampered ciphertext and wrong encryption keys are rejected",()=>{
   const f=fixture();
@@ -95,8 +91,7 @@ test("tampered ciphertext and wrong encryption keys are rejected",()=>{
     const path=join(f.directory,"00000000000000000001.evt");
     const record=JSON.parse(readFileSync(path,"utf8"));
     record.ciphertext=record.ciphertext.slice(0,-4)+"AAAA";
-    const {writeFileSync}=require("node:fs");
-    writeFileSync(path,JSON.stringify(record)+"\\n",{mode:0o600});
+    writeFileSync(path,JSON.stringify(record)+"\n",{mode:0o600});
     assert.throws(()=>new IngressSpool({directory:f.directory,key:f.key}).open(),/authentication/i);
   }finally{f.cleanup()}
 });
@@ -128,7 +123,7 @@ test("invalid event identifiers, content bounds, timestamps and extra fields are
   const f=fixture();
   try{
     assert.throws(()=>f.spool.append(event({messageId:"123"})),/Snowflake/i);
-    assert.throws(()=>f.spool.append(event({content:"x".repeat(20_001})),/content/i);
+    assert.throws(()=>f.spool.append(event({content:"x".repeat(20_001)})),/content/i);
     assert.throws(()=>f.spool.append(event({receivedAt:"2026-11-19T12:00:00"})),/timestamp/i);
     assert.throws(()=>f.spool.append({...event(),rawGatewayPayload:{}}),/unsupported field/i);
     assert.throws(()=>f.spool.append(event({kind:"deleted",content:"must not persist"})),/cannot retain/i);
@@ -147,11 +142,11 @@ test("spool refuses symlink directories and unexpected files",()=>{
   try{
     f.spool.close();
     mkdirSync(join(f.directory,"nested"));
-    const {symlinkSync}=require("node:fs");
     const link=join(f.directory,"link");
     symlinkSync(join(f.directory,"nested"),link);
     assert.throws(()=>new IngressSpool({directory:link,key:f.key}).open(),/symlink/i);
-    const {writeFileSync}=require("node:fs");
+    rmSync(link);
+    rmSync(join(f.directory,"nested"),{recursive:true});
     writeFileSync(join(f.directory,"unexpected.txt"),"no",{mode:0o600});
     assert.throws(()=>new IngressSpool({directory:f.directory,key:f.key}).open(),/Unexpected file/i);
   }finally{f.cleanup()}
