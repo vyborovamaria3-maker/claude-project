@@ -83,7 +83,7 @@ test("partial or corrupt temporary records fail closed instead of being silently
 });
 
 
-test("tampered ciphertext and wrong encryption keys are rejected",()=>{
+test("tampered ciphertext is rejected by authenticated encryption",()=>{
   const f=fixture();
   try{
     f.spool.append(event());
