@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {normalizeMessage,validateAuthorization} from "../src/events.mjs";
+import {IngressSpool} from "../src/ingress-spool.mjs";
+import {mkdtempSync,rmSync} from "node:fs";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import {randomBytes} from "node:crypto";
 import {installSchema,storeObservation,purgeExpired,getRecoveryBaseline,recordRecoveryCheck} from "../src/storage.mjs";
 
 const URL=process.env.DISCORD_TEST_DATABASE_URL;
@@ -12,6 +17,50 @@ const allowed=validateAuthorization({guilds:[{
   guild_id:guildId,channel_ids:[channelId,otherChannel],retention_days:30,
   policy_review_reference:"test",community_permission_reference:"test",reviewed_by:"ci"
 }]});
+
+test("durable spool replay after source commit does not duplicate the transactional outbox",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const directory=mkdtempSync(join(tmpdir(),"potapoff-discord-spool-integration-"));
+  const key=randomBytes(32);
+  let spool;
+  try{
+    await installSchema(pool);
+    spool=new IngressSpool({directory,key}).open();
+    const now=new Date();
+    const createdAt=new Date(now.getTime()-60*60*1000);
+    const messageId="923456789012345678";
+    const message={id:messageId,guildId,channelId,author:{id:"423456789012345678"},
+      content:"replay-safe Discord source event",createdAt,editedAt:null};
+    const snapshot={
+      kind:"observed",messageId,guildId,channelId,authorId:message.author.id,
+      content:message.content,createdAt:createdAt.toISOString(),editedAt:null,
+      receivedAt:now.toISOString(),
+    };
+    spool.append(snapshot);
+    const [first]=spool.listPending();
+    const observation=normalizeMessage(message,"observed",snapshot.receivedAt,guildId);
+    assert.equal((await storeObservation(pool,observation,30)).status,"stored");
+    // Simulate a hard crash after PostgreSQL COMMIT but before local ACK.
+    spool.close();
+    spool=new IngressSpool({directory,key}).open();
+    const [replayed]=spool.listPending();
+    assert.equal(replayed.event.messageId,messageId);
+    assert.equal((await storeObservation(pool,observation,30)).status,"stored");
+    const eventKey=["discord:message",channelId,messageId,observation.revisionKey].join(":");
+    const rows=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM outbox_events WHERE source_system='discord' AND event_key=$1",
+      [eventKey]);
+    assert.equal(rows.rows[0].n,1,"replaying an unacknowledged spool file must not duplicate the source event");
+    assert.equal(spool.ack(first.sequence),true);
+    spool.flushAcks();
+    assert.equal(spool.pendingCount,0);
+  }finally{
+    try{spool?.close()}catch{}
+    await pool.end();
+    rmSync(directory,{recursive:true,force:true});
+  }
+});
 
 test("PostgreSQL revisions, stale history, deletions and revoke/retention", {skip:!URL},async()=>{
   const {default:pg}=await import("pg");
