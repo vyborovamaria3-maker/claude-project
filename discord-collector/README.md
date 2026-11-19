@@ -89,8 +89,14 @@ Expiry timestamps are operator-maintained consent/review deadlines, not an
 external proof that a community has not withdrawn permission early. If
 permission is withdrawn before its recorded expiry, remove the channel from
 the authorization file; the running Collector detects that change on reload.
-A malformed or unreadable policy stops collection rather than continuing
-under stale permissions.
+Update the authorization file by writing a complete mode-0600 temporary
+file, fsyncing it, and atomically renaming it over the active file. A malformed
+or unreadable policy stops collection rather than continuing under stale
+permissions. These leases enforce operator-recorded consent and review
+deadlines; they do not independently prove that a community has not withdrawn
+consent early or that Discord bot channel permissions remain intact. Those
+facts still require operator action and a separate live-permission preflight
+before production rollout.
 
 ## Encrypted durable ingress setup
 
