@@ -318,6 +318,71 @@ async function backfill(guildId,channelId,maxMessages){
   console.log("History sync pass",{channelId,processed:count});
 }
 
+let authorizationReloadTimer;
+let authorizationReloadRunning=false;
+let authorizationDocumentFingerprint=JSON.stringify(doc);
+function authorizationStateFingerprint(snapshot){
+  return JSON.stringify({
+    mode:snapshot.mode,
+    channels:[...snapshot.entries()].map(([channelId,permission])=>[
+      channelId,permission.guildId,permission.retentionDays,
+      permission.permissionReference,permission.policyReviewReference,
+      permission.permissionExpiresAt,permission.policyReviewExpiresAt,
+    ]),
+    expired:[...snapshot.expiredChannels].sort(),
+  });
+}
+let authorizationState=authorizationStateFingerprint(allowed);
+
+async function reloadAuthorization(){
+  const nextDocument=JSON.parse(await readFile(authorizationPath,"utf8"));
+  const next=validateAuthorization(nextDocument,{allowErasureOnly});
+  const nextErasureOnly=next.erasureOnly||(next.size===0&&next.expiredChannels.length>0);
+  const nextDocumentFingerprint=JSON.stringify(nextDocument);
+  const nextState=authorizationStateFingerprint(next);
+  if(nextDocumentFingerprint===authorizationDocumentFingerprint&&nextState===authorizationState)return;
+
+  // Snapshot new-channel recovery watermarks before making those channels live.
+  for(const channelId of next.keys()){
+    if(!allowed.has(channelId))
+      recoveryBaselines.set(channelId,await getRecoveryBaseline(pool,channelId));
+  }
+  allowed=next;
+  erasureOnly=nextErasureOnly;
+  authorizationDocumentFingerprint=nextDocumentFingerprint;
+  authorizationState=nextState;
+
+  // The new allowlist is authoritative before any asynchronous purge starts.
+  // Events from removed/expired channels are rejected immediately.
+  const spoolResult=spool.sweepExpired(allowed);
+  const purgeResult=await purgeExpired(pool,allowed,{allowEmpty:erasureOnly});
+  console.log("Discord authorization policy reloaded",{
+    activeChannels:allowed.size,
+    expiredChannels:allowed.expiredChannels.length,
+    queuedEventsErased:spoolResult.eventsErased,
+    sourceRowsErased:purgeResult.rowsErased,
+    erasureTombstonesQueued:purgeResult.tombstonesQueued,
+  });
+  if(erasureOnly){
+    acceptingEvents=false;
+    console.log("No active Discord authorization remains; stopping after erasure");
+    void shutdown();
+  }
+}
+
+authorizationReloadTimer=setInterval(()=>{
+  if(authorizationReloadRunning||stopping)return;
+  authorizationReloadRunning=true;
+  void reloadAuthorization().catch(()=>{
+    failures++;
+    acceptingEvents=false;
+    process.exitCode=1;
+    console.error("Discord authorization reload failed; collection stopped","authorization_reload_failed");
+    void shutdown();
+  }).finally(()=>{authorizationReloadRunning=false;});
+},authorizationReloadMs);
+authorizationReloadTimer.unref();
+
 client.once(Events.ClientReady,()=>{
   startupTask=(async()=>{
     console.log("Collector connected",{channels:allowed.size,pendingIngressEvents:spool.pendingCount});
