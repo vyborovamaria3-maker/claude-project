@@ -57,7 +57,7 @@ test("preflight verifies only allowlisted text channels and computed bot permiss
   assert.equal(report.passedChannels,1);
   assert.equal(report.botId,botId);
   assert.deepEqual(report.guilds[0].channels[0].checks,{
-    viewChannel:true,readMessageHistory:true,administrator:false,sendMessages:false,
+    viewChannel:true,readMessageHistory:true,administrator:false,sendMessages:false,leastPrivilege:true,
   });
   assert.ok(fake.calls.some(call=>call.path===`/api/v10/channels/${channelId}/permissions/member/${botId}`));
   assert.ok(!fake.calls.some(call=>call.path.includes("/messages")));
@@ -103,7 +103,7 @@ test("SEND_MESSAGES is rejected because the Collector is read-only",async()=>{
     authorization:authorization(),token:"token",fetchImpl:fake.fetchImpl,now,
   });
   assert.equal(report.ok,false);
-  assert.equal(report.guilds[0].channels[0].errorCode,"unnecessary_send_messages_permission");
+  assert.equal(report.guilds[0].channels[0].errorCode,"unnecessary_permissions_granted");
 });
 
 test("channel omitted from visible guild channels fails without probing it",async()=>{
