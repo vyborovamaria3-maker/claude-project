@@ -149,9 +149,9 @@ prints a report containing IDs, check results and error codes only.
 
 ~~~sh
 cd discord-collector
-DISCORD_BOT_TOKEN=REDACTED \\
-DISCORD_AUTHORIZATION_PATH=/private/guilds.json \\
-DISCORD_MESSAGE_CONTENT_INTENT_CONFIRMED=true \\
+DISCORD_BOT_TOKEN=REDACTED \
+DISCORD_AUTHORIZATION_PATH=/private/guilds.json \
+DISCORD_MESSAGE_CONTENT_INTENT_CONFIRMED=true \
 npm run preflight
 ~~~
 
