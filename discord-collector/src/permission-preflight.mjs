@@ -1,6 +1,11 @@
 import {isDiscordSnowflake} from "@claude-project/contracts";
 
-const API_BASE_URL="https://discord.com/api/v10";
+export function discordApiBaseUrl(version=process.env.DISCORD_API_VERSION??"v10"){
+  if(typeof version!=="string"||!/^v[0-9]{1,3}$/.test(version))
+    throw new TypeError("DISCORD_API_VERSION must be a version such as v10");
+  return "https://discord.com/api/"+version;
+}
+const API_BASE_URL=discordApiBaseUrl();
 const USER_VIEW_CHANNEL=1n<<10n;
 const USER_READ_MESSAGE_HISTORY=1n<<16n;
 const USER_ADMINISTRATOR=1n<<3n;
@@ -51,14 +56,14 @@ async function retryAfterMs(response){
   return null;
 }
 
-async function requestJson(path,{token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep}){
+async function requestJson(path,{token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep,scheduleRest}){
   let normalizedBaseUrl=baseUrl;
   while(normalizedBaseUrl.endsWith("/"))normalizedBaseUrl=normalizedBaseUrl.slice(0,-1);
   const url=normalizedBaseUrl+path;
   for(let attempt=0;attempt<=maxRetries;attempt++){
     let response;
     try{
-      response=await fetchImpl(url,{
+      const request=()=>fetchImpl(url,{
         method:"GET",
         headers:{
           Authorization:"Bot "+token,
@@ -67,6 +72,7 @@ async function requestJson(path,{token,fetchImpl,baseUrl,timeoutMs,maxRetries,ma
         },
         signal:AbortSignal.timeout(timeoutMs),
       });
+      response=await (scheduleRest?scheduleRest("preflight",request):request());
     }catch{
       throw new DiscordApiError("discord_api_unavailable");
     }
@@ -283,7 +289,7 @@ export async function runDiscordPermissionPreflight({
     try{
       guildResponse=await requestJson(
         "/guilds/"+group.guildId,
-        {token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep},
+        {token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep,scheduleRest},
       );
     }catch(error){
       const code=error instanceof DiscordApiError?error.code:"discord_api_unavailable";
