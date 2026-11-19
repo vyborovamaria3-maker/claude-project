@@ -121,17 +121,13 @@ Before opening the Gateway, the Collector performs a read-only REST preflight:
 3. `GET /channels/{channel.id}` fetches metadata only for each channel ID
    already present in the private authorization file and verifies its guild
    and supported type. No unlisted channel IDs are requested.
-4. `GET /guilds/{guild.id}/roles` and
-   `GET /guilds/{guild.id}/members/{bot.id}` retrieve only the bot's role
-   inputs. The channel response includes permission overwrites; the preflight
-   computes the bot's effective permissions locally using Discord's documented
-   order: base role permissions, @everyone overwrite, aggregated role
-   overwrites, then the bot member overwrite. Administrator bypass is always
-   rejected. The resulting permission set must be exactly
-   `VIEW_CHANNEL` plus `READ_MESSAGE_HISTORY`.
+4. `GET /channels/{channel.id}/permissions/member/{user.id}` reads Discord's
+   computed permissions for the bot member, including role and channel
+   overwrites. The preflight requires `VIEW_CHANNEL` and
+   `READ_MESSAGE_HISTORY`.
 
 Only guild text (type 0) and announcement (type 5) channels are supported.
-The locally computed effective channel permission bitfield must contain exactly
+The effective channel permission bitfield must contain exactly
 `VIEW_CHANNEL` and `READ_MESSAGE_HISTORY`; every other permission is rejected.
 This is intentionally strict: the Collector does not need to post, moderate,
 manage channels or roles, or administer a server. Missing/hidden channels,
