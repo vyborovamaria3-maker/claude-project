@@ -1,7 +1,12 @@
 name: Telegram Intelligence v19 CI
 
+# P1 runner isolation: pull_request events execute untrusted PR code and are not
+# allowed on the shared self-hosted runner. This workflow now runs for trusted
+# refs only: push to main, or manual dispatch on main.
 on:
-  pull_request:
+  push:
+    branches:
+      - main
     paths:
       - "solana-launcher/backend/**"
       - "solana-launcher/app/miniapp/**"
@@ -19,17 +24,17 @@ on:
       - "solana-launcher/scripts/deploy-production.sh"
       - "solana-launcher/scripts/healthcheck-production.sh"
       - ".github/workflows/telegram-intelligence-v19-ci.yml"
-  push:
-    branches:
-      - agent/telegram-intelligence-v19
   workflow_dispatch:
 
 permissions:
   contents: read
 
 # Runner selection is controlled centrally by POTAPOFF_RUNNER; self-hosted is the default.
+# workflow_dispatch runs the default-branch workflow file, but an operator may pick any
+# ref; jobs below refuse non-main refs so untrusted branch code never reaches the runner.
 jobs:
   backend:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     env:
       SECRET_KEY: a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9
@@ -60,6 +65,7 @@ jobs:
         run: pytest -q
 
   frontend:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     defaults:
       run:
@@ -81,6 +87,7 @@ jobs:
         run: npx vitest run --environment node lib/tginvite-storage.test.ts lib/tginvite-invite-policy.test.ts lib/tginvite-invite-route.test.ts lib/tginvite-telegram-client.test.ts lib/tginvite-vault-client.test.ts lib/tginvite-jobs-route.test.ts lib/tginvite-invite-transport.test.ts lib/tginvite-history-export.test.ts lib/tginvite-mtproto.test.ts lib/tginvite-auth.test.ts lib/tginvite-encryption.test.ts lib/tginvite-filter.test.ts lib/tginvite-job-queue.test.ts lib/tginvite-rate-limiter.test.ts lib/tginvite-optin.test.ts lib/tginvite-dashboard-data.test.ts lib/tginvite-monitor-data.test.ts
 
   compose:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     defaults:
       run:

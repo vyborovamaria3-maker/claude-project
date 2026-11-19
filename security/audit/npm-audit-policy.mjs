@@ -17,6 +17,14 @@ try {
   process.exit(2);
 }
 
+// Fail closed on syntactically-valid-but-incomplete npm output (for example
+// an npm error envelope): the gate must never go green on a report that does
+// not actually contain the vulnerability table.
+if (!report || typeof report !== 'object' || !report.vulnerabilities || typeof report.vulnerabilities !== 'object' || Array.isArray(report.vulnerabilities)) {
+  console.error('NPM_AUDIT_POLICY_FAIL npm audit report does not contain a vulnerabilities object; audit output is incomplete or the command failed.');
+  process.exit(2);
+}
+
 const vulnerabilities = report?.vulnerabilities ?? {};
 const highOrCritical = Object.entries(vulnerabilities).filter(([, value]) =>
   value && (value.severity === 'high' || value.severity === 'critical')
@@ -51,12 +59,35 @@ function isAllowedBigintBuffer(item) {
     (haystack.toLowerCase().includes('bigint-buffer') && haystack.toLowerCase().includes('buffer overflow'));
 }
 
-const disallowedAdvisories = severeAdvisories.filter((item) => !isAllowedBigintBuffer(item));
+// Documented, time-bounded risk acceptance for the picomatch ReDoS advisory
+// GHSA-fc5q-39xc-vjpf (2026-11): the advisory affects every published
+// picomatch release (last_affected 4.0.7 == latest; no fixed version exists
+// upstream), so no lockfile bump can remediate it. In the production graph it
+// is reachable only through @solana/wallet-adapter-mobile -> react-native ->
+// metro/jest tooling code inside the wallet SDK; the runtime services do not
+// process attacker-controlled glob patterns, and CI never runs PR code on the
+// persistent self-hosted runner. The exception is REQUIRED (fail-closed when
+// missing or expired), must be cited by advisory id, and must be removed as
+// soon as upstream publishes a fixed release.
+const ALLOWED_PICOMATCH_GHSA = 'GHSA-fc5q-39xc-vjpf';
+const picomatchAllowedUntil = process.env.ALLOW_PICOMATCH_UNTIL ?? '';
+
+function isAllowedPicomatch(item) {
+  // Strictly cited by advisory id: a loose title/name fallback would also
+  // waive any FUTURE picomatch advisory, which the acceptance never covered.
+  const haystack = `${item.packageName ?? ''} ${item.name ?? ''} ${item.title ?? ''} ${item.url ?? ''}`;
+  return haystack.includes(ALLOWED_PICOMATCH_GHSA);
+}
+
+const picomatchExceptions = severeAdvisories.filter(isAllowedPicomatch);
+const bigintExceptions = severeAdvisories.filter(isAllowedBigintBuffer);
+const disallowedAdvisories = severeAdvisories.filter((item) => !isAllowedBigintBuffer(item) && !isAllowedPicomatch(item));
 if (disallowedAdvisories.length > 0) {
   console.error('NPM_AUDIT_POLICY_FAIL unexpected high/critical advisories:');
   for (const item of disallowedAdvisories) {
     console.error(`- ${item.packageName}: ${item.severity}: ${item.title ?? item.url ?? 'unknown advisory'}`);
   }
+  console.error('NPM_AUDIT_POLICY_NOTE the picomatch ReDoS advisory needs ALLOW_PICOMATCH_UNTIL=YYYY-MM-DD plus this exact advisory id in the tree; any other advisory is a real failure.');
   process.exit(1);
 }
 
@@ -68,13 +99,29 @@ if (severeAdvisories.length === 0) {
   process.exit(1);
 }
 
-if (!allowedUntil || !/^\d{4}-\d{2}-\d{2}$/.test(allowedUntil)) {
-  console.error('NPM_AUDIT_POLICY_FAIL ALLOW_BIGINT_BUFFER_UNTIL is required for the known upstream exception');
-  process.exit(1);
+// The bigint-buffer window is only enforced while its advisory is actually
+// present in the report: an expired window for an advisory that no longer
+// appears in the tree must not mask unrelated findings (or the lack of them).
+if (bigintExceptions.length > 0) {
+  if (!allowedUntil || !/^\d{4}-\d{2}-\d{2}$/.test(allowedUntil)) {
+    console.error('NPM_AUDIT_POLICY_FAIL ALLOW_BIGINT_BUFFER_UNTIL is required for the known upstream exception');
+    process.exit(1);
+  }
+  if (today > allowedUntil) {
+    console.error(`NPM_AUDIT_POLICY_FAIL bigint-buffer exception expired on ${allowedUntil}`);
+    process.exit(1);
+  }
 }
-if (today > allowedUntil) {
-  console.error(`NPM_AUDIT_POLICY_FAIL bigint-buffer exception expired on ${allowedUntil}`);
-  process.exit(1);
+if (picomatchExceptions.length > 0) {
+  if (!picomatchAllowedUntil || !/^\d{4}-\d{2}-\d{2}$/.test(picomatchAllowedUntil)) {
+    console.error('NPM_AUDIT_POLICY_FAIL ALLOW_PICOMATCH_UNTIL=YYYY-MM-DD is required for the unfixed picomatch ReDoS advisory (GHSA-fc5q-39xc-vjpf): no fixed release exists upstream, so the acceptance must be explicit, dated and logged.');
+    process.exit(1);
+  }
+  if (today > picomatchAllowedUntil) {
+    console.error(`NPM_AUDIT_POLICY_FAIL picomatch ReDoS exception expired on ${picomatchAllowedUntil}; re-evaluate or remove the acceptance once upstream publishes a fixed release.`);
+    process.exit(1);
+  }
+  console.log(`NPM_AUDIT_POLICY_ALLOWLIST ${ALLOWED_PICOMATCH_GHSA} (unfixed upstream ReDoS, prod reach: wallet-adapter-mobile tooling graph) accepted until ${picomatchAllowedUntil}`);
 }
 
 // Ensure every high/critical entry can be traced through the vulnerability graph to
@@ -102,8 +149,10 @@ for (const [packageName, value] of highOrCritical) {
     process.exit(1);
   }
   for (const root of roots) {
-    if (!root.includes(ALLOWED_BIGINT_BUFFER_GHSA) && !root.toLowerCase().includes('bigint-buffer')) {
-      console.error(`NPM_AUDIT_POLICY_FAIL ${packageName} traces to an unexpected severe advisory`);
+    const allowedBigint = root.includes(ALLOWED_BIGINT_BUFFER_GHSA) || root.toLowerCase().includes('bigint-buffer');
+    const allowedPicomatch = root.includes(ALLOWED_PICOMATCH_GHSA);
+    if (!allowedBigint && !allowedPicomatch) {
+      console.error(`NPM_AUDIT_POLICY_FAIL ${packageName} traces to an unexpected severe advisory: ${root.split('|')[0]}`);
       process.exit(1);
     }
   }
@@ -113,4 +162,10 @@ console.warn(
   `NPM_AUDIT_POLICY_EXCEPTION ${ALLOWED_BIGINT_BUFFER_GHSA} accepted through ${allowedUntil}; ` +
   'this is an explicit upstream-blocked availability-risk exception, not a clean audit.'
 );
-console.log(`NPM_AUDIT_POLICY_OK high/critical findings are limited to the documented bigint-buffer exception (${highOrCritical.length} affected package entries)`);
+if (picomatchExceptions.length > 0) {
+  console.warn(
+    `NPM_AUDIT_POLICY_EXCEPTION ${ALLOWED_PICOMATCH_GHSA} accepted through ${picomatchAllowedUntil}; ` +
+    'no fixed picomatch release exists upstream; remove this acceptance when upstream publishes a fix.'
+  );
+}
+console.log(`NPM_AUDIT_POLICY_OK high/critical findings are limited to the documented exceptions (${highOrCritical.length} affected package entries)`);

@@ -3,16 +3,6 @@ name: Security Gates
 on:
   pull_request:
     branches: [main]
-    paths:
-      - "solana-launcher/**"
-      - "solana-subscription-service/**"
-      - "telegram-miniapp/backend-new/**"
-      - "telegram-miniapp/bot/**"
-      - "security/**"
-      - ".github/workflows/security-gates.yml"
-      - ".github/workflows/potapoff-predeploy-gate.yml"
-      - ".github/workflows/potapoff-release-images.yml"
-      - ".github/workflows/potapoff-production.yml"
   workflow_dispatch:
 
 concurrency:
@@ -23,9 +13,14 @@ permissions:
   contents: read
 
 # Runner selection is controlled centrally by POTAPOFF_RUNNER; self-hosted is the default.
+# P1 isolation: pull_request events execute untrusted PR code and must never land on the
+# shared self-hosted runner; they run on ephemeral GitHub-hosted runners instead (free for
+# public repositories). workflow_dispatch runs the default-branch workflow file only: jobs
+# below refuse non-main refs so a branch ref cannot execute on the production runner.
 jobs:
   secret-scan:
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -44,7 +39,8 @@ jobs:
         run: python3 security/audit/secret-scan.py --mode history
 
   frontend-security:
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 25
     defaults:
       run:
@@ -70,7 +66,8 @@ jobs:
           node ../security/audit/npm-audit-policy.mjs "$RUNNER_TEMP/frontend-npm-audit.json"
 
   backend-security:
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 25
     env:
       SECRET_KEY: a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9
@@ -106,7 +103,8 @@ jobs:
         run: pip-audit
 
   subscription-service-security:
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 25
     defaults:
       run:
@@ -125,18 +123,25 @@ jobs:
       - name: API typecheck
         run: npm run typecheck -w @solsub/api
       - name: Vendored dependency security regressions
-        run: node --test ../security/audit/bigint-safe.test.mjs ../security/audit/braces-safe.test.mjs
+        run: node --test ../security/audit/bigint-safe.test.mjs ../security/audit/braces-safe.test.mjs ../security/audit/npm-audit-policy.test.mjs
       - name: API security regressions
         run: npm run test -w @solsub/api
       - name: Production dependency audit
         env:
           ALLOW_BIGINT_BUFFER_UNTIL: "2026-10-01"
+          # Unfixed picomatch ReDoS (GHSA-fc5q-39xc-vjpf): no patched release
+          # exists upstream; reachable in this production graph only via the
+          # @solana/wallet-adapter-mobile -> react-native -> metro tooling
+          # chain inside the wallet SDK. Acceptance is explicit, dated and
+          # fail-closed in security/audit/npm-audit-policy.mjs.
+          ALLOW_PICOMATCH_UNTIL: "2027-01-15"
         run: |
           npm audit --omit=dev --json > "$RUNNER_TEMP/subscription-npm-audit.json" || true
           node ../security/audit/npm-audit-policy.mjs "$RUNNER_TEMP/subscription-npm-audit.json"
 
   legacy-miniapp-security:
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 20
     defaults:
       run:

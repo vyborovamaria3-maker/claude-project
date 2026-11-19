@@ -1,29 +1,40 @@
 name: Intelligence CI
 
+# P1 runner isolation: pull_request events execute untrusted PR code and must
+# never land on the shared self-hosted runner. PR events run on ephemeral
+# GitHub-hosted runners (free for this public repository); push to main and
+# manual dispatch on main keep the central self-hosted selection.
 on:
   pull_request:
+  push:
+    branches:
+      - main
     paths:
-      - "intelligence/**"
-      - "scripts/verify_intelligence.py"
-      - "admin-site/app/intelligence_view.py"
-      - "admin-site/app/intelligence_view_factory.py"
-      - "admin-site/app/main_admin.py"
-      - "admin-site/app/config.py"
-      - "admin-site/tests/test_intelligence_*.py"
-      - "admin-site/docker-compose.yml"
-      - "admin-site/.env.example"
-      - "admin-site/.env.intelligence.example"
-      - "admin-site/requirements.txt"
-      - ".gitignore"
-      - ".github/workflows/intelligence-ci.yml"
+      - 'intelligence/**'
+      - 'scripts/verify_intelligence.py'
+      - 'admin-site/app/intelligence_view.py'
+      - 'admin-site/app/intelligence_view_factory.py'
+      - 'admin-site/app/main_admin.py'
+      - 'admin-site/app/config.py'
+      - 'admin-site/tests/test_intelligence_*.py'
+      - 'admin-site/docker-compose.yml'
+      - 'admin-site/.env.example'
+      - 'admin-site/.env.intelligence.example'
+      - 'admin-site/requirements.txt'
+      - '.gitignore'
+      - '.github/workflows/intelligence-ci.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 # Runner selection is controlled centrally by POTAPOFF_RUNNER; self-hosted is the default.
+# workflow_dispatch runs the default-branch workflow file, but an operator may pick any
+# ref; jobs below refuse non-main refs so untrusted branch code never reaches the runner.
 jobs:
   intelligence-tests:
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 30
 
     services:
