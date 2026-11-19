@@ -185,9 +185,26 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
         observedAt:deletedAt,occurredAt:null,contentSha256:null,contentErased:true,deletionReason:"deleted",producerVersion:"0.1.0"},
     };
     await emitInNativeTransaction(discordPool,deletion);
+    const deletionSourceRow=(await discordPool.query(
+      "SELECT created_at,payload FROM outbox_events WHERE source_system='discord' AND event_kind='message_deleted'")).rows[0];
+    const deletionDiagnosticClient=await destPool.connect();
+    try{
+      await deletionDiagnosticClient.query("BEGIN");
+      await ingestDestinationEvent(deletionDiagnosticClient,{
+        sourceSystem:"discord",eventKind:"message_deleted",eventKey:deletion.eventKey,
+        schemaVersion:"discord-message-v1",payload:deletionSourceRow.payload,createdAt:deletionSourceRow.created_at,
+      });
+    }catch(error){
+      throw new Error("Discord deletion destination preflight failed: "+(error instanceof Error?error.message:String(error)));
+    }finally{
+      await deletionDiagnosticClient.query("ROLLBACK");
+      deletionDiagnosticClient.release();
+    }
     const deletedStats=await runDeliveryBatch(port(discordPool),destPool,
       {workerId:"discord-delete",batchSize:1,leaseMs:120000});
-    assert.equal(deletedStats.delivered,1,JSON.stringify(deletedStats));
+    const deletionFailures=deletedStats.failed?await discordPool.query(
+      "SELECT last_error FROM outbox_events WHERE source_system='discord' AND event_kind='message_deleted'"):null;
+    assert.equal(deletedStats.delivered,1,JSON.stringify({stats:deletedStats,failures:deletionFailures?.rows??[]}));
     assert.equal(deletedStats.failed,0);
     const kinds=await destPool.query("SELECT timeline_kind FROM timeline_events WHERE source_system='discord' ORDER BY occurred_at");
     assert.deepEqual(kinds.rows.map(r=>r.timeline_kind),["discord_message_deleted"],
