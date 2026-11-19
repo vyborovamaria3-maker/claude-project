@@ -9,7 +9,8 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "start": "node src/index.mjs",
-    "preflight": "node src/preflight-cli.mjs"
+    "preflight": "node src/preflight-cli.mjs",
+    "erase-user": "node src/erase-user.mjs"
   },
   "dependencies": {
     "discord.js": "^14.19.3",
