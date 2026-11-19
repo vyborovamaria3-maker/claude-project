@@ -36,6 +36,15 @@ test("authorization leases expire at the earliest consent or policy deadline",()
  assert.equal(active.get(channelId).expiresAt,"2026-12-19T00:00:00.000Z");
 });
 
+test("event admission rejects a lease at expiry without waiting for file reload",()=>{
+ const allowed=validateAuthorization(valid);
+ const observation=normalizeMessage({id:messageId,guildId,channelId,
+  author:{id:"423456789012345678"},content:"hello",createdAt:new Date()}, "observed");
+ assert.equal(allowedObservation(allowed,observation),true);
+ allowed.get(channelId).expiresAt="2026-11-18T00:00:00.000Z";
+ assert.equal(allowedObservation(allowed,observation),false);
+});
+
 test("empty allowlist requires explicit erasure-only mode and operator opt-in",()=>{
  const empty={version:2,mode:"erasure_only",guilds:[]};
  assert.throws(()=>validateAuthorization(empty),/DISCORD_ALLOW_ERASURE_ONLY/);
