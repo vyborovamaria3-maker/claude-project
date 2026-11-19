@@ -191,6 +191,7 @@ export async function runDiscordPermissionPreflight({
   maxChannels=1_000,
   now=new Date(),
   sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms)),
+  scheduleRest=null,
 }={}){
   validateOptions({token,authorization,fetchImpl,timeoutMs,maxRetries,maxRetryDelayMs,maxChannels});
   let parsedBaseUrl;
@@ -250,7 +251,7 @@ export async function runDiscordPermissionPreflight({
 
   let bot;
   try{
-    bot=await requestJson("/users/@me",{token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep});
+    bot=await requestJson("/users/@me",{token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep,scheduleRest});
   }catch(error){
     const code=error instanceof DiscordApiError?error.code:"discord_api_unavailable";
     for(const group of groups){
@@ -318,7 +319,7 @@ export async function runDiscordPermissionPreflight({
       try{
         channel=await requestJson(
           "/channels/"+result.channelId,
-          {token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep},
+          {token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep,scheduleRest},
         );
       }catch(error){
         const code=error instanceof DiscordApiError?error.code:"discord_api_unavailable";
@@ -352,7 +353,7 @@ export async function runDiscordPermissionPreflight({
       }catch(error){
         const code=error instanceof DiscordApiError?error.code:"discord_api_unavailable";
         const mapped=code==="discord_forbidden"?"view_channel_denied":
-          code==="discord_not_found"?"channel_not_visible_or_missing":code;
+          code==="discord_not_found"?"permission_endpoint_unsupported":code;
         Object.assign(result,failedChannel(result.channelId,mapped));
         if(["invalid_bot_token","discord_api_unavailable","discord_rate_limited"].includes(code))
           stopAfterApiFailure=code;
