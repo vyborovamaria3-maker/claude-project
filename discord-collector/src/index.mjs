@@ -14,10 +14,16 @@ for(const key of ["DISCORD_BOT_TOKEN","DISCORD_SOURCE_DATABASE_URL","DISCORD_AUT
   "DISCORD_INGRESS_SPOOL_DIR","DISCORD_INGRESS_SPOOL_KEY"]){
   if(!process.env[key])throw new Error("Missing config: "+key);
 }
-const doc=JSON.parse(await readFile(process.env.DISCORD_AUTHORIZATION_PATH,"utf8"));
+const botToken=process.env.DISCORD_BOT_TOKEN;
+const sourceDatabaseUrl=process.env.DISCORD_SOURCE_DATABASE_URL;
+const authorizationPath=process.env.DISCORD_AUTHORIZATION_PATH;
+const spoolDirectory=process.env.DISCORD_INGRESS_SPOOL_DIR;
+const doc=JSON.parse(await readFile(authorizationPath,"utf8"));
 const allowed=validateAuthorization(doc);
 const spoolKey=parseIngressSpoolKey(process.env.DISCORD_INGRESS_SPOOL_KEY);
-delete process.env.DISCORD_INGRESS_SPOOL_KEY;
+for(const secretName of ["DISCORD_BOT_TOKEN","DISCORD_SOURCE_DATABASE_URL",
+  "DISCORD_AUTHORIZATION_PATH","DISCORD_INGRESS_SPOOL_KEY"])
+  delete process.env[secretName];
 const spoolMaxBytes=Number(process.env.DISCORD_INGRESS_SPOOL_MAX_BYTES||536_870_912);
 const spoolMaxEvents=Number(process.env.DISCORD_INGRESS_SPOOL_MAX_EVENTS||100_000);
 if(!Number.isSafeInteger(spoolMaxBytes)||spoolMaxBytes<1_048_576||spoolMaxBytes>10_737_418_240)
@@ -29,7 +35,7 @@ if(process.env.DISCORD_GAP_RECOVERY_ENABLED==="true" &&
    (!Number.isInteger(recoveryMaxPages)||recoveryMaxPages<1||recoveryMaxPages>50))
   throw new RangeError("DISCORD_GAP_RECOVERY_MAX_PAGES must be in 1..50");
 
-const pool=new pg.Pool({connectionString:process.env.DISCORD_SOURCE_DATABASE_URL,max:4,connectionTimeoutMillis:10_000,keepAlive:true,application_name:"potapoff-discord-collector"});
+const pool=new pg.Pool({connectionString:sourceDatabaseUrl,max:4,connectionTimeoutMillis:10_000,keepAlive:true,application_name:"potapoff-discord-collector"});
 const singletonClient=await pool.connect().catch(async error=>{spoolKey.fill(0);await pool.end();throw error});
 let singletonLockHeld=false;
 let spool=null;
@@ -42,7 +48,7 @@ try{
   if(lock.rows[0]?.acquired!==true)throw new Error("Another Discord Collector already holds the source lock");
   singletonLockHeld=true;
   spool=new IngressSpool({
-    directory:process.env.DISCORD_INGRESS_SPOOL_DIR,
+    directory:spoolDirectory,
     key:spoolKey,
     maxBytes:spoolMaxBytes,
     maxEvents:spoolMaxEvents,
@@ -379,7 +385,7 @@ try{
 }
 if(stopping)throw new Error("Collector stopped before Gateway login");
 try{
-  await client.login(process.env.DISCORD_BOT_TOKEN);
+  await client.login(botToken);
 }catch{
   failures++;
   acceptingEvents=false;
