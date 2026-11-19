@@ -2,10 +2,11 @@ import {readAuthorizationFile} from "./authorization-file.mjs";
 import {Client,GatewayIntentBits,Events,Partials} from "discord.js";
 import pg from "pg";
 import {validateAuthorization,normalizeMessage,allowedObservation} from "./events.mjs";
-import {installSchema,storeObservation,getBackfillCursor,advanceBackfillCursor,purgeExpired,getRecoveryBaseline,recordRecoveryCheck} from "./storage.mjs";
+import {installSchema,storeObservation,getBackfillCursor,advanceBackfillCursor,purgeExpired,getRecoveryBaseline,recordRecoveryCheck,recordCoverageFailure} from "./storage.mjs";
 import {scanRecentGap} from "./reconcile.mjs";
 import {IngressSpool,parseIngressSpoolKey} from "./ingress-spool.mjs";
 import {runDiscordPermissionPreflight} from "./permission-preflight.mjs";
+import {replaySpoolEntries} from "./spool-replay.mjs";
 
 if(process.env.DISCORD_COLLECTOR_ENABLED!=="true"){
   console.error("Disabled: DISCORD_COLLECTOR_ENABLED is not true");
@@ -295,13 +296,16 @@ function enqueueGatewayEvent(kind,message){
 }
 
 function isUnknownDiscordMessage(error){
-  return error?.code===10008||error?.status===404||error?.rawError?.code===10008;
+  // Only Discord's explicit Unknown Message code is terminal. A generic HTTP
+  // 404 may describe a missing channel/route and must not silently ACK data.
+  return error?.code===10008||error?.rawError?.code===10008;
 }
 
 async function processSpoolEntry(entry,{allowHydration=true}={}){
   const event=entry.event;
   const permission=allowed.get(event.channelId);
-  if(!permissionActive(permission)||permission.guildId!==event.guildId)return; // Current allowlist wins over queued data.
+  if(!permissionActive(permission)||permission.guildId!==event.guildId)
+    return {ack:true,status:"not-authorized"}; // Current allowlist wins over queued data.
 
   let message={
     id:event.messageId,
@@ -315,12 +319,9 @@ async function processSpoolEntry(entry,{allowHydration=true}={}){
   const needsHydration=event.kind!=="deleted"&&
     (!event.createdAt||(event.kind==="edited"&&(!event.editedAt||event.content===null)));
   if(needsHydration&&!allowHydration){
-    await recordRecoveryCheck(pool,permission.guildId,event.channelId,
-      recoveryBaselines.get(event.channelId)??null,{status:"failed"});
-    failures++;
-    process.exitCode=1;
-    console.error("Pre-login Discord event lacks enough source fields; coverage marked failed",event.kind);
-    return;
+    // Keep this exact encrypted record at the head of the queue. The Gateway
+    // must be allowed to connect before REST hydration can be attempted.
+    return {ack:false,status:"needs_hydration"};
   }
   if(needsHydration){
     try{
@@ -329,22 +330,28 @@ async function processSpoolEntry(entry,{allowHydration=true}={}){
       message=await channel.messages.fetch(event.messageId);
     }catch(error){
       if(!isUnknownDiscordMessage(error))throw error;
-      // A deleted message may no longer be fetchable. Record the coverage gap,
-      // then continue so a queued delete event behind it can still be applied.
-      await recordRecoveryCheck(pool,permission.guildId,event.channelId,
+      const currentPermission=allowed.get(event.channelId);
+      if(!permissionActive(currentPermission)||currentPermission.guildId!==event.guildId)
+        return {ack:true,status:"not-authorized"};
+      // A terminal Unknown Message is not hydratable. Persist a per-message,
+      // content-free coverage failure before ACK so analytics can see the gap.
+      await recordCoverageFailure(pool,event,currentPermission.retentionDays);
+      await recordRecoveryCheck(pool,currentPermission.guildId,event.channelId,
         recoveryBaselines.get(event.channelId)??null,{status:"failed"});
       failures++;
       process.exitCode=1;
-      console.error("Discord ingress event could not be hydrated; coverage marked failed",event.kind);
-      return;
+      console.error("Discord ingress event could not be hydrated; durable coverage gap recorded",event.kind);
+      return {ack:true,status:"coverage-gap"};
     }
   }
   const observation=normalizeMessage(message,event.kind,event.receivedAt,event.guildId);
-  if(!allowedObservation(allowed,observation))return;
+  if(!allowedObservation(allowed,observation))return {ack:true,status:"not-allowed"};
   const currentPermission=allowed.get(event.channelId);
-  if(!permissionActive(currentPermission)||currentPermission.guildId!==event.guildId)return;
-  await storeObservation(pool,observation,currentPermission.retentionDays,
+  if(!permissionActive(currentPermission)||currentPermission.guildId!==event.guildId)
+    return {ack:true,status:"not-authorized"};
+  const result=await storeObservation(pool,observation,currentPermission.retentionDays,
     new Date(),currentPermission.expiresAt);
+  return {ack:true,status:result.status};
 }
 
 function drainSpool({allowHydration=true}={}){
@@ -352,14 +359,20 @@ function drainSpool({allowHydration=true}={}){
   drainPromise=(async()=>{
     while(acceptingEvents&&spool.pendingCount>0){
       const batch=spool.listPending(100);
-      for(const entry of batch){
-        if(!acceptingEvents)break;
-        await processSpoolEntry(entry,{allowHydration});
-        // PostgreSQL commits before the local event is acknowledged. If the
-        // process crashes before unlink, the idempotent source transaction replays.
-        spool.ack(entry.sequence);
+      const replay=await replaySpoolEntries({
+        entries:batch,
+        processEntry:entry=>processSpoolEntry(entry,{allowHydration}),
+        acknowledge:sequence=>spool.ack(sequence),
+        flushAcks:()=>spool.flushAcks(),
+        shouldContinue:()=>acceptingEvents,
+      });
+      if(replay.blocked){
+        console.log("Discord durable ingress replay deferred until Gateway REST hydration",{
+          pendingEvents:spool.pendingCount,
+          blockedSequence:replay.blockedSequence,
+        });
+        break;
       }
-      spool.flushAcks();
       if(spool.pendingCount>0)await new Promise(resolve=>setImmediate(resolve));
     }
   })().catch(error=>{
