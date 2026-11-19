@@ -131,6 +131,7 @@ try{
     authorization:allowed,
     token:botToken,
     maxChannels:permissionPreflightMaxChannels,
+    scheduleRest:(priority,task)=>restScheduler.run(priority,task),
   });
   if(!initialPermissionReport.ok)
     throw new Error("Discord permission preflight rejected one or more authorized channels");
@@ -219,6 +220,7 @@ async function verifyPermissions(snapshot){
     authorization:snapshot,
     token:botToken,
     maxChannels:permissionPreflightMaxChannels,
+    scheduleRest:(priority,task)=>restScheduler.run(priority,task),
   });
   permissionPreflightTask=task;
   try{
