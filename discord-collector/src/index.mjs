@@ -407,7 +407,7 @@ function scheduleAuthorizationExpiry(snapshot){
     .filter(value=>Number.isFinite(value));
   if(!deadlines.length)return;
   const nextExpiry=Math.min(...deadlines);
-  const delay=Math.max(1,nextExpiry-Date.now()+100);
+  const delay=Math.min(2_147_000_000,Math.max(1,nextExpiry-Date.now()+100));
   authorizationExpiryTimer=setTimeout(startAuthorizationReload,delay);
   authorizationExpiryTimer.unref();
 }
