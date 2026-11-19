@@ -329,6 +329,7 @@ async function backfill(guildId,channelId,maxMessages){
 }
 
 let authorizationReloadRunning=false;
+let authorizationReloadPending=false;
 let authorizationDocumentFingerprint=JSON.stringify(doc);
 function authorizationStateFingerprint(snapshot){
   return JSON.stringify({
@@ -386,8 +387,7 @@ async function reloadAuthorization(){
 function startAuthorizationReload(){
   if(stopping)return;
   if(authorizationReloadRunning){
-    authorizationExpiryTimer=setTimeout(startAuthorizationReload,1_000);
-    authorizationExpiryTimer.unref();
+    authorizationReloadPending=true;
     return;
   }
   authorizationReloadRunning=true;
@@ -397,7 +397,13 @@ function startAuthorizationReload(){
     process.exitCode=1;
     console.error("Discord authorization reload failed; collection stopped","authorization_reload_failed");
     void shutdown();
-  }).finally(()=>{authorizationReloadRunning=false;});
+  }).finally(()=>{
+    authorizationReloadRunning=false;
+    if(authorizationReloadPending&&!stopping){
+      authorizationReloadPending=false;
+      startAuthorizationReload();
+    }
+  });
 }
 
 function scheduleAuthorizationExpiry(snapshot){
