@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {mkdtempSync,mkdirSync,readFileSync,readdirSync,renameSync,rmSync,statSync,writeFileSync,symlinkSync} from "node:fs";
+import {chmodSync,mkdtempSync,mkdirSync,readFileSync,readdirSync,renameSync,rmSync,statSync,writeFileSync,symlinkSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {randomBytes} from "node:crypto";
@@ -202,6 +202,19 @@ test("encryption key parser accepts only canonical base64 32-byte keys",()=>{
   assert.deepEqual(parseIngressSpoolKey(key.toString("base64")),key);
   assert.throws(()=>parseIngressSpoolKey("short"),/32-byte/i);
   assert.throws(()=>parseIngressSpoolKey(Buffer.alloc(32).toString("hex")),/base64/i);
+});
+
+test("unsafe existing permissions are rejected rather than silently widened",()=>{
+  const f=fixture();
+  try{
+    f.spool.append(event());
+    f.spool.close();
+    chmodSync(f.directory,0o755);
+    assert.throws(()=>new IngressSpool({directory:f.directory,key:f.key}).open(),/mode 0700/i);
+    chmodSync(f.directory,0o700);
+    chmodSync(join(f.directory,"00000000000000000001.evt"),0o644);
+    assert.throws(()=>new IngressSpool({directory:f.directory,key:f.key}).open(),/mode 0600/i);
+  }finally{f.cleanup()}
 });
 
 test("spool requires an absolute dedicated directory and rejects filesystem roots",()=>{
