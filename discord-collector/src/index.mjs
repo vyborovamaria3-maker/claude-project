@@ -119,6 +119,7 @@ let drainPromise=null;
 let sweepTimer;
 let backlogTimer;
 let authorizationReloadTimer;
+let authorizationExpiryTimer;
 let authorizationReloadTask=Promise.resolve();
 let sweepRunning=false;
 
@@ -348,7 +349,10 @@ async function reloadAuthorization(){
   const nextErasureOnly=next.erasureOnly||(next.size===0&&next.expiredChannels.length>0);
   const nextDocumentFingerprint=JSON.stringify(nextDocument);
   const nextState=authorizationStateFingerprint(next);
-  if(nextDocumentFingerprint===authorizationDocumentFingerprint&&nextState===authorizationState)return;
+  if(nextDocumentFingerprint===authorizationDocumentFingerprint&&nextState===authorizationState){
+    scheduleAuthorizationExpiry(allowed);
+    return;
+  }
 
   // Snapshot new-channel recovery watermarks before making those channels live.
   for(const channelId of next.keys()){
@@ -359,6 +363,7 @@ async function reloadAuthorization(){
   erasureOnly=nextErasureOnly;
   authorizationDocumentFingerprint=nextDocumentFingerprint;
   authorizationState=nextState;
+  scheduleAuthorizationExpiry(allowed);
 
   // The new allowlist is authoritative before any asynchronous purge starts.
   // Events from removed/expired channels are rejected immediately.
@@ -378,8 +383,13 @@ async function reloadAuthorization(){
   }
 }
 
-authorizationReloadTimer=setInterval(()=>{
-  if(authorizationReloadRunning||stopping)return;
+function startAuthorizationReload(){
+  if(stopping)return;
+  if(authorizationReloadRunning){
+    authorizationExpiryTimer=setTimeout(startAuthorizationReload,1_000);
+    authorizationExpiryTimer.unref();
+    return;
+  }
   authorizationReloadRunning=true;
   authorizationReloadTask=reloadAuthorization().catch(()=>{
     failures++;
@@ -388,7 +398,22 @@ authorizationReloadTimer=setInterval(()=>{
     console.error("Discord authorization reload failed; collection stopped","authorization_reload_failed");
     void shutdown();
   }).finally(()=>{authorizationReloadRunning=false;});
-},authorizationReloadMs);
+}
+
+function scheduleAuthorizationExpiry(snapshot){
+  clearTimeout(authorizationExpiryTimer);
+  const deadlines=[...snapshot.values()]
+    .map(permission=>Date.parse(permission.expiresAt))
+    .filter(value=>Number.isFinite(value));
+  if(!deadlines.length)return;
+  const nextExpiry=Math.min(...deadlines);
+  const delay=Math.max(1,nextExpiry-Date.now()+100);
+  authorizationExpiryTimer=setTimeout(startAuthorizationReload,delay);
+  authorizationExpiryTimer.unref();
+}
+
+scheduleAuthorizationExpiry(allowed);
+authorizationReloadTimer=setInterval(startAuthorizationReload,authorizationReloadMs);
 authorizationReloadTimer.unref();
 
 client.once(Events.ClientReady,()=>{
@@ -475,6 +500,7 @@ async function shutdown(){
   clearInterval(sweepTimer);
   clearInterval(backlogTimer);
   clearInterval(authorizationReloadTimer);
+  clearTimeout(authorizationExpiryTimer);
   shutdownPromise=(async()=>{
     try{await client.destroy()}finally{
       await Promise.allSettled([startupTask,sweepTask,coverageTask,drainPromise??Promise.resolve(),authorizationReloadTask]);
