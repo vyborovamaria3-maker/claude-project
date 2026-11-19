@@ -1,5 +1,8 @@
 name: Memecoin Intelligence CI
 
+# P1 runner isolation: pull_request events execute untrusted PR code and must
+# never land on the shared self-hosted runner, so they run on ephemeral
+# GitHub-hosted runners. Push to main keeps the self-hosted selection.
 on:
   pull_request:
     paths:
@@ -17,7 +20,8 @@ permissions:
 # Runner selection is controlled centrally by POTAPOFF_RUNNER; self-hosted is the default.
 jobs:
   validate:
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     defaults:
       run:
         working-directory: memecoin-intelligence
@@ -47,7 +51,8 @@ jobs:
         run: docker compose -f docker-compose.production.yml config >/dev/null
 
   security:
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     defaults:
       run:
         working-directory: memecoin-intelligence
