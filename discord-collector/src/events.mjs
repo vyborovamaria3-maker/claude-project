@@ -139,7 +139,7 @@ export function normalizeMessage(message, kind, observedAt=new Date().toISOStrin
 export function allowedObservation(allowed, observation){
   const permission=allowed.get(observation.channelId);
   if(!permission||permission.guildId!==observation.guildId)return false;
-  if(!permission.expiresAt)return true; // Legacy in-memory test fixtures only.
+  if(permission.expiresAt===undefined||permission.expiresAt===null)return true; // Legacy in-memory test fixtures only.
   const expiresAt=Date.parse(permission.expiresAt);
   return Number.isFinite(expiresAt)&&expiresAt>Date.now();
 }
