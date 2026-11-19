@@ -140,6 +140,27 @@ and the Gateway is disconnected. The preflight checks only the bot's current
 effective permissions; it does not replace written community consent,
 platform-policy review, or the separate Message Content intent attestation.
 
+### Run a permission check without starting collection
+
+A standalone command lets an operator verify the real bot token and channel
+permissions without starting PostgreSQL, opening the spool, connecting to the
+Gateway, or collecting messages. It makes read-only Discord REST calls and
+prints a report containing IDs, check results and error codes only.
+
+~~~sh
+cd discord-collector
+DISCORD_BOT_TOKEN=REDACTED \\
+DISCORD_AUTHORIZATION_PATH=/private/guilds.json \\
+DISCORD_MESSAGE_CONTENT_INTENT_CONFIRMED=true \\
+npm run preflight
+~~~
+
+The command exits 0 only when every authorized channel passes the exact
+read-only permission check and the operator has attested to Message Content
+intent. It does not independently verify the Developer Portal setting. The
+standalone command is an explicit live API operation; CI tests use mocked
+responses and do not execute it against Discord.
+
 The preflight is bounded to 1,000 authorized channels by default. An operator
 may raise `DISCORD_PERMISSION_PREFLIGHT_MAX_CHANNELS` up to 10,000 only after
 reviewing API rate limits and startup/recheck duration.
