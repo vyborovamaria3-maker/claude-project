@@ -91,7 +91,7 @@ test("edits with unknown source ordering fail closed",()=>{
 });
 test("Snowflake identifiers above unsigned 64-bit range are rejected",()=>{
  assert.throws(()=>normalizeMessage({...mock,id:"18446744073709551616"},"observed"),/Snowflake/i);
- assert.throws(()=>validateAuthorization({guilds:[{...valid.guilds[0],guild_id:"18446744073709551616"}]}),/Guild id/);
+ assert.throws(()=>validateAuthorization({...valid,guilds:[{...valid.guilds[0],guild_id:"18446744073709551616"}]}),/Guild id/);
 });
 
 test("invalid IDs, event types and timestamps rejected",()=>{
