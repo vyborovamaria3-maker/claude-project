@@ -308,6 +308,22 @@ export async function recordRecoveryCheck(pool,guildId,channelId,baseline,result
   finally{client.release()}
 }
 
+export async function recordCoverageFailure(pool,event,failureCode,spoolSequence){
+  if(!event||!["observed","edited","deleted"].includes(event.kind)||
+     !/^([1-9][0-9]{14,21})$/.test(String(event.guildId??""))||
+     !/^([1-9][0-9]{14,21})$/.test(String(event.channelId??""))||
+     !/^([1-9][0-9]{14,21})$/.test(String(event.messageId??""))||
+     !["message_not_hydratable","message_content_missing","message_content_intent_suspected"].includes(failureCode)||
+     !/^[1-9][0-9]{0,19}$/.test(String(spoolSequence??"")))
+    throw new TypeError("Invalid Discord coverage failure");
+  await pool.query(`INSERT INTO discord_coverage_failures
+    (guild_id,channel_id,message_id,event_kind,failure_code,spool_sequence)
+    VALUES($1,$2,$3,$4,$5,$6::numeric)
+    ON CONFLICT(message_id,event_kind,spool_sequence) DO NOTHING`,[
+      event.guildId,event.channelId,event.messageId,event.kind,failureCode,String(spoolSequence),
+    ]);
+}
+
 export async function getBackfillCursor(pool,channelId){
   const {rows}=await pool.query(
     "SELECT before_message_id FROM discord_backfill_cursors WHERE channel_id=$1",[channelId]);
