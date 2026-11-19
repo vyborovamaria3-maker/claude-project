@@ -13,9 +13,11 @@ const guildId="123456789012345678";
 const channelId="223456789012345678";
 const otherChannel="523456789012345678";
 const messageId="323456789012345678";
-const allowed=validateAuthorization({guilds:[{
+const allowed=validateAuthorization({version:2,mode:"collect",guilds:[{
   guild_id:guildId,channel_ids:[channelId,otherChannel],retention_days:30,
-  policy_review_reference:"test",community_permission_reference:"test",reviewed_by:"ci"
+  policy_review_reference:"test",policy_review_expires_at:"2026-12-19T00:00:00Z",
+  community_permission_reference:"test",community_permission_expires_at:"2026-12-19T00:00:00Z",
+  reviewed_by:"ci"
 }]});
 
 test("only one Discord Collector can hold the source database advisory lock",{skip:!URL},async()=>{
