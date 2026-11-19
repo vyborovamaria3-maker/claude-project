@@ -248,8 +248,11 @@ export async function purgeExpired(pool,allowed,{allowEmpty=false}={}){
     const coverageFailures=await client.query(
       "DELETE FROM discord_coverage_failures c WHERE c.expires_at<=NOW() OR NOT EXISTS ("+
       "SELECT 1 FROM unnest($1::text[],$2::text[]) AS a(channel_id,guild_id) "+
-      "WHERE a.channel_id=c.channel_id AND a.guild_id=c.guild_id)",
-      [channelIds,guildIds],
+      "WHERE a.channel_id=c.channel_id AND a.guild_id=c.guild_id) OR EXISTS ("+
+      "SELECT 1 FROM unnest($1::text[],$2::text[],$3::integer[]) AS a(channel_id,guild_id,retention_days) "+
+      "WHERE a.channel_id=c.channel_id AND a.guild_id=c.guild_id "+
+      "AND c.received_at<NOW()-(a.retention_days*INTERVAL '1 day'))",
+      [channelIds,guildIds,authorized.map(item=>item.retentionDays)],
     );
 
     for(const item of authorized){
@@ -327,7 +330,7 @@ export async function recordCoverageFailure(pool,event,retentionDays){
     await client.query(
       "INSERT INTO discord_coverage_failures "+
       "(guild_id,channel_id,message_id,event_kind,received_at,failure_code,expires_at) "+
-      "VALUES($1,$2,$3,$4,$5,'message_not_found',NOW()+($6::integer*INTERVAL '1 day')) "+
+      "VALUES($1,$2,$3,$4,$5,'message_not_found',$5::timestamptz+($6::integer*INTERVAL '1 day')) "+
       "ON CONFLICT(guild_id,channel_id,message_id,event_kind,received_at) DO NOTHING",
       [event.guildId,event.channelId,event.messageId,event.kind,event.receivedAt,retentionDays],
     );
