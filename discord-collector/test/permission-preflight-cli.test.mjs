@@ -8,7 +8,6 @@ import {runPermissionPreflightCli} from "../src/preflight-cli.mjs";
 const botId="123456789012345678";
 const guildId="223456789012345678";
 const channelId="323456789012345678";
-const roleId="523456789012345678";
 const now=new Date("2026-11-19T12:00:00.000Z");
 const validDocument={
   version:2,
@@ -45,12 +44,10 @@ function fakeFetch(permissions="66560"){
     calls.push({path,authorization:options.headers.Authorization});
     if(path==="/api/v10/users/@me")return jsonResponse({id:botId});
     if(path===`/api/v10/guilds/${guildId}`)return jsonResponse({id:guildId});
-    if(path===`/api/v10/guilds/${guildId}/roles`)
-      return jsonResponse([{id:guildId,permissions:"0"},{id:roleId,permissions}]);
-    if(path===`/api/v10/guilds/${guildId}/members/${botId}`)
-      return jsonResponse({user:{id:botId},roles:[roleId]});
     if(path===`/api/v10/channels/${channelId}`)
-      return jsonResponse({id:channelId,guild_id:guildId,type:0,permission_overwrites:[]});
+      return jsonResponse({id:channelId,guild_id:guildId,type:0});
+    if(path===`/api/v10/channels/${channelId}/permissions/member/${botId}`)
+      return jsonResponse({permissions});
     return jsonResponse({message:"unexpected route"},404);
   };
   return {fetchImpl,calls};
@@ -78,7 +75,7 @@ test("standalone preflight runs without collector, database, spool or Gateway se
     assert.equal(result.result.messageContentIntent.operatorAttested,true);
     assert.equal(result.result.messageContentIntent.independentlyVerified,false);
     assert.equal(result.result.preflightGateEnabled,true);
-    assert.equal(fake.calls.length,5);
+    assert.equal(fake.calls.length,4);
     assert.ok(fake.calls.every(call=>call.authorization==="Bot cli-secret-token"));
     assert.ok(!output.join("\n").includes("cli-secret-token"));
     assert.ok(!output.join("\n").includes("message content"));
