@@ -118,6 +118,7 @@ let coverageTask=Promise.resolve();
 let drainPromise=null;
 let sweepTimer;
 let backlogTimer;
+let authorizationReloadTimer;
 let sweepRunning=false;
 
 function singletonConnectionLost(){
@@ -318,7 +319,6 @@ async function backfill(guildId,channelId,maxMessages){
   console.log("History sync pass",{channelId,processed:count});
 }
 
-let authorizationReloadTimer;
 let authorizationReloadRunning=false;
 let authorizationDocumentFingerprint=JSON.stringify(doc);
 function authorizationStateFingerprint(snapshot){
