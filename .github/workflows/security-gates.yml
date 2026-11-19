@@ -13,8 +13,14 @@ permissions:
   contents: read
 
 # Runner selection is controlled centrally by POTAPOFF_RUNNER; self-hosted is the default.
+# P1 isolation: pull_request events execute untrusted PR code and must never land on the
+# shared self-hosted runner; they run on ephemeral GitHub-hosted runners instead (free for
+# public repositories). workflow_dispatch may target any ref and runs the workflow file
+# from that ref, so the jobs below refuse non-main refs themselves - the ref guard, not
+# the comment, is the security boundary.
 jobs:
   secret-scan:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 15
     steps:
@@ -34,6 +40,7 @@ jobs:
         run: python3 security/audit/secret-scan.py --mode history
 
   frontend-security:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 25
     defaults:
@@ -66,6 +73,7 @@ jobs:
           node ../security/audit/npm-audit-policy.mjs "$RUNNER_TEMP/frontend-npm-audit.json"
 
   backend-security:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 25
     env:
@@ -102,6 +110,7 @@ jobs:
         run: pip-audit
 
   subscription-service-security:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 25
     defaults:
@@ -160,6 +169,7 @@ jobs:
           node ../security/audit/npm-audit-policy.mjs "$RUNNER_TEMP/subscription-npm-audit.json"
 
   legacy-miniapp-security:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 20
     defaults:
