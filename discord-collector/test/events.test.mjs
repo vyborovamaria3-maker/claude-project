@@ -46,6 +46,16 @@ test("empty allowlist requires explicit erasure-only mode and operator opt-in",(
  assert.throws(()=>validateAuthorization({...valid,mode:"erasure_only"}),/must not contain authorized guilds/);
 });
 
+test("authorization rejects numeric Snowflakes and unrecognized personal-data fields",()=>{
+ assert.throws(()=>validateAuthorization({
+  ...valid,guilds:[{...valid.guilds[0],guild_id:123456789012345678}]
+ }),/Guild id/);
+ assert.throws(()=>validateAuthorization({...valid,operator_notes:"unexpected"}),/unsupported field/);
+ assert.throws(()=>validateAuthorization({
+  ...valid,guilds:[{...valid.guilds[0],channel_ids:[223456789012345678]}]
+ }),/channel snowflake/);
+});
+
 test("authorization expiry timestamps and validity horizons are strict",()=>{
  assert.throws(()=>validateAuthorization({
   ...valid,guilds:[{...valid.guilds[0],community_permission_expires_at:"2026-12-19"}]
