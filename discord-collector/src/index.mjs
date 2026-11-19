@@ -152,7 +152,7 @@ async function record(message,kind){
   if(!permissionActive(permission))return {status:"not-allowed"};
   const observation=normalizeMessage(message,kind,new Date().toISOString(),permission.guildId);
   if(!allowedObservation(allowed,observation))return {status:"not-allowed"};
-  return await storeObservation(pool,observation,permission.retentionDays);
+  return await storeObservation(pool,observation,permission.retentionDays,new Date(),permission.expiresAt);
 }
 
 async function persistCoverageGap(channelId){
