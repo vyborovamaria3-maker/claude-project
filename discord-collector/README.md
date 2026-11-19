@@ -153,7 +153,7 @@ default.
 - Synchronous per-event fsync intentionally trades throughput for durability
   and can block the Node event loop. Load-test the actual persistent disk and
   Discord heartbeat behaviour at expected peak message rates before rollout.
-- A full spool stops collection. Alerting, disk-capacity monitoring and an
+- A full spool stops collection. The Collector drains any recoverable backlog before Gateway reconnect to reduce restart-time capacity pressure. Alerting, disk-capacity monitoring and an
   operator runbook for safely restoring capacity are required.
 - Unlinking is logical erasure, not guaranteed physical sanitization on SSDs.
   Use encrypted persistent storage, restrict host access, and protect/backup
