@@ -1,8 +1,8 @@
 name: Admin Control Center CI & Security
 
-# P1 runner isolation: pull_request events execute untrusted PR code and are not
-# allowed on the shared self-hosted runner. CI for PRs runs in the dedicated
-# PR-safe workflows instead (repository-hygiene, security-gates).
+# P1 runner isolation: pull_request events execute untrusted PR code and must
+# never land on the shared self-hosted runner, so they run on ephemeral
+# GitHub-hosted runners. Push to main keeps the self-hosted selection.
 on:
   pull_request:
     paths:

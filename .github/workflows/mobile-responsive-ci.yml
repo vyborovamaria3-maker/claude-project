@@ -1,7 +1,7 @@
 name: Mobile Responsive CI
 
-  # P1 runner isolation: pull_request events execute untrusted PR code and must
-  # never land on the shared self-hosted runner, so they run on ephemeral
+# P1 runner isolation: pull_request events execute untrusted PR code and must
+# never land on the shared self-hosted runner, so they run on ephemeral
   # GitHub-hosted runners. Push to main and manual dispatch on main keep the
   # central self-hosted selection; dispatch jobs refuse non-main refs.
 on:
