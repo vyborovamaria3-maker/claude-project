@@ -32,6 +32,7 @@ test("ingress spool encrypts events and replays them after process restart",()=>
     const appended=f.spool.append(event());
     assert.equal(appended.sequence,"1");
     assert.equal(f.spool.pendingCount,1);
+    assert.equal("event" in f.spool.pending.get("1"),false,"the in-memory index must not retain plaintext payloads");
     const [name]=readdirSync(f.directory);
     assert.equal(name,"00000000000000000001.evt");
     const raw=readFileSync(join(f.directory,name),"utf8");
