@@ -68,7 +68,7 @@ function trackTask(kind,message,work){
     process.exitCode=1;
     const gap=Promise.resolve().then(()=>persistCoverageGap(channelId))
       .catch(()=>console.error("Discord overload coverage gap could not be persisted",channelId))
-      .finally(()=>void shutdown());
+      .finally(()=>{inFlight.delete(gap);void shutdown();});
     inFlight.add(gap);
     console.error("Discord ingress stopped after bounded in-flight write limit","ingress_overloaded");
     return;
@@ -146,6 +146,7 @@ client.once(Events.ClientReady,()=>{\n  startupTask=(async()=>{
   for(const [channelId,permission] of allowed){
     try{await backfill(permission.guildId,channelId,max)}
     catch(error){failures++;console.error("History backfill failed",channelId,error?.message)}
+  }
   })();
   void startupTask.catch(()=>{
     failures++;
