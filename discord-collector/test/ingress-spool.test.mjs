@@ -204,6 +204,12 @@ test("encryption key parser accepts only canonical base64 32-byte keys",()=>{
   assert.throws(()=>parseIngressSpoolKey(Buffer.alloc(32).toString("hex")),/base64/i);
 });
 
+test("spool requires an absolute dedicated directory and rejects filesystem roots",()=>{
+  const key=randomBytes(32);
+  assert.throws(()=>new IngressSpool({directory:"relative/spool",key}),/absolute path/i);
+  assert.throws(()=>new IngressSpool({directory:"/",key}),/filesystem root/i);
+});
+
 test("spool refuses symlink directories and unexpected files",()=>{
   const f=fixture();
   try{
