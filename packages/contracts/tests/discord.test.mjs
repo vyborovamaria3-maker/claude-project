@@ -30,7 +30,7 @@ test("Discord V2 builder rejects raw text, author IDs and malformed identity",()
  assert.throws(()=>buildDiscordMessageEnvelope({...b,revisionKey:"bad"}),/revision SHA/);
 });
 test("Discord evidence IDs reject malformed Snowflakes",()=>{
- assert.throws(()=>buildEvidenceRef({sourceKind:"discord_message",channelId,messageId:"bad",observedAt}),/Snowflakes/);
+ assert.throws(()=>buildEvidenceRef({sourceKind:"discord_message",channelId,messageId:"bad",observedAt}),/Snowflake/i);
 });
 test("Discord deletion reason is explicit and restricted",()=>{
  const e=buildDiscordMessageEnvelope({kind:"deleted",channelId,messageId,revisionKey:revision,
