@@ -36,16 +36,61 @@ Example authorization file, stored outside the repository:
 
 ~~~json
 {
+  "version": 2,
+  "mode": "collect",
   "guilds": [{
     "guild_id": "123456789012345678",
     "channel_ids": ["223456789012345678"],
     "community_permission_reference": "internal-consent-record",
+    "community_permission_expires_at": "2026-12-19T00:00:00Z",
     "policy_review_reference": "internal-platform-permission-record",
+    "policy_review_expires_at": "2026-12-19T00:00:00Z",
     "reviewed_by": "operator",
     "retention_days": 30
   }]
 }
 ~~~
+
+### Authorization expiry and revocation
+
+Authorization documents use schema version 2. Both the community permission
+and platform-policy review have explicit expiry timestamps. The earlier
+deadline controls the channel lease; leases cannot extend more than 365 days
+without a new review. The Collector reloads the authorization file every
+60 seconds by default (configurable from 30 seconds to one hour).
+
+- Removing a channel from the file revokes it on the next successful reload:
+  pending spool payloads are erased and source messages/revisions are purged
+  only after metadata-only erasure tombstones are committed to the Outbox.
+- An expired consent or policy review automatically removes that guild's
+  channels from the active allowlist and triggers the same erasure flow.
+- If all configured leases expire, the Collector enters erasure-only shutdown:
+  it does not connect to the Discord Gateway and does not require a bot token.
+- A deliberately empty allowlist is rejected in normal collect mode. To
+  explicitly erase all Discord source data, use this separate operator-only
+  document and enable the matching environment flag:
+
+~~~json
+{
+  "version": 2,
+  "mode": "erasure_only",
+  "guilds": []
+}
+~~~
+
+Set `DISCORD_ALLOW_ERASURE_ONLY=true` only for that deliberate operation.
+The source database and spool key are still required. The Collector removes
+pending spool payloads, emits erasure tombstones for every retained source
+message, purges local content/revisions, releases its singleton lock and exits
+without logging into Discord. The Intelligence ETL must subsequently deliver
+those tombstones to retract central evidence.
+
+Expiry timestamps are operator-maintained consent/review deadlines, not an
+external proof that a community has not withdrawn permission early. If
+permission is withdrawn before its recorded expiry, remove the channel from
+the authorization file; the running Collector detects that change on reload.
+A malformed or unreadable policy stops collection rather than continuing
+under stale permissions.
 
 ## Encrypted durable ingress setup
 
@@ -68,7 +113,7 @@ committed `.env` file:
 - `DISCORD_INGRESS_SPOOL_DIR=/var/lib/potapoff/discord-ingress`
 - `DISCORD_INGRESS_SPOOL_KEY=<canonical base64 for exactly 32 random bytes>`
 - `DISCORD_INGRESS_SPOOL_MAX_BYTES=536870912` (default 512 MiB)
-- `DISCORD_INGRESS_SPOOL_MAX_EVENTS=100000` (default 100,000 events)
+- `DISCORD_INGRESS_SPOOL_MAX_EVENTS=100000` (default 100,000 events)\n- `DISCORD_AUTHORIZATION_RELOAD_MS=60000` (default 60 seconds)\n- `DISCORD_ALLOW_ERASURE_ONLY=true` only for an explicitly approved empty-allowlist erasure run
 
 Use a dedicated spool directory for this source database; do not share it with another Collector. A PostgreSQL session advisory lock enforces one Collector per source database.
 
