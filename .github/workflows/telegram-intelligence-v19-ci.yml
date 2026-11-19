@@ -7,12 +7,21 @@ name: Telegram Intelligence v19 CI
 on:
   pull_request:
     paths:
+      - "solana-launcher/backend/**"
+      - "solana-launcher/app/miniapp/**"
+      - "solana-launcher/app/api/miniapp/**"
       - "solana-launcher/lib/telegram/**"
       - "solana-launcher/telegram-bot/**"
       - "solana-launcher/app/telegram-intelligence/**"
       - "solana-launcher/app/api/tginvite/**"
       - "solana-launcher/components/tginvite/**"
       - "solana-launcher/lib/tginvite-*.ts"
+      - "solana-launcher/lib/routeAuth.ts"
+      - "solana-launcher/components/SidebarNav.tsx"
+      - "solana-launcher/lib/siteDesign.ts"
+      - "solana-launcher/docker-compose.production.yml"
+      - "solana-launcher/scripts/deploy-production.sh"
+      - "solana-launcher/scripts/healthcheck-production.sh"
       - ".github/workflows/telegram-intelligence-v19-ci.yml"
   push:
     branches:
