@@ -17,6 +17,7 @@ for(const key of ["DISCORD_BOT_TOKEN","DISCORD_SOURCE_DATABASE_URL","DISCORD_AUT
 const doc=JSON.parse(await readFile(process.env.DISCORD_AUTHORIZATION_PATH,"utf8"));
 const allowed=validateAuthorization(doc);
 const spoolKey=parseIngressSpoolKey(process.env.DISCORD_INGRESS_SPOOL_KEY);
+delete process.env.DISCORD_INGRESS_SPOOL_KEY;
 const spoolMaxBytes=Number(process.env.DISCORD_INGRESS_SPOOL_MAX_BYTES||536_870_912);
 const spoolMaxEvents=Number(process.env.DISCORD_INGRESS_SPOOL_MAX_EVENTS||100_000);
 if(!Number.isSafeInteger(spoolMaxBytes)||spoolMaxBytes<1_048_576||spoolMaxBytes>10_737_418_240)
