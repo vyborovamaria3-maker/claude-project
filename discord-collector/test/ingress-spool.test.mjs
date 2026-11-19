@@ -142,6 +142,7 @@ test("a smaller configured cap does not prevent replay of an older durable backl
       assert.throws(()=>reopened.append(event({messageId:"723456789012345678"})),
         error=>error.code==="INGRESS_SPOOL_FULL");
       reopened.ack("1");
+      reopened.ack("2");
       reopened.flushAcks();
       assert.doesNotThrow(()=>reopened.append(event({messageId:"723456789012345678"})));
     }finally{reopened.close()}
