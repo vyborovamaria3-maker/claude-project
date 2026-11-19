@@ -94,6 +94,9 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date(),
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
+    // Shared source-write lock lets an explicit author erasure acquire the
+    // exclusive form and serialize against observations, retention and gaps.
+    await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('potapoff:discord-source-write',0))");
     // Serialize create/edit/delete races for one globally unique Discord message.
     await client.query("SELECT pg_advisory_xact_lock(hashtext('discord'),hashtext($1))",[o.messageId]);
     if(authorizationExpiresAt!==null&&authorizationExpiresAt!==undefined&&(!Number.isFinite(Date.parse(authorizationExpiresAt))||
@@ -210,6 +213,7 @@ export async function purgeExpired(pool,allowed,{allowEmpty=false}={}){
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('potapoff:discord-source-write',0))");
     let removed=0;
     let tombstonesQueued=0;
     const authorized=[...allowed.entries()]
@@ -339,6 +343,8 @@ export async function recordCoverageFailure(pool,event,retentionDays){
   const authorId=event.authorId==null?null:requireSnowflake(event.authorId,"author");
   const client=await pool.connect();
   try{
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('potapoff:discord-source-write',0))");
     await client.query(
       "INSERT INTO discord_coverage_failures "+
       "(guild_id,channel_id,message_id,author_id,event_kind,received_at,failure_code,expires_at) "+
@@ -346,7 +352,9 @@ export async function recordCoverageFailure(pool,event,retentionDays){
       "ON CONFLICT(guild_id,channel_id,message_id,event_kind,received_at) DO NOTHING",
       [guildId,channelId,messageId,authorId,event.kind,event.receivedAt,retentionDays],
     );
-  }finally{client.release()}
+    await client.query("COMMIT");
+  }catch(error){await client.query("ROLLBACK");throw error}
+  finally{client.release()}
 }
 
 
@@ -370,10 +378,9 @@ export async function eraseUserMessages(pool,authorIdInput){
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
-    await client.query(
-      "LOCK TABLE discord_messages,discord_message_revisions,discord_coverage_failures "+
-      "IN SHARE ROW EXCLUSIVE MODE",
-    );
+    // Exclusive form waits for every source writer and prevents new writes
+    // until Spool and source rows have been erased by the operator command.
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('potapoff:discord-source-write',0))");
     const selected=await client.query(
       "SELECT message_id,guild_id,channel_id FROM discord_messages "+
       "WHERE author_id=$1 AND deleted_at IS NULL ORDER BY message_id FOR UPDATE",
