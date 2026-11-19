@@ -31,13 +31,15 @@ export async function runPermissionPreflightCli({
     authorization,token,fetchImpl,maxChannels,now,
   });
   const messageContentIntentAttested=env.DISCORD_MESSAGE_CONTENT_INTENT_CONFIRMED==="true";
+  const preflightGateEnabled=env.DISCORD_PERMISSION_PREFLIGHT_ENABLED==="true";
   const result={
     ...report,
     messageContentIntent:{
       operatorAttested:messageContentIntentAttested,
       independentlyVerified:false,
     },
-    readyForGateway:report.ok&&messageContentIntentAttested,
+    preflightGateEnabled,
+    readyForGateway:report.ok&&messageContentIntentAttested&&preflightGateEnabled,
   };
   write(JSON.stringify(result,null,2));
   return {exitCode:result.readyForGateway?0:1,result};
