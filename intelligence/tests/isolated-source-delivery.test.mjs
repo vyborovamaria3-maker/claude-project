@@ -212,6 +212,36 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
       ["discord:message:"+channelId+":"+messageId]);
     assert.deepEqual(finalEvidence.rows.map(r=>r.event_kind),["message_deleted"]);
 
+    // Concurrent observation/deletion delivery is serialized by the destination
+    // message lock: regardless of which worker commits first, only the tombstone remains.
+    const raceMessageId="923456789012345678";
+    const raceObserved={
+      sourceSystem:"discord",eventKind:"message_observed",
+      eventKey:["discord:message",channelId,raceMessageId,"1".repeat(64)].join(":"),
+      schemaVersion:"discord-message-v1",
+      payload:{kind:"observed",channelId,messageId:raceMessageId,revisionKey:"1".repeat(64),
+        observedAt:seen,occurredAt:seen,contentSha256:"9".repeat(64),producerVersion:"0.1.0"},
+    };
+    const raceDeleted={
+      sourceSystem:"discord",eventKind:"message_deleted",
+      eventKey:["discord:message",channelId,raceMessageId,"2".repeat(64)].join(":"),
+      schemaVersion:"discord-message-v1",
+      payload:{kind:"deleted",channelId,messageId:raceMessageId,revisionKey:"2".repeat(64),
+        observedAt:deletedAt,occurredAt:null,contentSha256:null,contentErased:true,
+        deletionReason:"deleted",producerVersion:"0.1.0"},
+    };
+    await emitInNativeTransaction(discordPool,raceObserved);
+    await emitInNativeTransaction(discordPool,raceDeleted);
+    const [raceA,raceB]=await Promise.all([
+      runDeliveryBatch(port(discordPool),destPool,{workerId:"discord-race-a",batchSize:1,leaseMs:120000}),
+      runDeliveryBatch(port(discordPool),destPool,{workerId:"discord-race-b",batchSize:1,leaseMs:120000}),
+    ]);
+    assert.equal(raceA.delivered+raceB.delivered,2);
+    const raceTimeline=await destPool.query(
+      "SELECT timeline_kind FROM timeline_events WHERE source_system='discord' AND evidence_source_id=$1",
+      ["discord:message:"+channelId+":"+raceMessageId]);
+    assert.deepEqual(raceTimeline.rows.map(row=>row.timeline_kind),["discord_message_deleted"]);
+
     const mint="So11111111111111111111111111111111111111112";
     const token=formatTokenId("solana",mint);
     const cutoff="2026-10-18T02:00:00Z";
