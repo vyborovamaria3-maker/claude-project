@@ -260,12 +260,12 @@ test("unhydratable message coverage is recorded before acknowledgement and expir
   const {default:pg}=await import("pg");
   const pool=new pg.Pool({connectionString:URL,max:2});
   const coverageMessageId="923456789012345681";
-  const receivedAt="2026-11-19T12:00:00.000Z";
+  const receivedAt=new Date(Date.now()-31*24*60*60*1000).toISOString();
   try{
     await installSchema(pool);
     const event={kind:"edited",guildId,channelId,messageId:coverageMessageId,receivedAt};
-    await recordCoverageFailure(pool,event,30);
-    await recordCoverageFailure(pool,event,30);
+    await recordCoverageFailure(pool,event,365);
+    await recordCoverageFailure(pool,event,365);
     const recorded=await pool.query(
       "SELECT guild_id,channel_id,message_id,event_kind,failure_code FROM discord_coverage_failures WHERE message_id=$1",
       [coverageMessageId],
@@ -274,10 +274,6 @@ test("unhydratable message coverage is recorded before acknowledgement and expir
       guild_id:guildId,channel_id:channelId,message_id:coverageMessageId,
       event_kind:"edited",failure_code:"message_not_found",
     }],"duplicate replay must not duplicate a durable coverage failure");
-    await pool.query(
-      "UPDATE discord_coverage_failures SET expires_at=NOW()-INTERVAL '1 second' WHERE message_id=$1",
-      [coverageMessageId],
-    );
     const purge=await purgeExpired(pool,allowed);
     assert.equal(purge.coverageFailuresErased,1);
     const remaining=await pool.query(
