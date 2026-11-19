@@ -1,11 +1,22 @@
 name: Full Backtest Audit
 
+  # P1 runner isolation: pull_request events execute untrusted PR code and must
+  # never land on the shared self-hosted runner, so they run on ephemeral
+  # GitHub-hosted runners. Push to main and manual dispatch on main keep the
+  # central self-hosted selection; dispatch jobs refuse non-main refs.
 on:
   pull_request:
     branches: [main]
     paths:
       - "solana-launcher/**"
       - ".github/workflows/full-backtest-audit.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "solana-launcher/**"
+      - ".github/workflows/full-backtest-audit.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,9 +26,12 @@ concurrency:
   cancel-in-progress: true
 
 # Runner selection is controlled centrally by POTAPOFF_RUNNER; self-hosted is the default.
+# workflow_dispatch runs the default-branch workflow file, but an operator may pick any
+# ref; jobs below refuse non-main refs so untrusted branch code never reaches the runner.
 jobs:
   frontend-audit:
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 35
     defaults:
       run:
@@ -169,7 +183,8 @@ jobs:
           if-no-files-found: ignore
 
   backend-audit:
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 35
     services:
       postgres:
@@ -336,7 +351,8 @@ jobs:
           test "${{ steps.pipaudit.outcome }}" = success
 
   production-config-audit:
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 15
     defaults:
       run:
