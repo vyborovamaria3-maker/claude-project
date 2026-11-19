@@ -370,7 +370,7 @@ async function applyDiscordMessageTombstone(
   const sourceId=body.registryEvent.evidenceRef.sourceId;
   const {channelId,messageId}=discordMessageIdentity(sourceId);
   // Hash collisions only cause harmless extra serialization; same-message races cannot pass.
-  await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[sourceId]);
+  await tx.query("SELECT pg_advisory_xact_lock(hashtext('discord'),hashtext($1))",[sourceId]);
 
   if(event.eventKind==="message_deleted"){
     const raw=event.payload as Record<string,unknown>;
