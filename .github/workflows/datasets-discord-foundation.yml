@@ -1,0 +1,33 @@
+name: Datasets + Discord foundation
+on:
+  pull_request:
+    paths:
+      - 'dataset-ingestion/**'
+      - 'discord-collector/**'
+      - 'docs/architecture/DISCORD_DATASETS_ROADMAP.md'
+      - '.github/workflows/datasets-discord-foundation.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-foundation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Dataset fixture tests
+        run: python3 -m unittest discover -s dataset-ingestion/tests -v
+      - name: Dataset manifest JSON
+        run: python3 -m json.tool dataset-ingestion/catalog.json >/dev/null
+      - name: Discord normalization and authorization tests
+        run: node --test discord-collector/test/*.test.mjs
+      - name: Discord syntax check (no credentials needed)
+        run: |
+          node --check discord-collector/src/events.mjs
+          node --check discord-collector/src/storage.mjs
+          node --check discord-collector/src/index.mjs
