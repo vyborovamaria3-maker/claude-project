@@ -10,9 +10,12 @@ permissions:
   contents: read
 
 # Runner selection is controlled centrally by POTAPOFF_RUNNER; self-hosted is the default.
+# P1 isolation: pull_request events execute untrusted PR code and must never land on the
+# shared self-hosted runner; they run on ephemeral GitHub-hosted runners instead (free for
+# public repositories). Trusted events (push to main) keep the central runner selection.
 jobs:
   hygiene:
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
