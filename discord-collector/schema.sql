@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS discord_message_tombstones (
  message_id TEXT PRIMARY KEY,
  guild_id TEXT NOT NULL, channel_id TEXT NOT NULL,
  deleted_at TIMESTAMPTZ NOT NULL,
- deletion_reason TEXT NOT NULL CHECK(deletion_reason IN ('deleted','retention_expired','channel_revoked')),
+ deletion_reason TEXT NOT NULL CHECK(deletion_reason IN ('deleted','retention_expired','channel_revoked','user_requested')),
  CHECK (
   message_id ~ '^[1-9][0-9]{14,21}$'
   AND guild_id ~ '^[1-9][0-9]{14,21}$'
@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS discord_coverage_failures (
  guild_id TEXT NOT NULL,
  channel_id TEXT NOT NULL,
  message_id TEXT NOT NULL,
+ author_id TEXT,
  event_kind TEXT NOT NULL CHECK(event_kind IN ('observed','edited','deleted')),
  received_at TIMESTAMPTZ NOT NULL,
  failure_code TEXT NOT NULL CHECK(failure_code IN ('message_not_found')),
@@ -110,8 +111,13 @@ CREATE TABLE IF NOT EXISTS discord_coverage_failures (
  CHECK (
   guild_id ~ '^[1-9][0-9]{14,21}$'
   AND channel_id ~ '^[1-9][0-9]{14,21}$'
-  AND message_id ~ '^[1-9][0-9]{14,21}$'
+  AND message_id ~ '^[1-9][0-9]{14,21}
+
+  AND (author_id IS NULL OR author_id ~ '^[1-9][0-9]{14,21}
+)
  )
 );
 CREATE INDEX IF NOT EXISTS discord_coverage_failures_channel_expiry
  ON discord_coverage_failures(channel_id,expires_at);
+CREATE INDEX IF NOT EXISTS discord_coverage_failures_author
+ ON discord_coverage_failures(author_id) WHERE author_id IS NOT NULL;
