@@ -138,10 +138,17 @@ catch{
   throw new Error("Discord singleton lock connection is not healthy");
 }
 
+function permissionActive(permission){
+  if(!permission)return false;
+  if(!permission.expiresAt)return true; // Legacy in-memory fixtures only.
+  const expiry=Date.parse(permission.expiresAt);
+  return Number.isFinite(expiry)&&expiry>Date.now();
+}
+
 async function record(message,kind){
   const channelId=String(message.channelId??message.channel?.id??"");
   const permission=allowed.get(channelId);
-  if(!permission)return {status:"not-allowed"};
+  if(!permissionActive(permission))return {status:"not-allowed"};
   const observation=normalizeMessage(message,kind,new Date().toISOString(),permission.guildId);
   if(!allowedObservation(allowed,observation))return {status:"not-allowed"};
   return await storeObservation(pool,observation,permission.retentionDays);
@@ -149,7 +156,7 @@ async function record(message,kind){
 
 async function persistCoverageGap(channelId){
   const permission=allowed.get(channelId);
-  if(!permission)return;
+  if(!permissionActive(permission))return;
   await recordRecoveryCheck(pool,permission.guildId,channelId,
     recoveryBaselines.get(channelId)??null,{status:"failed"});
 }
@@ -195,7 +202,7 @@ function enqueueGatewayEvent(kind,message){
   if(!acceptingEvents)return;
   const channelId=String(message.channelId??message.channel?.id??"");
   const permission=allowed.get(channelId);
-  if(!permission)return;
+  if(!permissionActive(permission))return;
   try{
     const event=snapshotGatewayEvent(kind,message,permission);
     // append() writes an encrypted record, fsyncs the file, atomically renames
@@ -215,7 +222,7 @@ function isUnknownDiscordMessage(error){
 async function processSpoolEntry(entry,{allowHydration=true}={}){
   const event=entry.event;
   const permission=allowed.get(event.channelId);
-  if(!permission||permission.guildId!==event.guildId)return; // Current allowlist wins over queued data.
+  if(!permissionActive(permission)||permission.guildId!==event.guildId)return; // Current allowlist wins over queued data.
 
   let message={
     id:event.messageId,
