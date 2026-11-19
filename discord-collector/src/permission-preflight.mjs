@@ -4,6 +4,7 @@ const API_BASE_URL="https://discord.com/api/v10";
 const USER_VIEW_CHANNEL=1n<<10n;
 const USER_READ_MESSAGE_HISTORY=1n<<16n;
 const USER_ADMINISTRATOR=1n<<3n;
+const USER_SEND_MESSAGES=1n<<11n;
 const SUPPORTED_CHANNEL_TYPES=new Set([0,5]); // Guild text and announcement channels.
 const MAX_AUTHORIZATION_CHANNELS=10_000;
 
@@ -130,15 +131,18 @@ function permissionBits(value){
 function channelResult(channelId,channelType,bits){
   if(bits===null)return failedChannel(channelId,"invalid_permission_response");
   const administrator=(bits&USER_ADMINISTRATOR)!==0n;
-  const viewChannel=administrator||(bits&USER_VIEW_CHANNEL)!==0n;
-  const readMessageHistory=administrator||(bits&USER_READ_MESSAGE_HISTORY)!==0n;
-  const errorCode=!viewChannel?"view_channel_missing":
+  const sendMessages=(bits&USER_SEND_MESSAGES)!==0n;
+  const viewChannel=(bits&USER_VIEW_CHANNEL)!==0n;
+  const readMessageHistory=(bits&USER_READ_MESSAGE_HISTORY)!==0n;
+  const errorCode=administrator?"excessive_administrator_permission":
+    sendMessages?"unnecessary_send_messages_permission":
+    !viewChannel?"view_channel_missing":
     !readMessageHistory?"read_message_history_missing":null;
   return {
     channelId,
     status:errorCode?"failed":"passed",
     channelType,
-    checks:{viewChannel,readMessageHistory},
+    checks:{viewChannel,readMessageHistory,administrator,sendMessages},
     errorCode,
   };
 }
