@@ -119,6 +119,7 @@ let drainPromise=null;
 let sweepTimer;
 let backlogTimer;
 let authorizationReloadTimer;
+let authorizationReloadTask=Promise.resolve();
 let sweepRunning=false;
 
 function singletonConnectionLost(){
@@ -373,7 +374,7 @@ async function reloadAuthorization(){
 authorizationReloadTimer=setInterval(()=>{
   if(authorizationReloadRunning||stopping)return;
   authorizationReloadRunning=true;
-  void reloadAuthorization().catch(()=>{
+  authorizationReloadTask=reloadAuthorization().catch(()=>{
     failures++;
     acceptingEvents=false;
     process.exitCode=1;
@@ -469,7 +470,7 @@ async function shutdown(){
   clearInterval(authorizationReloadTimer);
   shutdownPromise=(async()=>{
     try{await client.destroy()}finally{
-      await Promise.allSettled([startupTask,sweepTask,coverageTask,drainPromise??Promise.resolve()]);
+      await Promise.allSettled([startupTask,sweepTask,coverageTask,drainPromise??Promise.resolve(),authorizationReloadTask]);
       try{spool.close()}finally{await releaseSourceDatabase()}
     }
     if(failures)process.exitCode=1;
