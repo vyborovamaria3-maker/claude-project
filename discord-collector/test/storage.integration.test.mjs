@@ -23,13 +23,14 @@ test("durable spool replay after source commit does not duplicate the transactio
   const pool=new pg.Pool({connectionString:URL,max:2});
   const directory=mkdtempSync(join(tmpdir(),"potapoff-discord-spool-integration-"));
   const key=randomBytes(32);
+  const messageId="923456789012345678";
+  let eventKey=null;
   let spool;
   try{
     await installSchema(pool);
     spool=new IngressSpool({directory,key}).open();
     const now=new Date();
     const createdAt=new Date(now.getTime()-60*60*1000);
-    const messageId="923456789012345678";
     const message={id:messageId,guildId,channelId,author:{id:"423456789012345678"},
       content:"replay-safe Discord source event",createdAt,editedAt:null};
     const snapshot={
@@ -47,7 +48,7 @@ test("durable spool replay after source commit does not duplicate the transactio
     const [replayed]=spool.listPending();
     assert.equal(replayed.event.messageId,messageId);
     assert.equal((await storeObservation(pool,observation,30)).status,"stored");
-    const eventKey=["discord:message",channelId,messageId,observation.revisionKey].join(":");
+    eventKey=["discord:message",channelId,messageId,observation.revisionKey].join(":");
     const rows=await pool.query(
       "SELECT COUNT(*)::int AS n FROM outbox_events WHERE source_system='discord' AND event_key=$1",
       [eventKey]);
@@ -57,6 +58,11 @@ test("durable spool replay after source commit does not duplicate the transactio
     assert.equal(spool.pendingCount,0);
   }finally{
     try{spool?.close()}catch{}
+    if(eventKey){
+      await pool.query("DELETE FROM outbox_events WHERE source_system='discord' AND event_key=$1",[eventKey]).catch(()=>{});
+    }
+    await pool.query("DELETE FROM discord_message_revisions WHERE message_id=$1",[messageId]).catch(()=>{});
+    await pool.query("DELETE FROM discord_messages WHERE message_id=$1",[messageId]).catch(()=>{});
     await pool.end();
     rmSync(directory,{recursive:true,force:true});
   }
