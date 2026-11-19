@@ -159,7 +159,7 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
     assert.equal((await destPool.query("SELECT count(*)::int AS n FROM timeline_events WHERE source_system='discord'")).rows[0].n,1);
 
     // Deletion is a first-class tombstone with no body hash, not a silent drop.
-    const deleteRevision="e".repeat(64),deletedAt=new Date(Date.now()-2000).toISOString();
+    const deleteRevision="e".repeat(64),deletedAt=new Date(Date.now()-60_000).toISOString();
     const deletion={
       sourceSystem:"discord",eventKind:"message_deleted",
       eventKey:["discord:message",channelId,messageId,deleteRevision].join(":"),
