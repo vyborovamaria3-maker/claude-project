@@ -93,3 +93,25 @@ ALTER TABLE discord_messages VALIDATE CONSTRAINT discord_messages_snowflake_ids_
 ALTER TABLE discord_message_revisions VALIDATE CONSTRAINT discord_message_revisions_snowflake_ids_check;
 ALTER TABLE discord_backfill_cursors VALIDATE CONSTRAINT discord_backfill_cursors_snowflake_ids_check;
 ALTER TABLE discord_recovery_checks VALIDATE CONSTRAINT discord_recovery_checks_snowflake_ids_check;
+
+-- Content-free per-message coverage failures are durable before an unhydratable
+-- spool event is acknowledged. They are bounded by the same channel retention.
+CREATE TABLE IF NOT EXISTS discord_coverage_failures (
+ id BIGSERIAL PRIMARY KEY,
+ guild_id TEXT NOT NULL,
+ channel_id TEXT NOT NULL,
+ message_id TEXT NOT NULL,
+ event_kind TEXT NOT NULL CHECK(event_kind IN ('observed','edited','deleted')),
+ received_at TIMESTAMPTZ NOT NULL,
+ failure_code TEXT NOT NULL CHECK(failure_code IN ('message_not_found')),
+ recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ expires_at TIMESTAMPTZ NOT NULL,
+ UNIQUE(guild_id,channel_id,message_id,event_kind,received_at),
+ CHECK (
+  guild_id ~ '^[1-9][0-9]{14,21}$'
+  AND channel_id ~ '^[1-9][0-9]{14,21}$'
+  AND message_id ~ '^[1-9][0-9]{14,21}$'
+ )
+);
+CREATE INDEX IF NOT EXISTS discord_coverage_failures_channel_expiry
+ ON discord_coverage_failures(channel_id,expires_at);
