@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS discord_message_tombstones (
  message_id TEXT PRIMARY KEY,
  guild_id TEXT NOT NULL, channel_id TEXT NOT NULL,
  deleted_at TIMESTAMPTZ NOT NULL,
- deletion_reason TEXT NOT NULL CHECK(deletion_reason IN ('deleted','retention_expired','channel_revoked')),
+ deletion_reason TEXT NOT NULL CHECK(deletion_reason IN ('deleted','retention_expired','channel_revoked','user_requested')),
  CHECK (
   message_id ~ '^[1-9][0-9]{14,21}$'
   AND guild_id ~ '^[1-9][0-9]{14,21}$'
@@ -52,6 +52,14 @@ CREATE TABLE IF NOT EXISTS discord_message_tombstones (
 );
 CREATE INDEX IF NOT EXISTS discord_tombstones_channel_time
  ON discord_message_tombstones(channel_id,deleted_at);
+ALTER TABLE discord_message_tombstones
+ DROP CONSTRAINT IF EXISTS discord_message_tombstones_deletion_reason_check;
+ALTER TABLE discord_message_tombstones
+ ADD CONSTRAINT discord_message_tombstones_deletion_reason_check
+ CHECK(deletion_reason IN ('deleted','retention_expired','channel_revoked','user_requested')) NOT VALID;
+ALTER TABLE discord_message_tombstones
+ VALIDATE CONSTRAINT discord_message_tombstones_deletion_reason_check;
+
 
 -- Application code validates before writes; database constraints provide a
 -- second boundary against malformed/non-uint64 identifiers.
