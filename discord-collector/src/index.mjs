@@ -37,9 +37,9 @@ const recoveryMaxPages=Number(process.env.DISCORD_GAP_RECOVERY_MAX_PAGES||5);
 if(process.env.DISCORD_GAP_RECOVERY_ENABLED==="true" &&
    (!Number.isInteger(recoveryMaxPages)||recoveryMaxPages<1||recoveryMaxPages>50))
   throw new RangeError("DISCORD_GAP_RECOVERY_MAX_PAGES must be in 1..50");
-const authorizationReloadMs=Number(process.env.DISCORD_AUTHORIZATION_RELOAD_MS||60_000);
-if(!Number.isInteger(authorizationReloadMs)||authorizationReloadMs<30_000||authorizationReloadMs>3_600_000)
-  throw new RangeError("DISCORD_AUTHORIZATION_RELOAD_MS must be in 30000..3600000");
+const authorizationReloadMs=Number(process.env.DISCORD_AUTHORIZATION_RELOAD_MS||30_000);
+if(!Number.isInteger(authorizationReloadMs)||authorizationReloadMs<5_000||authorizationReloadMs>60_000)
+  throw new RangeError("DISCORD_AUTHORIZATION_RELOAD_MS must be in 5000..60000");
 
 const pool=new pg.Pool({connectionString:sourceDatabaseUrl,max:4,connectionTimeoutMillis:10_000,keepAlive:true,application_name:"potapoff-discord-collector"});
 const singletonClient=await pool.connect().catch(async error=>{spoolKey.fill(0);await pool.end();throw error});
