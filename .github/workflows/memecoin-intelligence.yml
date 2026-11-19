@@ -35,7 +35,12 @@ jobs:
         run: npm run build
       - name: Validate production Compose
         env:
+          POSTGRES_USER: memecoin
+          POSTGRES_DB: memecoin
           POSTGRES_PASSWORD: ci-postgres-password
+          POSTGRES_APP_PASSWORD: ci-postgres-app-password
+          POSTGRES_MIGRATOR_PASSWORD: ci-postgres-migrator-password
+          POSTGRES_READONLY_PASSWORD: ci-postgres-readonly-password
           REDIS_PASSWORD: ci-redis-password
           INTERNAL_ADMIN_API_KEY: ci-admin-key
         run: docker compose -f docker-compose.production.yml config >/dev/null
@@ -55,8 +60,8 @@ jobs:
       - name: Dependency audit
         # Aligned with the repo-standard production dependency audit
         # (security/audit/npm-audit-policy.mjs): the dev tree carries the
-        # unfixed picomatch ReDoS advisory (GHSA-fc5q-39xc-vjpf) via
-        # build tooling (vite/vitest/chokidar), which would keep a full-tree
+        # unfixed picomatch ReDoS advisory (GHSA-fc5q-39xc-vjpf) via build
+        # tooling (vite/vitest/chokidar), which would keep a full-tree
         # --audit-level=high gate permanently red until upstream publishes a
         # fix. The production tree is audited fail-closed against high/
         # critical findings.
