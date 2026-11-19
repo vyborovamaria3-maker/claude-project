@@ -247,13 +247,21 @@ default.
   where the database is available, and shuts down instead of dropping events
   and continuing.
 - Events remain encrypted on disk while the source database is unavailable.
-  They are removed from the spool only after the source transaction commits.
-  A crash between PostgreSQL commit and local acknowledgement causes a replay,
-  not a loss; source transaction idempotency and message tombstones make this
-  safe.
+  They are removed from the spool only after either the source transaction or
+  a content-free per-message coverage-failure record commits. A crash between
+  PostgreSQL commit and local acknowledgement causes an idempotent replay.
+- Events requiring REST hydration remain at the head of the spool until the
+  Gateway is ready. Replay stops at that hydration barrier and does not process
+  later events out of order. Transient REST/storage failures leave the event
+  pending; only Discord's explicit Unknown Message response is terminal.
+- A terminally unhydratable event is written to
+  `discord_coverage_failures` with guild/channel/message identity, event kind,
+  receive time and a bounded failure code. It contains no message text or
+  author ID, is idempotent across replay, and expires with the channel's
+  retention policy. A channel-level unresolved recovery check is also recorded.
 - Message edits are hydrated from Discord only after the original Gateway
   dispatch is durably spooled. If an edit can no longer be fetched, the
-  collector records an unresolved coverage check and continues so a following
+  per-message coverage failure is committed before ACK so a following
   deletion can still be applied.
 - Spool startup and periodic retention sweeps erase queued events for revoked
   channels and expired messages. Source retention/revocation emits explicit
