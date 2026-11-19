@@ -20,9 +20,11 @@ Intelligence AI runtime.
 - A persistent local POSIX filesystem for the spool. It must support durable
   file and directory `fsync` plus atomic same-filesystem rename. Do not use an
   ephemeral container layer or an untested network filesystem.
-- An installed Discord bot with View Channel and Read Message History.
-- Message Content privileged intent only where Discord requires it and the
-  approved use permits it.
+- An installed Discord bot with only the channel-level read permissions needed
+  by the Collector: View Channel and Read Message History. Administrator and
+  Send Messages are explicitly rejected by preflight.
+- Message Content privileged intent enabled and approved in the Discord
+  Developer Portal where required; an operator must attest to this separately.
 - Written community permission, platform-policy review, retention schedule,
   and a named operator responsible for revocation and erasure.
 - Destination Intelligence migrations 001, 002, 004, 017, 019, 022 and 023.
@@ -98,6 +100,49 @@ consent early or that Discord bot channel permissions remain intact. Those
 facts still require operator action and a separate live-permission preflight
 before production rollout.
 
+## Read-only Discord permission preflight
+
+For every active collect-mode authorization, the Collector requires:
+
+- `DISCORD_PERMISSION_PREFLIGHT_ENABLED=true`
+- `DISCORD_MESSAGE_CONTENT_INTENT_CONFIRMED=true`
+
+The second setting is an operator attestation that the privileged Message
+Content intent is enabled and approved for this application in the Discord
+Developer Portal. Discord does not expose that portal setting through the
+channel-permission endpoints; the Collector cannot independently prove it.
+If the intent is unavailable, message content fields may be empty or Gateway
+login may be rejected.
+
+Before opening the Gateway, the Collector performs a read-only REST preflight:
+
+1. `GET /users/@me` identifies the bot account.
+2. `GET /guilds/{guild.id}/channels` verifies guild access and enumerates
+   channels visible to the bot. The response is used only to look up IDs already
+   present in the private authorization file; it never expands the allowlist.
+3. `GET /channels/{channel.id}/permissions/member/{user.id}` reads Discord's
+   computed permissions for the bot member, including role and channel
+   overwrites. The preflight requires `VIEW_CHANNEL` and
+   `READ_MESSAGE_HISTORY`.
+
+Only guild text (type 0) and announcement (type 5) channels are supported.
+Missing/hidden channels, missing permissions, unsupported channel types,
+invalid bot credentials, API errors and bounded rate-limit exhaustion all
+fail closed. The Collector does not request or store message bodies during
+preflight. It also rejects `ADMINISTRATOR` and `SEND_MESSAGES`: this service
+is read-only and must not be able to administer a server or post messages.
+
+The same check runs every five minutes by default (configurable from one to
+fifteen minutes). Newly added channels are checked before they enter the live
+allowlist. If a periodic check cannot verify permissions, collection stops
+and the Gateway is disconnected. The preflight checks only the bot's current
+effective permissions; it does not replace written community consent,
+platform-policy review, or the separate Message Content intent attestation.
+
+The preflight is bounded to 1,000 authorized channels by default. An operator
+may raise `DISCORD_PERMISSION_PREFLIGHT_MAX_CHANNELS` up to 10,000 only after
+reviewing API rate limits and startup/recheck duration.
+
 ## Encrypted durable ingress setup
 
 Generate a 32-byte key once and store it in the deployment secret manager:
@@ -121,6 +166,10 @@ committed `.env` file:
 - `DISCORD_INGRESS_SPOOL_MAX_BYTES=536870912` (default 512 MiB)
 - `DISCORD_INGRESS_SPOOL_MAX_EVENTS=100000` (default 100,000 events)
 - `DISCORD_AUTHORIZATION_RELOAD_MS=30000` (default 30 seconds; maximum 60 seconds)
+- `DISCORD_PERMISSION_PREFLIGHT_ENABLED=true` (mandatory before Gateway login)
+- `DISCORD_MESSAGE_CONTENT_INTENT_CONFIRMED=true` (operator attestation of portal access)
+- `DISCORD_PERMISSION_PREFLIGHT_MAX_CHANNELS=1000` (default 1,000; maximum 10,000)
+- `DISCORD_PERMISSION_PREFLIGHT_INTERVAL_MS=300000` (default 5 minutes; 1–15 minutes)
 - `DISCORD_ALLOW_ERASURE_ONLY=true` only for an explicitly approved empty-allowlist erasure run
 
 Use a dedicated spool directory for this source database; do not share it with another Collector. A PostgreSQL session advisory lock enforces one Collector per source database.
@@ -215,9 +264,10 @@ default.
 - REST history can recover messages, but cannot reliably reconstruct every
   missed edit or deletion during downtime. Coverage remains explicitly
   partial/unresolved where appropriate.
-- Authorization is reviewed from a private operator-supplied file; automatic
-  rights-expiry revalidation and a complete empty-allowlist erasure-only mode
-  are still required.
+- Live Discord permission preflight is mandatory before Gateway login and
+  rechecked periodically. CI uses only mocked HTTP responses; operators must
+  run the preflight with the real bot token and confirm the privileged intent
+  in the Developer Portal before any production activation.
 - Derived token-mention features, verified Solana mint identity, community
   quality scoring, feature-store integration, historical backtesting and
   shadow-mode evaluation are separate follow-up work.
