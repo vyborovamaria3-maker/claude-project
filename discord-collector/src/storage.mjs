@@ -16,6 +16,14 @@ export async function installSchema(pool){
 function requireRetention(days){
   if(!Number.isInteger(days)||days<1||days>365)throw new TypeError("Invalid retention days");
 }
+const SNOWFLAKE=/^[1-9][0-9]{14,21}$/;
+const MAX_SNOWFLAKE=18446744073709551615n;
+function requireSnowflake(value,name){
+  const id=String(value??"");
+  if(!SNOWFLAKE.test(id)||BigInt(id)>MAX_SNOWFLAKE)
+    throw new TypeError("Invalid Discord "+name+" Snowflake");
+  return id;
+}
 
 export function isExpiredObservation(observation,retentionDays,clock=new Date()){
   requireRetention(retentionDays);
@@ -322,19 +330,66 @@ export async function recordCoverageFailure(pool,event,retentionDays){
   requireRetention(retentionDays);
   if(!event||typeof event!=="object"||
      !["observed","edited","deleted"].includes(event.kind)||
-     !event.guildId||!event.channelId||!event.messageId||
      typeof event.receivedAt!=="string"||!Number.isFinite(Date.parse(event.receivedAt)))
     throw new TypeError("Invalid Discord coverage failure identity");
+  const guildId=requireSnowflake(event.guildId,"guild");
+  const channelId=requireSnowflake(event.channelId,"channel");
+  const messageId=requireSnowflake(event.messageId,"message");
+  const authorId=event.authorId==null?null:requireSnowflake(event.authorId,"author");
   const client=await pool.connect();
   try{
     await client.query(
       "INSERT INTO discord_coverage_failures "+
-      "(guild_id,channel_id,message_id,event_kind,received_at,failure_code,expires_at) "+
-      "VALUES($1,$2,$3,$4,$5,'message_not_found',$5::timestamptz+($6::integer*INTERVAL '1 day')) "+
+      "(guild_id,channel_id,message_id,author_id,event_kind,received_at,failure_code,expires_at) "+
+      "VALUES($1,$2,$3,$4,$5,$6,'message_not_found',$6::timestamptz+($7::integer*INTERVAL '1 day')) "+
       "ON CONFLICT(guild_id,channel_id,message_id,event_kind,received_at) DO NOTHING",
-      [event.guildId,event.channelId,event.messageId,event.kind,event.receivedAt,retentionDays],
+      [guildId,channelId,messageId,authorId,event.kind,event.receivedAt,retentionDays],
     );
   }finally{client.release()}
+}
+
+
+/**
+ * Erase every retained message/revision for one Discord author and emit
+ * metadata-only destination tombstones in the same source transaction.
+ * Table locks serialize this one-off DSAR operation against concurrent
+ * observation, edit, delete, retention and coverage writes.
+ */
+export async function eraseUserMessages(pool,authorIdInput){
+  const authorId=requireSnowflake(authorIdInput,"author");
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    await client.query(
+      "LOCK TABLE discord_messages,discord_message_revisions,discord_coverage_failures "+
+      "IN SHARE ROW EXCLUSIVE MODE",
+    );
+    const selected=await client.query(
+      "SELECT message_id,guild_id,channel_id FROM discord_messages "+
+      "WHERE author_id=$1 AND deleted_at IS NULL ORDER BY message_id FOR UPDATE",
+      [authorId],
+    );
+    const rows=selected.rows;
+    const tombstonesQueued=await enqueueErasureTombstones(client,rows,"user_requested");
+    const ids=rows.map(row=>row.message_id);
+    let revisionsErased=0;
+    let messagesErased=0;
+    if(ids.length){
+      const revisions=await client.query(
+        "DELETE FROM discord_message_revisions WHERE message_id=ANY($1::text[])",[ids]);
+      const messages=await client.query(
+        "DELETE FROM discord_messages WHERE message_id=ANY($1::text[])",[ids]);
+      revisionsErased=revisions.rowCount;
+      messagesErased=messages.rowCount;
+    }
+    const coverage=await client.query(
+      "DELETE FROM discord_coverage_failures WHERE author_id=$1 OR message_id=ANY($2::text[])",
+      [authorId,ids],
+    );
+    await client.query("COMMIT");
+    return {messagesErased,revisionsErased,tombstonesQueued,coverageFailuresErased:coverage.rowCount};
+  }catch(error){await client.query("ROLLBACK");throw error}
+  finally{client.release()}
 }
 
 export async function getBackfillCursor(pool,channelId){
