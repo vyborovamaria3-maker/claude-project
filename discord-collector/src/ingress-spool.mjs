@@ -295,15 +295,18 @@ export class IngressSpool {
     return {eventsErased:erased,pendingEvents:this.pending.size,pendingBytes:this.pendingBytes};
   }
 
-  eraseAuthor(authorId){
+  eraseAuthor(authorId,messageIds=[]){
     if(!this.opened)throw new Error("Ingress spool is not open");
     if(!isDiscordSnowflake(authorId))throw new TypeError("Invalid Discord author Snowflake");
+    if(!Array.isArray(messageIds)||messageIds.some(id=>!isDiscordSnowflake(id)))
+      throw new TypeError("Invalid Discord message ID set for author erasure");
+    const targetMessages=new Set(messageIds);
     let eventsErased=0;
-    // Decrypt one record at a time; never materialize the entire backlog's
-    // message bodies or author identifiers while processing a user request.
+    // Decrypt one record at a time; remove direct author matches and records
+    // for known author-owned messages whose partial Gateway event lacks authorId.
     for(const entry of [...this.pending.values()]){
       const event=decryptRecord(readFileSync(entry.path,"utf8"),entry.sequence,this.key);
-      if(event.authorId===authorId){
+      if(event.authorId===authorId||targetMessages.has(event.messageId)){
         this.ack(entry.sequence);
         eventsErased++;
       }
