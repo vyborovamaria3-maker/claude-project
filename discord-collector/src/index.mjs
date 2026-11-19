@@ -7,6 +7,7 @@ import {scanRecentGap} from "./reconcile.mjs";
 import {IngressSpool,parseIngressSpoolKey} from "./ingress-spool.mjs";
 import {runDiscordPermissionPreflight} from "./permission-preflight.mjs";
 import {replaySpoolEntries} from "./spool-replay.mjs";
+import {RestScheduler} from "./rest-scheduler.mjs";
 
 if(process.env.DISCORD_COLLECTOR_ENABLED!=="true"){
   console.error("Disabled: DISCORD_COLLECTOR_ENABLED is not true");
@@ -48,6 +49,12 @@ if(!Number.isInteger(permissionPreflightMaxChannels)||permissionPreflightMaxChan
 const permissionPreflightIntervalMs=Number(process.env.DISCORD_PERMISSION_PREFLIGHT_INTERVAL_MS||300_000);
 if(!Number.isInteger(permissionPreflightIntervalMs)||permissionPreflightIntervalMs<60_000||permissionPreflightIntervalMs>900_000)
   throw new RangeError("DISCORD_PERMISSION_PREFLIGHT_INTERVAL_MS must be in 60000..900000");
+const permissionPreflightMinRequestIntervalMs=Number(process.env.DISCORD_PERMISSION_PREFLIGHT_MIN_REQUEST_INTERVAL_MS||25);
+if(!Number.isInteger(permissionPreflightMinRequestIntervalMs)||permissionPreflightMinRequestIntervalMs<0||permissionPreflightMinRequestIntervalMs>1_000)
+  throw new RangeError("DISCORD_PERMISSION_PREFLIGHT_MIN_REQUEST_INTERVAL_MS must be in 0..1000");
+const estimatedPreflightRequests=3*permissionPreflightMaxChannels+1;
+if(permissionPreflightIntervalMs<estimatedPreflightRequests*permissionPreflightMinRequestIntervalMs)
+  throw new RangeError("Permission preflight interval is too short for the configured channel cap and REST pacing");
 if(allowed.size>0&&process.env.DISCORD_PERMISSION_PREFLIGHT_ENABLED!=="true")
   throw new Error("DISCORD_PERMISSION_PREFLIGHT_ENABLED=true is mandatory before Gateway login");
 if(allowed.size>0&&process.env.DISCORD_MESSAGE_CONTENT_INTENT_CONFIRMED!=="true")
@@ -58,6 +65,15 @@ const singletonClient=await pool.connect().catch(async error=>{spoolKey.fill(0);
 let singletonLockHeld=false;
 let spool=null;
 const recoveryBaselines=new Map();
+const restScheduler=new RestScheduler({maxPending:100});
+async function scheduleRest(task,options){
+  try{return await restScheduler.run(task,options)}
+  catch(error){
+    if(error?.status===429||error?.code===429)restRateLimitResponses++;
+    throw error;
+  }
+}
+let restRateLimitResponses=0;
 let startupSpoolSweep={eventsErased:0};
 let startupPurge={rowsErased:0,tombstonesQueued:0};
 async function releaseSourceDatabase(){
@@ -207,11 +223,13 @@ async function verifyPermissions(snapshot){
   if(permissionPreflightRunning)await permissionPreflightTask;
   if(permissionPreflightFailed)throw new Error("Discord permission verification already failed");
   permissionPreflightRunning=true;
-  const task=runDiscordPermissionPreflight({
+  const task=scheduleRest(()=>runDiscordPermissionPreflight({
     authorization:snapshot,
     token:botToken,
     maxChannels:permissionPreflightMaxChannels,
-  });
+    minRequestIntervalMs:permissionPreflightMinRequestIntervalMs,
+    onRateLimit:()=>{restRateLimitResponses++},
+  }),{priority:0,label:"permission-preflight"});
   permissionPreflightTask=task;
   try{
     const report=await task;
@@ -325,9 +343,11 @@ async function processSpoolEntry(entry,{allowHydration=true}={}){
   }
   if(needsHydration){
     try{
-      const channel=await client.channels.fetch(event.channelId);
+      const channel=await scheduleRest(()=>client.channels.fetch(event.channelId),
+        {priority:0,label:"message-hydration-channel"});
       if(!channel?.messages)throw new Error("Authorized Discord channel history is unavailable");
-      message=await channel.messages.fetch(event.messageId);
+      message=await scheduleRest(()=>channel.messages.fetch(event.messageId),
+        {priority:0,label:"message-hydration"});
     }catch(error){
       if(!isUnknownDiscordMessage(error))throw error;
       const currentPermission=allowed.get(event.channelId);
@@ -399,13 +419,17 @@ client.on(Events.MessageBulkDelete,messages=>{
 });
 
 async function backfill(guildId,channelId,maxMessages){
-  const channel=await client.channels.fetch(channelId);
+  const channel=await scheduleRest(()=>client.channels.fetch(channelId),
+    {priority:2,label:"history-backfill-channel"});
   if(!channel?.messages)throw new Error("Channel not accessible for history");
   let cursor=await getBackfillCursor(pool,channelId);
   let count=0;
   while(count<maxMessages&&!stopping){
     const requested=Math.min(100,maxMessages-count);
-    const page=await channel.messages.fetch({limit:requested,...(cursor?{before:cursor}:{})});
+    const page=await scheduleRest(
+      ()=>channel.messages.fetch({limit:requested,...(cursor?{before:cursor}:{})}),
+      {priority:2,label:"history-backfill-page"},
+    );
     if(page.size===0)break;
     const ordered=[...page.values()].sort((a,b)=>BigInt(a.id)<BigInt(b.id)?-1:1);
     for(const message of ordered){
@@ -567,11 +591,13 @@ client.once(Events.ClientReady,()=>{
         if(stopping)break;
         const baseline=recoveryBaselines.get(channelId)??null;
         try{
-          const channel=await client.channels.fetch(channelId);
-          const result=await scanRecentGap({
-            channel,baselineMessageId:baseline,maxPages:recoveryMaxPages,
-            onMessage:message=>record(message,"observed")
-          });
+          const result=await scheduleRest(async()=>{
+            const channel=await client.channels.fetch(channelId);
+            return scanRecentGap({
+              channel,baselineMessageId:baseline,maxPages:recoveryMaxPages,
+              onMessage:message=>record(message,"observed")
+            });
+          },{priority:1,label:"gap-recovery"});
           await recordRecoveryCheck(pool,permission.guildId,channelId,baseline,result);
           console.log("Discord recovery window",{channelId,status:result.status,
             pages:result.pagesScanned,processed:result.messagesProcessed});
