@@ -61,6 +61,12 @@ test("authorization expiry timestamps and validity horizons are strict",()=>{
   ...valid,guilds:[{...valid.guilds[0],community_permission_expires_at:"2026-12-19"}]
  }),/offset-aware ISO timestamp/);
  assert.throws(()=>validateAuthorization({
+  ...valid,guilds:[{...valid.guilds[0],community_permission_expires_at:"2026-02-31T00:00:00Z"}]
+ }),/invalid calendar date/);
+ assert.throws(()=>validateAuthorization({
+  ...valid,guilds:[{...valid.guilds[0],policy_review_expires_at:"2026-12-19T00:00:00+15:00"}]
+ }),/invalid UTC offset/);
+ assert.throws(()=>validateAuthorization({
   ...valid,guilds:[{...valid.guilds[0],policy_review_expires_at:"2028-01-01T00:00:00Z"}]
  },{now:new Date("2026-11-19T00:00:00Z")}),/365 days/);
  assert.throws(()=>validateAuthorization({
