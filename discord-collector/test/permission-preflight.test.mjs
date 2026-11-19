@@ -201,7 +201,7 @@ test("unsupported channel types fail closed",async()=>{
   assert.equal(report.guilds[0].channels[0].errorCode,"unsupported_channel_type");
 });
 
-test("permission endpoint forbidden fails closed without exposing API response bodies",async()=>{
+test("guild permission inputs forbidden fails closed without exposing API response bodies",async()=>{
   const calls=[];
   const fetchImpl=async(url)=>{
     const path=new URL(url).pathname;
@@ -232,9 +232,13 @@ test("rate limits are retried only within the configured wait budget",async()=>{
       if(guildCalls===1)return jsonResponse({retry_after:0.01},429,{"retry-after":"0.01"});
       return jsonResponse({id:guildId});
     }
+    if(path===`/api/v10/guilds/${guildId}/roles`)
+      return jsonResponse([{id:guildId,permissions:"0"},{id:roleId,permissions:String(VIEW|HISTORY)}]);
+    if(path===`/api/v10/guilds/${guildId}/members/${botId}`)
+      return jsonResponse({user:{id:botId},roles:[roleId]});
     if(path===`/api/v10/channels/${channelId}`)
-      return jsonResponse({id:channelId,guild_id:guildId,type:0});
-    return jsonResponse({permissions:String(VIEW|HISTORY)});
+      return jsonResponse({id:channelId,guild_id:guildId,type:0,permission_overwrites:[]});
+    return jsonResponse({message:"unexpected route"},404);
   };
   const report=await runDiscordPermissionPreflight({
     authorization:authorization(),token:"token",fetchImpl,now,
