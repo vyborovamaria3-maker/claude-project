@@ -63,7 +63,7 @@ async function enqueueErasureTombstones(client,rows,reason){
   const observedAt=new Date().toISOString();
   let queued=0;
   for(const row of rows){
-    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[row.message_id]);
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('discord'),hashtext($1))",[row.message_id]);
     const inserted=await client.query(
       "INSERT INTO discord_message_tombstones "+
       "(message_id,guild_id,channel_id,deleted_at,deletion_reason) "+
@@ -84,7 +84,7 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date())
   try{
     await client.query("BEGIN");
     // Serialize create/edit/delete races for one globally unique Discord message.
-    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[o.messageId]);
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('discord'),hashtext($1))",[o.messageId]);
     const previous=await client.query(
       "SELECT guild_id,channel_id,deleted_at,revision_at,content_sha256 "+
       "FROM discord_messages WHERE message_id=$1 FOR UPDATE",[o.messageId]);
