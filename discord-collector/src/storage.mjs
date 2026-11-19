@@ -356,6 +356,15 @@ export async function recordCoverageFailure(pool,event,retentionDays){
  * Table locks serialize this one-off DSAR operation against concurrent
  * observation, edit, delete, retention and coverage writes.
  */
+export async function findUserMessageIds(pool,authorIdInput){
+  const authorId=requireSnowflake(authorIdInput,"author");
+  const result=await pool.query(
+    "SELECT message_id FROM discord_messages WHERE author_id=$1 ORDER BY message_id",
+    [authorId],
+  );
+  return result.rows.map(row=>row.message_id);
+}
+
 export async function eraseUserMessages(pool,authorIdInput){
   const authorId=requireSnowflake(authorIdInput,"author");
   const client=await pool.connect();
