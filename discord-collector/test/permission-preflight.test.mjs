@@ -209,6 +209,16 @@ test("expired authorization leases are not sent to Discord",async()=>{
   assert.equal(calls,0);
 });
 
+test("authorization lease timestamps with explicit numeric offsets are accepted",async()=>{
+  const offsetAuthorization=authorization();
+  offsetAuthorization.get(channelId).expiresAt="2026-12-19T03:00:00+03:00";
+  const fake=successfulFetch();
+  const report=await runDiscordPermissionPreflight({
+    authorization:offsetAuthorization,token:"token",fetchImpl:fake.fetchImpl,now,
+  });
+  assert.equal(report.ok,true);
+});
+
 test("authorization map lease timestamps must include an explicit UTC offset",async()=>{
   const invalid=authorization();
   invalid.get(channelId).expiresAt="2026-12-19T00:00:00";
