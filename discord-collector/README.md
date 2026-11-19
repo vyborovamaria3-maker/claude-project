@@ -205,6 +205,36 @@ AES-256-GCM with a unique nonce per event. The spool directory must already be m
 unrecoverable; changing the key while events remain queued prevents replay.
 Drain the spool before key rotation. There is no implicit key fallback.
 
+## User-requested message erasure
+
+A data-subject erasure operation can remove every currently retained message
+from one Discord author without sending the author ID to Intelligence.
+
+Run only after verifying the request and author identity through the approved
+operator process. The command is separate from collection, requires an
+explicit opt-in, and prints counts only:
+
+```sh
+cd discord-collector
+DISCORD_USER_ERASURE_ENABLED=true \
+DISCORD_ERASURE_AUTHOR_ID=REDACTED \
+DISCORD_SOURCE_DATABASE_URL=REDACTED \
+npm run erase-user
+```
+
+The operation takes source-table locks to serialize against concurrent
+observation/edit/delete and coverage writes. It deletes matching message
+content, revisions and associated coverage failures, and writes one
+metadata-only `user_requested` tombstone per message in the same transaction
+as the source Outbox event. The Outbox contains no author ID or message body;
+Intelligence retracts the matching evidence when ETL delivers the tombstones.
+The command does not connect to Discord or require the Bot Token.
+
+This is a one-time erasure of currently retained data, not an author-level
+future collection opt-out. A separate suppression policy is required if the
+request also means that future messages from this author must never be
+collected.
+
 ## Disabled-by-default setup
 
 ~~~sh
