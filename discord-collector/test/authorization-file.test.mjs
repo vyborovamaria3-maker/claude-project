@@ -25,7 +25,7 @@ test("authorization file rejects relative paths and symlinks",async()=>{
   const f=fixture();
   try{
     writeFileSync(f.path,"{}",{mode:0o600});
-    assert.rejects(readAuthorizationFile("relative/authorization.json"),/absolute path/);
+    await assert.rejects(readAuthorizationFile("relative/authorization.json"),/absolute path/);
     const link=join(f.directory,"link.json");
     symlinkSync(f.path,link);
     await assert.rejects(readAuthorizationFile(link));
