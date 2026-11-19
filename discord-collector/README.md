@@ -70,7 +70,7 @@ committed `.env` file:
 - `DISCORD_INGRESS_SPOOL_MAX_BYTES=536870912` (default 512 MiB)
 - `DISCORD_INGRESS_SPOOL_MAX_EVENTS=100000` (default 100,000 events)
 
-The encryption key is required whenever collection is enabled. The spool uses
+Use a dedicated spool directory for this source database; do not share it with another Collector. A PostgreSQL session advisory lock enforces one Collector per source database.\n\nThe encryption key is required whenever collection is enabled. The spool uses
 AES-256-GCM with a unique nonce per event. The directory is forced to mode
 0700 and event files to mode 0600. Losing the key makes pending events
 unrecoverable; changing the key while events remain queued prevents replay.
