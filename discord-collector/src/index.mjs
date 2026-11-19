@@ -342,7 +342,17 @@ async function shutdown(){
   shutdownPromise=(async()=>{
     try{await client.destroy()}finally{
       await Promise.allSettled([startupTask,sweepTask,coverageTask,drainPromise??Promise.resolve()]);
-      try{spool.close()}finally{await pool.end()}
+      try{spool.close()}finally{
+        try{
+          if(singletonLockHeld)await singletonClient.query("SELECT pg_advisory_unlock(137987614,20261119)");
+          singletonLockHeld=false;
+          singletonClient.release();
+        }catch(error){
+          singletonLockHeld=false;
+          singletonClient.release(error);
+        }
+        await pool.end();
+      }
     }
     if(failures)process.exitCode=1;
   })();
