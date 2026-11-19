@@ -295,7 +295,7 @@ test("channel metadata returned for another guild invalidates the preflight resp
     authorization:authorization(),token:"token",fetchImpl,now,
   });
   assert.equal(report.ok,false);
-  assert.equal(report.guilds[0].channels[0].errorCode,"invalid_guild_channels_response");
+  assert.equal(report.guilds[0].channels[0].errorCode,"channel_guild_mismatch");
 });
 
 test("network failures stop preflight without exposing request details",async()=>{
