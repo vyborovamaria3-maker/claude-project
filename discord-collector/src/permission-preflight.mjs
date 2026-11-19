@@ -129,6 +129,72 @@ function permissionBits(value){
   try{return BigInt(value)}catch{return null}
 }
 
+function decimalPermissionBits(value){
+  if(typeof value!=="string"||!/^[0-9]+$/.test(value))return null;
+  try{return BigInt(value)}catch{return null}
+}
+
+function applyOverwrite(base,deny,allow){
+  return (base&~deny)|allow;
+}
+
+function computeEffectivePermissions({guildId,member,roles,channel}){
+  if(!member||!Array.isArray(member.roles)||!Array.isArray(roles)||
+     !Array.isArray(channel.permission_overwrites))return null;
+  if(!member.roles.every(id=>typeof id==="string"&&isDiscordSnowflake(id)))return null;
+
+  const rolePermissions=new Map();
+  for(const role of roles){
+    if(!role||typeof role.id!=="string"||!isDiscordSnowflake(role.id))return null;
+    const bits=decimalPermissionBits(role.permissions);
+    if(bits===null||rolePermissions.has(role.id))return null;
+    rolePermissions.set(role.id,bits);
+  }
+  const everyone=rolePermissions.get(guildId);
+  if(everyone===undefined)return null;
+  let base=everyone;
+  for(const roleId of member.roles){
+    const bits=rolePermissions.get(roleId);
+    if(bits===undefined)return null;
+    base|=bits;
+  }
+
+  // Administrator bypasses channel overwrites in Discord. Preserve the bit so
+  // the least-privilege validator rejects it instead of treating it as read-only.
+  const administrator=(base&USER_ADMINISTRATOR)!==0n;
+  if(administrator)return base;
+
+  const overwrites=channel.permission_overwrites;
+  const parsed=[];
+  for(const overwrite of overwrites){
+    if(!overwrite||typeof overwrite.id!=="string"||!isDiscordSnowflake(overwrite.id)||
+       ![0,1].includes(overwrite.type))return null;
+    const allow=decimalPermissionBits(overwrite.allow);
+    const deny=decimalPermissionBits(overwrite.deny);
+    if(allow===null||deny===null)return null;
+    parsed.push({id:overwrite.id,type:overwrite.type,allow,deny});
+  }
+
+  const everyoneOverwrite=parsed.find(item=>item.type===0&&item.id===guildId);
+  if(everyoneOverwrite)
+    base=applyOverwrite(base,everyoneOverwrite.deny,everyoneOverwrite.allow);
+
+  let roleDeny=0n,roleAllow=0n;
+  const memberRoleIds=new Set(member.roles);
+  for(const overwrite of parsed){
+    if(overwrite.type===0&&memberRoleIds.has(overwrite.id)){
+      roleDeny|=overwrite.deny;
+      roleAllow|=overwrite.allow;
+    }
+  }
+  base=applyOverwrite(base,roleDeny,roleAllow);
+
+  const memberOverwrite=parsed.find(item=>item.type===1&&item.id===member.user?.id);
+  if(memberOverwrite)
+    base=applyOverwrite(base,memberOverwrite.deny,memberOverwrite.allow);
+  return base;
+}
+
 function channelResult(channelId,channelType,bits){
   if(bits===null)return failedChannel(channelId,"invalid_permission_response");
   const administrator=(bits&USER_ADMINISTRATOR)!==0n;
@@ -303,6 +369,32 @@ export async function runDiscordPermissionPreflight({
       continue;
     }
 
+    let roles,member;
+    try{
+      [roles,member]=await Promise.all([
+        requestJson("/guilds/"+group.guildId+"/roles",
+          {token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep}),
+        requestJson("/guilds/"+group.guildId+"/members/"+bot.id,
+          {token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep}),
+      ]);
+    }catch(error){
+      const code=error instanceof DiscordApiError?error.code:"discord_api_unavailable";
+      const mapped=code==="discord_forbidden"?"guild_access_denied":
+        code==="discord_not_found"?"guild_member_or_roles_unavailable":code;
+      for(const channel of pending)Object.assign(channel,failedChannel(channel.channelId,mapped));
+      group.status="failed";
+      group.errorCode=mapped;
+      if(["invalid_bot_token","discord_api_unavailable","discord_rate_limited"].includes(code))
+        stopAfterApiFailure=code;
+      continue;
+    }
+    if(!Array.isArray(roles)||!member||member.user?.id!==bot.id||!Array.isArray(member.roles)){
+      for(const channel of pending)Object.assign(channel,failedChannel(channel.channelId,"invalid_guild_permission_data"));
+      group.status="failed";
+      group.errorCode="invalid_guild_permission_data";
+      continue;
+    }
+
     for(const result of pending){
       if(stopAfterApiFailure){
         Object.assign(result,failedChannel(result.channelId,stopAfterApiFailure));
@@ -336,23 +428,7 @@ export async function runDiscordPermissionPreflight({
         result.channelType=Number.isInteger(channel.type)?channel.type:null;
         continue;
       }
-
-      let permissionResponse;
-      try{
-        permissionResponse=await requestJson(
-          "/channels/"+result.channelId+"/permissions/member/"+bot.id,
-          {token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep},
-        );
-      }catch(error){
-        const code=error instanceof DiscordApiError?error.code:"discord_api_unavailable";
-        const mapped=code==="discord_forbidden"?"view_channel_denied":
-          code==="discord_not_found"?"channel_not_visible_or_missing":code;
-        Object.assign(result,failedChannel(result.channelId,mapped));
-        if(["invalid_bot_token","discord_api_unavailable","discord_rate_limited"].includes(code))
-          stopAfterApiFailure=code;
-        continue;
-      }
-      const bits=permissionBits(permissionResponse?.permissions);
+      const bits=computeEffectivePermissions({guildId:group.guildId,member,roles,channel});
       Object.assign(result,channelResult(result.channelId,channel.type,bits));
     }
 
