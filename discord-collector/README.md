@@ -1,20 +1,32 @@
-# Discord Collector — opt-in research proof of concept
+# Discord Collector — opt-in research service
 
-Uses official Discord bot Gateway + bounded REST backfill. Not a selfbot, not
-global Discord search, and **not integrated** with central Intelligence.
-Both Discord platform permission for the proposed use AND the affected
-communities' permission must exist; configuration is merely an audit record.
+Uses the official Discord bot Gateway and explicitly bounded REST history
+access. It is not a selfbot, does not provide global Discord search, and does
+not read arbitrary servers. The collector is disabled by default.
+
+The current integration path is:
+
+`Discord Gateway → isolated source PostgreSQL → transactional Outbox →
+Intelligence ETL → Event Envelope V2 → Inbox/evidence/timeline`.
+
+Only privacy-minimized metadata crosses into central Intelligence. Raw message
+text and author IDs remain in the isolated source database and are never put
+in the shared event envelope or sent to the Intelligence AI runtime.
 
 ## Prerequisites
 
-- Node.js 22+, isolated PostgreSQL source database with restricted access.
-- Installed authorized Discord bot, View Channel, Read Message History,
-  and permitted Message Content privileged intent where necessary.
-- Reviewed purpose, lawful basis, data-minimization and erasure procedures.
-- Real bot tokens, raw messages, private rights files and source DB URLs must
-  never be committed or exposed to central events/AI/logs.
+- Node.js 22+ and an isolated PostgreSQL source database with restricted access.
+- An installed Discord bot with View Channel and Read Message History.
+- Message Content privileged intent only where Discord requires it and the
+  approved use permits it.
+- Written community permission, platform-policy review, retention schedule,
+  and a named operator responsible for revocation and erasure.
+- Destination Intelligence migrations 001, 002, 004, 017, 019, 022 and 023.
+- Real bot tokens, raw messages, authorization files and source DB URLs must
+  never be committed or exposed to central events, AI prompts or logs.
 
 Example authorization (private file outside the repository):
+
 ~~~json
 {
   "guilds": [{
@@ -28,63 +40,85 @@ Example authorization (private file outside the repository):
 }
 ~~~
 
-Disabled by default:
+## Disabled-by-default setup
+
 ~~~sh
 cd discord-collector
 npm install
 npm test
+
 DISCORD_COLLECTOR_ENABLED=true \
 DISCORD_BOT_TOKEN=REDACTED \
 DISCORD_SOURCE_DATABASE_URL=postgresql://REDACTED \
 DISCORD_AUTHORIZATION_PATH=/private/guilds.json \
+DISCORD_MAX_IN_FLIGHT_WRITES=256 \
 npm start
 ~~~
 
-Optional historical sync also requires DISCORD_BACKFILL_ENABLED=true and a
-strictly positive DISCORD_BACKFILL_MAX_MESSAGES. Never set an unbounded budget.
+Optional historical sync requires DISCORD_BACKFILL_ENABLED=true and a strictly
+positive DISCORD_BACKFILL_MAX_MESSAGES. Restart gap reconciliation requires
+DISCORD_GAP_RECOVERY_ENABLED=true and a bounded
+DISCORD_GAP_RECOVERY_MAX_PAGES value from 1 to 50. Both remain disabled by
+default.
 
-## Safeguards
+## Data and delivery safeguards
 
-- Source-local PostgreSQL, explicit guild/channel allowlist.
-- SQLite and other source DBs are untouched.
-- Message create/edit/delete; partial deletion uses the trusted guild in
-  the authorization map, not a guessed guild.
-- Source revision timestamps protect recent edits from being replaced by
-  stale REST history; first observation time is preserved.
-- Delete tombstones erase current and retained revision text and prevent
-  resurrection after late replay.
-- Old messages are rejected at ingestion based on retention_days.
-- A startup and 15-minute sweep erases expired messages/revisions and rows
-  for channels removed from the authorization list at restart.
-- Backfill cursor only advances after a successfully persisted page.
+- Explicit guild/channel allowlist; unknown channels are rejected.
+- Source PostgreSQL stores message content and author IDs only for the
+  configured retention window. Central event payloads contain no raw text,
+  author ID, guild ID or attachment URL.
+- Source message revisions and their outbox events are committed atomically.
+  A failed outbox insert rolls back the message/revision transaction.
+- Create, edit, single-delete and bulk-delete Gateway events are supported.
+- Source and destination tombstones prevent a late edit, replay or REST
+  backfill from restoring a deleted/expired/revoked message.
+- A deletion retracts earlier Discord evidence and timeline rows in the same
+  Intelligence inbox transaction; only the metadata-only deletion audit
+  remains.
+- Retention expiry and channel revocation enqueue explicit erasure tombstones
+  before local message/revision rows are removed.
+- Source message writes and tombstone creation serialize by message identity.
+- Outbox delivery is at-least-once; Intelligence Inbox idempotency protects
+  against ACK loss and duplicate delivery.
+- Collector tracks in-flight writes, drains them on graceful shutdown, bounds
+  concurrency, and stops on persistence failure or overload rather than
+  silently continuing.
+- Recovery watermarks and unresolved coverage status survive restarts.
+- Snowflakes are validated as unsigned 64-bit decimal IDs and remain strings;
+  JavaScript Number coercion is never used.
 
-## Still NOT production ready
+## Current limitations — do not enable production collection yet
 
-- Access removal at Discord itself is not detected/reconciled automatically.
-- Missing robust live gap catch-up and event retry/DLQ.
-- No rights expiry revalidation or full DSAR/audit cleanup of derived content.
-- No event outbox, V2 Discord contracts, token verification, coverage, scoring or UI.
-- No deployment without separate approval of exact Discord Developer Policy usage.
-- Service tests use fake data; a PostgreSQL integration test runs in CI only.
+- Gateway dispatches are not first written to a separate disk-backed ingress
+  spool. A hard process/host crash before the source PostgreSQL commit can
+  still leave a source-coverage gap. The collector records known failures and
+  stops on write errors, but this is not an exactly-once Gateway guarantee.
+- A REST history scan can recover messages, but cannot reliably reconstruct
+  every missed edit or deletion during downtime. Coverage remains explicitly
+  partial/unresolved where appropriate.
+- Authorization is reviewed from a private operator-supplied file; automatic
+  rights-expiry revalidation and a complete empty-allowlist erasure-only mode
+  are still required.
+- Derived token-mention features, verified Solana mint identity, community
+  quality scoring, feature-store integration, historical backtesting and
+  shadow-mode evaluation are not part of this delivery foundation yet.
+- No bot credentials, live Discord API calls, production database migrations,
+  collector activation or deployment are included in CI or this PR.
 
+## Restart gap statuses
 
-## Optional bounded restart gap scan
+At startup, before Gateway login, the collector snapshots the last message ID
+for each authorized channel. If bounded recovery is enabled, it walks recent
+history backwards until it reaches that watermark or exhausts its strict page
+budget.
 
-Set DISCORD_GAP_RECOVERY_ENABLED=true and optionally
-DISCORD_GAP_RECOVERY_MAX_PAGES=5 (1..50), in addition to the existing live
-collector flags. At startup, before Gateway login, the collector snapshots
-the last message ID in each authorized channel. Once connected, it walks
-authorized recent history backwards with REST until the old watermark is
-found or a strict request budget is reached.
+The source database records:
 
-Results are persisted in discord_recovery_checks with statuses:
-- initial_unverified: never seen before; no claim of prior completeness.
-- bounded_recovery: the old watermark was reached in the bounded pass.
-- gap_unresolved: page budget exhausted or old watermark not reached.
-- failed: REST access, permissions or storage encountered errors.
+- `initial_unverified`: first observation; no claim of prior completeness.
+- `bounded_recovery`: the prior watermark was reached.
+- `gap_unresolved`: the page budget ended before the watermark.
+- `failed`: REST access, permissions or storage failed.
 
-A persisted unresolved baseline survives restarts and is only resolved after
-a later scan reaches that same watermark. No status ever claims that missed
-edits or deletes during downtime were fully reconstructed. This is NOT
-complete Discord source coverage and does not authorize scraping. A separate
-coverage model, durable retry queue, and full reconciliation are still required.
+An unresolved baseline survives restarts and is only resolved after a later
+scan reaches the same watermark. This does not prove missed edits or deletes
+were reconstructed and must not be interpreted as complete source coverage.
