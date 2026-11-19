@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {mkdtempSync,mkdirSync,readFileSync,readdirSync,renameSync,rmSync,statSync,writeFileSync,symlinkSync,unlinkSync} from "node:fs";
+import {mkdtempSync,mkdirSync,readFileSync,readdirSync,renameSync,rmSync,statSync,writeFileSync,symlinkSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {randomBytes} from "node:crypto";
@@ -93,6 +93,17 @@ test("tampered ciphertext and wrong encryption keys are rejected",()=>{
     record.ciphertext=record.ciphertext.slice(0,-4)+"AAAA";
     writeFileSync(path,JSON.stringify(record)+"\n",{mode:0o600});
     assert.throws(()=>new IngressSpool({directory:f.directory,key:f.key}).open(),/authentication/i);
+  }finally{f.cleanup()}
+});
+
+test("a different spool key cannot decrypt persisted events",()=>{
+  const f=fixture();
+  try{
+    f.spool.append(event());
+    f.spool.close();
+    assert.throws(()=>new IngressSpool({
+      directory:f.directory,key:randomBytes(32),
+    }).open(),/authentication/i);
   }finally{f.cleanup()}
 });
 
