@@ -60,6 +60,9 @@ test("PostgreSQL revisions, stale history, deletions and revoke/retention", {ski
     assert.equal(erased.rows[0].content,null);
     assert.equal(erased.rows[0].author_id,null);
     assert.ok(erased.rows[0].deleted_at);
+    const sourceDeleteTombstone=await pool.query(
+      "SELECT deletion_reason FROM discord_message_tombstones WHERE message_id=$1",[messageId]);
+    assert.equal(sourceDeleteTombstone.rows[0].deletion_reason,"deleted");
     const leaked=await pool.query("SELECT COUNT(*)::int AS n FROM discord_message_revisions WHERE message_id=$1 AND content IS NOT NULL",[messageId]);
     assert.equal(leaked.rows[0].n,0);
     // A source removed from the allowlist is erased on the next sweep.
