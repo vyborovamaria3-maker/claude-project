@@ -332,6 +332,83 @@ async function revokeRetiredTextSnapshots(
       event.sourceSystem,body.registryEvent.evidenceRef.sourceId,
     ]);
 }
+/** Serialize every Discord revision for one message and preserve a durable tombstone.
+ * A late/replayed observed or edited event may be recorded in the inbox for idempotency,
+ * but it must never recreate evidence or timeline rows after deletion/erasure.
+ */
+function discordMessageIdentity(sourceId:string):{channelId:string;messageId:string}{
+  const match=/^discord:message:([1-9][0-9]{14,21}):([1-9][0-9]{14,21})$/.exec(sourceId);
+  if(!match)throw new TypeError("Invalid Discord message evidence identity");
+  return {channelId:match[1]!,messageId:match[2]!};
+}
+
+async function retractDiscordMessageEvidence(tx:PgTransaction,sourceId:string):Promise<void>{
+  await tx.query(`DELETE FROM timeline_event_entities AS e
+    USING timeline_events AS t
+    WHERE e.source_system=t.source_system
+      AND e.source_event_kind=t.source_event_kind
+      AND e.event_key=t.event_key
+      AND t.source_system='discord'
+      AND t.evidence_source_id=$1
+      AND t.source_event_kind IN ('message_observed','message_edited')`,[sourceId]);
+  await tx.query(`DELETE FROM timeline_events
+    WHERE source_system='discord' AND evidence_source_id=$1
+      AND source_event_kind IN ('message_observed','message_edited')`,[sourceId]);
+  await tx.query(`DELETE FROM entity_evidence
+    WHERE source_system='discord' AND evidence_source_id=$1
+      AND event_kind IN ('message_observed','message_edited')`,[sourceId]);
+}
+
+/** Returns true when a non-delete event is suppressed by an existing tombstone. */
+async function applyDiscordMessageTombstone(
+  tx:PgTransaction,event:DeliveryEvent,body:RegistryOutboxPayload,
+):Promise<boolean>{
+  if(event.sourceSystem!=="discord")return false;
+  if(!["message_observed","message_edited","message_deleted"].includes(event.eventKind))
+    throw new TypeError("Unsupported Discord delivery event kind");
+  const sourceId=body.registryEvent.evidenceRef.sourceId;
+  const {channelId,messageId}=discordMessageIdentity(sourceId);
+  // Hash collisions only cause harmless extra serialization; same-message races cannot pass.
+  await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[sourceId]);
+
+  if(event.eventKind==="message_deleted"){
+    const raw=event.payload as Record<string,unknown>;
+    const deletion=raw.messageDeletion;
+    if(!deletion||typeof deletion!=="object"||
+       (deletion as Record<string,unknown>).contentErased!==true){
+      throw new TypeError("Discord deletion lacks explicit content-erasure confirmation");
+    }
+    const requested=(deletion as Record<string,unknown>).reason;
+    const reason=["deleted","retention_expired","channel_revoked"].includes(String(requested))
+      ? String(requested) : "deleted";
+    await tx.query(`INSERT INTO discord_message_tombstones
+      (evidence_source_id,channel_id,message_id,deleted_at,deletion_reason,deletion_event_key)
+      VALUES($1,$2,$3,$4,$5,$6)
+      ON CONFLICT(evidence_source_id) DO UPDATE SET
+        deleted_at=LEAST(discord_message_tombstones.deleted_at,EXCLUDED.deleted_at),
+        deletion_reason=CASE WHEN EXCLUDED.deletion_reason='deleted'
+          THEN 'deleted' ELSE discord_message_tombstones.deletion_reason END,
+        deletion_event_key=EXCLUDED.deletion_event_key`,[
+      sourceId,channelId,messageId,body.registryEvent.evidenceRef.observedAt,reason,event.eventKey,
+    ]);
+    await retractDiscordMessageEvidence(tx,sourceId);
+    return false; // Preserve the explicit deletion tombstone timeline event.
+  }
+
+  const tombstone=await tx.query(
+    "SELECT 1 FROM discord_message_tombstones WHERE evidence_source_id=$1 FOR UPDATE",
+    [sourceId],
+  );
+  if(tombstone.rows.length){
+    // ingestRegistryEvent may have just inserted this late revision's evidence.
+    await tx.query(`DELETE FROM entity_evidence
+      WHERE source_system='discord' AND evidence_source_id=$1
+        AND event_kind=$2 AND event_key=$3`,[sourceId,event.eventKind,event.eventKey]);
+    return true;
+  }
+  return false;
+}
+
 /** Reuse delivery's privacy/invalidation hooks for read-only legacy source
  * snapshots. Caller owns the transaction, including its durable watch cursor. */
 async function ingestPreparedDestinationEvent(
@@ -341,6 +418,7 @@ async function ingestPreparedDestinationEvent(
   const { event, body, envelopeSha256 } = prepared;
   const fresh = await ingestRegistryEvent(tx, body.registryEvent,
     envelopeSha256 === undefined ? {} : { envelopeSha256 });
+  const discordTombstoned=await applyDiscordMessageTombstone(tx,event,body);
   if(event.eventKind==="token_link_verified"||event.eventKind==="token_links_invalidated"){
     await ingestTokenLinkObservation(tx,{
       sourceSystem:event.sourceSystem as "x"|"tg",
@@ -354,7 +432,7 @@ async function ingestPreparedDestinationEvent(
       eventKey:event.eventKey,schemaVersion:event.schemaVersion,payload:body,
     });
   }
-  if (body.timelineEvent) {
+  if (body.timelineEvent && !discordTombstoned) {
     await ingestTimelineEvent(tx,event.sourceSystem,event.eventKind,body.timelineEvent);
   }
   if(fresh){
