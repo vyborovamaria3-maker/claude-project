@@ -6,7 +6,7 @@ import {mkdtempSync,rmSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {randomBytes} from "node:crypto";
-import {installSchema,storeObservation,purgeExpired,getRecoveryBaseline,recordRecoveryCheck} from "../src/storage.mjs";
+import {installSchema,storeObservation,purgeExpired,getRecoveryBaseline,recordRecoveryCheck,eraseAuthorMessages} from "../src/storage.mjs";
 
 const URL=process.env.DISCORD_TEST_DATABASE_URL;
 const guildId="123456789012345678";
@@ -252,6 +252,50 @@ test("source transaction refuses to persist an event after its authorization lea
       ["discord:message:"+channelId+":"+messageId+":%"]).catch(()=>{});
     await pool.query("DELETE FROM discord_message_revisions WHERE message_id=$1",[messageId]).catch(()=>{});
     await pool.query("DELETE FROM discord_messages WHERE message_id=$1",[messageId]).catch(()=>{});
+    await pool.end();
+  }
+});
+
+
+test("user-requested erasure tombstones every authored message and removes local identity",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const authorId="423456789012345681";
+  const ids=["823456789012345681","823456789012345682"];
+  try{
+    await installSchema(pool);
+    for(const [index,id] of ids.entries()){
+      const now=new Date();
+      const message=normalizeMessage({
+        id,guildId,channelId,author:{id:authorId},content:"private message "+index,
+        createdAt:new Date(now.getTime()-60_000),editedAt:null,
+      },"observed",now.toISOString(),guildId);
+      await storeObservation(pool,message,30);
+    }
+    const erased=await eraseAuthorMessages(pool,authorId);
+    assert.deepEqual(erased,{messagesErased:2,tombstonesQueued:2});
+    const remaining=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_messages WHERE author_id=$1",[authorId]);
+    assert.equal(remaining.rows[0].n,0);
+    const revisions=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_message_revisions WHERE message_id=ANY($1::text[])",[ids]);
+    assert.equal(revisions.rows[0].n,0);
+    const tombstones=await pool.query(
+      "SELECT message_id,deletion_reason FROM discord_message_tombstones WHERE message_id=ANY($1::text[]) ORDER BY message_id",[ids]);
+    assert.deepEqual(tombstones.rows,ids.map(message_id=>({message_id,deletion_reason:"user_requested"})));
+    const outbox=await pool.query(
+      "SELECT payload->>'deletionReason' AS reason,payload FROM outbox_events "+
+      "WHERE source_system='discord' AND event_kind='message_deleted' "+
+      "AND payload->>'messageId'=ANY($1::text[]) ORDER BY payload->>'messageId'",[ids]);
+    assert.equal(outbox.rows.length,2);
+    assert.ok(outbox.rows.every(row=>row.reason==="user_requested"));
+    assert.ok(outbox.rows.every(row=>!("authorId" in row.payload)&&!("content" in row.payload)));
+    assert.deepEqual(await eraseAuthorMessages(pool,authorId),{messagesErased:0,tombstonesQueued:0});
+  }finally{
+    await pool.query("DELETE FROM outbox_events WHERE source_system='discord' AND payload->>'messageId'=ANY($1::text[])",[ids]).catch(()=>{});
+    await pool.query("DELETE FROM discord_message_tombstones WHERE message_id=ANY($1::text[])",[ids]).catch(()=>{});
+    await pool.query("DELETE FROM discord_message_revisions WHERE message_id=ANY($1::text[])",[ids]).catch(()=>{});
+    await pool.query("DELETE FROM discord_messages WHERE message_id=ANY($1::text[])",[ids]).catch(()=>{});
     await pool.end();
   }
 });
