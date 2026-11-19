@@ -191,7 +191,6 @@ export async function runDiscordPermissionPreflight({
   if(parsedBaseUrl.protocol!=="https:"||parsedBaseUrl.username||parsedBaseUrl.password||
      parsedBaseUrl.search||parsedBaseUrl.hash)
     throw new TypeError("Discord API base URL must use HTTPS without credentials or query parameters");
-    throw new TypeError("Discord API base URL must use HTTPS");
   const nowMs=now instanceof Date?now.getTime():Date.parse(now);
   if(!Number.isFinite(nowMs))throw new TypeError("Preflight clock is invalid");
   const checkedAt=new Date(nowMs).toISOString();
@@ -233,8 +232,13 @@ export async function runDiscordPermissionPreflight({
   }));
   const activeCount=groups.reduce((count,group)=>
     count+group.channels.filter(channel=>channel.errorCode===null).length,0);
-  if(activeCount===0)
+  if(activeCount===0){
+    for(const group of groups){
+      group.status="failed";
+      group.errorCode=group.channels.find(channel=>channel.errorCode)?.errorCode??"no_active_authorized_channels";
+    }
     return makeReport({checkedAt,groups,topLevelError:"no_active_authorized_channels"});
+  }
 
   let bot;
   try{
@@ -248,8 +252,15 @@ export async function runDiscordPermissionPreflight({
     }
     return makeReport({checkedAt,groups,topLevelError:code});
   }
-  if(!bot||typeof bot.id!=="string"||!isDiscordSnowflake(bot.id))
+  if(!bot||typeof bot.id!=="string"||!isDiscordSnowflake(bot.id)){
+    for(const group of groups){
+      for(const channel of group.channels)
+        if(channel.status==="pending")Object.assign(channel,failedChannel(channel.channelId,"invalid_bot_identity_response"));
+      group.status="failed";
+      group.errorCode="invalid_bot_identity_response";
+    }
     return makeReport({checkedAt,groups,topLevelError:"invalid_bot_identity_response"});
+  }
 
   let stopAfterApiFailure=null;
   for(const group of groups){
