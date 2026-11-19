@@ -52,6 +52,7 @@ test("PostgreSQL revisions, stale history, deletions and revoke/retention", {ski
     assert.equal(queued.rows[2].event_kind,"message_deleted");
     assert.equal(queued.rows[2].payload.contentErased,true);
     assert.equal(queued.rows[2].payload.contentSha256,null);
+    assert.equal(queued.rows[2].payload.deletionReason,"deleted");
     assert.equal("content" in queued.rows[2].payload,false);
     assert.equal("authorId" in queued.rows[2].payload,false);
     assert.equal((await storeObservation(pool,edited,30)).status,"tombstoned");
@@ -64,10 +65,29 @@ test("PostgreSQL revisions, stale history, deletions and revoke/retention", {ski
     // A source removed from the allowlist is erased on the next sweep.
     const second=normalizeMessage({...base,id:"623456789012345678",channelId:otherChannel,content:"revocable"},"observed");
     await storeObservation(pool,second,30);
-    const reduced=new Map([[channelId,allowed.get(channelId)]]);
-    await purgeExpired(pool,reduced);
+    const oldBase={...base,id:"823456789012345678",
+      createdAt:new Date(now.getTime()-31*24*60*60*1000),content:"expired"};
+    const oldObservation=normalizeMessage(oldBase,"observed",now.toISOString());
+    assert.equal((await storeObservation(pool,oldObservation,365)).status,"stored");
+    const reduced=new Map([[channelId,{...allowed.get(channelId),retentionDays:30}]]);
+    const purge=await purgeExpired(pool,reduced);
+    assert.equal(purge.tombstonesQueued,2,"revocation and retention must both enqueue erasure events");
     const removed=await pool.query("SELECT COUNT(*)::int AS n FROM discord_messages WHERE channel_id=$1",[otherChannel]);
     assert.equal(removed.rows[0].n,0);
+    const sourceTombstones=await pool.query(
+      "SELECT message_id,deletion_reason FROM discord_message_tombstones WHERE message_id=ANY($1::text[]) ORDER BY message_id",
+      [["623456789012345678","823456789012345678"]]);
+    assert.deepEqual(sourceTombstones.rows,[
+      {message_id:"623456789012345678",deletion_reason:"channel_revoked"},
+      {message_id:"823456789012345678",deletion_reason:"retention_expired"},
+    ]);
+    const erasedOutbox=await pool.query(
+      "SELECT payload->>'deletionReason' AS reason FROM outbox_events "+
+      "WHERE source_system='discord' AND event_kind='message_deleted' AND payload->>'deletionReason' IS NOT NULL "+
+      "ORDER BY reason");
+    assert.deepEqual(erasedOutbox.rows.map(row=>row.reason),["channel_revoked","deleted","retention_expired"]);
+    assert.equal((await storeObservation(pool,second,30)).status,"tombstoned",
+      "revoked messages must not be reinserted after local retention purge");
     // Incomplete recovery checkpoints must survive service restarts.
     await recordRecoveryCheck(pool,guildId,channelId,messageId,
       {status:"gap_unresolved",pagesScanned:1,messagesProcessed:100});
