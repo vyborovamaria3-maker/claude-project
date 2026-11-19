@@ -147,7 +147,7 @@ function prepareDeliveryEvent(event: DeliveryEvent): PreparedDeliveryEvent {
     if (event.createdAt === undefined) throw new TypeError("Discord V2 delivery requires source outbox created_at");
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new TypeError("Invalid Discord source outbox payload");
     const raw = payload as Record<string, unknown>;
-    const allowed = new Set(["kind","channelId","messageId","revisionKey","observedAt","occurredAt","contentSha256","contentErased","producerVersion"]);
+    const allowed = new Set(["kind","channelId","messageId","revisionKey","observedAt","occurredAt","contentSha256","contentErased","deletionReason","producerVersion"]);
     for (const key of Object.keys(raw)) if (!allowed.has(key)) throw new TypeError("Unexpected Discord outbox payload field");
     const envelope = buildDiscordMessageEnvelope({
       kind: raw.kind as "observed"|"edited"|"deleted", channelId: raw.channelId as string,
@@ -156,6 +156,7 @@ function prepareDeliveryEvent(event: DeliveryEvent): PreparedDeliveryEvent {
       occurredAt: (raw.occurredAt ?? null) as string|null,
       contentSha256: (raw.contentSha256 ?? null) as string|null,
       contentErased: raw.contentErased as boolean|undefined,
+      deletionReason: raw.deletionReason as "deleted"|"retention_expired"|"channel_revoked"|undefined,
       producerVersion: raw.producerVersion as string,
     });
     if (envelope.sourceSystem !== event.sourceSystem || envelope.eventKind !== event.eventKind ||
