@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {normalizeMessage,validateAuthorization} from "../src/events.mjs";
+import {IngressSpool} from "../src/ingress-spool.mjs";
+import {mkdtempSync,rmSync} from "node:fs";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import {randomBytes} from "node:crypto";
 import {installSchema,storeObservation,purgeExpired,getRecoveryBaseline,recordRecoveryCheck} from "../src/storage.mjs";
 
 const URL=process.env.DISCORD_TEST_DATABASE_URL;
@@ -12,6 +17,76 @@ const allowed=validateAuthorization({guilds:[{
   guild_id:guildId,channel_ids:[channelId,otherChannel],retention_days:30,
   policy_review_reference:"test",community_permission_reference:"test",reviewed_by:"ci"
 }]});
+
+test("only one Discord Collector can hold the source database advisory lock",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const first=await pool.connect();
+  const second=await pool.connect();
+  const lockSql="SELECT pg_try_advisory_lock(hashtextextended('potapoff:discord-collector:singleton',0)) AS acquired";
+  const unlockSql="SELECT pg_advisory_unlock(hashtextextended('potapoff:discord-collector:singleton',0))";
+  try{
+    assert.equal((await first.query(lockSql)).rows[0].acquired,true);
+    assert.equal((await second.query(lockSql)).rows[0].acquired,false);
+    await first.query(unlockSql);
+    assert.equal((await second.query(lockSql)).rows[0].acquired,true);
+    await second.query(unlockSql);
+  }finally{
+    first.release();
+    second.release();
+    await pool.end();
+  }
+});
+
+test("durable spool replay after source commit does not duplicate the transactional outbox",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const directory=mkdtempSync(join(tmpdir(),"potapoff-discord-spool-integration-"));
+  const key=randomBytes(32);
+  const messageId="923456789012345678";
+  let eventKey=null;
+  let spool;
+  try{
+    await installSchema(pool);
+    spool=new IngressSpool({directory,key}).open();
+    const now=new Date();
+    const createdAt=new Date(now.getTime()-60*60*1000);
+    const message={id:messageId,guildId,channelId,author:{id:"423456789012345678"},
+      content:"replay-safe Discord source event",createdAt,editedAt:null};
+    const snapshot={
+      kind:"observed",messageId,guildId,channelId,authorId:message.author.id,
+      content:message.content,createdAt:createdAt.toISOString(),editedAt:null,
+      receivedAt:now.toISOString(),
+    };
+    spool.append(snapshot);
+    const [first]=spool.listPending();
+    const observation=normalizeMessage(message,"observed",snapshot.receivedAt,guildId);
+    eventKey=["discord:message",channelId,messageId,observation.revisionKey].join(":");
+    assert.equal((await storeObservation(pool,observation,30)).status,"stored");
+    // Simulate a hard crash after PostgreSQL COMMIT but before local ACK.
+    spool.close();
+    spool=new IngressSpool({directory,key}).open();
+    const [replayed]=spool.listPending();
+    assert.equal(replayed.event.messageId,messageId);
+    assert.equal((await storeObservation(pool,observation,30)).status,"stored");
+    const rows=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM outbox_events WHERE source_system='discord' AND event_key=$1",
+      [eventKey]);
+    assert.equal(rows.rows[0].n,1,"replaying an unacknowledged spool file must not duplicate the source event");
+    assert.equal(spool.ack(first.sequence),true);
+    spool.flushAcks();
+    assert.equal(spool.pendingCount,0);
+  }finally{
+    try{spool?.close()}catch{}
+    if(eventKey){
+      await pool.query("DELETE FROM outbox_events WHERE source_system='discord' AND event_key=$1",[eventKey]).catch(()=>{});
+    }
+    await pool.query("DELETE FROM discord_message_revisions WHERE message_id=$1",[messageId]).catch(()=>{});
+    await pool.query("DELETE FROM discord_messages WHERE message_id=$1",[messageId]).catch(()=>{});
+    await pool.end();
+    rmSync(directory,{recursive:true,force:true});
+  }
+});
 
 test("PostgreSQL revisions, stale history, deletions and revoke/retention", {skip:!URL},async()=>{
   const {default:pg}=await import("pg");
@@ -26,7 +101,7 @@ test("PostgreSQL revisions, stale history, deletions and revoke/retention", {ski
     const origin=normalizeMessage(base,"observed",now.toISOString());
     assert.equal((await storeObservation(pool,origin,30)).status,"stored");
     assert.equal((await storeObservation(pool,origin,30)).status,"stored");
-    let queued=await pool.query("SELECT event_kind,event_key,payload FROM outbox_events WHERE source_system='discord' ORDER BY id");
+    let queued=await pool.query("SELECT event_kind,event_key,payload FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1 ORDER BY id",["discord:message:"+channelId+":"+messageId+":%"]);
     assert.equal(queued.rows.length,1,"duplicate observations must be idempotent in the source outbox");
     assert.equal(queued.rows[0].event_kind,"message_observed");
     assert.equal(queued.rows[0].payload.channelId,channelId);
@@ -37,7 +112,7 @@ test("PostgreSQL revisions, stale history, deletions and revoke/retention", {ski
     assert.equal((await storeObservation(pool,edited,30)).status,"stored");
     const stale=normalizeMessage(base,"observed",new Date(now.getTime()+1000).toISOString());
     assert.equal((await storeObservation(pool,stale,30)).status,"stale");
-    queued=await pool.query("SELECT event_kind,event_key,payload FROM outbox_events WHERE source_system='discord' ORDER BY id");
+    queued=await pool.query("SELECT event_kind,event_key,payload FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1 ORDER BY id",["discord:message:"+channelId+":"+messageId+":%"]);
     assert.equal(queued.rows.length,2,"stale REST history must not create a fresh source event");
     assert.equal(queued.rows[1].event_kind,"message_edited");
     assert.equal(queued.rows[1].payload.contentSha256,edited.contentSha);
@@ -47,7 +122,7 @@ test("PostgreSQL revisions, stale history, deletions and revoke/retention", {ski
     const deletePartial={id:messageId,channelId};
     const deletion=normalizeMessage(deletePartial,"deleted",now.toISOString(),guildId);
     assert.equal((await storeObservation(pool,deletion,30)).status,"deleted");
-    queued=await pool.query("SELECT event_kind,payload FROM outbox_events WHERE source_system='discord' ORDER BY id");
+    queued=await pool.query("SELECT event_kind,payload FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1 ORDER BY id",["discord:message:"+channelId+":"+messageId+":%"]);
     assert.equal(queued.rows.length,3);
     assert.equal(queued.rows[2].event_kind,"message_deleted");
     assert.equal(queued.rows[2].payload.contentErased,true);
