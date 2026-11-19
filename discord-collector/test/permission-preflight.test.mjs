@@ -209,6 +209,14 @@ test("expired authorization leases are not sent to Discord",async()=>{
   assert.equal(calls,0);
 });
 
+test("authorization map lease timestamps must include an explicit UTC offset",async()=>{
+  const invalid=authorization();
+  invalid.get(channelId).expiresAt="2026-12-19T00:00:00";
+  await assert.rejects(runDiscordPermissionPreflight({
+    authorization:invalid,token:"token",fetchImpl:async()=>jsonResponse({}),now,
+  }),/invalid channel lease/);
+});
+
 test("preflight channel budget is enforced before any API request",async()=>{
   let calls=0;
   const report=await runDiscordPermissionPreflight({
