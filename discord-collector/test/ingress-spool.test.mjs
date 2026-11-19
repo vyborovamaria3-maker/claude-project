@@ -188,6 +188,7 @@ test("invalid event identifiers, content bounds, timestamps and extra fields are
     assert.throws(()=>f.spool.append(event({messageId:"123"})),/Snowflake/i);
     assert.throws(()=>f.spool.append(event({content:"x".repeat(20_001)})),/content/i);
     assert.throws(()=>f.spool.append(event({receivedAt:"2026-11-19T12:00:00"})),/timestamp/i);
+    assert.throws(()=>f.spool.append(event({createdAt:"2026-11-19+00:00",content:null,authorId:null})),/timestamp/i);
     assert.throws(()=>f.spool.append({...event(),rawGatewayPayload:{}}),/unsupported field/i);
     assert.throws(()=>f.spool.append(event({kind:"deleted",content:"must not persist"})),/cannot retain/i);
     assert.throws(()=>f.spool.append(event({createdAt:null})),/publication timestamp/i);
