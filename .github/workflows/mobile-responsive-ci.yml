@@ -1,9 +1,14 @@
 name: Mobile Responsive CI
 
-# P1 runner isolation: pull_request events execute untrusted PR code and are not
-# allowed on the shared self-hosted runner. This workflow now runs for trusted
-# refs only: push to main, or manual dispatch on main.
+  # P1 runner isolation: pull_request events execute untrusted PR code and must
+  # never land on the shared self-hosted runner, so they run on ephemeral
+  # GitHub-hosted runners. Push to main and manual dispatch on main keep the
+  # central self-hosted selection; dispatch jobs refuse non-main refs.
 on:
+  pull_request:
+    paths:
+      - "solana-launcher/**"
+      - ".github/workflows/mobile-responsive-ci.yml"
   push:
     branches:
       - main
@@ -25,7 +30,7 @@ concurrency:
 jobs:
   mobile-user-smoke:
     if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 20
     defaults:
       run:

@@ -1,9 +1,19 @@
 name: Telegram Intelligence v19 CI
 
-# P1 runner isolation: pull_request events execute untrusted PR code and are not
-# allowed on the shared self-hosted runner. This workflow now runs for trusted
-# refs only: push to main, or manual dispatch on main.
+  # P1 runner isolation: pull_request events execute untrusted PR code and must
+  # never land on the shared self-hosted runner, so they run on ephemeral
+  # GitHub-hosted runners. Push to main and manual dispatch on main keep the
+  # central self-hosted selection; dispatch jobs refuse non-main refs.
 on:
+  pull_request:
+    paths:
+      - "solana-launcher/lib/telegram/**"
+      - "solana-launcher/telegram-bot/**"
+      - "solana-launcher/app/telegram-intelligence/**"
+      - "solana-launcher/app/api/tginvite/**"
+      - "solana-launcher/components/tginvite/**"
+      - "solana-launcher/lib/tginvite-*.ts"
+      - ".github/workflows/telegram-intelligence-v19-ci.yml"
   push:
     branches:
       - main
@@ -35,7 +45,7 @@ permissions:
 jobs:
   backend:
     if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     env:
       SECRET_KEY: a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9
     defaults:
@@ -66,7 +76,7 @@ jobs:
 
   frontend:
     if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     defaults:
       run:
         working-directory: solana-launcher
@@ -88,7 +98,7 @@ jobs:
 
   compose:
     if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     defaults:
       run:
         working-directory: solana-launcher

@@ -15,8 +15,9 @@ permissions:
 # Runner selection is controlled centrally by POTAPOFF_RUNNER; self-hosted is the default.
 # P1 isolation: pull_request events execute untrusted PR code and must never land on the
 # shared self-hosted runner; they run on ephemeral GitHub-hosted runners instead (free for
-# public repositories). workflow_dispatch runs the default-branch workflow file only: jobs
-# below refuse non-main refs so a branch ref cannot execute on the production runner.
+# public repositories). workflow_dispatch may target any ref and runs the workflow file
+# from that ref, so the jobs below refuse non-main refs themselves - the ref guard, not
+# the comment, is the security boundary.
 jobs:
   secret-scan:
     if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
