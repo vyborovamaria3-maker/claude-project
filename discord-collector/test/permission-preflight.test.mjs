@@ -6,6 +6,7 @@ const botId="123456789012345678";
 const guildId="223456789012345678";
 const channelId="323456789012345678";
 const otherChannelId="423456789012345678";
+const roleId="523456789012345678";
 const expiresAt="2026-12-19T00:00:00.000Z";
 const now=new Date("2026-11-19T12:00:00.000Z");
 const VIEW=1n<<10n;
@@ -34,11 +35,15 @@ function successfulFetch({permissions=VIEW|HISTORY,channelTypes={}}={}){
     if(parsed.pathname==="/api/v10/users/@me")return jsonResponse({id:botId});
     if(parsed.pathname===`/api/v10/guilds/${guildId}`)
       return jsonResponse({id:guildId});
+    if(parsed.pathname===`/api/v10/guilds/${guildId}/roles`)
+      return jsonResponse([
+        {id:guildId,permissions:"0"},
+        {id:roleId,permissions:String(permissions)},
+      ]);
+    if(parsed.pathname===`/api/v10/guilds/${guildId}/members/${botId}`)
+      return jsonResponse({user:{id:botId},roles:[roleId]});
     if(parsed.pathname===`/api/v10/channels/${channelId}`)
-      return jsonResponse({id:channelId,guild_id:guildId,type:channelTypes[channelId]??0});
-    const permissionPath="/api/v10/channels/"+channelId+"/permissions/member/"+botId;
-    if(parsed.pathname===permissionPath)
-      return jsonResponse({permissions:String(permissions)});
+      return jsonResponse({id:channelId,guild_id:guildId,type:channelTypes[channelId]??0,permission_overwrites:[]});
     return jsonResponse({message:"unexpected route"},404);
   };
   return {fetchImpl,calls};
@@ -58,7 +63,8 @@ test("preflight verifies only allowlisted text channels and computed bot permiss
   assert.deepEqual(report.guilds[0].channels[0].checks,{
     viewChannel:true,readMessageHistory:true,administrator:false,sendMessages:false,leastPrivilege:true,
   });
-  assert.ok(fake.calls.some(call=>call.path===`/api/v10/channels/${channelId}/permissions/member/${botId}`));
+  assert.ok(fake.calls.some(call=>call.path===`/api/v10/guilds/${guildId}/roles`));
+  assert.ok(fake.calls.some(call=>call.path===`/api/v10/guilds/${guildId}/members/${botId}`));
   assert.ok(!fake.calls.some(call=>call.path.includes("/messages")));
   assert.ok(fake.calls.every(call=>call.authorization==="Bot test-secret-token"));
   assert.ok(!JSON.stringify(report).includes("test-secret-token"));
@@ -117,7 +123,7 @@ test("missing or hidden authorized channel fails without a permission probe",asy
   });
   assert.equal(report.ok,false);
   assert.equal(report.guilds[0].channels[0].errorCode,"channel_not_visible_or_missing");
-  assert.ok(!fake.calls.some(call=>call.path.includes(`/channels/${channelId}/permissions/`)));
+  assert.ok(!fake.calls.some(call=>call.path.includes("/messages")));
 });
 
 test("a missing guild or bot membership fails the guild's authorized channels",async()=>{
@@ -134,7 +140,7 @@ test("a missing guild or bot membership fails the guild's authorized channels",a
   });
   assert.equal(report.ok,false);
   assert.equal(report.guilds[0].errorCode,"guild_unavailable_or_bot_not_member");
-  assert.ok(!calls.some(path=>path.includes("/permissions/member/")));
+  assert.ok(!calls.some(path=>path.includes("/channels/")));
 });
 
 test("unsupported channel types fail closed",async()=>{
@@ -161,7 +167,7 @@ test("permission endpoint forbidden fails closed without exposing API response b
     authorization:authorization(),token:"secret",fetchImpl,now,
   });
   assert.equal(report.ok,false);
-  assert.equal(report.guilds[0].channels[0].errorCode,"view_channel_denied");
+  assert.equal(report.guilds[0].channels[0].errorCode,"guild_access_denied");
   assert.ok(!JSON.stringify(report).includes("private diagnostic"));
   assert.ok(!JSON.stringify(report).includes("secret"));
 });
@@ -271,8 +277,8 @@ test("malformed computed permission bitfield fails closed",async()=>{
   const fake=successfulFetch();
   const fetchImpl=async(url,options)=>{
     const parsed=new URL(url);
-    if(parsed.pathname.endsWith("/permissions/member/"+botId))
-      return jsonResponse({permissions:9007199254740992});
+    if(parsed.pathname===`/api/v10/guilds/${guildId}/roles`)
+      return jsonResponse([{id:guildId,permissions:"0"},{id:roleId,permissions:9007199254740992}]);
     return fake.fetchImpl(url,options);
   };
   const report=await runDiscordPermissionPreflight({
