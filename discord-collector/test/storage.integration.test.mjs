@@ -6,7 +6,7 @@ import {mkdtempSync,rmSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {randomBytes} from "node:crypto";
-import {installSchema,storeObservation,purgeExpired,getRecoveryBaseline,recordRecoveryCheck} from "../src/storage.mjs";
+import {installSchema,storeObservation,purgeExpired,getRecoveryBaseline,recordRecoveryCheck,recordCoverageFailure} from "../src/storage.mjs";
 
 const URL=process.env.DISCORD_TEST_DATABASE_URL;
 const guildId="123456789012345678";
@@ -252,6 +252,41 @@ test("source transaction refuses to persist an event after its authorization lea
       ["discord:message:"+channelId+":"+messageId+":%"]).catch(()=>{});
     await pool.query("DELETE FROM discord_message_revisions WHERE message_id=$1",[messageId]).catch(()=>{});
     await pool.query("DELETE FROM discord_messages WHERE message_id=$1",[messageId]).catch(()=>{});
+    await pool.end();
+  }
+});
+
+test("unhydratable message coverage is recorded before acknowledgement and expires with retention",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const coverageMessageId="923456789012345681";
+  const receivedAt="2026-11-19T12:00:00.000Z";
+  try{
+    await installSchema(pool);
+    const event={kind:"edited",guildId,channelId,messageId:coverageMessageId,receivedAt};
+    await recordCoverageFailure(pool,event,30);
+    await recordCoverageFailure(pool,event,30);
+    const recorded=await pool.query(
+      "SELECT guild_id,channel_id,message_id,event_kind,failure_code FROM discord_coverage_failures WHERE message_id=$1",
+      [coverageMessageId],
+    );
+    assert.deepEqual(recorded.rows,[{
+      guild_id:guildId,channel_id:channelId,message_id:coverageMessageId,
+      event_kind:"edited",failure_code:"message_not_found",
+    }],"duplicate replay must not duplicate a durable coverage failure");
+    await pool.query(
+      "UPDATE discord_coverage_failures SET expires_at=NOW()-INTERVAL '1 second' WHERE message_id=$1",
+      [coverageMessageId],
+    );
+    const purge=await purgeExpired(pool,allowed);
+    assert.equal(purge.coverageFailuresErased,1);
+    const remaining=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_coverage_failures WHERE message_id=$1",
+      [coverageMessageId],
+    );
+    assert.equal(remaining.rows[0].n,0);
+  }finally{
+    await pool.query("DELETE FROM discord_coverage_failures WHERE message_id=$1",[coverageMessageId]).catch(()=>{});
     await pool.end();
   }
 });
