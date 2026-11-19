@@ -80,3 +80,16 @@ test("Discord claims fail closed until migration 022 evidence/timeline constrain
  }};
  await assert.rejects(checkDestination(pool,{requireDiscordEvidence:true,allowLegacyFingerprints:true}),/migration 022 required/);
 });
+
+
+test("Discord claims fail closed until durable message tombstones exist",async()=>{
+ const pool={query:async sql=>{
+  if(sql.includes("payload_sha256 IS NULL"))return{rows:[{pending:false}]};
+  return{rows:[{inbox:true,registry:true,evidence:true,timeline:true,token_links:true,
+   blockchain_revisions:true,inbox_fingerprint:true,
+   discord_message_tombstones:false,
+   discord_evidence_definition:"CHECK (evidence_kind IN ('x_tweet','tg_message','chain_tx','discord_message'))",
+   discord_timeline_definition:"CHECK (timeline_kind IN ('tweet_published','tg_message_published','discord_message_published','discord_message_edited','discord_message_deleted'))"}]};
+ }};
+ await assert.rejects(checkDestination(pool,{requireDiscordEvidence:true,allowLegacyFingerprints:true}),/migration 023 required/);
+});
