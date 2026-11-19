@@ -31,7 +31,8 @@
       "enum": [
         "x",
         "tg",
-        "blockchain"
+        "blockchain",
+        "discord"
       ]
     },
     "eventKind": {
@@ -144,7 +145,8 @@
             "enum": [
               "x_tweet",
               "tg_message",
-              "chain_tx"
+              "chain_tx",
+              "discord_message"
             ]
           },
           "sourceId": {
@@ -201,7 +203,8 @@
           "enum": [
             "x",
             "tg",
-            "blockchain"
+            "blockchain",
+            "discord"
           ]
         },
         "scope": {

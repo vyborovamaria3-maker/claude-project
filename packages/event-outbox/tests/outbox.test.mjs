@@ -152,3 +152,16 @@ test("Postgres and SQLite claims reject rows without a valid immutable created_a
   assert.ok(db.sql.includes("ROLLBACK"),
     "malformed SQLite metadata must roll back before lease ownership is updated");
 });
+
+
+test("Discord is an explicitly supported outbox source", () => {
+  const discord = {
+    sourceSystem: "discord",
+    eventKind: "discord_message_observed",
+    eventKey: "discord:message:12345678901234567:22345678901234567:32345678901234567:observed",
+    schemaVersion: "discord-message-v1",
+    payload: { registryEvent: { sourceSystem: "discord" } },
+  };
+  assert.doesNotThrow(() => validateOutboxEvent(discord));
+  assert.throws(() => validateOutboxEvent({ ...discord, sourceSystem: "discord-scrape" }), /Unsupported outbox source/);
+});

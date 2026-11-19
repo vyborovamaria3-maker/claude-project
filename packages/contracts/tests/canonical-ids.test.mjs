@@ -67,3 +67,26 @@ test("stable social identities never use username, and huge IDs remain text", ()
   assert.throws(() => formatAuthorId("tg", "0"), /Stable numeric/);
   assert.throws(() => formatAuthorId("tg", "-0"), /Stable numeric/);
 });
+
+
+test("Discord canonical source IDs use strict Snowflakes", () => {
+  const channel = "12345678901234567";
+  assert.equal(formatSourceId("discord", channel), "discord:channel:" + channel);
+  assert.equal(parseSourceId("discord:channel:" + channel)?.platform, "discord");
+  assert.equal(parseSourceId("discord:channel:" + channel)?.accountId, channel);
+  assert.equal(formatAuthorId("discord", "22345678901234567"), "discord:22345678901234567");
+  assert.equal(parseAuthorId("discord:22345678901234567")?.platform, "discord");
+  for (const invalid of ["discord:channel:-12345678901234567", "discord:channel:123", "discord:channel:00123456789012345"]) {
+    assert.equal(parseSourceId(invalid), null);
+  }
+  assert.throws(() => formatSourceId("discord", "123"), /Stable numeric/);
+});
+
+
+test("Discord Snowflakes reject values outside the unsigned 64-bit range", () => {
+  const max = "18446744073709551615";
+  assert.equal(formatSourceId("discord", max), "discord:channel:" + max);
+  assert.throws(() => formatSourceId("discord", "18446744073709551616"), /Stable numeric/);
+  assert.throws(() => formatAuthorId("discord", "18446744073709551616"), /Stable numeric/);
+  assert.equal(parseSourceId("discord:channel:18446744073709551616"), null);
+});

@@ -5,8 +5,9 @@ import { buildTimelineEvent, type JsonValue, type TimelineEventKind } from "./ti
 import { parseTokenId, parseWalletId, isSolanaSignature } from "./canonical-ids.js";
 import { validateVerifiedTokenLinkEvent } from "./token-link.js";
 import { validateTokenLinksInvalidatedEvent } from "./token-link-invalidation.js";
+import { toUtcIso } from "./time.js";
 
-export type EventSource = "x" | "tg" | "blockchain";
+export type EventSource = "x" | "tg" | "blockchain" | "discord";
 export type CompatibilityMode = "backward" | "forward" | "full";
 
 export type JsonSchema = Readonly<{
@@ -33,7 +34,7 @@ export type SchemaDefinition = Readonly<{
   sourceSystem: EventSource;
   eventKind: string;
   schemaVersion: string;
-  producerName: "x-collector" | "tg-collector" | "solana-launcher";
+  producerName: "x-collector" | "tg-collector" | "solana-launcher" | "discord-collector";
   consumers: readonly ["node-intelligence"];
   compatibilityMode: CompatibilityMode;
   deprecatedAt: null;
@@ -85,6 +86,30 @@ function evidenceSchema(sourceKind: EvidenceSourceKind, sourceIdPattern: string)
 const X_EVIDENCE = evidenceSchema("x_tweet", "^x:tweet:[1-9][0-9]*$");
 const TG_EVIDENCE = evidenceSchema("tg_message", "^tg:message:-?(?:[1-9][0-9]*):[1-9][0-9]*$");
 const CHAIN_EVIDENCE = evidenceSchema("chain_tx", "^chain:tx:solana:[1-9A-HJ-NP-Za-km-z]+$");
+const DISCORD_EVIDENCE: JsonSchema = {
+  type: "object",
+  required: ["sourceKind", "sourceId", "observedAt"],
+  additionalProperties: false,
+  properties: {
+    sourceKind: { const: "discord_message" },
+    sourceId: { type: "string", pattern: "^discord:message:[1-9][0-9]{14,21}:[1-9][0-9]{14,21}:[1-9][0-9]{14,21}$", maxLength: 512 },
+    observedAt: TIME,
+    occurredAt: TIME,
+    provider: { type: "string", minLength: 1, maxLength: 4096 },
+    parserVersion: { type: "string", minLength: 1, maxLength: 4096 },
+  },
+};
+const DISCORD_SNOWFLAKE: JsonSchema = { type: "string", pattern: "^[1-9][0-9]{14,21}$", minLength: 15, maxLength: 22 };
+const DISCORD_MESSAGE_REVISION_SCHEMA: JsonSchema = {
+  type: "object", required: ["guildId", "channelId", "messageId", "revisionAt"],
+  additionalProperties: false,
+  properties: { guildId: DISCORD_SNOWFLAKE, channelId: DISCORD_SNOWFLAKE, messageId: DISCORD_SNOWFLAKE, revisionAt: TIME },
+};
+const DISCORD_MESSAGE_DELETED_SCHEMA: JsonSchema = {
+  type: "object", required: ["guildId", "channelId", "messageId"],
+  additionalProperties: false,
+  properties: { guildId: DISCORD_SNOWFLAKE, channelId: DISCORD_SNOWFLAKE, messageId: DISCORD_SNOWFLAKE },
+};
 
 function registryEventSchema(
   sourceSystem: EventSource,
@@ -178,6 +203,8 @@ const TG_REGISTRY = (kind: string, version: string) =>
   registryEventSchema("tg", kind, version, TG_EVIDENCE);
 const CHAIN_REGISTRY = (kind: string, version: string) =>
   registryEventSchema("blockchain", kind, version, CHAIN_EVIDENCE);
+const DISCORD_REGISTRY = (kind: string, version: string) =>
+  registryEventSchema("discord", kind, version, DISCORD_EVIDENCE);
 
 const TOKEN_LINK_SCHEMA: JsonSchema = {
   type: "object",
@@ -285,6 +312,20 @@ const DEFINITIONS: readonly SchemaDefinition[] = Object.freeze([
     payloadSchema(TG_REGISTRY("token_links_invalidated", "token-link-v1"), {
       tokenLinksInvalidation: INVALIDATION_SCHEMA,
     }, ["tokenLinksInvalidation"])),
+  define("discord", "discord_message_observed", "discord-message-v1", "discord-collector",
+    payloadSchema(DISCORD_REGISTRY("discord_message_observed", "discord-message-v1"), {
+      discordMessage: DISCORD_MESSAGE_REVISION_SCHEMA,
+      timelineEvent: timelineEventSchema("discord_message_observed", DISCORD_EVIDENCE),
+    }, ["discordMessage", "timelineEvent"])),
+  define("discord", "discord_message_edited", "discord-message-v1", "discord-collector",
+    payloadSchema(DISCORD_REGISTRY("discord_message_edited", "discord-message-v1"), {
+      discordMessage: DISCORD_MESSAGE_REVISION_SCHEMA,
+      timelineEvent: timelineEventSchema("discord_message_edited", DISCORD_EVIDENCE),
+    }, ["discordMessage", "timelineEvent"])),
+  define("discord", "discord_message_deleted", "discord-message-v1", "discord-collector",
+    payloadSchema(DISCORD_REGISTRY("discord_message_deleted", "discord-message-v1"), {
+      discordMessage: DISCORD_MESSAGE_DELETED_SCHEMA,
+    }, ["discordMessage"])),
 ]);
 
 const INDEX = new Map(DEFINITIONS.map((definition) => [
@@ -410,6 +451,7 @@ function validateLegacySemantics(identity: SchemaIdentity, payloadValue: unknown
     x: "x_tweet",
     tg: "tg_message",
     blockchain: "chain_tx",
+    discord: "discord_message",
   } as const;
   if (evidenceRef.sourceKind !== evidenceForSource[identity.sourceSystem]) {
     throw new TypeError("Evidence kind does not match sourceSystem");
@@ -428,6 +470,51 @@ function validateLegacySemantics(identity: SchemaIdentity, payloadValue: unknown
     if (!match || entityRefs.length !== 1 || entityRefs[0]!.kind !== "source" ||
         entityRefs[0]!.canonicalId !== "tg:source:" + match[1]) {
       throw new TypeError("Telegram event source entity does not match message evidence");
+    }
+  } else if (identity.sourceSystem === "discord") {
+    const match = /^discord:message:([1-9][0-9]{14,21}):([1-9][0-9]{14,21}):([1-9][0-9]{14,21})$/.exec(evidenceRef.sourceId);
+    if (!match || entityRefs.length !== 1 || entityRefs[0]!.kind !== "source" ||
+        entityRefs[0]!.canonicalId !== "discord:channel:" + match[2]) {
+      throw new TypeError("Discord event must reference exactly its canonical channel source");
+    }
+    if (!["discord_message_observed", "discord_message_edited", "discord_message_deleted"].includes(identity.eventKind)) {
+      throw new TypeError("Unsupported Discord event kind");
+    }
+    const message = record(payload.discordMessage, "$.payload.discordMessage");
+    if (message.guildId !== match[1] || message.channelId !== match[2] || message.messageId !== match[3]) {
+      throw new TypeError("Discord message metadata does not match evidence identity");
+    }
+    const eventPrefix = "discord:message:" + match[1] + ":" + match[2] + ":" + match[3] + ":";
+    if (identity.eventKind === "discord_message_deleted") {
+      if (payload.timelineEvent !== undefined) throw new TypeError("Deleted Discord messages cannot publish a content timeline event");
+      if (identity.eventKey !== eventPrefix + "deleted") {
+        throw new TypeError("Discord delete event key must be stable for the message tombstone");
+      }
+    } else {
+      const revisionAt = message.revisionAt;
+      if (typeof revisionAt !== "string" || !/(Z|[+-][0-9]{2}:[0-9]{2})$/i.test(revisionAt) || !Number.isFinite(Date.parse(revisionAt))) {
+        throw new TypeError("Discord revisionAt must be an aware ISO timestamp");
+      }
+      const canonicalRevisionAt = toUtcIso(revisionAt);
+      if (revisionAt !== canonicalRevisionAt) {
+        throw new TypeError("Discord revisionAt must use canonical UTC ISO format");
+      }
+      if (!evidenceRef.occurredAt) throw new TypeError("Discord observed/edited events require revision occurredAt");
+      const revisionMs = Date.parse(canonicalRevisionAt);
+      const occurredMs = Date.parse(evidenceRef.occurredAt);
+      const observedMs = Date.parse(evidenceRef.observedAt);
+      if (revisionMs !== occurredMs || revisionMs > observedMs) {
+        throw new TypeError("Discord revision clock must equal source occurredAt and not exceed observedAt");
+      }
+      const expectedTimeline = identity.eventKind === "discord_message_observed"
+        ? "discord_message_observed" : "discord_message_edited";
+      const expectedKey = identity.eventKind === "discord_message_observed"
+        ? eventPrefix + "observed" : eventPrefix + "edited:" + canonicalRevisionAt;
+      if (identity.eventKey !== expectedKey) {
+        throw new TypeError("Discord event key must uniquely identify its source revision");
+      }
+      const timeline = record(payload.timelineEvent, "$.payload.timelineEvent");
+      if (timeline.kind !== expectedTimeline) throw new TypeError("Discord timeline kind does not match source event");
     }
   } else if (identity.eventKind === "wallet_transaction_observed") {
     if (entityRefs.length !== 1 || entityRefs[0]!.kind !== "wallet") {

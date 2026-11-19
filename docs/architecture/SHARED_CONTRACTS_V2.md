@@ -3,7 +3,7 @@
 Status: **PARTIAL IMPLEMENTATION — V2 contract package and consumer V1/V2 dual-read are implemented; all source producers still emit V1**  
 Date: 2026-11-12  
 Parent plan: [POTAPOFF_INTELLIGENCE_V2_IMPLEMENTATION_PLAN.md](POTAPOFF_INTELLIGENCE_V2_IMPLEMENTATION_PLAN.md)  
-Scope: X Collector, TG Collector, Solana blockchain module, Node Intelligence.
+Scope: X Collector, TG Collector, Solana blockchain module, opt-in Discord Collector, Node Intelligence.
 
 This document defines the next contract revision. It does not claim producers already emit V2 and does not authorize enabling source outboxes or changing production databases.
 
@@ -13,7 +13,7 @@ The current wire envelope is:
 
 ```ts
 type OutboxEvent = {
-  sourceSystem: "x" | "tg" | "blockchain" | "twitter_research";
+  sourceSystem: "x" | "tg" | "blockchain" | "twitter_research" | "discord";
   eventKind: string;
   eventKey: string;
   schemaVersion: string;
@@ -38,7 +38,7 @@ Proposed TypeScript shape:
 type EventEnvelopeV2<TPayload extends Record<string, unknown>> = {
   envelopeVersion: "event-envelope-v2";
   eventId: string;                 // stable ID derived from source + kind + eventKey
-  sourceSystem: "x" | "tg" | "blockchain";
+  sourceSystem: "x" | "tg" | "blockchain" | "discord";
   eventKind: string;
   eventKey: string;                // unique per immutable observation/revision
   schemaVersion: string;           // version of the payload schema, not envelope
@@ -56,7 +56,7 @@ type EventEnvelopeV2<TPayload extends Record<string, unknown>> = {
     canonicalId: string;
   }>;
   evidenceRefs: Array<{
-    sourceKind: "x_tweet" | "tg_message" | "chain_tx";
+    sourceKind: "x_tweet" | "tg_message" | "chain_tx" | "discord_message";
     sourceId: string;
     rawPointer?: string;            // reference only; no raw private content
     contentSha256?: string;
@@ -202,7 +202,7 @@ The architecture-hardening branch now implements the first runtime contract laye
 - `EventEnvelopeV2` TypeScript types, builder and fail-closed validator.
 - Canonical JSON serialization and SHA-256 over the complete normalized envelope excluding `payloadSha256`.
 - Deterministic `eventId` from source system + event kind + event key.
-- Source-controlled schema registry with ten current V1 source/event/schema combinations: X tweet, TG message publication/deletion, Solana raw wallet observation, Solana swap evidence/revision, and X/TG verified-link and invalidation events.
+- Source-controlled schema registry with ten existing X/TG/Solana V1 source/event/schema combinations plus three registered Discord V2 message schemas (observed, edited, deleted). Discord is V2-only; it has no V1 adapter.
 - JSON Schema document checked against the TypeScript schema object in tests.
 - Backward/forward/full compatibility comparison helpers and immutable schema-ID guard.
 - V1-to-V2 normalizer with actual source-builder fixtures in the producer integration workflow.
@@ -266,3 +266,34 @@ This strategy does not modify source outbox rows or historical payloads. The bra
 - [ ] Exact-head CI and actual PostgreSQL integration execution remain pending.
 - [x] Token-link materialization mismatch rolls back V1→V2 promotion in the PostgreSQL integration test.
 - [ ] Timeline and swap materialization mismatch tests and independent review remain required before producer cutover.
+
+
+## 10. Discord V2 additive source extension — 2026-11-18
+
+The shared contracts branch adds a registered discord source with
+discord-collector as the schema owner. The three event kinds are
+discord_message_observed, discord_message_edited, and
+discord_message_deleted, all under discord-message-v1.
+
+- Evidence ID: discord:message:<guildSnowflake>:<channelSnowflake>:<messageSnowflake>.
+- The only entity reference is the channel source discord:channel:<channelSnowflake>.
+- Snowflakes remain strings and must be nonzero unsigned 64-bit values. Never
+  coerce them through JavaScript Number.
+- The shared event excludes message text, author IDs/handles, attachment URLs,
+  raw pointers, and content fingerprints. The local collector may retain
+  source content only in its isolated, permission-gated store under its own
+  retention/deletion policy.
+- Observed event occurredAt is the message creation time. Edited event
+  occurredAt is the edit revision time; eventKey includes that canonical UTC
+  revision timestamp so repeated edits do not overwrite one another.
+- Delete is a tombstone without a content timeline row. Discord V1 payloads are
+  rejected; only a validated Event Envelope V2 may enter the consumer.
+- Partial/unknown channel coverage must remain explicit. A bounded restart scan
+  is not proof of complete history.
+
+Destination migration 022_discord_message_contracts.sql additively widens
+only the evidence-kind and timeline-kind checks. The consumer library can
+validate and ingest a Discord V2 envelope, but the CLI/supervisor source
+connection and source transactional outbox are not yet integrated. Those are
+the next implementation stage. This contract does not grant Discord platform
+permission or community consent and does not enable a live collector.

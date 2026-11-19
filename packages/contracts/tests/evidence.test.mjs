@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildEvidenceRef } from "../dist/index.js";
+import { buildEvidenceRef, validateEvidenceRef } from "../dist/index.js";
 
 const NOW = "2026-10-17T20:30:00Z";
 const SIG = "1".repeat(64);
@@ -37,4 +37,44 @@ test("malformed provenance or ambiguous clocks are rejected", () => {
   assert.throws(() => buildEvidenceRef({sourceKind:"x_tweet",tweetId:"abc",observedAt:NOW}), /Tweet ID/);
   assert.throws(() => buildEvidenceRef({sourceKind:"x_tweet",tweetId:"12",observedAt:"2026-10-17T20:00:00"}), /timezone/);
   assert.throws(() => buildEvidenceRef({sourceKind:"x_tweet",tweetId:"12",observedAt:NOW,provider:" "}), /Invalid provider/);
+});
+
+
+test("Discord evidence identity binds guild, channel and message Snowflakes", () => {
+  const ref = buildEvidenceRef({
+    sourceKind: "discord_message",
+    guildId: "12345678901234567",
+    channelId: "22345678901234567",
+    messageId: "32345678901234567",
+    occurredAt: "2026-11-18T18:00:00Z",
+    observedAt: "2026-11-18T18:00:02Z",
+    provider: "discord-gateway",
+    parserVersion: "discord-collector-v1",
+  });
+  assert.equal(ref.sourceId, "discord:message:12345678901234567:22345678901234567:32345678901234567");
+  assert.equal(validateEvidenceRef(ref).sourceId, ref.sourceId);
+  assert.throws(() => buildEvidenceRef({
+    sourceKind: "discord_message", guildId: "1", channelId: "22345678901234567",
+    messageId: "32345678901234567", observedAt: NOW,
+  }), /Snowflakes/);
+  assert.throws(() => validateEvidenceRef({...ref, sourceId: "discord:message:1:2:3"}), /Discord message evidence/);
+});
+
+
+test("Discord evidence rejects Snowflake values above uint64 max", () => {
+  const valid = "18446744073709551615";
+  assert.doesNotThrow(() => buildEvidenceRef({
+    sourceKind:"discord_message",guildId:valid,channelId:valid,messageId:valid,observedAt:NOW,
+  }));
+  assert.throws(() => buildEvidenceRef({
+    sourceKind:"discord_message",guildId:"18446744073709551616",
+    channelId:"22345678901234567",messageId:"32345678901234567",observedAt:NOW,
+  }), /Snowflakes/);
+  const ref = buildEvidenceRef({
+    sourceKind:"discord_message",guildId:"12345678901234567",
+    channelId:"22345678901234567",messageId:"32345678901234567",observedAt:NOW,
+  });
+  assert.throws(() => validateEvidenceRef({...ref,
+    sourceId:"discord:message:18446744073709551616:22345678901234567:32345678901234567",
+  }), /Snowflakes/);
 });

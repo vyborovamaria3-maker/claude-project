@@ -115,3 +115,32 @@ Producer-specific V2 builders, all-source V1/V2 parity fixtures, and the operato
 
 
 **Historical Solana SQLite clock gate:** older Solana outbox writers copied `observedAt` into `created_at`. New writers now stamp wall-clock insertion time. Existing rows are not rewritten; inspect pending legacy Solana rows before enabling V1→V2 delivery because their stored `created_at` may be equal to (rather than later than) `observedAt`, and the old and new same-millisecond cases cannot be distinguished from the timestamp alone.
+
+
+## Discord message evidence — V2 additive extension
+
+The architecture-hardening branch adds a registered Discord source with three
+immutable event identities: discord_message_observed, discord_message_edited
+and discord_message_deleted, all under discord-message-v1.
+
+- Evidence identity is discord:message:<guildSnowflake>:<channelSnowflake>:<messageSnowflake>.
+- Source entity identity is discord:channel:<channelSnowflake>.
+- Only source/channel provenance is placed in the shared event. Raw message text,
+  author IDs, author handles, attachment URLs and member metadata are forbidden
+  from the Discord V2 payload schema.
+- Observed/edited events include source clocks and a metadata-only timeline row.
+  Deleted events are tombstones and cannot create a content timeline body.
+- A message edit has its own stable event identity; do not overwrite the original
+  observed event. A delete is a separate event and downstream retraction work is
+  required before production delivery.
+- Snowflakes are validated as unsigned 64-bit decimal strings (nonzero and no
+  greater than 18446744073709551615); never coerce them to JavaScript Number.
+- Observed event keys end in :observed; delete tombstones end in :deleted.
+  Each edit key includes its canonical UTC revisionAt. For edits, evidence
+  occurredAt and timeline occurredAt are the edit timestamp, not original
+  message creation time.
+- Discord coverage may be partial/unknown. A bounded restart scan is not proof
+  of complete historical coverage.
+
+This contract is not permission to collect messages. The collector still requires
+separate Discord platform-policy review and affected-community permission.
