@@ -50,7 +50,7 @@ async function emitDiscordObservation(client,o){
 
 function erasureObservation(row,reason,observedAt){
   const revisionKey=createHash("sha256")
-    .update([row.guild_id,row.channel_id,row.message_id,"deleted",reason].join("|"))
+    .update([row.guild_id,row.channel_id,row.message_id,"deleted","","",reason].join("|"))
     .digest("hex");
   return {
     kind:"deleted",guildId:row.guild_id,channelId:row.channel_id,messageId:row.message_id,
@@ -61,6 +61,7 @@ function erasureObservation(row,reason,observedAt){
 
 async function enqueueErasureTombstones(client,rows,reason){
   const observedAt=new Date().toISOString();
+  let queued=0;
   for(const row of rows){
     const inserted=await client.query(
       "INSERT INTO discord_message_tombstones "+
@@ -68,8 +69,12 @@ async function enqueueErasureTombstones(client,rows,reason){
       "VALUES($1,$2,$3,$4,$5) ON CONFLICT(message_id) DO NOTHING RETURNING message_id",
       [row.message_id,row.guild_id,row.channel_id,observedAt,reason],
     );
-    if(inserted.rows.length)await emitDiscordObservation(client,erasureObservation(row,reason,observedAt));
+    if(inserted.rows.length){
+      await emitDiscordObservation(client,erasureObservation(row,reason,observedAt));
+      queued++;
+    }
   }
+  return queued;
 }
 
 export async function storeObservation(pool, o, retentionDays, clock=new Date()){
@@ -174,6 +179,7 @@ export async function purgeExpired(pool,allowed){
   try{
     await client.query("BEGIN");
     let removed=0;
+    let tombstonesQueued=0;
     const authorized=[...allowed.entries()].map(([channelId,permission])=>{
       requireRetention(permission.retentionDays);
       if(!permission.guildId)throw new Error("Authorized channel is missing its guild identity");
@@ -189,7 +195,7 @@ export async function purgeExpired(pool,allowed){
       "WHERE a.channel_id=m.channel_id AND a.guild_id=m.guild_id)",
       [channelIds,guildIds],
     );
-    await enqueueErasureTombstones(client,revokedRows.rows,"channel_revoked");
+    tombstonesQueued+=await enqueueErasureTombstones(client,revokedRows.rows,"channel_revoked");
     if(revokedRows.rows.length){
       const ids=revokedRows.rows.map(row=>row.message_id);
       const revisions=await client.query(
@@ -218,7 +224,7 @@ export async function purgeExpired(pool,allowed){
         "AND COALESCE(occurred_at,observed_at)<NOW()-($3::integer*INTERVAL '1 day')",
         [item.channelId,item.guildId,item.retentionDays],
       );
-      await enqueueErasureTombstones(client,expired.rows,"retention_expired");
+      tombstonesQueued+=await enqueueErasureTombstones(client,expired.rows,"retention_expired");
       if(expired.rows.length){
         const ids=expired.rows.map(row=>row.message_id);
         const revisions=await client.query(
@@ -229,7 +235,7 @@ export async function purgeExpired(pool,allowed){
       }
     }
     await client.query("COMMIT");
-    return {rowsErased:removed,tombstonesQueued:revokedRows.rows.length};
+    return {rowsErased:removed,tombstonesQueued};
   }catch(e){await client.query("ROLLBACK");throw e}
   finally{client.release()}
 }
