@@ -89,14 +89,18 @@ function isoOrNull(value,fallbackTimestamp){
 
 function snapshotGatewayEvent(kind,message,permission){
   const channelId=String(message.channelId??message.channel?.id??"");
+  const createdAt=isoOrNull(message.createdAt,message.createdTimestamp);
+  const retainPersonalFields=kind!=="deleted"&&createdAt!==null;
   return {
     kind,
     messageId:String(message.id??""),
     guildId:String(message.guildId??message.guild?.id??permission.guildId),
     channelId,
-    authorId:message.author?.id?String(message.author.id):null,
-    content:kind==="deleted"?null:(typeof message.content==="string"?message.content:null),
-    createdAt:isoOrNull(message.createdAt,message.createdTimestamp),
+    // Without a trustworthy publication timestamp, keep only identifiers needed
+    // to hydrate the event later; never retain author/content beyond retention.
+    authorId:retainPersonalFields&&message.author?.id?String(message.author.id):null,
+    content:retainPersonalFields&&typeof message.content==="string"?message.content:null,
+    createdAt,
     editedAt:isoOrNull(message.editedAt,message.editedTimestamp),
     receivedAt:new Date().toISOString(),
   };
