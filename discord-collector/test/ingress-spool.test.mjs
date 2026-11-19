@@ -253,17 +253,18 @@ test("user-requested erasure removes matching encrypted spool events durably",()
   const f=fixture();
   try{
     f.spool.append(event({messageId:"623456789012345678"}));
-    f.spool.append(event({messageId:"723456789012345678",authorId:"823456789012345678"}));
-    const result=f.spool.eraseAuthor(authorId);
-    assert.equal(result.eventsErased,1);
+    f.spool.append(event({messageId:"723456789012345678",authorId:null}));
+    f.spool.append(event({messageId:"823456789012345678",authorId:"923456789012345678"}));
+    const result=f.spool.eraseAuthor(authorId,["723456789012345678"]);
+    assert.equal(result.eventsErased,2);
     assert.equal(result.pendingEvents,1);
     assert.equal(f.spool.pendingCount,1);
     f.spool.close();
     const reopened=new IngressSpool({directory:f.directory,key:f.key}).open();
     try{
       const pending=reopened.listPending();
-      assert.deepEqual(pending.map(item=>item.event.messageId),["723456789012345678"]);
-      assert.equal(pending[0].event.authorId,"823456789012345678");
+      assert.deepEqual(pending.map(item=>item.event.messageId),["823456789012345678"]);
+      assert.equal(pending[0].event.authorId,"923456789012345678");
     }finally{reopened.close()}
   }finally{f.cleanup()}
 });
