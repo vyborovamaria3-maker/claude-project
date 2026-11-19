@@ -201,10 +201,10 @@ export async function purgeExpired(pool,allowed,{allowEmpty=false}={}){
 
     const revokedRows=await client.query(
       "SELECT message_id,guild_id,channel_id FROM discord_messages m "+
-      "WHERE m.deleted_at IS NULL AND NOT EXISTS ("+
+      "WHERE ($3::boolean OR m.deleted_at IS NULL) AND NOT EXISTS ("+
       "SELECT 1 FROM unnest($1::text[],$2::text[]) AS a(channel_id,guild_id) "+
       "WHERE a.channel_id=m.channel_id AND a.guild_id=m.guild_id)",
-      [channelIds,guildIds],
+      [channelIds,guildIds,allowEmpty&&allowed.size===0],
     );
     tombstonesQueued+=await enqueueErasureTombstones(client,revokedRows.rows,"channel_revoked");
     if(revokedRows.rows.length){
