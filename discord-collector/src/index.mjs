@@ -114,7 +114,8 @@ async function backfill(guildId,channelId,maxMessages){
   }
   console.log("History sync pass",{channelId,processed:count});
 }
-client.once(Events.ClientReady,()=>{\n  startupTask=(async()=>{
+client.once(Events.ClientReady,()=>{
+  startupTask=(async()=>{
   console.log("Collector connected",{channels:allowed.size});
   if(process.env.DISCORD_GAP_RECOVERY_ENABLED==="true"){
     for(const [channelId,permission] of allowed){
