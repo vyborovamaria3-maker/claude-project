@@ -1,10 +1,10 @@
 import {
-  chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync,
+  closeSync, existsSync, fsyncSync, lstatSync, mkdirSync,
   openSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync,
   writeFileSync,
 } from "node:fs";
 import {createCipheriv,createDecipheriv,randomBytes} from "node:crypto";
-import {join,resolve} from "node:path";
+import {isAbsolute,join,parse,resolve} from "node:path";
 import {isDiscordSnowflake} from "@claude-project/contracts";
 
 const FORMAT_VERSION=1;
@@ -117,8 +117,8 @@ function decryptRecord(raw,expectedSequence,key){
 
 export class IngressSpool {
   constructor({directory,key,maxBytes=512*1024*1024,maxEvents=100_000}){
-    if(typeof directory!=="string"||!directory.trim())
-      throw new TypeError("An explicit DISCORD_INGRESS_SPOOL_DIR is required");
+    if(typeof directory!=="string"||!directory.trim()||!isAbsolute(directory))
+      throw new TypeError("DISCORD_INGRESS_SPOOL_DIR must be an explicit absolute path");
     if(!Buffer.isBuffer(key)||key.length!==32)
       throw new TypeError("Ingress spool requires a 32-byte encryption key");
     if(!Number.isSafeInteger(maxBytes)||maxBytes<1)
@@ -126,6 +126,8 @@ export class IngressSpool {
     if(!Number.isSafeInteger(maxEvents)||maxEvents<1)
       throw new RangeError("Ingress spool maxEvents must be a positive safe integer");
     this.directory=resolve(directory);
+    if(this.directory===parse(this.directory).root)
+      throw new TypeError("Ingress spool directory must be dedicated and cannot be a filesystem root");
     this.key=Buffer.from(key);
     this.maxBytes=maxBytes;
     this.maxEvents=maxEvents;
@@ -143,11 +145,9 @@ export class IngressSpool {
     const initial=lstatSync(this.directory);
     if(initial.isSymbolicLink()||!initial.isDirectory())
       throw new Error("Ingress spool path must be a real directory, not a symlink");
-    chmodSync(this.directory,0o700);
-    const secured=lstatSync(this.directory);
-    if((secured.mode&0o777)!==0o700)
-      throw new Error("Ingress spool directory permissions must be exactly 0700");
-    if(typeof process.getuid==="function"&&secured.uid!==process.getuid())
+    if((initial.mode&0o777)!==0o700)
+      throw new Error("Ingress spool directory must already have exact mode 0700");
+    if(typeof process.getuid==="function"&&initial.uid!==process.getuid())
       throw new Error("Ingress spool directory must be owned by the collector user");
     this.directoryFd=openSync(this.directory,"r");
     try{
@@ -162,10 +162,9 @@ export class IngressSpool {
         const stat=lstatSync(path);
         if(stat.isSymbolicLink()||!stat.isFile())
           throw new Error("Ingress spool records must be regular files, not symlinks");
-        chmodSync(path,0o600);
-        const securedFile=lstatSync(path);
-        if((securedFile.mode&0o777)!==0o600)
-          throw new Error("Ingress spool records must have exact mode 0600");
+        if((stat.mode&0o777)!==0o600)
+          throw new Error("Ingress spool records must already have exact mode 0600");
+        const securedFile=stat;
         if(typeof process.getuid==="function"&&securedFile.uid!==process.getuid())
           throw new Error("Ingress spool records must be owned by the collector user");
         if(securedFile.size<1||securedFile.size>MAX_EVENT_BYTES)
