@@ -51,6 +51,7 @@ export function validateAuthorization(document,{allowErasureOnly=false,now=new D
 
   const seenGuilds=new Set();
   const seenChannels=new Set();
+  let totalChannels=0;
   for(const item of document.guilds){
     if(!item||typeof item!=="object"||Array.isArray(item)||
        Object.keys(item).some(key=>!["guild_id","channel_ids","community_permission_reference",
@@ -77,6 +78,8 @@ export function validateAuthorization(document,{allowErasureOnly=false,now=new D
     const expiresAt=Math.min(Date.parse(permissionExpiresAt),Date.parse(policyReviewExpiresAt));
     const isExpired=expiresAt<=nowMs;
     for(const rawId of item.channel_ids){
+      totalChannels++;
+      if(totalChannels>10_000)throw new Error("Authorization document exceeds 10000 channels");
       if(typeof rawId!=="string"||!isDiscordSnowflake(rawId))throw new Error("Invalid channel snowflake");
       const channelId=rawId;
       if(seenChannels.has(channelId))throw new Error("Ambiguous duplicate channel");
