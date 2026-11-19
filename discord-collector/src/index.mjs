@@ -155,7 +155,7 @@ function isUnknownDiscordMessage(error){
   return error?.code===10008||error?.status===404||error?.rawError?.code===10008;
 }
 
-async function processSpoolEntry(entry){
+async function processSpoolEntry(entry,{allowHydration=true}={}){
   const event=entry.event;
   const permission=allowed.get(event.channelId);
   if(!permission||permission.guildId!==event.guildId)return; // Current allowlist wins over queued data.
@@ -171,6 +171,14 @@ async function processSpoolEntry(entry){
   };
   const needsHydration=event.kind!=="deleted"&&
     (!event.createdAt||(event.kind==="edited"&&(!event.editedAt||event.content===null)));
+  if(needsHydration&&!allowHydration){
+    await recordRecoveryCheck(pool,permission.guildId,event.channelId,
+      recoveryBaselines.get(event.channelId)??null,{status:"failed"});
+    failures++;
+    process.exitCode=1;
+    console.error("Pre-login Discord event lacks enough source fields; coverage marked failed",event.kind);
+    return;
+  }
   if(needsHydration){
     try{
       const channel=await client.channels.fetch(event.channelId);
@@ -193,14 +201,14 @@ async function processSpoolEntry(entry){
   await storeObservation(pool,observation,permission.retentionDays);
 }
 
-function drainSpool(){
+function drainSpool({allowHydration=true}={}){
   if(drainPromise)return drainPromise;
   drainPromise=(async()=>{
     while(acceptingEvents&&spool.pendingCount>0){
       const batch=spool.listPending(100);
       for(const entry of batch){
         if(!acceptingEvents)break;
-        await processSpoolEntry(entry);
+        await processSpoolEntry(entry,{allowHydration});
         // PostgreSQL commits before the local event is acknowledged. If the
         // process crashes before unlink, the idempotent source transaction replays.
         spool.ack(entry.sequence);
@@ -342,6 +350,14 @@ async function shutdown(){
 }
 process.on("SIGINT",()=>void shutdown());
 process.on("SIGTERM",()=>void shutdown());
+// Free a recovered backlog before opening the Gateway. Events that need REST
+// hydration are explicitly marked as coverage gaps rather than blocking login.
+try{
+  await drainSpool({allowHydration:false});
+}catch{
+  await shutdown();
+  throw new Error("Pre-login durable ingress replay failed; pending records were retained");
+}
 try{
   await client.login(process.env.DISCORD_BOT_TOKEN);
 }catch{
