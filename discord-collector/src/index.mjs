@@ -28,7 +28,7 @@ if(process.env.DISCORD_GAP_RECOVERY_ENABLED==="true" &&
    (!Number.isInteger(recoveryMaxPages)||recoveryMaxPages<1||recoveryMaxPages>50))
   throw new RangeError("DISCORD_GAP_RECOVERY_MAX_PAGES must be in 1..50");
 
-const pool=new pg.Pool({connectionString:process.env.DISCORD_SOURCE_DATABASE_URL,max:4});
+const pool=new pg.Pool({connectionString:process.env.DISCORD_SOURCE_DATABASE_URL,max:4,connectionTimeoutMillis:10_000,keepAlive:true});
 const singletonClient=await pool.connect().catch(async error=>{await pool.end();throw error});
 let singletonLockHeld=false;
 let spool=null;
@@ -368,6 +368,7 @@ try{
   await shutdown();
   throw new Error("Pre-login durable ingress replay failed; pending records were retained");
 }
+if(stopping)throw new Error("Collector stopped before Gateway login");
 try{
   await client.login(process.env.DISCORD_BOT_TOKEN);
 }catch{
