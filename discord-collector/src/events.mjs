@@ -1,29 +1,111 @@
 import {createHash} from "node:crypto";
 import {isDiscordSnowflake} from "@claude-project/contracts";
 
-export function validateAuthorization(document) {
-  if(!document || typeof document!=="object" || !Array.isArray(document.guilds) || document.guilds.length===0)
-    throw new Error("Nonempty, explicit authorized guild list is mandatory");
-  const allowed=new Map();
-  for(const item of document.guilds){
-    if(!isDiscordSnowflake(String(item.guild_id)) || !Array.isArray(item.channel_ids))
-      throw new Error("Guild id and explicit channel_ids are required");
-    if(!item.policy_review_reference || !item.community_permission_reference || !item.reviewed_by)
-      throw new Error("Policy and community permissions must be recorded");
-    if(!Number.isInteger(item.retention_days) || item.retention_days<1 || item.retention_days>365)
-      throw new Error("Retention must be explicitly bounded to 1..365 days");
-    if(item.channel_ids.length===0)throw new Error("Every authorized guild needs channels");
-    for(const id of item.channel_ids){
-      if(!isDiscordSnowflake(String(id))) throw new Error("Invalid channel snowflake");
-      if(allowed.has(String(id))) throw new Error("Ambiguous duplicate channel");
-      allowed.set(String(id),{guildId:String(item.guild_id),retentionDays:item.retention_days,
-        policyReviewReference:item.policy_review_reference,
-        permissionReference:item.community_permission_reference});
-    }
-  }
-  return allowed;
+const DAY_MS=86_400_000;
+const MAX_AUTHORIZATION_DAYS=365;
+const AUTHORIZATION_TIMESTAMP=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/i;
+
+function authorizationExpiry(value,name,nowMs){
+  if(typeof value!=="string"||!AUTHORIZATION_TIMESTAMP.test(value))
+    throw new Error(name+" must be an offset-aware ISO timestamp");
+  const [year,month,day,hour,minute,second]=value.slice(0,19).split(/[-T:]/).map(Number);
+  const localDate=new Date(Date.UTC(year,month-1,day,hour,minute,second));
+  if(year<2000||localDate.getUTCFullYear()!==year||localDate.getUTCMonth()!==month-1||
+     localDate.getUTCDate()!==day||localDate.getUTCHours()!==hour||
+     localDate.getUTCMinutes()!==minute||localDate.getUTCSeconds()!==second)
+    throw new Error(name+" contains an invalid calendar date or time");
+  const offset=/([+-])(\d{2}):(\d{2})$/.exec(value);
+  if(offset&&(Number(offset[2])>14||Number(offset[3])>59||
+     (Number(offset[2])===14&&Number(offset[3])!==0)))
+    throw new Error(name+" contains an invalid UTC offset");
+  const timestamp=Date.parse(value);
+  if(!Number.isFinite(timestamp))throw new Error(name+" is not a valid ISO timestamp");
+  if(timestamp>nowMs+MAX_AUTHORIZATION_DAYS*DAY_MS)
+    throw new Error(name+" cannot extend more than 365 days without review");
+  return new Date(timestamp).toISOString();
 }
 
+export function validateAuthorization(document,{allowErasureOnly=false,now=new Date()}={}) {
+  if(!document||typeof document!=="object"||Array.isArray(document)||document.version!==2)
+    throw new Error("Authorization document version 2 is mandatory");
+  if(Object.keys(document).some(key=>!["version","mode","guilds"].includes(key)))
+    throw new Error("Authorization document contains an unsupported field");
+  if(!["collect","erasure_only"].includes(document.mode)||!Array.isArray(document.guilds)||
+     document.guilds.length>1000)
+    throw new Error("Authorization mode and bounded guild list are mandatory");
+  const allowed=new Map();
+  const expiredChannels=[];
+  const expiredGuildIds=[];
+  const nowMs=now instanceof Date?now.getTime():Date.parse(now);
+  if(!Number.isFinite(nowMs))throw new TypeError("Authorization validation time is invalid");
+  if(document.mode==="erasure_only"){
+    if(document.guilds.length!==0)throw new Error("Erasure-only mode must not contain authorized guilds");
+    if(!allowErasureOnly)throw new Error("Erasure-only mode requires DISCORD_ALLOW_ERASURE_ONLY=true");
+    allowed.mode="erasure_only";
+    allowed.erasureOnly=true;
+    allowed.expiredChannels=expiredChannels;
+    allowed.expiredGuildIds=expiredGuildIds;
+    return allowed;
+  }
+  if(document.guilds.length===0)throw new Error("Collect mode requires an explicit nonempty guild list");
+
+  const seenGuilds=new Set();
+  const seenChannels=new Set();
+  let totalChannels=0;
+  for(const item of document.guilds){
+    if(!item||typeof item!=="object"||Array.isArray(item)||
+       Object.keys(item).some(key=>!["guild_id","channel_ids","community_permission_reference",
+         "community_permission_expires_at","policy_review_reference","policy_review_expires_at",
+         "reviewed_by","retention_days"].includes(key))||
+       typeof item.guild_id!=="string"||!isDiscordSnowflake(item.guild_id)||
+       !Array.isArray(item.channel_ids)||item.channel_ids.length===0||item.channel_ids.length>500)
+      throw new Error("Guild id and bounded explicit channel_ids are required");
+    const guildId=item.guild_id;
+    if(seenGuilds.has(guildId))throw new Error("Duplicate authorized guild");
+    seenGuilds.add(guildId);
+    if(typeof item.policy_review_reference!=="string"||!item.policy_review_reference.trim()||
+       item.policy_review_reference.length>1024||
+       typeof item.community_permission_reference!=="string"||!item.community_permission_reference.trim()||
+       item.community_permission_reference.length>1024||
+       typeof item.reviewed_by!=="string"||!item.reviewed_by.trim()||item.reviewed_by.length>128)
+      throw new Error("Bounded policy and community permission references and reviewer are mandatory");
+    if(!Number.isInteger(item.retention_days)||item.retention_days<1||item.retention_days>365)
+      throw new Error("Retention must be explicitly bounded to 1..365 days");
+    const permissionExpiresAt=authorizationExpiry(
+      item.community_permission_expires_at,"community_permission_expires_at",nowMs);
+    const policyReviewExpiresAt=authorizationExpiry(
+      item.policy_review_expires_at,"policy_review_expires_at",nowMs);
+    const expiresAt=Math.min(Date.parse(permissionExpiresAt),Date.parse(policyReviewExpiresAt));
+    const isExpired=expiresAt<=nowMs;
+    for(const rawId of item.channel_ids){
+      totalChannels++;
+      if(totalChannels>10_000)throw new Error("Authorization document exceeds 10000 channels");
+      if(typeof rawId!=="string"||!isDiscordSnowflake(rawId))throw new Error("Invalid channel snowflake");
+      const channelId=rawId;
+      if(seenChannels.has(channelId))throw new Error("Ambiguous duplicate channel");
+      seenChannels.add(channelId);
+      if(isExpired){
+        expiredChannels.push(channelId);
+      }else{
+        allowed.set(channelId,{
+          guildId,
+          retentionDays:item.retention_days,
+          policyReviewReference:item.policy_review_reference,
+          permissionReference:item.community_permission_reference,
+          permissionExpiresAt,
+          policyReviewExpiresAt,
+          expiresAt:new Date(expiresAt).toISOString(),
+        });
+      }
+    }
+    if(isExpired)expiredGuildIds.push(guildId);
+  }
+  allowed.mode="collect";
+  allowed.erasureOnly=false;
+  allowed.expiredChannels=expiredChannels;
+  allowed.expiredGuildIds=expiredGuildIds;
+  return allowed;
+}
 export function normalizeMessage(message, kind, observedAt=new Date().toISOString(), fallbackGuildId=null, deletionReason="deleted"){
   if(!["observed","edited","deleted"].includes(kind))throw new TypeError("Unsupported event kind");
   const id=String(message.id??"");
@@ -56,5 +138,8 @@ export function normalizeMessage(message, kind, observedAt=new Date().toISOStrin
 
 export function allowedObservation(allowed, observation){
   const permission=allowed.get(observation.channelId);
-  return Boolean(permission&&permission.guildId===observation.guildId);
+  if(!permission||permission.guildId!==observation.guildId)return false;
+  if(permission.expiresAt===undefined||permission.expiresAt===null)return true; // Legacy in-memory test fixtures only.
+  const expiresAt=Date.parse(permission.expiresAt);
+  return Number.isFinite(expiresAt)&&expiresAt>Date.now();
 }

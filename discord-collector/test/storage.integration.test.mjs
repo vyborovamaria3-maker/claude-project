@@ -13,9 +13,11 @@ const guildId="123456789012345678";
 const channelId="223456789012345678";
 const otherChannel="523456789012345678";
 const messageId="323456789012345678";
-const allowed=validateAuthorization({guilds:[{
+const allowed=validateAuthorization({version:2,mode:"collect",guilds:[{
   guild_id:guildId,channel_ids:[channelId,otherChannel],retention_days:30,
-  policy_review_reference:"test",community_permission_reference:"test",reviewed_by:"ci"
+  policy_review_reference:"test",policy_review_expires_at:"2026-12-19T00:00:00Z",
+  community_permission_reference:"test",community_permission_expires_at:"2026-12-19T00:00:00Z",
+  reviewed_by:"ci"
 }]});
 
 test("only one Discord Collector can hold the source database advisory lock",{skip:!URL},async()=>{
@@ -187,6 +189,69 @@ test("PostgreSQL revisions, stale history, deletions and revoke/retention", {ski
     await pool.query("DROP TRIGGER fail_discord_outbox_fixture ON outbox_events");
     await pool.query("DROP FUNCTION fail_discord_outbox_fixture()");
   }finally{
+    await pool.end();
+  }
+});
+
+test("explicit erasure-only mode purges every source message and emits tombstones",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const messageId="923456789012345679";
+  const eventKeyPattern="discord:message:"+channelId+":"+messageId+":%";
+  try{
+    await installSchema(pool);
+    const now=new Date();
+    const createdAt=new Date(now.getTime()-60*60*1000);
+    const message={id:messageId,guildId,channelId,author:{id:"423456789012345678"},
+      content:"must be erased when consent is revoked",createdAt,editedAt:null};
+    const observation=normalizeMessage(message,"observed",now.toISOString(),guildId);
+    await storeObservation(pool,observation,30);
+    await assert.rejects(purgeExpired(pool,new Map()),/No authorized channels/);
+    const result=await purgeExpired(pool,new Map(),{allowEmpty:true});
+    assert.ok(result.tombstonesQueued>=1);
+    const remaining=await pool.query("SELECT COUNT(*)::int AS n FROM discord_messages WHERE message_id=$1",[messageId]);
+    assert.equal(remaining.rows[0].n,0);
+    const tombstone=await pool.query(
+      "SELECT deletion_reason FROM discord_message_tombstones WHERE message_id=$1",[messageId]);
+    assert.equal(tombstone.rows[0].deletion_reason,"channel_revoked");
+    const deletion=await pool.query(
+      "SELECT payload->>'deletionReason' AS reason FROM outbox_events "+
+      "WHERE source_system='discord' AND event_kind='message_deleted' AND event_key LIKE $1",
+      [eventKeyPattern]);
+    assert.deepEqual(deletion.rows.map(row=>row.reason),["channel_revoked"]);
+  }finally{
+    await pool.query("DELETE FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1",[eventKeyPattern]).catch(()=>{});
+    await pool.query("DELETE FROM discord_message_tombstones WHERE message_id=$1",[messageId]).catch(()=>{});
+    await pool.query("DELETE FROM discord_message_revisions WHERE message_id=$1",[messageId]).catch(()=>{});
+    await pool.query("DELETE FROM discord_messages WHERE message_id=$1",[messageId]).catch(()=>{});
+    await pool.end();
+  }
+});
+
+test("source transaction refuses to persist an event after its authorization lease expired",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const messageId="923456789012345680";
+  try{
+    await installSchema(pool);
+    const now=new Date();
+    const observation=normalizeMessage({
+      id:messageId,guildId,channelId,author:{id:"423456789012345680"},
+      content:"must not be persisted after expiry",createdAt:now,editedAt:null,
+    },"observed",now.toISOString(),guildId);
+    const result=await storeObservation(pool,observation,30,new Date(),"2026-11-18T00:00:00.000Z");
+    assert.equal(result.status,"authorization-expired");
+    const rows=await pool.query("SELECT COUNT(*)::int AS n FROM discord_messages WHERE message_id=$1",[messageId]);
+    assert.equal(rows.rows[0].n,0);
+    const outbox=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1",
+      ["discord:message:"+channelId+":"+messageId+":%"]);
+    assert.equal(outbox.rows[0].n,0);
+  }finally{
+    await pool.query("DELETE FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1",
+      ["discord:message:"+channelId+":"+messageId+":%"]).catch(()=>{});
+    await pool.query("DELETE FROM discord_message_revisions WHERE message_id=$1",[messageId]).catch(()=>{});
+    await pool.query("DELETE FROM discord_messages WHERE message_id=$1",[messageId]).catch(()=>{});
     await pool.end();
   }
 });

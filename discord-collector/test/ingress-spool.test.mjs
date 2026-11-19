@@ -170,6 +170,17 @@ test("capacity limits apply backpressure without dropping the already durable ev
   }finally{f.cleanup()}
 });
 
+test("spool sweep erases queued events when an authorization lease expires",()=>{
+  const f=fixture();
+  try{
+    f.spool.append(event());
+    const allowed=new Map([[channelId,{guildId,retentionDays:30,expiresAt:"2026-11-18T00:00:00.000Z"}]]);
+    const result=f.spool.sweepExpired(allowed,new Date("2026-11-19T00:00:00Z"));
+    assert.equal(result.eventsErased,1);
+    assert.equal(f.spool.pendingCount,0);
+  }finally{f.cleanup()}
+});
+
 test("retention and channel revocation erase pending encrypted events",()=>{
   const f=fixture();
   try{

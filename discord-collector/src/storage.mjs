@@ -78,13 +78,20 @@ async function enqueueErasureTombstones(client,rows,reason){
   return queued;
 }
 
-export async function storeObservation(pool, o, retentionDays, clock=new Date()){
+export async function storeObservation(pool, o, retentionDays, clock=new Date(), authorizationExpiresAt=null){
   if(isExpiredObservation(o,retentionDays,clock))return {status:"expired"};
+  if(authorizationExpiresAt!==null&&authorizationExpiresAt!==undefined&&(!Number.isFinite(Date.parse(authorizationExpiresAt))||
+     Date.parse(authorizationExpiresAt)<=Date.now()))return {status:"authorization-expired"};
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
     // Serialize create/edit/delete races for one globally unique Discord message.
     await client.query("SELECT pg_advisory_xact_lock(hashtext('discord'),hashtext($1))",[o.messageId]);
+    if(authorizationExpiresAt!==null&&authorizationExpiresAt!==undefined&&(!Number.isFinite(Date.parse(authorizationExpiresAt))||
+       Date.parse(authorizationExpiresAt)<=Date.now())){
+      await client.query("ROLLBACK");
+      return {status:"authorization-expired"};
+    }
     const previous=await client.query(
       "SELECT guild_id,channel_id,deleted_at,revision_at,content_sha256 "+
       "FROM discord_messages WHERE message_id=$1 FOR UPDATE",[o.messageId]);
@@ -176,35 +183,46 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date())
          o.editedAt,o.content,o.contentSha,o.revisionAt]);
     }
     if(!stale)await emitDiscordObservation(client,o);
+    if(authorizationExpiresAt!==null&&authorizationExpiresAt!==undefined&&(!Number.isFinite(Date.parse(authorizationExpiresAt))||
+       Date.parse(authorizationExpiresAt)<=Date.now())){
+      await client.query("ROLLBACK");
+      return {status:"authorization-expired"};
+    }
     await client.query("COMMIT");
     return {status:stale?"stale":o.kind==="deleted"?"deleted":"stored"};
   }catch(e){await client.query("ROLLBACK");throw e}
   finally{client.release()}
 }
 
-export async function purgeExpired(pool,allowed){
+export async function purgeExpired(pool,allowed,{allowEmpty=false}={}){
   // Revocation and retention emit durable erasure tombstones BEFORE local rows
   // are removed. The same transaction contains the source Outbox inserts.
-  if(!(allowed instanceof Map)||allowed.size===0)throw new Error("No authorized channels");
+  if(!(allowed instanceof Map)||(!allowEmpty&&allowed.size===0))throw new Error("No authorized channels");
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
     let removed=0;
     let tombstonesQueued=0;
-    const authorized=[...allowed.entries()].map(([channelId,permission])=>{
-      requireRetention(permission.retentionDays);
-      if(!permission.guildId)throw new Error("Authorized channel is missing its guild identity");
-      return {channelId,guildId:String(permission.guildId),retentionDays:permission.retentionDays};
-    });
+    const authorized=[...allowed.entries()]
+      .filter(([,permission])=>{
+        if(permission.expiresAt===undefined||permission.expiresAt===null)return true; // Legacy test fixtures only.
+        const expiry=Date.parse(permission.expiresAt);
+        return Number.isFinite(expiry)&&expiry>Date.now();
+      })
+      .map(([channelId,permission])=>{
+        requireRetention(permission.retentionDays);
+        if(!permission.guildId)throw new Error("Authorized channel is missing its guild identity");
+        return {channelId,guildId:String(permission.guildId),retentionDays:permission.retentionDays};
+      });
     const channelIds=authorized.map(item=>item.channelId);
     const guildIds=authorized.map(item=>item.guildId);
 
     const revokedRows=await client.query(
       "SELECT message_id,guild_id,channel_id FROM discord_messages m "+
-      "WHERE m.deleted_at IS NULL AND NOT EXISTS ("+
+      "WHERE ($3::boolean OR m.deleted_at IS NULL) AND NOT EXISTS ("+
       "SELECT 1 FROM unnest($1::text[],$2::text[]) AS a(channel_id,guild_id) "+
       "WHERE a.channel_id=m.channel_id AND a.guild_id=m.guild_id)",
-      [channelIds,guildIds],
+      [channelIds,guildIds,allowEmpty&&allowed.size===0],
     );
     tombstonesQueued+=await enqueueErasureTombstones(client,revokedRows.rows,"channel_revoked");
     if(revokedRows.rows.length){

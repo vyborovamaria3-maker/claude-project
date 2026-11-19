@@ -279,10 +279,14 @@ export class IngressSpool {
       const event=decryptRecord(readFileSync(entry.path,"utf8"),entry.sequence,this.key);
       const permission=allowed.get(event.channelId);
       const revoked=!permission||permission.guildId!==event.guildId;
+      const hasAuthorizationExpiry=permission&&permission.expiresAt!==undefined&&permission.expiresAt!==null;
+      const authorizationExpiry=hasAuthorizationExpiry?Date.parse(permission.expiresAt):null;
+      const authorizationExpired=!revoked&&hasAuthorizationExpiry&&
+        (!Number.isFinite(authorizationExpiry)||authorizationExpiry<=nowMs);
       const published=event.createdAt?Date.parse(event.createdAt):null;
       const expired=!revoked&&event.kind!=="deleted"&&published!==null&&
         published<nowMs-permission.retentionDays*DAY_MS;
-      if(revoked||expired){
+      if(revoked||authorizationExpired||expired){
         this.ack(entry.sequence);
         erased++;
       }

@@ -1,4 +1,4 @@
-import {readFile} from "node:fs/promises";
+import {readAuthorizationFile} from "./authorization-file.mjs";
 import {Client,GatewayIntentBits,Events,Partials} from "discord.js";
 import pg from "pg";
 import {validateAuthorization,normalizeMessage,allowedObservation} from "./events.mjs";
@@ -10,16 +10,19 @@ if(process.env.DISCORD_COLLECTOR_ENABLED!=="true"){
   console.error("Disabled: DISCORD_COLLECTOR_ENABLED is not true");
   process.exit(0);
 }
-for(const key of ["DISCORD_BOT_TOKEN","DISCORD_SOURCE_DATABASE_URL","DISCORD_AUTHORIZATION_PATH",
+for(const key of ["DISCORD_SOURCE_DATABASE_URL","DISCORD_AUTHORIZATION_PATH",
   "DISCORD_INGRESS_SPOOL_DIR","DISCORD_INGRESS_SPOOL_KEY"]){
   if(!process.env[key])throw new Error("Missing config: "+key);
 }
-const botToken=process.env.DISCORD_BOT_TOKEN;
+const botToken=process.env.DISCORD_BOT_TOKEN??null;
 const sourceDatabaseUrl=process.env.DISCORD_SOURCE_DATABASE_URL;
 const authorizationPath=process.env.DISCORD_AUTHORIZATION_PATH;
 const spoolDirectory=process.env.DISCORD_INGRESS_SPOOL_DIR;
-const doc=JSON.parse(await readFile(authorizationPath,"utf8"));
-const allowed=validateAuthorization(doc);
+const allowErasureOnly=process.env.DISCORD_ALLOW_ERASURE_ONLY==="true";
+const doc=await readAuthorizationFile(authorizationPath);
+let allowed=validateAuthorization(doc,{allowErasureOnly});
+let erasureOnly=allowed.erasureOnly||(allowed.size===0&&allowed.expiredChannels.length>0);
+if(allowed.size>0&&!botToken)throw new Error("DISCORD_BOT_TOKEN is required while authorized channels are active");
 const spoolKey=parseIngressSpoolKey(process.env.DISCORD_INGRESS_SPOOL_KEY);
 for(const secretName of ["DISCORD_BOT_TOKEN","DISCORD_SOURCE_DATABASE_URL",
   "DISCORD_AUTHORIZATION_PATH","DISCORD_INGRESS_SPOOL_KEY"])
@@ -34,12 +37,29 @@ const recoveryMaxPages=Number(process.env.DISCORD_GAP_RECOVERY_MAX_PAGES||5);
 if(process.env.DISCORD_GAP_RECOVERY_ENABLED==="true" &&
    (!Number.isInteger(recoveryMaxPages)||recoveryMaxPages<1||recoveryMaxPages>50))
   throw new RangeError("DISCORD_GAP_RECOVERY_MAX_PAGES must be in 1..50");
+const authorizationReloadMs=Number(process.env.DISCORD_AUTHORIZATION_RELOAD_MS||30_000);
+if(!Number.isInteger(authorizationReloadMs)||authorizationReloadMs<5_000||authorizationReloadMs>60_000)
+  throw new RangeError("DISCORD_AUTHORIZATION_RELOAD_MS must be in 5000..60000");
 
 const pool=new pg.Pool({connectionString:sourceDatabaseUrl,max:4,connectionTimeoutMillis:10_000,keepAlive:true,application_name:"potapoff-discord-collector"});
 const singletonClient=await pool.connect().catch(async error=>{spoolKey.fill(0);await pool.end();throw error});
 let singletonLockHeld=false;
 let spool=null;
 const recoveryBaselines=new Map();
+let startupSpoolSweep={eventsErased:0};
+let startupPurge={rowsErased:0,tombstonesQueued:0};
+async function releaseSourceDatabase(){
+  try{
+    if(singletonLockHeld)
+      await singletonClient.query("SELECT pg_advisory_unlock(hashtextextended('potapoff:discord-collector:singleton',0))");
+    singletonLockHeld=false;
+    singletonClient.release();
+  }catch(error){
+    singletonLockHeld=false;
+    singletonClient.release(error);
+  }
+  await pool.end();
+}
 try{
   // One Collector per source database. A session advisory lock is released by
   // PostgreSQL automatically if the process or connection dies.
@@ -54,24 +74,35 @@ try{
     maxEvents:spoolMaxEvents,
   }).open();
   spoolKey.fill(0);
-  // Remove revoked or expired pending payloads before Gateway login.
-  const startupSpoolSweep=spool.sweepExpired(allowed);
-  if(startupSpoolSweep.eventsErased>0)
-    console.log("Expired/revoked ingress events erased",{events:startupSpoolSweep.eventsErased});
-  // Schema, retention controls and recovery watermarks must be ready before Gateway login.
+  // Remove revoked or expired pending payloads before any Gateway connection.
+  startupSpoolSweep=spool.sweepExpired(allowed);
+  // Schema and erasure tombstones must be ready before Gateway login.
   await installSchema(pool);
-  await purgeExpired(pool,allowed);
+  startupPurge=await purgeExpired(pool,allowed,{allowEmpty:erasureOnly});
   for(const channelId of allowed.keys())
     recoveryBaselines.set(channelId,await getRecoveryBaseline(pool,channelId));
 }catch(error){
   spoolKey.fill(0);
   try{spool?.close()}catch{}
-  if(singletonLockHeld){
-    try{await singletonClient.query("SELECT pg_advisory_unlock(hashtextextended('potapoff:discord-collector:singleton',0))")}catch{}
-  }
-  singletonClient.release();
-  await pool.end();
+  await releaseSourceDatabase();
   throw error;
+}
+
+if(startupSpoolSweep.eventsErased>0||startupPurge.rowsErased>0)
+  console.log("Startup Discord erasure sweep",{
+    pendingIngressEvents:startupSpoolSweep.eventsErased,
+    sourceRows:startupPurge.rowsErased,
+    tombstonesQueued:startupPurge.tombstonesQueued,
+    expiredChannels:allowed.expiredChannels.length,
+  });
+if(erasureOnly){
+  console.log("Discord authorization has no active channels; completed erasure-only run",{
+    expiredChannels:allowed.expiredChannels.length,
+    sourceRows:startupPurge.rowsErased,
+    tombstonesQueued:startupPurge.tombstonesQueued,
+  });
+  try{spool.close()}finally{await releaseSourceDatabase()}
+  process.exit(0);
 }
 const client=new Client({
   intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent],
@@ -87,6 +118,9 @@ let coverageTask=Promise.resolve();
 let drainPromise=null;
 let sweepTimer;
 let backlogTimer;
+let authorizationReloadTimer;
+let authorizationExpiryTimer;
+let authorizationReloadTask=Promise.resolve();
 let sweepRunning=false;
 
 function singletonConnectionLost(){
@@ -105,18 +139,25 @@ catch{
   throw new Error("Discord singleton lock connection is not healthy");
 }
 
+function permissionActive(permission){
+  if(!permission)return false;
+  if(permission.expiresAt===undefined||permission.expiresAt===null)return true; // Legacy in-memory fixtures only.
+  const expiry=Date.parse(permission.expiresAt);
+  return Number.isFinite(expiry)&&expiry>Date.now();
+}
+
 async function record(message,kind){
   const channelId=String(message.channelId??message.channel?.id??"");
   const permission=allowed.get(channelId);
-  if(!permission)return {status:"not-allowed"};
+  if(!permissionActive(permission))return {status:"not-allowed"};
   const observation=normalizeMessage(message,kind,new Date().toISOString(),permission.guildId);
   if(!allowedObservation(allowed,observation))return {status:"not-allowed"};
-  return await storeObservation(pool,observation,permission.retentionDays);
+  return await storeObservation(pool,observation,permission.retentionDays,new Date(),permission.expiresAt);
 }
 
 async function persistCoverageGap(channelId){
   const permission=allowed.get(channelId);
-  if(!permission)return;
+  if(!permissionActive(permission))return;
   await recordRecoveryCheck(pool,permission.guildId,channelId,
     recoveryBaselines.get(channelId)??null,{status:"failed"});
 }
@@ -162,7 +203,7 @@ function enqueueGatewayEvent(kind,message){
   if(!acceptingEvents)return;
   const channelId=String(message.channelId??message.channel?.id??"");
   const permission=allowed.get(channelId);
-  if(!permission)return;
+  if(!permissionActive(permission))return;
   try{
     const event=snapshotGatewayEvent(kind,message,permission);
     // append() writes an encrypted record, fsyncs the file, atomically renames
@@ -182,7 +223,7 @@ function isUnknownDiscordMessage(error){
 async function processSpoolEntry(entry,{allowHydration=true}={}){
   const event=entry.event;
   const permission=allowed.get(event.channelId);
-  if(!permission||permission.guildId!==event.guildId)return; // Current allowlist wins over queued data.
+  if(!permissionActive(permission)||permission.guildId!==event.guildId)return; // Current allowlist wins over queued data.
 
   let message={
     id:event.messageId,
@@ -287,6 +328,100 @@ async function backfill(guildId,channelId,maxMessages){
   console.log("History sync pass",{channelId,processed:count});
 }
 
+let authorizationReloadRunning=false;
+let authorizationReloadPending=false;
+let authorizationDocumentFingerprint=JSON.stringify(doc);
+function authorizationStateFingerprint(snapshot){
+  return JSON.stringify({
+    mode:snapshot.mode,
+    channels:[...snapshot.entries()].map(([channelId,permission])=>[
+      channelId,permission.guildId,permission.retentionDays,
+      permission.permissionReference,permission.policyReviewReference,
+      permission.permissionExpiresAt,permission.policyReviewExpiresAt,
+    ]),
+    expired:[...snapshot.expiredChannels].sort(),
+  });
+}
+let authorizationState=authorizationStateFingerprint(allowed);
+
+async function reloadAuthorization(){
+  const nextDocument=await readAuthorizationFile(authorizationPath);
+  const next=validateAuthorization(nextDocument,{allowErasureOnly});
+  const nextErasureOnly=next.erasureOnly||(next.size===0&&next.expiredChannels.length>0);
+  const nextDocumentFingerprint=JSON.stringify(nextDocument);
+  const nextState=authorizationStateFingerprint(next);
+  if(nextDocumentFingerprint===authorizationDocumentFingerprint&&nextState===authorizationState){
+    scheduleAuthorizationExpiry(allowed);
+    return;
+  }
+
+  // Snapshot new-channel recovery watermarks before making those channels live.
+  for(const channelId of next.keys()){
+    if(!allowed.has(channelId))
+      recoveryBaselines.set(channelId,await getRecoveryBaseline(pool,channelId));
+  }
+  allowed=next;
+  erasureOnly=nextErasureOnly;
+  authorizationDocumentFingerprint=nextDocumentFingerprint;
+  authorizationState=nextState;
+  scheduleAuthorizationExpiry(allowed);
+
+  // The new allowlist is authoritative before any asynchronous purge starts.
+  // Events from removed/expired channels are rejected immediately.
+  const spoolResult=spool.sweepExpired(allowed);
+  const purgeResult=await purgeExpired(pool,allowed,{allowEmpty:erasureOnly});
+  console.log("Discord authorization policy reloaded",{
+    activeChannels:allowed.size,
+    expiredChannels:allowed.expiredChannels.length,
+    queuedEventsErased:spoolResult.eventsErased,
+    sourceRowsErased:purgeResult.rowsErased,
+    erasureTombstonesQueued:purgeResult.tombstonesQueued,
+  });
+  if(erasureOnly){
+    acceptingEvents=false;
+    console.log("No active Discord authorization remains; stopping after erasure");
+    void shutdown();
+  }
+}
+
+function startAuthorizationReload(){
+  if(stopping)return;
+  if(authorizationReloadRunning){
+    authorizationReloadPending=true;
+    return;
+  }
+  authorizationReloadRunning=true;
+  authorizationReloadTask=reloadAuthorization().catch(()=>{
+    failures++;
+    acceptingEvents=false;
+    process.exitCode=1;
+    console.error("Discord authorization reload failed; collection stopped","authorization_reload_failed");
+    void shutdown();
+  }).finally(()=>{
+    authorizationReloadRunning=false;
+    if(authorizationReloadPending&&!stopping){
+      authorizationReloadPending=false;
+      startAuthorizationReload();
+    }
+  });
+}
+
+function scheduleAuthorizationExpiry(snapshot){
+  clearTimeout(authorizationExpiryTimer);
+  const deadlines=[...snapshot.values()]
+    .map(permission=>Date.parse(permission.expiresAt))
+    .filter(value=>Number.isFinite(value));
+  if(!deadlines.length)return;
+  const nextExpiry=Math.min(...deadlines);
+  const delay=Math.min(2_147_000_000,Math.max(1,nextExpiry-Date.now()+100));
+  authorizationExpiryTimer=setTimeout(startAuthorizationReload,delay);
+  authorizationExpiryTimer.unref();
+}
+
+scheduleAuthorizationExpiry(allowed);
+authorizationReloadTimer=setInterval(startAuthorizationReload,authorizationReloadMs);
+authorizationReloadTimer.unref();
+
 client.once(Events.ClientReady,()=>{
   startupTask=(async()=>{
     console.log("Collector connected",{channels:allowed.size,pendingIngressEvents:spool.pendingCount});
@@ -347,7 +482,7 @@ sweepTimer=setInterval(()=>{
   sweepRunning=true;
   sweepTask=(async()=>{
     const spoolResult=spool.sweepExpired(allowed);
-    const result=await purgeExpired(pool,allowed);
+    const result=await purgeExpired(pool,allowed,{allowEmpty:erasureOnly});
     if(result.rowsErased>0||spoolResult.eventsErased>0)
       console.log("Expired/revoked Discord data erased",{
         sourceRows:result.rowsErased,
@@ -370,20 +505,12 @@ async function shutdown(){
   acceptingEvents=false;
   clearInterval(sweepTimer);
   clearInterval(backlogTimer);
+  clearInterval(authorizationReloadTimer);
+  clearTimeout(authorizationExpiryTimer);
   shutdownPromise=(async()=>{
     try{await client.destroy()}finally{
-      await Promise.allSettled([startupTask,sweepTask,coverageTask,drainPromise??Promise.resolve()]);
-      try{spool.close()}finally{
-        try{
-          if(singletonLockHeld)await singletonClient.query("SELECT pg_advisory_unlock(hashtextextended('potapoff:discord-collector:singleton',0))");
-          singletonLockHeld=false;
-          singletonClient.release();
-        }catch(error){
-          singletonLockHeld=false;
-          singletonClient.release(error);
-        }
-        await pool.end();
-      }
+      await Promise.allSettled([startupTask,sweepTask,coverageTask,drainPromise??Promise.resolve(),authorizationReloadTask]);
+      try{spool.close()}finally{await releaseSourceDatabase()}
     }
     if(failures)process.exitCode=1;
   })();
