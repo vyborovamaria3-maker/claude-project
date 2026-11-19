@@ -191,11 +191,17 @@ export async function purgeExpired(pool,allowed,{allowEmpty=false}={}){
     await client.query("BEGIN");
     let removed=0;
     let tombstonesQueued=0;
-    const authorized=[...allowed.entries()].map(([channelId,permission])=>{
-      requireRetention(permission.retentionDays);
-      if(!permission.guildId)throw new Error("Authorized channel is missing its guild identity");
-      return {channelId,guildId:String(permission.guildId),retentionDays:permission.retentionDays};
-    });
+    const authorized=[...allowed.entries()]
+      .filter(([,permission])=>{
+        if(!permission.expiresAt)return true; // Legacy test fixtures only.
+        const expiry=Date.parse(permission.expiresAt);
+        return Number.isFinite(expiry)&&expiry>Date.now();
+      })
+      .map(([channelId,permission])=>{
+        requireRetention(permission.retentionDays);
+        if(!permission.guildId)throw new Error("Authorized channel is missing its guild identity");
+        return {channelId,guildId:String(permission.guildId),retentionDays:permission.retentionDays};
+      });
     const channelIds=authorized.map(item=>item.channelId);
     const guildIds=authorized.map(item=>item.guildId);
 
