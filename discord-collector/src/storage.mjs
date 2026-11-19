@@ -205,7 +205,7 @@ export async function purgeExpired(pool,allowed,{allowEmpty=false}={}){
     let tombstonesQueued=0;
     const authorized=[...allowed.entries()]
       .filter(([,permission])=>{
-        if(!permission.expiresAt)return true; // Legacy test fixtures only.
+        if(permission.expiresAt===undefined||permission.expiresAt===null)return true; // Legacy test fixtures only.
         const expiry=Date.parse(permission.expiresAt);
         return Number.isFinite(expiry)&&expiry>Date.now();
       })
