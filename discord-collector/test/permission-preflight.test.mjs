@@ -231,6 +231,58 @@ test("invalid token fails closed and never appears in the report",async()=>{
   assert.ok(!JSON.stringify(report).includes("very-secret-token"));
 });
 
+test("malformed bot identity response fails every authorized channel",async()=>{
+  const report=await runDiscordPermissionPreflight({
+    authorization:authorization(),token:"token",
+    fetchImpl:async()=>jsonResponse({id:123456789012345678}),now,
+  });
+  assert.equal(report.ok,false);
+  assert.equal(report.errorCode,"invalid_bot_identity_response");
+  assert.equal(report.guilds[0].status,"failed");
+  assert.equal(report.guilds[0].channels[0].errorCode,"invalid_bot_identity_response");
+});
+
+test("malformed computed permission bitfield fails closed",async()=>{
+  const fake=successfulFetch();
+  const fetchImpl=async(url,options)=>{
+    const parsed=new URL(url);
+    if(parsed.pathname.endsWith("/permissions/member/"+botId))
+      return jsonResponse({permissions:9007199254740992});
+    return fake.fetchImpl(url,options);
+  };
+  const report=await runDiscordPermissionPreflight({
+    authorization:authorization(),token:"token",fetchImpl,now,
+  });
+  assert.equal(report.ok,false);
+  assert.equal(report.guilds[0].channels[0].errorCode,"invalid_permission_response");
+});
+
+test("channel metadata returned for another guild invalidates the preflight response",async()=>{
+  const fetchImpl=async(url)=>{
+    const path=new URL(url).pathname;
+    if(path==="/api/v10/users/@me")return jsonResponse({id:botId});
+    if(path===`/api/v10/guilds/${guildId}/channels`)
+      return jsonResponse([{id:channelId,guild_id:otherChannelId,type:0}]);
+    return jsonResponse({permissions:String(VIEW|HISTORY)});
+  };
+  const report=await runDiscordPermissionPreflight({
+    authorization:authorization(),token:"token",fetchImpl,now,
+  });
+  assert.equal(report.ok,false);
+  assert.equal(report.guilds[0].channels[0].errorCode,"invalid_guild_channels_response");
+});
+
+test("network failures stop preflight without exposing request details",async()=>{
+  const report=await runDiscordPermissionPreflight({
+    authorization:authorization(),token:"network-secret",
+    fetchImpl:async()=>{throw new Error("network failed with secret network-secret")},
+    now,
+  });
+  assert.equal(report.ok,false);
+  assert.equal(report.errorCode,"discord_api_unavailable");
+  assert.ok(!JSON.stringify(report).includes("network-secret"));
+});
+
 test("plain HTTP API overrides are rejected",async()=>{
   await assert.rejects(runDiscordPermissionPreflight({
     authorization:authorization(),token:"token",fetchImpl:async()=>jsonResponse({}),
