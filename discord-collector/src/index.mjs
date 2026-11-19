@@ -466,20 +466,11 @@ async function shutdown(){
   acceptingEvents=false;
   clearInterval(sweepTimer);
   clearInterval(backlogTimer);
+  clearInterval(authorizationReloadTimer);
   shutdownPromise=(async()=>{
     try{await client.destroy()}finally{
       await Promise.allSettled([startupTask,sweepTask,coverageTask,drainPromise??Promise.resolve()]);
-      try{spool.close()}finally{
-        try{
-          if(singletonLockHeld)await singletonClient.query("SELECT pg_advisory_unlock(hashtextextended('potapoff:discord-collector:singleton',0))");
-          singletonLockHeld=false;
-          singletonClient.release();
-        }catch(error){
-          singletonLockHeld=false;
-          singletonClient.release(error);
-        }
-        await pool.end();
-      }
+      try{spool.close()}finally{await releaseSourceDatabase()}
     }
     if(failures)process.exitCode=1;
   })();
