@@ -14,7 +14,7 @@ function authorizationExpiry(value,name,nowMs){
      localDate.getUTCDate()!==day||localDate.getUTCHours()!==hour||
      localDate.getUTCMinutes()!==minute||localDate.getUTCSeconds()!==second)
     throw new Error(name+" contains an invalid calendar date or time");
-  const offset=/([+-])(\\d{2}):(\\d{2})$/.exec(value);
+  const offset=/([+-])(\d{2}):(\d{2})$/.exec(value);
   if(offset&&(Number(offset[2])>14||Number(offset[3])>59||
      (Number(offset[2])===14&&Number(offset[3])!==0)))
     throw new Error(name+" contains an invalid UTC offset");
