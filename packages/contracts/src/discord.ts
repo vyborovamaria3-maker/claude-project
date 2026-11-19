@@ -20,7 +20,6 @@ export type DiscordMessageEnvelopeInput = Readonly<{
   producerVersion: string;
 }>;
 
-const SNOWFLAKE = /^[1-9][0-9]{14,21}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 
 /** Privacy-minimized V2 builder. It never accepts raw message text, author IDs or guild IDs. */
