@@ -46,6 +46,20 @@ const singletonClient=await pool.connect().catch(async error=>{spoolKey.fill(0);
 let singletonLockHeld=false;
 let spool=null;
 const recoveryBaselines=new Map();
+let startupSpoolSweep={eventsErased:0};
+let startupPurge={rowsErased:0,tombstonesQueued:0};
+async function releaseSourceDatabase(){
+  try{
+    if(singletonLockHeld)
+      await singletonClient.query("SELECT pg_advisory_unlock(hashtextextended('potapoff:discord-collector:singleton',0))");
+    singletonLockHeld=false;
+    singletonClient.release();
+  }catch(error){
+    singletonLockHeld=false;
+    singletonClient.release(error);
+  }
+  await pool.end();
+}
 try{
   // One Collector per source database. A session advisory lock is released by
   // PostgreSQL automatically if the process or connection dies.
@@ -60,24 +74,35 @@ try{
     maxEvents:spoolMaxEvents,
   }).open();
   spoolKey.fill(0);
-  // Remove revoked or expired pending payloads before Gateway login.
-  const startupSpoolSweep=spool.sweepExpired(allowed);
-  if(startupSpoolSweep.eventsErased>0)
-    console.log("Expired/revoked ingress events erased",{events:startupSpoolSweep.eventsErased});
-  // Schema, retention controls and recovery watermarks must be ready before Gateway login.
+  // Remove revoked or expired pending payloads before any Gateway connection.
+  startupSpoolSweep=spool.sweepExpired(allowed);
+  // Schema and erasure tombstones must be ready before Gateway login.
   await installSchema(pool);
-  await purgeExpired(pool,allowed);
+  startupPurge=await purgeExpired(pool,allowed,{allowEmpty:erasureOnly});
   for(const channelId of allowed.keys())
     recoveryBaselines.set(channelId,await getRecoveryBaseline(pool,channelId));
 }catch(error){
   spoolKey.fill(0);
   try{spool?.close()}catch{}
-  if(singletonLockHeld){
-    try{await singletonClient.query("SELECT pg_advisory_unlock(hashtextextended('potapoff:discord-collector:singleton',0))")}catch{}
-  }
-  singletonClient.release();
-  await pool.end();
+  await releaseSourceDatabase();
   throw error;
+}
+
+if(startupSpoolSweep.eventsErased>0||startupPurge.rowsErased>0)
+  console.log("Startup Discord erasure sweep",{
+    pendingIngressEvents:startupSpoolSweep.eventsErased,
+    sourceRows:startupPurge.rowsErased,
+    tombstonesQueued:startupPurge.tombstonesQueued,
+    expiredChannels:allowed.expiredChannels.length,
+  });
+if(erasureOnly){
+  console.log("Discord authorization has no active channels; completed erasure-only run",{
+    expiredChannels:allowed.expiredChannels.length,
+    sourceRows:startupPurge.rowsErased,
+    tombstonesQueued:startupPurge.tombstonesQueued,
+  });
+  try{spool.close()}finally{await releaseSourceDatabase()}
+  process.exit(0);
 }
 const client=new Client({
   intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent],
