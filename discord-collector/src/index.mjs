@@ -89,6 +89,17 @@ let sweepTimer;
 let backlogTimer;
 let sweepRunning=false;
 
+function singletonConnectionLost(){
+  if(stopping)return;
+  acceptingEvents=false;
+  failures++;
+  process.exitCode=1;
+  console.error("Discord singleton lock connection lost","singleton_lock_lost");
+  void shutdown();
+}
+singletonClient.on("error",singletonConnectionLost);
+singletonClient.on("end",singletonConnectionLost);
+
 async function record(message,kind){
   const channelId=String(message.channelId??message.channel?.id??"");
   const permission=allowed.get(channelId);
