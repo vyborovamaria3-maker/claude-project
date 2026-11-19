@@ -308,6 +308,41 @@ export async function recordRecoveryCheck(pool,guildId,channelId,baseline,result
   finally{client.release()}
 }
 
+export async function eraseAuthorMessages(pool,authorId){
+  if(typeof authorId!=="string"||!/^([1-9][0-9]{14,21})$/.test(authorId)||
+     BigInt(authorId)>18446744073709551615n)
+    throw new TypeError("A valid Discord author Snowflake is required");
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    // Candidate IDs are read without row locks. Each message then follows the
+    // same advisory-lock-before-row-lock order as normal create/edit/delete.
+    const candidates=await client.query(
+      "SELECT message_id FROM discord_messages WHERE author_id=$1 AND deleted_at IS NULL "+
+      "ORDER BY message_id::numeric",[authorId]);
+    let messagesErased=0,tombstonesQueued=0;
+    for(const candidate of candidates.rows){
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('discord'),hashtext($1))",
+        [candidate.message_id]);
+      const current=await client.query(
+        "SELECT message_id,guild_id,channel_id FROM discord_messages "+
+        "WHERE message_id=$1 AND author_id=$2 AND deleted_at IS NULL FOR UPDATE",
+        [candidate.message_id,authorId]);
+      if(!current.rows.length)continue;
+      tombstonesQueued+=await enqueueErasureTombstones(client,current.rows,"user_requested");
+      const ids=[candidate.message_id];
+      await client.query("DELETE FROM discord_message_revisions WHERE message_id=ANY($1::text[])",[ids]);
+      const deleted=await client.query("DELETE FROM discord_messages WHERE message_id=ANY($1::text[])",[ids]);
+      messagesErased+=deleted.rowCount??0;
+    }
+    await client.query("COMMIT");
+    return {messagesErased,tombstonesQueued};
+  }catch(error){
+    await client.query("ROLLBACK");
+    throw error;
+  }finally{client.release()}
+}
+
 export async function recordCoverageFailure(pool,event,failureCode,spoolSequence){
   if(!event||!["observed","edited","deleted"].includes(event.kind)||
      !/^([1-9][0-9]{14,21})$/.test(String(event.guildId??""))||
