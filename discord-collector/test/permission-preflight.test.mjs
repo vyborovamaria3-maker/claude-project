@@ -57,7 +57,7 @@ test("preflight verifies only allowlisted text channels and computed bot permiss
   assert.equal(report.passedChannels,1);
   assert.equal(report.botId,botId);
   assert.deepEqual(report.guilds[0].channels[0].checks,{
-    viewChannel:true,readMessageHistory:true,
+    viewChannel:true,readMessageHistory:true,administrator:false,sendMessages:false,
   });
   assert.ok(fake.calls.some(call=>call.path===`/api/v10/channels/${channelId}/permissions/member/${botId}`));
   assert.ok(!fake.calls.some(call=>call.path.includes("/messages")));
@@ -94,9 +94,7 @@ test("administrator permission satisfies both read-only permission checks",async
     authorization:authorization(),token:"token",fetchImpl:fake.fetchImpl,now,
   });
   assert.equal(report.ok,true);
-  assert.deepEqual(report.guilds[0].channels[0].checks,{
-    viewChannel:true,readMessageHistory:true,
-  });
+  assert.equal(report.guilds[0].channels[0].errorCode,"excessive_administrator_permission");
 });
 
 test("channel omitted from visible guild channels fails without probing it",async()=>{
