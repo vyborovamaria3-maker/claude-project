@@ -161,7 +161,7 @@ sweepTimer=setInterval(()=>{
   if(sweepRunning||stopping)return;
   sweepRunning=true;
   sweepTask=purgeExpired(pool,allowed).then(result=>{
-    if(result.rowsErased>0)console.log("Expired/revoked data erased",{rows:result.rowsErased});
+    if(result.rowsErased>0)console.log("Expired/revoked data erased",{rows:result.rowsErased,tombstonesQueued:result.tombstonesQueued});
   }).catch(()=>{
     failures++;
     acceptingEvents=false;
