@@ -245,6 +245,12 @@ export async function purgeExpired(pool,allowed,{allowEmpty=false}={}){
       "WHERE a.channel_id=c.channel_id AND a.guild_id=c.guild_id)",
       [channelIds,guildIds],
     );
+    const coverageFailures=await client.query(
+      "DELETE FROM discord_coverage_failures c WHERE c.expires_at<=NOW() OR NOT EXISTS ("+
+      "SELECT 1 FROM unnest($1::text[],$2::text[]) AS a(channel_id,guild_id) "+
+      "WHERE a.channel_id=c.channel_id AND a.guild_id=c.guild_id)",
+      [channelIds,guildIds],
+    );
 
     for(const item of authorized){
       const expired=await client.query(
@@ -264,7 +270,7 @@ export async function purgeExpired(pool,allowed,{allowEmpty=false}={}){
       }
     }
     await client.query("COMMIT");
-    return {rowsErased:removed,tombstonesQueued};
+    return {rowsErased:removed,tombstonesQueued,coverageFailuresErased:coverageFailures.rowCount};
   }catch(e){await client.query("ROLLBACK");throw e}
   finally{client.release()}
 }
@@ -306,6 +312,26 @@ export async function recordRecoveryCheck(pool,guildId,channelId,baseline,result
     await client.query("COMMIT");
   }catch(e){await client.query("ROLLBACK");throw e}
   finally{client.release()}
+}
+
+
+export async function recordCoverageFailure(pool,event,retentionDays){
+  requireRetention(retentionDays);
+  if(!event||typeof event!=="object"||
+     !["observed","edited","deleted"].includes(event.kind)||
+     !event.guildId||!event.channelId||!event.messageId||
+     typeof event.receivedAt!=="string"||!Number.isFinite(Date.parse(event.receivedAt)))
+    throw new TypeError("Invalid Discord coverage failure identity");
+  const client=await pool.connect();
+  try{
+    await client.query(
+      "INSERT INTO discord_coverage_failures "+
+      "(guild_id,channel_id,message_id,event_kind,received_at,failure_code,expires_at) "+
+      "VALUES($1,$2,$3,$4,$5,'message_not_found',NOW()+($6::integer*INTERVAL '1 day')) "+
+      "ON CONFLICT(guild_id,channel_id,message_id,event_kind,received_at) DO NOTHING",
+      [event.guildId,event.channelId,event.messageId,event.kind,event.receivedAt,retentionDays],
+    );
+  }finally{client.release()}
 }
 
 export async function getBackfillCursor(pool,channelId){
