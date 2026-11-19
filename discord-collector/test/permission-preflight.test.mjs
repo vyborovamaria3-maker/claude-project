@@ -26,19 +26,18 @@ function jsonResponse(value,status=200,headers={}){
   });
 }
 
-function successfulFetch({permissions=VIEW|HISTORY,visibleIds=[channelId],channelTypes={}}={}){
+function successfulFetch({permissions=VIEW|HISTORY,channelTypes={}}={}){
   const calls=[];
   const fetchImpl=async(url,options)=>{
     const parsed=new URL(url);
     calls.push({path:parsed.pathname,authorization:options.headers.Authorization});
     if(parsed.pathname==="/api/v10/users/@me")return jsonResponse({id:botId});
-    if(parsed.pathname===`/api/v10/guilds/${guildId}/channels`)
-      return jsonResponse(visibleIds.map(id=>({
-        id,guild_id:guildId,type:channelTypes[id]??0,
-      })));
+    if(parsed.pathname===`/api/v10/guilds/${guildId}`)
+      return jsonResponse({id:guildId});
+    if(parsed.pathname===`/api/v10/channels/${channelId}`)
+      return jsonResponse({id:channelId,guild_id:guildId,type:channelTypes[channelId]??0});
     const permissionPath="/api/v10/channels/"+channelId+"/permissions/member/"+botId;
-    const otherPermissionPath="/api/v10/channels/"+otherChannelId+"/permissions/member/"+botId;
-    if(parsed.pathname===permissionPath||parsed.pathname===otherPermissionPath)
+    if(parsed.pathname===permissionPath)
       return jsonResponse({permissions:String(permissions)});
     return jsonResponse({message:"unexpected route"},404);
   };
@@ -46,7 +45,7 @@ function successfulFetch({permissions=VIEW|HISTORY,visibleIds=[channelId],channe
 }
 
 test("preflight verifies only allowlisted text channels and computed bot permissions",async()=>{
-  const fake=successfulFetch({visibleIds:[channelId,otherChannelId]});
+  const fake=successfulFetch();
   const report=await runDiscordPermissionPreflight({
     authorization:authorization(),token:"test-secret-token",fetchImpl:fake.fetchImpl,now,
   });
@@ -64,7 +63,7 @@ test("preflight verifies only allowlisted text channels and computed bot permiss
   assert.ok(fake.calls.every(call=>call.authorization==="Bot test-secret-token"));
   assert.ok(!JSON.stringify(report).includes("test-secret-token"));
   assert.ok(!JSON.stringify(report).includes("message content"));
-  // A visible but non-authorized channel must never be probed.
+  // No unlisted channel ID is ever requested.
   assert.ok(!fake.calls.some(call=>call.path.includes(otherChannelId)));
 });
 
@@ -106,10 +105,15 @@ test("SEND_MESSAGES is rejected because the Collector is read-only",async()=>{
   assert.equal(report.guilds[0].channels[0].errorCode,"unnecessary_permissions_granted");
 });
 
-test("channel omitted from visible guild channels fails without probing it",async()=>{
-  const fake=successfulFetch({visibleIds:[otherChannelId]});
+test("missing or hidden authorized channel fails without a permission probe",async()=>{
+  const fake=successfulFetch();
+  const fetchImpl=async(url,options)=>{
+    const path=new URL(url).pathname;
+    if(path===`/api/v10/channels/${channelId}`)return jsonResponse({code:10003},404);
+    return fake.fetchImpl(url,options);
+  };
   const report=await runDiscordPermissionPreflight({
-    authorization:authorization(),token:"token",fetchImpl:fake.fetchImpl,now,
+    authorization:authorization(),token:"token",fetchImpl,now,
   });
   assert.equal(report.ok,false);
   assert.equal(report.guilds[0].channels[0].errorCode,"channel_not_visible_or_missing");
@@ -122,7 +126,7 @@ test("a missing guild or bot membership fails the guild's authorized channels",a
     const path=new URL(url).pathname;
     calls.push(path);
     if(path==="/api/v10/users/@me")return jsonResponse({id:botId});
-    if(path===`/api/v10/guilds/${guildId}/channels`)return jsonResponse({code:10004},404);
+    if(path===`/api/v10/guilds/${guildId}`)return jsonResponse({code:10004},404);
     return jsonResponse({},500);
   };
   const report=await runDiscordPermissionPreflight({
@@ -148,8 +152,9 @@ test("permission endpoint forbidden fails closed without exposing API response b
     const path=new URL(url).pathname;
     calls.push(path);
     if(path==="/api/v10/users/@me")return jsonResponse({id:botId});
-    if(path===`/api/v10/guilds/${guildId}/channels`)
-      return jsonResponse([{id:channelId,guild_id:guildId,type:0}]);
+    if(path===`/api/v10/guilds/${guildId}`)return jsonResponse({id:guildId});
+    if(path===`/api/v10/channels/${channelId}`)
+      return jsonResponse({id:channelId,guild_id:guildId,type:0});
     return jsonResponse({message:"private diagnostic"},403);
   };
   const report=await runDiscordPermissionPreflight({
@@ -167,11 +172,13 @@ test("rate limits are retried only within the configured wait budget",async()=>{
   const fetchImpl=async(url)=>{
     const path=new URL(url).pathname;
     if(path==="/api/v10/users/@me")return jsonResponse({id:botId});
-    if(path===`/api/v10/guilds/${guildId}/channels`){
+    if(path===`/api/v10/guilds/${guildId}`){
       guildCalls++;
       if(guildCalls===1)return jsonResponse({retry_after:0.01},429,{"retry-after":"0.01"});
-      return jsonResponse([{id:channelId,guild_id:guildId,type:0}]);
+      return jsonResponse({id:guildId});
     }
+    if(path===`/api/v10/channels/${channelId}`)
+      return jsonResponse({id:channelId,guild_id:guildId,type:0});
     return jsonResponse({permissions:String(VIEW|HISTORY)});
   };
   const report=await runDiscordPermissionPreflight({
@@ -279,8 +286,9 @@ test("channel metadata returned for another guild invalidates the preflight resp
   const fetchImpl=async(url)=>{
     const path=new URL(url).pathname;
     if(path==="/api/v10/users/@me")return jsonResponse({id:botId});
-    if(path===`/api/v10/guilds/${guildId}/channels`)
-      return jsonResponse([{id:channelId,guild_id:otherChannelId,type:0}]);
+    if(path===`/api/v10/guilds/${guildId}`)return jsonResponse({id:guildId});
+    if(path===`/api/v10/channels/${channelId}`)
+      return jsonResponse({id:channelId,guild_id:otherChannelId,type:0});
     return jsonResponse({permissions:String(VIEW|HISTORY)});
   };
   const report=await runDiscordPermissionPreflight({
