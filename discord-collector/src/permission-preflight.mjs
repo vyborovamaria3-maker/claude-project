@@ -124,11 +124,6 @@ function failedChannel(channelId,errorCode){
   };
 }
 
-function permissionBits(value){
-  if(typeof value!=="string"||!/^[0-9]+$/.test(value))return null;
-  try{return BigInt(value)}catch{return null}
-}
-
 function decimalPermissionBits(value){
   if(typeof value!=="string"||!/^[0-9]+$/.test(value))return null;
   try{return BigInt(value)}catch{return null}
