@@ -57,7 +57,7 @@ Authorization documents use schema version 2. Both the community permission
 and platform-policy review have explicit expiry timestamps. The earlier
 deadline controls the channel lease; leases cannot extend more than 365 days
 without a new review. The Collector reloads the authorization file every
-60 seconds by default (configurable from 30 seconds to one hour).
+30 seconds by default (configurable from 5 to 60 seconds).
 
 - Removing a channel from the file revokes it on the next successful reload:
   pending spool payloads are erased and source messages/revisions are purged
@@ -114,7 +114,7 @@ committed `.env` file:
 - `DISCORD_INGRESS_SPOOL_KEY=<canonical base64 for exactly 32 random bytes>`
 - `DISCORD_INGRESS_SPOOL_MAX_BYTES=536870912` (default 512 MiB)
 - `DISCORD_INGRESS_SPOOL_MAX_EVENTS=100000` (default 100,000 events)
-- `DISCORD_AUTHORIZATION_RELOAD_MS=60000` (default 60 seconds)
+- `DISCORD_AUTHORIZATION_RELOAD_MS=30000` (default 30 seconds; maximum 60 seconds)
 - `DISCORD_ALLOW_ERASURE_ONLY=true` only for an explicitly approved empty-allowlist erasure run
 
 Use a dedicated spool directory for this source database; do not share it with another Collector. A PostgreSQL session advisory lock enforces one Collector per source database.
