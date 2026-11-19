@@ -162,6 +162,7 @@ let authorizationReloadTask=Promise.resolve();
 let permissionPreflightTimer;
 let permissionPreflightTask=Promise.resolve();
 let permissionPreflightRunning=false;
+let permissionPreflightFailed=false;
 let sweepRunning=false;
 
 function singletonConnectionLost(){
@@ -201,7 +202,9 @@ function permissionPreflightSummary(report){
 }
 
 async function verifyPermissions(snapshot){
+  if(permissionPreflightFailed)throw new Error("Discord permission verification already failed");
   if(permissionPreflightRunning)await permissionPreflightTask;
+  if(permissionPreflightFailed)throw new Error("Discord permission verification already failed");
   permissionPreflightRunning=true;
   const task=runDiscordPermissionPreflight({
     authorization:snapshot,
@@ -209,8 +212,14 @@ async function verifyPermissions(snapshot){
     maxChannels:permissionPreflightMaxChannels,
   });
   permissionPreflightTask=task;
-  try{return await task}
-  finally{
+  try{
+    const report=await task;
+    if(!report.ok)permissionPreflightFailed=true;
+    return report;
+  }catch(error){
+    permissionPreflightFailed=true;
+    throw error;
+  }finally{
     if(permissionPreflightTask===task)permissionPreflightRunning=false;
   }
 }
