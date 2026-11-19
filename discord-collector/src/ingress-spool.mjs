@@ -141,25 +141,25 @@ export class IngressSpool {
 
   open(){
     if(this.opened)throw new Error("Ingress spool is already open");
-    let createdDirectory=false;
-    try{mkdirSync(this.directory,{mode:0o700});createdDirectory=true}
-    catch(error){if(error.code!=="EEXIST")throw error}
-    const initial=lstatSync(this.directory);
-    if(initial.isSymbolicLink()||!initial.isDirectory())
-      throw new Error("Ingress spool path must be a real directory, not a symlink");
-    if(createdDirectory)chmodSync(this.directory,0o700);
-    const securedDirectory=lstatSync(this.directory);
-    if((securedDirectory.mode&0o777)!==0o700)
-      throw new Error("Ingress spool directory must already have exact mode 0700");
-    if(typeof process.getuid==="function"&&securedDirectory.uid!==process.getuid())
-      throw new Error("Ingress spool directory must be owned by the collector user");
-    const parentFd=openSync(dirname(this.directory),"r");
-    try{fsyncSync(parentFd)}finally{closeSync(parentFd)}
-    this.directoryFd=openSync(this.directory,"r");
     try{
+      let createdDirectory=false;
+      try{mkdirSync(this.directory,{mode:0o700});createdDirectory=true}
+      catch(error){if(error.code!=="EEXIST")throw error}
+      const initial=lstatSync(this.directory);
+      if(initial.isSymbolicLink()||!initial.isDirectory())
+        throw new Error("Ingress spool path must be a real directory, not a symlink");
+      if(createdDirectory)chmodSync(this.directory,0o700);
+      const securedDirectory=lstatSync(this.directory);
+      if((securedDirectory.mode&0o777)!==0o700)
+        throw new Error("Ingress spool directory must already have exact mode 0700");
+      if(typeof process.getuid==="function"&&securedDirectory.uid!==process.getuid())
+        throw new Error("Ingress spool directory must be owned by the collector user");
+      const parentFd=openSync(dirname(this.directory),"r");
+      try{fsyncSync(parentFd)}finally{closeSync(parentFd)}
+      this.directoryFd=openSync(this.directory,"r");
       let sawTemporary=false;
       for(const name of readdirSync(this.directory).sort()){
-        const match=/^([0-9]{20})\.(evt|tmp)$/.exec(name);
+        const match=/^([0-9]{20})\\.(evt|tmp)$/.exec(name);
         if(!match)throw new Error("Unexpected file in dedicated ingress spool directory: "+name);
         const paddedSequence=match[1];
         const sequence=BigInt(paddedSequence).toString();
@@ -170,10 +170,9 @@ export class IngressSpool {
           throw new Error("Ingress spool records must be regular files, not symlinks");
         if((stat.mode&0o777)!==0o600)
           throw new Error("Ingress spool records must already have exact mode 0600");
-        const securedFile=stat;
-        if(typeof process.getuid==="function"&&securedFile.uid!==process.getuid())
+        if(typeof process.getuid==="function"&&stat.uid!==process.getuid())
           throw new Error("Ingress spool records must be owned by the collector user");
-        if(securedFile.size<1||securedFile.size>MAX_EVENT_BYTES)
+        if(stat.size<1||stat.size>MAX_EVENT_BYTES)
           throw new Error("Ingress spool record has an invalid size; refusing to discard it");
         decryptRecord(readFileSync(path,"utf8"),sequence,this.key); // Authenticate before Gateway login.
         if(this.pending.has(sequence))throw new Error("Duplicate ingress spool sequence");
@@ -197,8 +196,10 @@ export class IngressSpool {
       this.opened=true;
       return this;
     }catch(error){
-      closeSync(this.directoryFd);
-      this.directoryFd=null;
+      if(this.directoryFd!==null){
+        try{closeSync(this.directoryFd)}catch{}
+        this.directoryFd=null;
+      }
       this.key.fill(0);
       throw error;
     }
