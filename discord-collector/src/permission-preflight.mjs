@@ -50,7 +50,9 @@ async function retryAfterMs(response){
 }
 
 async function requestJson(path,{token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep}){
-  const url=baseUrl.replace(/\\/+$/,"")+path;
+  let normalizedBaseUrl=baseUrl;
+  while(normalizedBaseUrl.endsWith("/"))normalizedBaseUrl=normalizedBaseUrl.slice(0,-1);
+  const url=normalizedBaseUrl+path;
   for(let attempt=0;attempt<=maxRetries;attempt++){
     let response;
     try{
@@ -178,7 +180,11 @@ export async function runDiscordPermissionPreflight({
   sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms)),
 }={}){
   validateOptions({token,authorization,fetchImpl,timeoutMs,maxRetries,maxRetryDelayMs,maxChannels});
-  if(typeof baseUrl!=="string"||!/^https:\\/\\//i.test(baseUrl))
+  let parsedBaseUrl;
+  try{parsedBaseUrl=new URL(baseUrl)}catch{throw new TypeError("Discord API base URL is invalid")}
+  if(parsedBaseUrl.protocol!=="https:"||parsedBaseUrl.username||parsedBaseUrl.password||
+     parsedBaseUrl.search||parsedBaseUrl.hash)
+    throw new TypeError("Discord API base URL must use HTTPS without credentials or query parameters");
     throw new TypeError("Discord API base URL must use HTTPS");
   const nowMs=now instanceof Date?now.getTime():Date.parse(now);
   if(!Number.isFinite(nowMs))throw new TypeError("Preflight clock is invalid");
