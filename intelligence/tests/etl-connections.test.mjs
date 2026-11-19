@@ -60,3 +60,36 @@ test("fingerprint gate does not mask missing required migrations",async()=>{
   }]})};
   await assert.rejects(checkDestination(pool,{allowLegacyFingerprints:true}),/migration 017 required/);
 });
+
+
+test("Discord source pool uses its own PostgreSQL DSN and least-privilege reader mode",()=>{
+ const options=postgresSourcePoolOptions("discord",false,{DISCORD_SOURCE_DATABASE_URL:"postgres://example/discord"});
+ assert.equal(options.connectionString,"postgres://example/discord");
+ assert.equal(options.application_name,"potapoff-intelligence-discord-source-reader");
+ assert.equal(options.options,"-c default_transaction_read_only=on");
+});
+test("Discord claims fail closed until migration 022 evidence/timeline constraints exist",async()=>{
+ const pool={query:async sql=>{
+  if(sql.includes("payload_sha256 IS NULL"))return{rows:[{pending:false}]};
+  return{rows:[{inbox:true,registry:true,evidence:true,timeline:true,token_links:true,
+   blockchain_revisions:true,inbox_fingerprint:true,
+   inbox_envelope_fingerprint:true,inbox_envelope_fingerprint_constraint:true,
+   inbox_envelope_fingerprint_definition:"CHECK (envelope_sha256 IS NULL OR envelope_sha256 ~ '^[a-f0-9]{64}$')",
+   discord_evidence_definition:"CHECK (evidence_kind IN ('x_tweet','tg_message','chain_tx'))",
+   discord_timeline_definition:"CHECK (timeline_kind IN ('tweet_published','tg_message_published'))"}]};
+ }};
+ await assert.rejects(checkDestination(pool,{requireDiscordEvidence:true,allowLegacyFingerprints:true}),/migration 022 required/);
+});
+
+
+test("Discord claims fail closed until durable message tombstones exist",async()=>{
+ const pool={query:async sql=>{
+  if(sql.includes("payload_sha256 IS NULL"))return{rows:[{pending:false}]};
+  return{rows:[{inbox:true,registry:true,evidence:true,timeline:true,token_links:true,
+   blockchain_revisions:true,inbox_fingerprint:true,
+   discord_message_tombstones:false,
+   discord_evidence_definition:"CHECK (evidence_kind IN ('x_tweet','tg_message','chain_tx','discord_message'))",
+   discord_timeline_definition:"CHECK (timeline_kind IN ('tweet_published','tg_message_published','discord_message_published','discord_message_edited','discord_message_deleted'))"}]};
+ }};
+ await assert.rejects(checkDestination(pool,{requireDiscordEvidence:true,allowLegacyFingerprints:true}),/migration 023 required/);
+});

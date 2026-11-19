@@ -41,6 +41,10 @@ jobs:
         run: npm install --prefix packages/contracts --ignore-scripts --no-package-lock --no-audit
       - name: Strict typecheck, build, and regression tests
         run: npm --prefix packages/contracts run check
+      - name: Build shared event-outbox package
+        run: |
+          npm install --prefix packages/event-outbox --ignore-scripts --no-audit --no-fund
+          npm --prefix packages/event-outbox run build
       - name: Install Discord collector and local contracts package
         run: npm install --prefix discord-collector --ignore-scripts --no-audit --no-fund
       - name: Run Discord collector and contract integration tests

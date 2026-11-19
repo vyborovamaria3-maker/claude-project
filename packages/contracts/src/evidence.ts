@@ -1,5 +1,5 @@
 import {
-  formatSourceId, isChain, isSolanaSignature,
+  formatSourceId, isChain, isDiscordSnowflake, isSolanaSignature,
   type Chain,
 } from "./canonical-ids.js";
 import { toUtcIso } from "./time.js";
@@ -31,7 +31,6 @@ export type EvidenceInput = EvidenceMetadata & (
 );
 
 const POSITIVE_ID = /^[1-9][0-9]*$/;
-const DISCORD_SNOWFLAKE = /^[1-9][0-9]{14,21}$/;
 
 function optionalMetadata(value: string | undefined, label: string): string | undefined {
   if (value === undefined) return undefined;
@@ -55,7 +54,7 @@ export function buildEvidenceRef(input: EvidenceInput): EvidenceRef {
       break;
     }
     case "discord_message":
-      if (!DISCORD_SNOWFLAKE.test(input.channelId) || !DISCORD_SNOWFLAKE.test(input.messageId)) throw new TypeError("Discord channel and message IDs must be valid Snowflakes");
+      if (!isDiscordSnowflake(input.channelId) || !isDiscordSnowflake(input.messageId)) throw new TypeError("Discord channel and message IDs must be valid Snowflakes");
       sourceId = "discord:message:" + input.channelId + ":" + input.messageId;
       break;
     case "chain_tx":

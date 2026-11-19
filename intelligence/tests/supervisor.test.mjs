@@ -14,7 +14,7 @@ test("supervisor --help is offline and does not require credentials",()=>{
   });
   assert.equal(run.status,0,run.stderr);
   assert.match(run.stdout,/foreground process/);
-  assert.match(run.stdout,/--sources x,tg,blockchain/);
+  assert.match(run.stdout,/--sources x,tg,blockchain,discord/);
 });
 
 test("supervisor refuses to start without both explicit opt-ins",()=>{
@@ -48,6 +48,7 @@ test("CLI forbids duplicate, missing or unknown sources and unsafe numeric value
     ["--sources","tg","--max-batches","-1"],
   ])assert.throws(()=>parseArguments(args),Error);
   assert.deepEqual(parseArguments(["--sources","x,tg","--max-batches","10"]).sources,["x","tg"]);
+  assert.deepEqual(parseArguments(["--sources","discord"]).sources,["discord"]);
   assert.equal(parseArguments(["--source","blockchain","--lease-ms=60000"]).leaseMs,60000);
 });
 

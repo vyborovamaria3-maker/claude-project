@@ -11,7 +11,7 @@ test("SQL migrations have unique sequential version numbers",async()=>{
       "duplicate migration version "+prefix+" in "+byVersion.get(prefix)+" and "+name);
     byVersion.set(prefix,name);
   }
-  for(let n=1;n<=22;n++)assert.ok(byVersion.has(n),
+  for(let n=1;n<=23;n++)assert.ok(byVersion.has(n),
     "missing migration "+String(n).padStart(3,"0"));
   const privacy=await readFile(new URL("014_privacy_evidence_indexes.sql",root),"utf8");
   assert.match(privacy,/idx_intelligence_inbox_evidence_source/);
@@ -48,4 +48,14 @@ test("Discord evidence and timeline kinds are enabled by additive migration 022"
  const sql=await readFile(new URL("022_discord_source_contracts.sql",root),"utf8");
  assert.match(sql,/discord_message/);assert.match(sql,/discord_message_published/);
  assert.match(sql,/discord_message_edited/);assert.match(sql,/discord_message_deleted/);assert.match(sql,/VALIDATE CONSTRAINT/);
+});
+
+
+test("Discord message tombstones are durable and additive in migration 023",async()=>{
+ const sql=await readFile(new URL("023_discord_message_tombstones.sql",root),"utf8");
+ assert.match(sql,/CREATE TABLE IF NOT EXISTS discord_message_tombstones/);
+ assert.match(sql,/retention_expired/);
+ assert.match(sql,/channel_revoked/);
+ assert.match(sql,/evidence_source_id/);
+ assert.match(sql,/no message body, author ID, or content fingerprint/i);
 });

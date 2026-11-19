@@ -32,6 +32,12 @@ export function isChain(value: unknown): value is Chain {
   return typeof value === "string" && (CHAINS as readonly string[]).includes(value);
 }
 
+/** Discord Snowflakes are unsigned 64-bit decimal IDs; keep them as strings. */
+export function isDiscordSnowflake(value: unknown): value is string {
+  return typeof value === "string" && DISCORD_SNOWFLAKE.test(value)
+    && BigInt(value) <= 18446744073709551615n;
+}
+
 /** Count decoded Base58 bytes without Number precision loss. */
 function isBase58ByteLength(value: string, requiredBytes: number): boolean {
   if (value.length < 1 || value.length > 128) return false;
@@ -116,7 +122,7 @@ function validateAccountId(platform: SocialPlatform, accountId: unknown): string
   if (typeof accountId !== "string") throw new TypeError("Account ID must be a string");
   if (platform === "x" && DIGITS.test(accountId)) return accountId;
   if (platform === "tg" && TG_DIGITS.test(accountId)) return accountId;
-  if (platform === "discord" && DISCORD_SNOWFLAKE.test(accountId)) return accountId;
+  if (platform === "discord" && isDiscordSnowflake(accountId)) return accountId;
   throw new TypeError("Stable numeric X/TG/Discord account ID required; do not use a handle");
 }
 

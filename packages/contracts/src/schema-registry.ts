@@ -255,7 +255,10 @@ const DISCORD_MESSAGE_TIMELINE_PAYLOAD: JsonSchema = {
 };
 const DISCORD_MESSAGE_DELETION: JsonSchema = {
   type: "object", required: ["contentErased"], additionalProperties: false,
-  properties: { contentErased: { const: true } },
+  properties: {
+    contentErased: { const: true },
+    reason: { type: "string", enum: ["deleted", "retention_expired", "channel_revoked"] },
+  },
 };
 
 const DEFINITIONS: readonly SchemaDefinition[] = Object.freeze([

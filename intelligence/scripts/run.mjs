@@ -29,7 +29,7 @@ function argumentsFor(argv) {
     }else throw new Error("unknown CLI option");
   }
   if(options.help)return options;
-  if(!["x","tg","blockchain"].includes(options.source)) throw new Error("select --source x|tg|blockchain");
+  if(!["x","tg","blockchain","discord"].includes(options.source)) throw new Error("select --source x|tg|blockchain|discord");
   if(options.once===options.status) throw new Error("select exactly one of --once or --status");
   if(!Number.isSafeInteger(options.limit)||options.limit<1||options.limit>1000)throw new Error("limit must be 1..1000");
   return options;
@@ -37,11 +37,11 @@ function argumentsFor(argv) {
 function usage() {
   return [
     "Intelligence local ETL (no source or remote collection is started)",
-    "  node scripts/run.mjs --source x|tg|blockchain --status",
-    "  INTELLIGENCE_ETL_ENABLED=true node scripts/run.mjs --source x|tg|blockchain --once --limit 50",
-    "Source env: X_SOURCE_DATABASE_URL, TG_SOURCE_DATABASE_URL, SOLANA_TRADE_DB_PATH",
+    "  node scripts/run.mjs --source x|tg|blockchain|discord --status",
+    "  INTELLIGENCE_ETL_ENABLED=true node scripts/run.mjs --source x|tg|blockchain|discord --once --limit 50",
+    "Source env: X_SOURCE_DATABASE_URL, TG_SOURCE_DATABASE_URL, DISCORD_SOURCE_DATABASE_URL, SOLANA_TRADE_DB_PATH",
     "Destination env: INTELLIGENCE_DATABASE_URL (required for --once)",
-    "Preconditions: source outbox schema, destination 001+002+004+017+019 for V1/V2 delivery; +005 for Blockchain swap revisions",
+    "Preconditions: source outbox schema, destination 001+002+004+017+019 for V1/V2; +022+023 for Discord; +005 for Blockchain swap revisions",
   ].join("\n");
 }
 async function status(source){
@@ -66,14 +66,15 @@ async function main(){
     destination=destinationConnection();
     await checkDestination(destination,{
       requireBlockchainRevisions:args.source==='blockchain',
+      requireDiscordEvidence:args.source==='discord',
       requireEnvelopeFingerprint:true,
     });
-    const ai=await createAiRuntime(destination,source.kind==='pg'?{[args.source]:source.connection}:{});
+    const ai=await createAiRuntime(destination,source.kind==='pg'&&['x','tg'].includes(args.source)?{[args.source]:source.connection}:{});
     const stats=await runDeliveryBatch(source.port,destination,{
       workerId:randomUUID(),batchSize:args.limit,leaseMs:120_000,
     });
     console.log(JSON.stringify({source:args.source,mode:"once",...stats}));
-    if(ai&&args.source!=='blockchain'){
+    if(ai&&(args.source==='x'||args.source==='tg')){
       try{
         const result=await ai.run(args.source);
         console.log(JSON.stringify({source:args.source,mode:"ai",...result}));

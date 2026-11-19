@@ -4,7 +4,7 @@ import {
   formatTokenId, parseTokenId, validateTokenId, isChain,
   formatWalletId, parseWalletId, normalizeAddress, normalizeMint,
   isSolanaPublicKey, isSolanaSignature, formatAuthorId, parseAuthorId,
-  formatSourceId, parseSourceId,
+  formatSourceId, parseSourceId, isDiscordSnowflake,
 } from "../dist/index.js";
 
 const SOL = "So11111111111111111111111111111111111111112";
@@ -68,6 +68,14 @@ test("stable social identities never use username, and huge IDs remain text", ()
   assert.throws(() => formatAuthorId("tg", "-0"), /Stable numeric/);
 });
 
+
+test("Discord Snowflakes enforce the unsigned 64-bit boundary",()=>{
+ assert.equal(isDiscordSnowflake("18446744073709551615"),true);
+ assert.equal(isDiscordSnowflake("18446744073709551616"),false);
+ assert.equal(isDiscordSnowflake("001234567890123"),false);
+ assert.equal(isDiscordSnowflake("123456789012345"),true);
+ assert.equal(isDiscordSnowflake("12345678901234"),false);
+});
 
 test("Discord Snowflake author and channel identities are stable and strict", () => {
  const user="423456789012345678",channel="223456789012345678";

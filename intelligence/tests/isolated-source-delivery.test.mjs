@@ -16,28 +16,29 @@ const url=process.env.INTELLIGENCE_TEST_DB_URL;
 
 test("independent X/TG PG sources deliver to a separate Intelligence schema with ACK-after-commit",{skip:!url},async()=>{
   const suffix=randomBytes(5).toString("hex");
-  const sources={x:"source_x_"+suffix,tg:"source_tg_"+suffix,dst:"intelligence_"+suffix};
+  const sources={x:"source_x_"+suffix,tg:"source_tg_"+suffix,discord:"source_discord_"+suffix,dst:"intelligence_"+suffix};
   const admin=new pg.Client({connectionString:url});
-  let xPool, tgPool, destPool;
+  let xPool, tgPool, discordPool, destPool;
   await admin.connect();
   try {
     for (const schema of Object.values(sources)) {
       await admin.query('CREATE SCHEMA "'+schema+'"');
     }
-    for (const name of ["x","tg"]) {
+    for (const name of ["x","tg","discord"]) {
       await admin.query('SET search_path TO "'+sources[name]+'"');
       await admin.query(POSTGRES_OUTBOX_DDL);
     }
     await admin.query('SET search_path TO "'+sources.dst+'"');
-    for (const name of ["001_entity_registry.sql","017_inbox_payload_fingerprint.sql","002_timeline.sql","004_token_link_observations.sql"]) {
+    for (const name of ["001_entity_registry.sql","017_inbox_payload_fingerprint.sql","002_timeline.sql","004_token_link_observations.sql","019_inbox_envelope_fingerprint.sql","022_discord_source_contracts.sql","023_discord_message_tombstones.sql"]) {
       await admin.query(await readFile(new URL("../migrations/"+name,import.meta.url),"utf8"));
     }
     const poolFor=(schema)=>new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:3});
-    xPool=poolFor(sources.x); tgPool=poolFor(sources.tg); destPool=poolFor(sources.dst);
-    for (const [pool, schema] of [[xPool,sources.x],[tgPool,sources.tg],[destPool,sources.dst]]) {
+    xPool=poolFor(sources.x); tgPool=poolFor(sources.tg); discordPool=poolFor(sources.discord); destPool=poolFor(sources.dst);
+    for (const [pool, schema] of [[xPool,sources.x],[tgPool,sources.tg],[discordPool,sources.discord],[destPool,sources.dst]]) {
       assert.equal((await pool.query("SELECT current_schema() AS name")).rows[0].name,schema);
     }
     const when="2026-10-18T01:00:00Z";
+    const seen="2026-10-22T13:00:00Z";
     const fixtures=[
       {pool:xPool,platform:"x",eventKind:"tweet_observed",eventKey:"x:tweet:900000:v1",
         kind:"author",canonicalId:formatAuthorId("x","9999"),
@@ -78,6 +79,25 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
       ack:event=>ackPostgres(pool,event.id,event.leaseOwner,event.leaseUntil),
       fail:(event,reason,next)=>failPostgres(pool,event.id,event.leaseOwner,event.leaseUntil,reason,next),
     });
+    const emitInNativeTransaction=async(pool,event)=>{
+      const tx=await pool.connect();
+      try{
+        await tx.query("BEGIN");
+        await emitPostgres(tx,event);
+        const queued=await tx.query(
+          "UPDATE outbox_events SET next_attempt_at=NOW()-interval '1 minute' "+
+          "WHERE source_system=$1 AND event_kind=$2 AND event_key=$3 "+
+          "RETURNING id",
+          [event.sourceSystem,event.eventKind,event.eventKey],
+        );
+        assert.equal(queued.rows.length,1,"fixture event must be enqueued before COMMIT");
+        await tx.query("COMMIT");
+      }catch(error){
+        try{await tx.query("ROLLBACK")}catch{}
+        throw error;
+      }finally{tx.release()}
+    };
+
     const xStats=await runDeliveryBatch(port(xPool),destPool,{workerId:"x-worker",batchSize:5,leaseMs:120000});
     assert.equal(xStats.delivered,1);
     assert.equal(xStats.failed,0);
@@ -104,9 +124,126 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
     // envelopes (not a mocked claim function). Destination transaction commit
     // must precede an independent source ACK, and a source edit cannot revoke
     // evidence from another social platform.
+
+    // Discord compact source events are upgraded to V2 using the immutable
+    // source outbox created_at, then committed to Inbox/evidence/timeline before ACK.
+    const channelId="223456789012345678",messageId="323456789012345678";
+    const revision="d".repeat(64),contentHash="a".repeat(64);
+    const discordEvent={
+      sourceSystem:"discord",eventKind:"message_observed",
+      eventKey:["discord:message",channelId,messageId,revision].join(":"),
+      schemaVersion:"discord-message-v1",
+      payload:{kind:"observed",channelId,messageId,revisionKey:revision,
+        observedAt:seen,occurredAt:seen,contentSha256:contentHash,producerVersion:"0.1.0"},
+    };
+    await emitInNativeTransaction(discordPool,discordEvent);
+    const discordStats=await runDeliveryBatch(port(discordPool),destPool,
+      {workerId:"discord-worker",batchSize:2,leaseMs:120000});
+    assert.equal(discordStats.delivered,1,JSON.stringify(discordStats));
+    assert.equal(discordStats.failed,0);
+    const discordInbox=await destPool.query(
+      "SELECT source_system,evidence_source_id,envelope_sha256 FROM intelligence_inbox WHERE source_system='discord'");
+    assert.equal(discordInbox.rows.length,1);
+    assert.equal(discordInbox.rows[0].evidence_source_id,"discord:message:"+channelId+":"+messageId);
+    assert.match(discordInbox.rows[0].envelope_sha256,/^[a-f0-9]{64}$/);
+    const discordTimeline=await destPool.query(
+      "SELECT timeline_kind FROM timeline_events WHERE source_system='discord'");
+    assert.deepEqual(discordTimeline.rows.map(r=>r.timeline_kind),["discord_message_published"]);
+
+    // ACK loss must replay as a destination duplicate, not a second timeline row.
+    await discordPool.query("UPDATE outbox_events SET processed_at=NULL,lease_owner=NULL,lease_until=NULL WHERE source_system='discord'");
+    const discordReplay=await runDeliveryBatch(port(discordPool),destPool,
+      {workerId:"discord-replay",batchSize:1,leaseMs:120000});
+    assert.equal(discordReplay.duplicates,1);
+    assert.equal(discordReplay.delivered,0);
+    assert.equal((await destPool.query("SELECT count(*)::int AS n FROM timeline_events WHERE source_system='discord'")).rows[0].n,1);
+
+    // Deletion is a first-class tombstone with no body hash, not a silent drop.
+    const deleteRevision="e".repeat(64),deletedAt=new Date(Date.now()-60_000).toISOString();
+    const deletion={
+      sourceSystem:"discord",eventKind:"message_deleted",
+      eventKey:["discord:message",channelId,messageId,deleteRevision].join(":"),
+      schemaVersion:"discord-message-v1",
+      payload:{kind:"deleted",channelId,messageId,revisionKey:deleteRevision,
+        observedAt:deletedAt,occurredAt:null,contentSha256:null,contentErased:true,deletionReason:"deleted",producerVersion:"0.1.0"},
+    };
+    await emitInNativeTransaction(discordPool,deletion);
+    const deletedStats=await runDeliveryBatch(port(discordPool),destPool,
+      {workerId:"discord-delete",batchSize:1,leaseMs:120000});
+    assert.equal(deletedStats.delivered,1,JSON.stringify(deletedStats));
+    assert.equal(deletedStats.failed,0);
+    const kinds=await destPool.query("SELECT timeline_kind FROM timeline_events WHERE source_system='discord' ORDER BY occurred_at");
+    assert.deepEqual(kinds.rows.map(r=>r.timeline_kind),["discord_message_deleted"],
+      "deletion must retract earlier observed/edited timeline rows");
+    const retainedEvidence=await destPool.query(
+      "SELECT event_kind FROM entity_evidence WHERE source_system='discord' AND evidence_source_id=$1",
+      ["discord:message:"+channelId+":"+messageId]);
+    assert.deepEqual(retainedEvidence.rows.map(r=>r.event_kind),["message_deleted"],
+      "only the metadata-only deletion audit evidence may remain");
+
+    // A late ACK-loss replay of the original observation must not resurrect it.
+    await discordPool.query("UPDATE outbox_events SET processed_at=NULL,lease_owner=NULL,lease_until=NULL "+
+      "WHERE source_system='discord' AND event_kind='message_observed'");
+    const lateReplay=await runDeliveryBatch(port(discordPool),destPool,
+      {workerId:"discord-late-replay",batchSize:1,leaseMs:120000});
+    assert.equal(lateReplay.duplicates,1);
+    assert.deepEqual((await destPool.query(
+      "SELECT timeline_kind FROM timeline_events WHERE source_system='discord'")).rows.map(r=>r.timeline_kind),
+      ["discord_message_deleted"]);
+
+    // Even a distinct late edit is suppressed by the durable message tombstone.
+    const lateEditRevision="f".repeat(64);
+    const lateEdit={
+      sourceSystem:"discord",eventKind:"message_edited",
+      eventKey:["discord:message",channelId,messageId,lateEditRevision].join(":"),
+      schemaVersion:"discord-message-v1",
+      payload:{kind:"edited",channelId,messageId,revisionKey:lateEditRevision,
+        observedAt:deletedAt,occurredAt:deletedAt,contentSha256:"c".repeat(64),producerVersion:"0.1.0"},
+    };
+    await emitInNativeTransaction(discordPool,lateEdit);
+    const lateEditStats=await runDeliveryBatch(port(discordPool),destPool,
+      {workerId:"discord-late-edit",batchSize:1,leaseMs:120000});
+    assert.equal(lateEditStats.delivered,1);
+    assert.deepEqual((await destPool.query(
+      "SELECT timeline_kind FROM timeline_events WHERE source_system='discord'")).rows.map(r=>r.timeline_kind),
+      ["discord_message_deleted"]);
+    const finalEvidence=await destPool.query(
+      "SELECT event_kind FROM entity_evidence WHERE source_system='discord' AND evidence_source_id=$1",
+      ["discord:message:"+channelId+":"+messageId]);
+    assert.deepEqual(finalEvidence.rows.map(r=>r.event_kind),["message_deleted"]);
+
+    // Concurrent observation/deletion delivery is serialized by the destination
+    // message lock: regardless of which worker commits first, only the tombstone remains.
+    const raceMessageId="923456789012345678";
+    const raceObserved={
+      sourceSystem:"discord",eventKind:"message_observed",
+      eventKey:["discord:message",channelId,raceMessageId,"1".repeat(64)].join(":"),
+      schemaVersion:"discord-message-v1",
+      payload:{kind:"observed",channelId,messageId:raceMessageId,revisionKey:"1".repeat(64),
+        observedAt:seen,occurredAt:seen,contentSha256:"9".repeat(64),producerVersion:"0.1.0"},
+    };
+    const raceDeleted={
+      sourceSystem:"discord",eventKind:"message_deleted",
+      eventKey:["discord:message",channelId,raceMessageId,"2".repeat(64)].join(":"),
+      schemaVersion:"discord-message-v1",
+      payload:{kind:"deleted",channelId,messageId:raceMessageId,revisionKey:"2".repeat(64),
+        observedAt:deletedAt,occurredAt:null,contentSha256:null,contentErased:true,
+        deletionReason:"deleted",producerVersion:"0.1.0"},
+    };
+    await emitInNativeTransaction(discordPool,raceObserved);
+    await emitInNativeTransaction(discordPool,raceDeleted);
+    const [raceA,raceB]=await Promise.all([
+      runDeliveryBatch(port(discordPool),destPool,{workerId:"discord-race-a",batchSize:1,leaseMs:120000}),
+      runDeliveryBatch(port(discordPool),destPool,{workerId:"discord-race-b",batchSize:1,leaseMs:120000}),
+    ]);
+    assert.equal(raceA.delivered+raceB.delivered,2);
+    const raceTimeline=await destPool.query(
+      "SELECT timeline_kind FROM timeline_events WHERE source_system='discord' AND evidence_source_id=$1",
+      ["discord:message:"+channelId+":"+raceMessageId]);
+    assert.deepEqual(raceTimeline.rows.map(row=>row.timeline_kind),["discord_message_deleted"]);
+
     const mint="So11111111111111111111111111111111111111112";
     const token=formatTokenId("solana",mint);
-    const seen="2026-10-22T13:00:00Z";
     const cutoff="2026-10-18T02:00:00Z";
     // The destination ingests now. A fixed 2026-10-23 knownAt must NOT see
     // a later (2026-10-24) CI ingestion, even if source evidence was seen on 22nd.
@@ -139,24 +276,6 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
         revision:"b".repeat(64),
       },
     ];
-    const emitInNativeTransaction=async(pool,event)=>{
-      const tx=await pool.connect();
-      try{
-        await tx.query("BEGIN");
-        await emitPostgres(tx,event);
-        const queued=await tx.query(
-          "UPDATE outbox_events SET next_attempt_at=NOW()-interval '1 minute' "+
-          "WHERE source_system=$1 AND event_kind=$2 AND event_key=$3 "+
-          "RETURNING id",
-          [event.sourceSystem,event.eventKind,event.eventKey],
-        );
-        assert.equal(queued.rows.length,1,"fixture event must be enqueued before COMMIT");
-        await tx.query("COMMIT");
-      }catch(error){
-        try{await tx.query("ROLLBACK")}catch{}
-        throw error;
-      }finally{tx.release()}
-    };
     for(const item of inputs){
       const verified=buildVerifiedTokenLinkEvent({
         sourceSystem:item.sourceSystem,
@@ -240,6 +359,7 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
   }finally{
     if(xPool)await xPool.end();
     if(tgPool)await tgPool.end();
+    if(discordPool)await discordPool.end();
     if(destPool)await destPool.end();
     for(const schema of Object.values(sources).reverse()) {
       try{await admin.query('DROP SCHEMA IF EXISTS "'+schema+'" CASCADE')}catch{}
