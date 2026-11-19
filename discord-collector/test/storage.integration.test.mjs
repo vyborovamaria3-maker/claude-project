@@ -225,3 +225,31 @@ test("explicit erasure-only mode purges every source message and emits tombstone
     await pool.end();
   }
 });
+
+test("source transaction refuses to persist an event after its authorization lease expired",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const messageId="923456789012345680";
+  try{
+    await installSchema(pool);
+    const now=new Date();
+    const observation=normalizeMessage({
+      id:messageId,guildId,channelId,author:{id:"423456789012345680"},
+      content:"must not be persisted after expiry",createdAt:now,editedAt:null,
+    },"observed",now.toISOString(),guildId);
+    const result=await storeObservation(pool,observation,30,new Date(),"2026-11-18T00:00:00.000Z");
+    assert.equal(result.status,"authorization-expired");
+    const rows=await pool.query("SELECT COUNT(*)::int AS n FROM discord_messages WHERE message_id=$1",[messageId]);
+    assert.equal(rows.rows[0].n,0);
+    const outbox=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1",
+      ["discord:message:"+channelId+":"+messageId+":%"]);
+    assert.equal(outbox.rows[0].n,0);
+  }finally{
+    await pool.query("DELETE FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1",
+      ["discord:message:"+channelId+":"+messageId+":%"]).catch(()=>{});
+    await pool.query("DELETE FROM discord_message_revisions WHERE message_id=$1",[messageId]).catch(()=>{});
+    await pool.query("DELETE FROM discord_messages WHERE message_id=$1",[messageId]).catch(()=>{});
+    await pool.end();
+  }
+});
