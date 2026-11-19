@@ -52,7 +52,9 @@ jobs:
       - name: Check Discord collector syntax
         run: |
           node --check discord-collector/src/events.mjs
+          node --check discord-collector/src/authorization-file.mjs
           node --check discord-collector/src/ingress-spool.mjs
           node --check discord-collector/src/storage.mjs
           node --check discord-collector/src/reconcile.mjs
+          node --check discord-collector/src/permission-preflight.mjs
           node --check discord-collector/src/index.mjs
