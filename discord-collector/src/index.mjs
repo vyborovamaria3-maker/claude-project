@@ -28,9 +28,6 @@ if(process.env.DISCORD_GAP_RECOVERY_ENABLED==="true" &&
    (!Number.isInteger(recoveryMaxPages)||recoveryMaxPages<1||recoveryMaxPages>50))
   throw new RangeError("DISCORD_GAP_RECOVERY_MAX_PAGES must be in 1..50");
 
-const pool=new pg.Pool({connectionString:process.env.DISCORD_SOURCE_DATABASE_URL,max:4});
-await installSchema(pool);
-await purgeExpired(pool,allowed); // Startup retention/revocation control, fail-closed if unavailable.
 const spool=new IngressSpool({
   directory:process.env.DISCORD_INGRESS_SPOOL_DIR,
   key:spoolKey,
@@ -41,10 +38,17 @@ const spool=new IngressSpool({
 const startupSpoolSweep=spool.sweepExpired(allowed);
 if(startupSpoolSweep.eventsErased>0)
   console.log("Expired/revoked ingress events erased",{events:startupSpoolSweep.eventsErased});
-// Snapshot BEFORE Gateway login; live events must not hide missed downtime messages.
+const pool=new pg.Pool({connectionString:process.env.DISCORD_SOURCE_DATABASE_URL,max:4});
+// Schema, retention controls and recovery watermarks must all be ready before Gateway login.
 const recoveryBaselines=new Map();
-for(const channelId of allowed.keys()){
-  recoveryBaselines.set(channelId,await getRecoveryBaseline(pool,channelId));
+try{
+  await installSchema(pool);
+  await purgeExpired(pool,allowed);
+  for(const channelId of allowed.keys())
+    recoveryBaselines.set(channelId,await getRecoveryBaseline(pool,channelId));
+}catch(error){
+  try{spool.close()}finally{await pool.end()}
+  throw error;
 }
 const client=new Client({
   intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent],
