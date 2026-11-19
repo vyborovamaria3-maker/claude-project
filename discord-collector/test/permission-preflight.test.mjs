@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {runDiscordPermissionPreflight} from "../src/permission-preflight.mjs";
+import {runDiscordPermissionPreflight,discordApiBaseUrl} from "../src/permission-preflight.mjs";
 
 const botId="123456789012345678";
 const guildId="223456789012345678";
@@ -314,4 +314,37 @@ test("plain HTTP API overrides are rejected",async()=>{
     authorization:authorization(),token:"token",fetchImpl:async()=>jsonResponse({}),
     baseUrl:"http://discord.test/api/v10",now,
   }),/HTTPS/);
+});
+
+test("permission endpoint incompatibility fails closed with an actionable code",async()=>{
+  const fake=successfulFetch();
+  const fetchImpl=async(url,options)=>{
+    const path=new URL(url).pathname;
+    if(path.endsWith("/permissions/member/"+botId))return jsonResponse({code:0},404);
+    return fake.fetchImpl(url,options);
+  };
+  const report=await runDiscordPermissionPreflight({
+    authorization:authorization(),token:"token",fetchImpl,now,
+  });
+  assert.equal(report.ok,false);
+  assert.equal(report.guilds[0].channels[0].errorCode,"permission_endpoint_unsupported");
+});
+
+test("all preflight REST requests use the injected priority scheduler",async()=>{
+  const fake=successfulFetch();
+  const priorities=[];
+  const report=await runDiscordPermissionPreflight({
+    authorization:authorization(),token:"token",fetchImpl:fake.fetchImpl,now,
+    scheduleRest:async(priority,task)=>{priorities.push(priority);return task()},
+  });
+  assert.equal(report.ok,true);
+  assert.equal(priorities.length,4);
+  assert.ok(priorities.every(priority=>priority==="preflight"));
+});
+
+test("Discord API version is validated and configurable",()=>{
+  assert.equal(discordApiBaseUrl("v10"),"https://discord.com/api/v10");
+  assert.equal(discordApiBaseUrl("v11"),"https://discord.com/api/v11");
+  assert.throws(()=>discordApiBaseUrl("10"),/DISCORD_API_VERSION/);
+  assert.throws(()=>discordApiBaseUrl("v10/../admin"),/DISCORD_API_VERSION/);
 });
