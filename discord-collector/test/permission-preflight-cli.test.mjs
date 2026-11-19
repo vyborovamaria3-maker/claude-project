@@ -62,6 +62,7 @@ test("standalone preflight runs without collector, database, spool or Gateway se
         DISCORD_AUTHORIZATION_PATH:f.path,
         DISCORD_BOT_TOKEN:"cli-secret-token",
         DISCORD_MESSAGE_CONTENT_INTENT_CONFIRMED:"true",
+        DISCORD_PERMISSION_PREFLIGHT_ENABLED:"true",
       },
       fetchImpl:fake.fetchImpl,
       write:value=>output.push(value),
@@ -72,6 +73,7 @@ test("standalone preflight runs without collector, database, spool or Gateway se
     assert.equal(result.result.ok,true);
     assert.equal(result.result.messageContentIntent.operatorAttested,true);
     assert.equal(result.result.messageContentIntent.independentlyVerified,false);
+    assert.equal(result.result.preflightGateEnabled,true);
     assert.equal(fake.calls.length,3);
     assert.ok(fake.calls.every(call=>call.authorization==="Bot cli-secret-token"));
     assert.ok(!output.join("\n").includes("cli-secret-token"));
@@ -85,7 +87,7 @@ test("channel permission success is not reported as Gateway-ready without Messag
   const output=[];
   try{
     const result=await runPermissionPreflightCli({
-      env:{DISCORD_AUTHORIZATION_PATH:f.path,DISCORD_BOT_TOKEN:"token"},
+      env:{DISCORD_AUTHORIZATION_PATH:f.path,DISCORD_BOT_TOKEN:"token",DISCORD_PERMISSION_PREFLIGHT_ENABLED:"true"},
       fetchImpl:fake.fetchImpl,write:value=>output.push(value),now,
     });
     assert.equal(result.result.ok,true);
