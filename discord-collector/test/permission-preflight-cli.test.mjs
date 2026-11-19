@@ -43,8 +43,9 @@ function fakeFetch(permissions="66560"){
     const path=new URL(url).pathname;
     calls.push({path,authorization:options.headers.Authorization});
     if(path==="/api/v10/users/@me")return jsonResponse({id:botId});
-    if(path===`/api/v10/guilds/${guildId}/channels`)
-      return jsonResponse([{id:channelId,guild_id:guildId,type:0}]);
+    if(path===`/api/v10/guilds/${guildId}`)return jsonResponse({id:guildId});
+    if(path===`/api/v10/channels/${channelId}`)
+      return jsonResponse({id:channelId,guild_id:guildId,type:0});
     if(path===`/api/v10/channels/${channelId}/permissions/member/${botId}`)
       return jsonResponse({permissions});
     return jsonResponse({message:"unexpected route"},404);
@@ -74,7 +75,7 @@ test("standalone preflight runs without collector, database, spool or Gateway se
     assert.equal(result.result.messageContentIntent.operatorAttested,true);
     assert.equal(result.result.messageContentIntent.independentlyVerified,false);
     assert.equal(result.result.preflightGateEnabled,true);
-    assert.equal(fake.calls.length,3);
+    assert.equal(fake.calls.length,4);
     assert.ok(fake.calls.every(call=>call.authorization==="Bot cli-secret-token"));
     assert.ok(!output.join("\n").includes("cli-secret-token"));
     assert.ok(!output.join("\n").includes("message content"));
