@@ -1,29 +1,88 @@
 import {createHash} from "node:crypto";
 import {isDiscordSnowflake} from "@claude-project/contracts";
 
-export function validateAuthorization(document) {
-  if(!document || typeof document!=="object" || !Array.isArray(document.guilds) || document.guilds.length===0)
-    throw new Error("Nonempty, explicit authorized guild list is mandatory");
-  const allowed=new Map();
-  for(const item of document.guilds){
-    if(!isDiscordSnowflake(String(item.guild_id)) || !Array.isArray(item.channel_ids))
-      throw new Error("Guild id and explicit channel_ids are required");
-    if(!item.policy_review_reference || !item.community_permission_reference || !item.reviewed_by)
-      throw new Error("Policy and community permissions must be recorded");
-    if(!Number.isInteger(item.retention_days) || item.retention_days<1 || item.retention_days>365)
-      throw new Error("Retention must be explicitly bounded to 1..365 days");
-    if(item.channel_ids.length===0)throw new Error("Every authorized guild needs channels");
-    for(const id of item.channel_ids){
-      if(!isDiscordSnowflake(String(id))) throw new Error("Invalid channel snowflake");
-      if(allowed.has(String(id))) throw new Error("Ambiguous duplicate channel");
-      allowed.set(String(id),{guildId:String(item.guild_id),retentionDays:item.retention_days,
-        policyReviewReference:item.policy_review_reference,
-        permissionReference:item.community_permission_reference});
-    }
-  }
-  return allowed;
+const DAY_MS=86_400_000;
+const MAX_AUTHORIZATION_DAYS=365;
+const AUTHORIZATION_TIMESTAMP=/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$/i;
+
+function authorizationExpiry(value,name,nowMs){
+  if(typeof value!=="string"||!AUTHORIZATION_TIMESTAMP.test(value)||!Number.isFinite(Date.parse(value)))
+    throw new Error(name+" must be an offset-aware ISO timestamp");
+  const timestamp=Date.parse(value);
+  if(timestamp>nowMs+MAX_AUTHORIZATION_DAYS*DAY_MS)
+    throw new Error(name+" cannot extend more than 365 days without review");
+  return new Date(timestamp).toISOString();
 }
 
+export function validateAuthorization(document,{allowErasureOnly=false,now=new Date()}={}) {
+  if(!document||typeof document!=="object"||Array.isArray(document)||document.version!==2)
+    throw new Error("Authorization document version 2 is mandatory");
+  if(!["collect","erasure_only"].includes(document.mode)||!Array.isArray(document.guilds))
+    throw new Error("Authorization mode and guild list are mandatory");
+  const allowed=new Map();
+  const expiredChannels=[];
+  const expiredGuildIds=[];
+  const nowMs=now instanceof Date?now.getTime():Date.parse(now);
+  if(!Number.isFinite(nowMs))throw new TypeError("Authorization validation time is invalid");
+  if(document.mode==="erasure_only"){
+    if(!allowErasureOnly)throw new Error("Erasure-only mode requires DISCORD_ALLOW_ERASURE_ONLY=true");
+    if(document.guilds.length!==0)throw new Error("Erasure-only mode must not contain authorized guilds");
+    allowed.mode="erasure_only";
+    allowed.erasureOnly=true;
+    allowed.expiredChannels=expiredChannels;
+    allowed.expiredGuildIds=expiredGuildIds;
+    return allowed;
+  }
+  if(document.guilds.length===0)throw new Error("Collect mode requires an explicit nonempty guild list");
+
+  const seenGuilds=new Set();
+  const seenChannels=new Set();
+  for(const item of document.guilds){
+    if(!item||typeof item!=="object"||!isDiscordSnowflake(String(item.guild_id))||
+       !Array.isArray(item.channel_ids)||item.channel_ids.length===0)
+      throw new Error("Guild id and explicit channel_ids are required");
+    const guildId=String(item.guild_id);
+    if(seenGuilds.has(guildId))throw new Error("Duplicate authorized guild");
+    seenGuilds.add(guildId);
+    if(typeof item.policy_review_reference!=="string"||!item.policy_review_reference.trim()||
+       typeof item.community_permission_reference!=="string"||!item.community_permission_reference.trim()||
+       typeof item.reviewed_by!=="string"||!item.reviewed_by.trim())
+      throw new Error("Policy and community permissions must be recorded");
+    if(!Number.isInteger(item.retention_days)||item.retention_days<1||item.retention_days>365)
+      throw new Error("Retention must be explicitly bounded to 1..365 days");
+    const permissionExpiresAt=authorizationExpiry(
+      item.community_permission_expires_at,"community_permission_expires_at",nowMs);
+    const policyReviewExpiresAt=authorizationExpiry(
+      item.policy_review_expires_at,"policy_review_expires_at",nowMs);
+    const expiresAt=Math.min(Date.parse(permissionExpiresAt),Date.parse(policyReviewExpiresAt));
+    const isExpired=expiresAt<=nowMs;
+    for(const rawId of item.channel_ids){
+      const channelId=String(rawId);
+      if(!isDiscordSnowflake(channelId))throw new Error("Invalid channel snowflake");
+      if(seenChannels.has(channelId))throw new Error("Ambiguous duplicate channel");
+      seenChannels.add(channelId);
+      if(isExpired){
+        expiredChannels.push(channelId);
+      }else{
+        allowed.set(channelId,{
+          guildId,
+          retentionDays:item.retention_days,
+          policyReviewReference:item.policy_review_reference,
+          permissionReference:item.community_permission_reference,
+          permissionExpiresAt,
+          policyReviewExpiresAt,
+          expiresAt:new Date(expiresAt).toISOString(),
+        });
+      }
+    }
+    if(isExpired)expiredGuildIds.push(guildId);
+  }
+  allowed.mode="collect";
+  allowed.erasureOnly=false;
+  allowed.expiredChannels=expiredChannels;
+  allowed.expiredGuildIds=expiredGuildIds;
+  return allowed;
+}
 export function normalizeMessage(message, kind, observedAt=new Date().toISOString(), fallbackGuildId=null, deletionReason="deleted"){
   if(!["observed","edited","deleted"].includes(kind))throw new TypeError("Unsupported event kind");
   const id=String(message.id??"");
