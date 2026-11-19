@@ -16,8 +16,8 @@ class DiscordApiError extends Error {
   }
 }
 
-function safeCancel(response){
-  return Promise.resolve(response?.body?.cancel?.()).catch(()=>{});
+async function safeCancel(response){
+  try{await response?.body?.cancel?.()}catch{}
 }
 
 function validateOptions({token,authorization,fetchImpl,timeoutMs,maxRetries,maxRetryDelayMs,maxChannels}){
@@ -297,6 +297,10 @@ export async function runDiscordPermissionPreflight({
     }
 
     for(const result of pending){
+      if(stopAfterApiFailure){
+        Object.assign(result,failedChannel(result.channelId,stopAfterApiFailure));
+        continue;
+      }
       const channel=visibleById.get(result.channelId);
       if(!channel){
         Object.assign(result,failedChannel(result.channelId,"channel_not_visible_or_missing"));
