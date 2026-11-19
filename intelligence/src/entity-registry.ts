@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import {
-  buildEntityRef, isSolanaSignature, toUtcIso, type EntityRef, type EvidenceRef,
+  buildEntityRef, isDiscordSnowflake, isSolanaSignature, toUtcIso, type EntityRef, type EvidenceRef,
 } from "@claude-project/contracts";
 
 export type RegistryEvent = {
@@ -43,6 +43,12 @@ function validateEvidence(evidence: EvidenceRef): EvidenceRef {
       throw new TypeError("Invalid chain transaction evidence");
     }
   }
+  if (evidence.sourceKind === "discord_message") {
+    const match = /^discord:message:([^:]+):([^:]+)$/.exec(id);
+    if (!match || !isDiscordSnowflake(match[1]) || !isDiscordSnowflake(match[2])) {
+      throw new TypeError("Invalid Discord Snowflake evidence");
+    }
+  }
   const provider = evidence.provider === undefined ? undefined : limited(evidence.provider, "provider", 4096);
   const parserVersion = evidence.parserVersion === undefined ? undefined : limited(evidence.parserVersion, "parserVersion", 4096);
   const rawPointer = evidence.rawPointer === undefined ? undefined : limited(evidence.rawPointer, "rawPointer", 4096);
@@ -78,8 +84,8 @@ export function validateRegistryEvent(input: RegistryEvent): RegistryEvent {
     firstSeenAt: ref.firstSeenAt, lastSeenAt: ref.lastSeenAt,
   }));
   if (input.sourceSystem === "discord") {
-    const match = /^discord:message:([1-9][0-9]{14,21}):([1-9][0-9]{14,21})$/.exec(evidenceRef.sourceId);
-    if (!match || !["message_observed", "message_edited", "message_deleted"].includes(input.eventKind) ||
+    const match = /^discord:message:([^:]+):([^:]+)$/.exec(evidenceRef.sourceId);
+    if (!match || !isDiscordSnowflake(match[1]) || !isDiscordSnowflake(match[2]) || !["message_observed", "message_edited", "message_deleted"].includes(input.eventKind) ||
         entityRefs.length !== 1 || entityRefs[0]!.kind !== "source" ||
         entityRefs[0]!.canonicalId !== "discord:channel:" + match[1]) {
       throw new TypeError("Discord registry event must bind one canonical channel to its message evidence");
