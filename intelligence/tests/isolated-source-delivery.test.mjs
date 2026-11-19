@@ -139,7 +139,9 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
     await emitInNativeTransaction(discordPool,discordEvent);
     const discordStats=await runDeliveryBatch(port(discordPool),destPool,
       {workerId:"discord-worker",batchSize:2,leaseMs:120000});
-    assert.equal(discordStats.delivered,1,JSON.stringify(discordStats));
+    const discordFailures=discordStats.failed?await discordPool.query(
+      "SELECT last_error FROM outbox_events WHERE source_system='discord' AND event_kind='message_observed'"):null;
+    assert.equal(discordStats.delivered,1,JSON.stringify({stats:discordStats,failures:discordFailures?.rows??[]}));
     assert.equal(discordStats.failed,0);
     const discordInbox=await destPool.query(
       "SELECT source_system,evidence_source_id,envelope_sha256 FROM intelligence_inbox WHERE source_system='discord'");
