@@ -38,6 +38,11 @@ test("edits with unknown source ordering fail closed",()=>{
  const edited=normalizeMessage({...mock,editedAt:new Date("2024-05-01T01:00:00Z")},"edited");
  assert.equal(edited.revisionAt,"2024-05-01T01:00:00.000Z");
 });
+test("Snowflake identifiers above unsigned 64-bit range are rejected",()=>{
+ assert.throws(()=>normalizeMessage({...mock,id:"18446744073709551616"},"observed"),/Snowflake/);
+ assert.throws(()=>validateAuthorization({guilds:[{...valid.guilds[0],guild_id:"18446744073709551616"}]}),/Guild id/);
+});
+
 test("invalid IDs, event types and timestamps rejected",()=>{
  assert.throws(()=>normalizeMessage({...mock,id:"123"},"observed"));
  assert.throws(()=>normalizeMessage(mock,"unknown"));
