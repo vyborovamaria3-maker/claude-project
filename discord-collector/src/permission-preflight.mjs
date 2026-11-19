@@ -213,7 +213,7 @@ export async function runDiscordPermissionPreflight({
     if(!isDiscordSnowflake(channelId)||!permission||
        !isDiscordSnowflake(String(permission.guildId??""))||
        typeof permission.expiresAt!=="string"||
-       !/(?:Z|[+-]\\d{2}:\\d{2})$/i.test(permission.expiresAt)||
+       !/(?:Z|[+-]\d{2}:\d{2})$/i.test(permission.expiresAt)||
        !Number.isFinite(Date.parse(permission.expiresAt)))
       throw new TypeError("Authorization map contains an invalid channel lease");
     const group=grouped.get(permission.guildId)??[];
