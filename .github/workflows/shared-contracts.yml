@@ -58,5 +58,6 @@ jobs:
           node --check discord-collector/src/reconcile.mjs
           node --check discord-collector/src/permission-preflight.mjs
           node --check discord-collector/src/preflight-cli.mjs
+          node --check discord-collector/src/erase-user.mjs
           node --check discord-collector/src/spool-replay.mjs
           node --check discord-collector/src/index.mjs
