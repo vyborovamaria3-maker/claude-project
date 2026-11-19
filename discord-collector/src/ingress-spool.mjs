@@ -159,7 +159,7 @@ export class IngressSpool {
       this.directoryFd=openSync(this.directory,"r");
       let sawTemporary=false;
       for(const name of readdirSync(this.directory).sort()){
-        const match=/^([0-9]{20})\\.(evt|tmp)$/.exec(name);
+        const match=/^([0-9]{20})\.(evt|tmp)$/.exec(name);
         if(!match)throw new Error("Unexpected file in dedicated ingress spool directory: "+name);
         const paddedSequence=match[1];
         const sequence=BigInt(paddedSequence).toString();
