@@ -45,6 +45,11 @@ function validateEvent(input){
     throw new TypeError("Ingress message content exceeds its bounded format");
   if(input.kind==="deleted"&&content!==null)
     throw new TypeError("Deleted ingress events cannot retain message content");
+  if(input.kind==="deleted"&&authorId!==null)
+    throw new TypeError("Deleted ingress events cannot retain author identifiers");
+  const createdAt=awareTimestamp(input.createdAt,"createdAt");
+  if(!createdAt&&(content!==null||authorId!==null))
+    throw new TypeError("Ingress content and author identifiers require a source publication timestamp");
   return Object.freeze({
     kind:input.kind,
     messageId:String(input.messageId),
@@ -52,7 +57,7 @@ function validateEvent(input){
     channelId:String(input.channelId),
     authorId,
     content,
-    createdAt:awareTimestamp(input.createdAt,"createdAt"),
+    createdAt,
     editedAt:awareTimestamp(input.editedAt,"editedAt"),
     receivedAt:awareTimestamp(input.receivedAt,"receivedAt",{required:true}),
   });
