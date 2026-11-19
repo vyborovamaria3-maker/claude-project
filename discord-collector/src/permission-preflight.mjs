@@ -134,8 +134,8 @@ function applyOverwrite(base,deny,allow){
 }
 
 function computeEffectivePermissions({guildId,member,roles,channel}){
-  if(!member||!Array.isArray(member.roles)||!Array.isArray(roles)||
-     !Array.isArray(channel.permission_overwrites))return null;
+  if(!member||!Array.isArray(member.roles)||member.roles.length>250||!Array.isArray(roles)||roles.length>250||
+     !Array.isArray(channel.permission_overwrites)||channel.permission_overwrites.length>100)return null;
   if(!member.roles.every(id=>typeof id==="string"&&isDiscordSnowflake(id)))return null;
 
   const rolePermissions=new Map();
