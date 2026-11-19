@@ -182,10 +182,10 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date())
   finally{client.release()}
 }
 
-export async function purgeExpired(pool,allowed){
+export async function purgeExpired(pool,allowed,{allowEmpty=false}={}){
   // Revocation and retention emit durable erasure tombstones BEFORE local rows
   // are removed. The same transaction contains the source Outbox inserts.
-  if(!(allowed instanceof Map)||allowed.size===0)throw new Error("No authorized channels");
+  if(!(allowed instanceof Map)||(!allowEmpty&&allowed.size===0))throw new Error("No authorized channels");
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
