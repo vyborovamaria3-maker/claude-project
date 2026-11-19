@@ -442,7 +442,7 @@ async function reloadAuthorization(){
   if(retained.size!==allowed.size){
     allowed=retained;
     const revokedSpool=spool.sweepExpired(allowed);
-    const revokedPurge=await purgeExpired(pool,allowed,{allowEmpty:nextErasureOnly});
+    const revokedPurge=await purgeExpired(pool,allowed,{allowEmpty:nextErasureOnly||allowed.size===0});
     console.log("Discord revoked-channel erasure",{
       queuedEventsErased:revokedSpool.eventsErased,
       sourceRowsErased:revokedPurge.rowsErased,
