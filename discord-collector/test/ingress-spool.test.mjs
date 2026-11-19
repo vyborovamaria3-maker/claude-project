@@ -33,7 +33,7 @@ test("ingress spool encrypts events and replays them after process restart",()=>
     assert.equal(appended.sequence,"1");
     assert.equal(f.spool.pendingCount,1);
     const [name]=readdirSync(f.directory);
-    assert.match(name,/^00000000000000000001\\.evt$/);
+    assert.equal(name,"00000000000000000001.evt");
     const raw=readFileSync(join(f.directory,name),"utf8");
     assert.equal(raw.includes("private Discord text"),false);
     assert.equal(raw.includes(authorId),false);
