@@ -170,8 +170,9 @@ function makeReport({checkedAt,botId=null,groups,topLevelError=null}){
 /**
  * Read-only, allowlist-bounded Discord permission preflight.
  *
- * It lists only channels visible to the bot, then asks Discord for the
- * bot member's computed channel permissions. It never fetches message bodies.
+ * It fetches only explicitly authorized guild/channel IDs, then asks Discord
+ * for the bot member's computed channel permissions. It never enumerates
+ * unapproved channels or fetches message bodies.
  */
 export async function runDiscordPermissionPreflight({
   authorization,
@@ -278,10 +279,10 @@ export async function runDiscordPermissionPreflight({
       continue;
     }
 
-    let visibleChannels;
+    let guildResponse;
     try{
-      visibleChannels=await requestJson(
-        "/guilds/"+group.guildId+"/channels",
+      guildResponse=await requestJson(
+        "/guilds/"+group.guildId,
         {token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep},
       );
     }catch(error){
@@ -295,28 +296,10 @@ export async function runDiscordPermissionPreflight({
         stopAfterApiFailure=code;
       continue;
     }
-    if(!Array.isArray(visibleChannels)){
-      for(const channel of pending)Object.assign(channel,failedChannel(channel.channelId,"invalid_guild_channels_response"));
+    if(!guildResponse||guildResponse.id!==group.guildId){
+      for(const channel of pending)Object.assign(channel,failedChannel(channel.channelId,"invalid_guild_response"));
       group.status="failed";
-      group.errorCode="invalid_guild_channels_response";
-      continue;
-    }
-
-    const visibleById=new Map();
-    let invalidChannelList=false;
-    for(const channel of visibleChannels){
-      if(!channel||typeof channel.id!=="string"||!isDiscordSnowflake(channel.id)||
-         (channel.guild_id!==undefined&&channel.guild_id!==group.guildId)||
-         visibleById.has(channel.id)){
-        invalidChannelList=true;
-        break;
-      }
-      visibleById.set(channel.id,channel);
-    }
-    if(invalidChannelList){
-      for(const channel of pending)Object.assign(channel,failedChannel(channel.channelId,"invalid_guild_channels_response"));
-      group.status="failed";
-      group.errorCode="invalid_guild_channels_response";
+      group.errorCode="invalid_guild_response";
       continue;
     }
 
@@ -325,9 +308,27 @@ export async function runDiscordPermissionPreflight({
         Object.assign(result,failedChannel(result.channelId,stopAfterApiFailure));
         continue;
       }
-      const channel=visibleById.get(result.channelId);
-      if(!channel){
-        Object.assign(result,failedChannel(result.channelId,"channel_not_visible_or_missing"));
+      let channel;
+      try{
+        channel=await requestJson(
+          "/channels/"+result.channelId,
+          {token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep},
+        );
+      }catch(error){
+        const code=error instanceof DiscordApiError?error.code:"discord_api_unavailable";
+        const mapped=code==="discord_forbidden"?"channel_access_denied":
+          code==="discord_not_found"?"channel_not_visible_or_missing":code;
+        Object.assign(result,failedChannel(result.channelId,mapped));
+        if(["invalid_bot_token","discord_api_unavailable","discord_rate_limited"].includes(code))
+          stopAfterApiFailure=code;
+        continue;
+      }
+      if(!channel||channel.id!==result.channelId||typeof channel.guild_id!=="string"){
+        Object.assign(result,failedChannel(result.channelId,"invalid_channel_response"));
+        continue;
+      }
+      if(channel.guild_id!==group.guildId){
+        Object.assign(result,failedChannel(result.channelId,"channel_guild_mismatch"));
         continue;
       }
       if(!SUPPORTED_CHANNEL_TYPES.has(channel.type)){
