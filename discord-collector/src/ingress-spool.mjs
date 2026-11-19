@@ -18,7 +18,7 @@ function awareTimestamp(value,name,{required=false}={}){
     return null;
   }
   if(typeof value!=="string"||!Number.isFinite(Date.parse(value))||
-     !/(Z|[+-]\\d\\d:\\d\\d)$/i.test(value))
+     !/(Z|[+-]\d\d:\d\d)$/i.test(value))
     throw new TypeError(name+" must be an offset-aware ISO timestamp");
   return new Date(value).toISOString();
 }
@@ -81,7 +81,7 @@ function encryptRecord(sequence,event,key){
     iv:iv.toString("base64"),
     tag:cipher.getAuthTag().toString("base64"),
     ciphertext:ciphertext.toString("base64"),
-  })+"\\n";
+  })+"\n";
 }
 
 function decryptRecord(raw,expectedSequence,key){
@@ -152,9 +152,10 @@ export class IngressSpool {
     try{
       let sawTemporary=false;
       for(const name of readdirSync(this.directory).sort()){
-        const match=/^([0-9]{20})\\.(evt|tmp)$/.exec(name);
+        const match=/^([0-9]{20})\.(evt|tmp)$/.exec(name);
         if(!match)throw new Error("Unexpected file in dedicated ingress spool directory: "+name);
-        const sequence=match[1];
+        const paddedSequence=match[1];
+        const sequence=BigInt(paddedSequence).toString();
         const path=join(this.directory,name);
         const stat=lstatSync(path);
         if(stat.isSymbolicLink()||!stat.isFile()||(stat.mode&0o077)!==0)
@@ -164,12 +165,12 @@ export class IngressSpool {
         const event=decryptRecord(readFileSync(path,"utf8"),sequence,this.key);
         if(this.pending.has(sequence))throw new Error("Duplicate ingress spool sequence");
         if(match[2]==="tmp"){
-          const target=join(this.directory,sequence+".evt");
+          const target=join(this.directory,paddedSequence+".evt");
           if(existsSync(target))throw new Error("Ingress spool temporary/final record collision");
           renameSync(path,target);
           sawTemporary=true;
         }
-        const finalPath=join(this.directory,sequence+".evt");
+        const finalPath=join(this.directory,paddedSequence+".evt");
         const finalStat=statSync(finalPath);
         this.pending.set(sequence,{sequence,event,path:finalPath,size:finalStat.size});
         this.pendingBytes+=finalStat.size;
