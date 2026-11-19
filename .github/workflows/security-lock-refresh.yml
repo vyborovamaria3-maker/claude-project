@@ -18,8 +18,10 @@ jobs:
     # any account can create a fork branch with the same name. The gate
     # therefore requires ALL of: the head branch lives in this repository
     # (no forks), the PR was opened by the repository owner, and the actor
-    # who triggered this event (the author of every subsequent push, since
-    # synchronize events carry the pusher) is the owner too.
+    # who triggered this event is the owner too. On synchronize events the
+    # actor is the pusher; on re-runs it is the re-run initiator. This is
+    # an account/access-control fence, NOT a commit-provenance fence: it
+    # does not verify who authored the commits already on the branch.
     if: >-
       github.head_ref == 'security/full-audit-20260818' &&
       github.event.pull_request.head.repo.full_name == 'vyborovamaria3-maker/claude-project' &&
