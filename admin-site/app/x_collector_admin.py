@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import time
 from contextlib import contextmanager
 from typing import Any
 
@@ -14,6 +15,16 @@ from pydantic import BaseModel, Field
 
 from .auth import require_admin
 from .database import _mask_nested, is_sensitive
+
+# The collector editor is intentionally narrow. All source, queue, credential,
+# evidence and derived-data tables remain read-only in the Control Center.
+MUTATION_POLICY = {
+    'feature_flags': {
+        'insert': frozenset({'name', 'enabled', 'rollout_pct', 'description'}),
+        'update': frozenset({'enabled', 'rollout_pct', 'description'}),
+    },
+}
+MUTATION_ACTIONS = ('insert', 'update', 'delete')
 
 LABELS = {
     'twitter_tweets': 'Твиты', 'twitter_profiles': 'Профили авторов',
@@ -129,15 +140,32 @@ def metadata(db, table):
         JOIN pg_namespace n ON n.oid=c.relnamespace
         LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
         WHERE n.nspname='public' AND c.relname=%s AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum""", (table,)).fetchall()
+    policy = MUTATION_POLICY.get(table, {})
+    allowed_actions = [
+        action for action in MUTATION_ACTIONS
+        if entry['kind'] in ('r', 'p') and policy.get(action)
+    ]
     for c in columns:
         c['sensitive'] = is_sensitive(c['name']) or c['type'] == 'bytea' or c['name'] in ('proxy_json', 'credentials')
-    entry.update(columns=columns, label=LABELS.get(table, table), description=description(table), editable=entry['kind'] in ('r','p') and table != 'schema_migrations')
+        c['editable_actions'] = [
+            action for action in allowed_actions
+            if c['name'] in policy.get(action, frozenset())
+        ]
+    entry.update(
+        columns=columns,
+        label=LABELS.get(table, table),
+        description=description(table),
+        allowed_actions=allowed_actions,
+        editable=bool(allowed_actions),
+    )
     return entry
 
 
 def validate_mutation(meta, body, action):
-    if not meta['editable']:
-        raise HTTPException(403, 'Представления и история миграций доступны только для просмотра')
+    policy = MUTATION_POLICY.get(meta.get('name', ''), {})
+    allowed_fields = policy.get(action)
+    if not meta.get('editable') or not allowed_fields:
+        raise HTTPException(403, 'Эта операция для таблицы запрещена политикой редактора')
     if not body.confirm:
         raise HTTPException(422, 'Подтвердите изменение записи')
     fields = {c['name']: c for c in meta['columns']}
@@ -147,6 +175,8 @@ def validate_mutation(meta, body, action):
             raise HTTPException(422, 'Для изменения нужны полный первичный ключ и версия записи')
     for name in body.values:
         c = fields.get(name)
+        if name not in allowed_fields:
+            raise HTTPException(422, 'Поле не входит в список разрешённых: ' + name)
         if not c or c['sensitive'] or c['generated'] or c['identity'] == 'a' or (action == 'update' and c['primary_key']):
             raise HTTPException(422, 'Поле недоступно для редактирования: ' + name)
     return fields
@@ -224,11 +254,17 @@ def build_x_collector_router():
                 meta = metadata(db, table)
                 fields = validate_mutation(meta, body, action)
                 relation = sql.Identifier('public', table)
-                if any(has_secrets(v) or has_redaction(v) for v in body.values.values()):
+                values = dict(body.values)
+                if action == 'insert' and not values:
+                    raise HTTPException(422, 'Нет полей для добавления')
+                if table == 'feature_flags':
+                    # The editor owns this timestamp; clients cannot backdate or forge it.
+                    values['updated_at'] = int(time.time() * 1000)
+                if any(has_secrets(v) or has_redaction(v) for v in values.values()):
                     raise HTTPException(422, 'JSON с секретными полями или скрытыми значениями нельзя записать через редактор')
-                params = [adapt(v, fields[k]) for k,v in body.values.items()]
+                params = [adapt(v, fields[k]) for k,v in values.items()]
                 if action == 'insert':
-                    query = sql.SQL('INSERT INTO {} ({}) VALUES ({})').format(relation, sql.SQL(',').join(map(sql.Identifier, body.values)), sql.SQL(',').join(sql.Placeholder() for _ in body.values)) if body.values else sql.SQL('INSERT INTO {} DEFAULT VALUES').format(relation)
+                    query = sql.SQL('INSERT INTO {} ({}) VALUES ({})').format(relation, sql.SQL(',').join(map(sql.Identifier, values)), sql.SQL(',').join(sql.Placeholder() for _ in values))
                 else:
                     predicate = sql.SQL(' AND ').join(sql.SQL('{} = %s').format(sql.Identifier(k)) for k in body.key) + sql.SQL(' AND xmin::text = %s')
                     key_params = [adapt(v, fields[k]) for k,v in body.key.items()] + [body.version]
@@ -244,7 +280,7 @@ def build_x_collector_router():
                     else:
                         if not body.values:
                             raise HTTPException(422, 'Нет изменённых полей')
-                        query = sql.SQL('UPDATE {} SET {} WHERE {}').format(relation, sql.SQL(',').join(sql.SQL('{} = %s').format(sql.Identifier(k)) for k in body.values), predicate)
+                        query = sql.SQL('UPDATE {} SET {} WHERE {}').format(relation, sql.SQL(',').join(sql.SQL('{} = %s').format(sql.Identifier(k)) for k in values), predicate)
                         params += key_params
                 cursor = db.execute(query, params)
                 if cursor.rowcount != 1:

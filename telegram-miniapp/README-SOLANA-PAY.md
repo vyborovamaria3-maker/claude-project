@@ -1,140 +1,81 @@
-# Telegram Mini App + Solana Pay (USDT)
+# Experimental Express/Prisma Solana Pay service
 
-Telegram Mini App с оплатой подписки через Solana Pay (1000 USDT на 1 год).
+> Status: separate backend experiment; not the API used by the current
+> POTAPoff Mini App page in solana-launcher. Do not treat this README as
+> evidence of a deployed or production-ready payment service.
 
-## Архитектура
+## Scope and files
 
-```
-telegram-miniapp/
-├── backend-new/          # Node.js + Express + Prisma + PostgreSQL
-│   ├── src/
-│   │   ├── config/       # Конфигурация
-│   │   ├── controllers/  # API handlers
-│   │   ├── services/     # Solana, DB логика
-│   │   └── index.ts      # Express сервер
-│   ├── prisma/schema.prisma  # User, Payment модели
-│   └── .env.example
-├── frontend/             # React + Vite (адаптирован)
-│   ├── src/
-│   │   ├── components/PayButton.tsx      # Кнопка оплаты
-│   │   ├── components/SubscriptionStatus.tsx  # Статус подписки
-│   │   ├── hooks/useSubscription.ts      # Проверка статуса
-│   │   ├── lib/telegram.ts               # Telegram WebApp SDK
-│   │   ├── lib/api.ts                    # API клиент
-│   │   └── App.tsx                       # Основной компонент
-│   └── .env.example
-└── backend/            # Python бот (aiogram) - запуск Mini App
-    └── bot.py
-```
+- backend-new/: Express + TypeScript API, Prisma data layer and Helius webhook.
+- backend-new/src/controllers/subscriptionController.ts: authenticated
+  /api/subscription/* routes.
+- backend-new/src/controllers/webhookController.ts: Helius webhook.
+- backend-new/prisma/schema.prisma: User and Payment models.
+- bot/: separate Node Telegram bot that opens a configured WebApp URL.
+- frontend/: separate Vite prototype. Its current App.tsx calls the
+  Next.js /api/miniapp/* routes, not this Express service. The older
+  PayButton and useSubscription components are not wired into that App.
 
-## Быстрый старт
+## Database
 
-### 1. Подготовка окружения
+The checked-in Prisma schema explicitly selects SQLite:
 
-Создайте `.env` файлы:
+    datasource db {
+      provider = "sqlite"
+      url      = env("DATABASE_URL")
+    }
 
-**backend-new/.env:**
-```env
-PORT=3001
-DATABASE_URL=postgresql://user:pass@localhost:5432/miniapp
-SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY
-USDT_MINT=Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB
-MERCHANT_WALLET=YOUR_SOLANA_WALLET_ADDRESS
-HELIUS_API_KEY=your_helius_api_key
-HELIUS_WEBHOOK_SECRET=your_webhook_secret
-FRONTEND_URL=https://your-frontend.vercel.app
-TELEGRAM_BOT_TOKEN=your_bot_token
-```
+The matching .env.example uses DATABASE_URL=file:./dev.db. Do not describe
+this service as PostgreSQL-backed. A production database migration/backup
+design is not part of this experiment.
 
-**frontend/.env:**
-```env
-VITE_API_URL=https://your-backend.render.com
-```
+## Local setup
 
-### 2. База данных
+    cd telegram-miniapp/backend-new
+    npm ci
+    npx prisma generate
+    npm run db:migrate
+    npm run dev
 
-```bash
-cd backend-new
-npm install
-npx prisma generate
-npx prisma migrate dev --name init
-npm run dev
-```
+Copy .env.example to .env first. Required values include DATABASE_URL,
+MERCHANT_WALLET, HELIUS_API_KEY, HELIUS_WEBHOOK_SECRET (at least 32 characters)
+and TELEGRAM_BOT_TOKEN. Production FRONTEND_URL must use HTTPS.
 
-### 3. Фронтенд
+## API contract
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+Create a payment:
 
-### 4. Python бот (запуск Mini App)
+    POST /api/subscription/create
+    Content-Type: application/json
 
-```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python bot.py
-```
+    {
+      "initData": "<raw Telegram.WebApp.initData>",
+      "plan": "premium"
+    }
 
-## Helius Webhook настройка
+The backend verifies Telegram initData server-side. A client-supplied
+telegramId or username is not an authentication substitute.
 
-1. Зарегистрируйтесь на [helius.dev](https://helius.dev)
-2. Создайте Webhook с URL: `https://your-backend.com/webhook/helius`
-3. Выберите события: `NATIVE_TRANSFERS`, `TOKEN_TRANSFERS`
-4. Укажите account address: ваш `MERCHANT_WALLET`
+Read subscription status:
 
-## Flow оплаты
+    GET /api/subscription/status
+    x-telegram-init-data: <raw Telegram.WebApp.initData>
 
-1. Пользователь открывает Mini App из бота
-2. Нажимает "Pay 1000 USDT"
-3. Backend создает payment запись с unique memo
-4. Открывается Solana Pay deep link (Phantom/Solflare)
-5. Пользователь подтверждает транзакцию
-6. Helius отправляет webhook на backend
-7. Backend подтверждает платеж и активирует подписку (+365 дней)
-8. Frontend определяет активную подписку через polling
+There is no userId query parameter contract for this endpoint. Both routes
+return Cache-Control: no-store where applicable.
 
-## Проверка работы
+## Payment verification
 
-- **Health check:** `GET http://localhost:3001/health`
-- **Webhook health:** `GET http://localhost:3001/webhook/helius/health`
-- **Create payment:** `POST http://localhost:3001/api/subscription/create`
-- **Check status:** `GET http://localhost:3001/api/subscription/status?userId=123456`
+The Helius webhook is POST /webhook/helius. The request must include the
+configured webhook secret in the Authorization header (Bearer form is
+accepted). The secret is required by configuration and must be at least
+32 characters; it is not optional.
 
-## Деплой
+A webhook notification alone does not activate a subscription. The handler
+checks the payment reference/memo, destination, USDT mint and amount, then
+calls the configured Solana RPC verification before confirming the payment.
+Use a real Telegram initData only in an authorized test environment; do not
+paste bot tokens, Helius keys, webhook secrets or wallet private keys into
+issues or logs.
 
-### Backend (Render/Railway/DigitalOcean)
-```bash
-npm install
-npm run build
-npm start
-```
-
-### Frontend (Vercel)
-```bash
-npm install
-npm run build
-```
-
-### Helius Webhook URL
-```
-https://your-backend.onrender.com/webhook/helius
-```
-
-## Безопасность
-
-- ✅ Валидация Telegram initData на сервере (опционально)
-- ✅ Проверка подписи Helius webhook
-- ✅ HTTPS обязательно для production
-- ✅ Отдельный merchant wallet (не основной!)
-- ✅ Unique memo для каждого платежа
-
-## Лимиты
-
-- Цена фиксированная: 1000 USDT
-- Подписка: 365 дней (1 год)
-- Сеть: Solana Mainnet
-- Токен: USDT (Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB)
+See HELIUS-SETUP.md for the experiment's endpoint and operator checklist.
