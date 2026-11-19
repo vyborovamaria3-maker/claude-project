@@ -114,11 +114,6 @@ function decryptRecord(raw,expectedSequence,key){
   }
 }
 
-function compareSequence(a,b){
-  const left=BigInt(a),right=BigInt(b);
-  return left<right?-1:left>right?1:0;
-}
-
 export class IngressSpool {
   constructor({directory,key,maxBytes=512*1024*1024,maxEvents=100_000}){
     if(typeof directory!=="string"||!directory.trim())
@@ -174,7 +169,7 @@ export class IngressSpool {
           throw new Error("Ingress spool records must be owned by the collector user");
         if(securedFile.size<1||securedFile.size>MAX_EVENT_BYTES)
           throw new Error("Ingress spool record has an invalid size; refusing to discard it");
-        const event=decryptRecord(readFileSync(path,"utf8"),sequence,this.key);
+        decryptRecord(readFileSync(path,"utf8"),sequence,this.key); // Authenticate before Gateway login.
         if(this.pending.has(sequence))throw new Error("Duplicate ingress spool sequence");
         if(match[2]==="tmp"){
           const target=join(this.directory,paddedSequence+".evt");
@@ -184,7 +179,7 @@ export class IngressSpool {
         }
         const finalPath=join(this.directory,paddedSequence+".evt");
         const finalStat=statSync(finalPath);
-        this.pending.set(sequence,{sequence,event,path:finalPath,size:finalStat.size});
+        this.pending.set(sequence,{sequence,path:finalPath,size:finalStat.size});
         this.pendingBytes+=finalStat.size;
         const next=BigInt(sequence)+1n;
         if(next>this.nextSequence)this.nextSequence=next;
@@ -225,7 +220,7 @@ export class IngressSpool {
       fsyncSync(fd);
     }finally{closeSync(fd)}
     renameSync(temporary,finalPath);
-    const entry={sequence,event,path:finalPath,size};
+    const entry={sequence,path:finalPath,size};
     this.pending.set(sequence,entry);
     this.pendingBytes+=size;
     this.nextSequence++;
@@ -238,9 +233,12 @@ export class IngressSpool {
   listPending(limit=Number.MAX_SAFE_INTEGER){
     if(!this.opened)throw new Error("Ingress spool is not open");
     if(!Number.isSafeInteger(limit)||limit<1)throw new RangeError("Invalid ingress spool page size");
-    return [...this.pending.values()]
-      .sort((a,b)=>compareSequence(a.sequence,b.sequence))
-      .slice(0,limit);
+    // Map insertion order is sequence order: startup inserts sorted filenames,
+    // and new events are appended with monotonically increasing sequence IDs.
+    return [...this.pending.values()].slice(0,limit).map(entry=>({
+      ...entry,
+      event:decryptRecord(readFileSync(entry.path,"utf8"),entry.sequence,this.key),
+    }));
   }
 
   ack(sequence){
@@ -267,8 +265,10 @@ export class IngressSpool {
     if(!(allowed instanceof Map))throw new TypeError("Current channel allowlist is required");
     let erased=0;
     const nowMs=now.getTime();
-    for(const entry of this.listPending()){
-      const event=entry.event;
+    for(const entry of this.pending.values()){
+      // Decrypt one record at a time; never retain the whole backlog's raw text
+      // and author identifiers in process memory.
+      const event=decryptRecord(readFileSync(entry.path,"utf8"),entry.sequence,this.key);
       const permission=allowed.get(event.channelId);
       const revoked=!permission||permission.guildId!==event.guildId;
       const published=event.createdAt?Date.parse(event.createdAt):null;
