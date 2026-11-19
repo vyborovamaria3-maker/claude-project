@@ -111,10 +111,8 @@ CREATE TABLE IF NOT EXISTS discord_coverage_failures (
  CHECK (
   guild_id ~ '^[1-9][0-9]{14,21}$'
   AND channel_id ~ '^[1-9][0-9]{14,21}$'
-  AND message_id ~ '^[1-9][0-9]{14,21}
-
-  AND (author_id IS NULL OR author_id ~ '^[1-9][0-9]{14,21}
-)
+  AND message_id ~ '^[1-9][0-9]{14,21}$'
+  AND (author_id IS NULL OR author_id ~ '^[1-9][0-9]{14,21}$')
  )
 );
 CREATE INDEX IF NOT EXISTS discord_coverage_failures_channel_expiry
