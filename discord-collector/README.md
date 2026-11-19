@@ -225,8 +225,9 @@ npm run erase-user
 ```
 
 The command first acquires the Collector's singleton advisory lock, then
-removes matching encrypted events from the persistent Spool and fsyncs the
-directory. It takes source-table locks to serialize against concurrent
+removes matching encrypted events from the persistent Spool by author ID and
+by every known stored message ID (including partial Gateway events without an
+author ID), then fsyncs the directory. It takes source-table locks to serialize against concurrent
 observation/edit/delete and coverage writes. It deletes matching message
 content, revisions and associated coverage failures, and writes one
 metadata-only `user_requested` tombstone per message in the same transaction
