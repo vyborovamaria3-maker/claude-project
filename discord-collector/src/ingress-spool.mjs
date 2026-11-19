@@ -4,7 +4,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import {createCipheriv,createDecipheriv,randomBytes} from "node:crypto";
-import {isAbsolute,join,parse,resolve} from "node:path";
+import {dirname,isAbsolute,join,parse,resolve} from "node:path";
 import {isDiscordSnowflake} from "@claude-project/contracts";
 
 const FORMAT_VERSION=1;
@@ -153,6 +153,8 @@ export class IngressSpool {
       throw new Error("Ingress spool directory must already have exact mode 0700");
     if(typeof process.getuid==="function"&&securedDirectory.uid!==process.getuid())
       throw new Error("Ingress spool directory must be owned by the collector user");
+    const parentFd=openSync(dirname(this.directory),"r");
+    try{fsyncSync(parentFd)}finally{closeSync(parentFd)}
     this.directoryFd=openSync(this.directory,"r");
     try{
       let sawTemporary=false;
