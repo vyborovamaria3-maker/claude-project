@@ -19,10 +19,11 @@ function requireRetention(days){
 const SNOWFLAKE=/^[1-9][0-9]{14,21}$/;
 const MAX_SNOWFLAKE=18446744073709551615n;
 function requireSnowflake(value,name){
-  const id=String(value??"");
-  if(!SNOWFLAKE.test(id)||BigInt(id)>MAX_SNOWFLAKE)
+  // Snowflakes must remain decimal strings; accepting a JS Number can silently
+  // round an identifier before a destructive erasure operation.
+  if(typeof value!=="string"||!SNOWFLAKE.test(value)||BigInt(value)>MAX_SNOWFLAKE)
     throw new TypeError("Invalid Discord "+name+" Snowflake");
-  return id;
+  return value;
 }
 
 export function isExpiredObservation(observation,retentionDays,clock=new Date()){
