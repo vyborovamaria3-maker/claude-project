@@ -423,6 +423,35 @@ test("recovery and backfill cursors do not write metadata after authorization is
   }
 });
 
+test("unresolved recovery with a null baseline remains the watermark after later Gateway inserts",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const emptyChannel="923456789012345699";
+  const laterMessage="923456789012345698";
+  try{
+    await installSchema(pool);
+    await recordRecoveryCheck(pool,guildId,emptyChannel,null,{
+      status:"gap_unresolved",pagesScanned:1,messagesProcessed:0,
+    });
+    await pool.query(
+      "INSERT INTO discord_messages(message_id,guild_id,channel_id,author_id,occurred_at,observed_at,content,content_sha256) "+
+      "VALUES($1,$2,$3,$4,NOW(),NOW(),$5,$6)",
+      [laterMessage,guildId,emptyChannel,"423456789012345699","later Gateway message","a".repeat(64)],
+    );
+    assert.equal(await getRecoveryBaseline(pool,emptyChannel),null,
+      "a null unresolved watermark must not be replaced by a later message ID");
+    await recordRecoveryCheck(pool,guildId,emptyChannel,null,{
+      status:"bounded_recovery",pagesScanned:2,messagesProcessed:5,
+    });
+    assert.equal(await getRecoveryBaseline(pool,emptyChannel),laterMessage,
+      "once the null-baseline gap is resolved, the current latest message becomes the baseline");
+  }finally{
+    await pool.query("DELETE FROM discord_recovery_checks WHERE channel_id=$1",[emptyChannel]).catch(()=>{});
+    await pool.query("DELETE FROM discord_messages WHERE message_id=$1",[laterMessage]).catch(()=>{});
+    await pool.end();
+  }
+});
+
 test("source observation rechecks the current authorization lease inside its transaction",{skip:!URL},async()=>{
   const {default:pg}=await import("pg");
   const pool=new pg.Pool({connectionString:URL,max:2});
