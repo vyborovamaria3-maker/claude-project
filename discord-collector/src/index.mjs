@@ -268,8 +268,12 @@ async function record(message,kind){
 async function persistCoverageGap(channelId){
   const permission=allowed.get(channelId);
   if(!permissionActive(permission))return;
+  const stillAuthorized=()=>{
+    const current=allowed.get(channelId);
+    return permissionActive(current)&&sameAuthorizationLease(current,permission);
+  };
   await recordRecoveryCheck(pool,permission.guildId,channelId,
-    recoveryBaselines.get(channelId)??null,{status:"failed"});
+    recoveryBaselines.get(channelId)??null,{status:"failed"},stillAuthorized);
 }
 
 function isoOrNull(value,fallbackTimestamp){
@@ -378,7 +382,7 @@ async function processSpoolEntry(entry,{allowHydration=true}={}){
       );
       if(!recorded)return {ack:true,status:"not-authorized"};
       await recordRecoveryCheck(pool,currentPermission.guildId,event.channelId,
-        recoveryBaselines.get(event.channelId)??null,{status:"failed"});
+        recoveryBaselines.get(event.channelId)??null,{status:"failed"},stillAuthorized);
       failures++;
       process.exitCode=1;
       console.error("Discord ingress event could not be hydrated; durable coverage gap recorded",event.kind);
@@ -444,12 +448,18 @@ client.on(Events.MessageBulkDelete,messages=>{
 });
 
 async function backfill(guildId,channelId,maxMessages){
+  const permission=allowed.get(channelId);
+  if(!permissionActive(permission)||permission.guildId!==guildId)return;
+  const stillAuthorized=()=>{
+    const current=allowed.get(channelId);
+    return permissionActive(current)&&sameAuthorizationLease(current,permission);
+  };
   const channel=await scheduleRest(()=>client.channels.fetch(channelId),
     {priority:2,label:"history-backfill-channel"});
   if(!channel?.messages)throw new Error("Channel not accessible for history");
   let cursor=await getBackfillCursor(pool,channelId);
   let count=0;
-  while(count<maxMessages&&!stopping){
+  while(count<maxMessages&&!stopping&&stillAuthorized()){
     const requested=Math.min(100,maxMessages-count);
     const page=await scheduleRest(
       ()=>channel.messages.fetch({limit:requested,...(cursor?{before:cursor}:{})}),
@@ -462,10 +472,10 @@ async function backfill(guildId,channelId,maxMessages){
       await record(message,"observed");
       count++;
     }
-    if(stopping)break;
+    if(stopping||!stillAuthorized())break;
     cursor=ordered[0].id;
     // Cursor never advances past a failed page; successful rows replay idempotently.
-    await advanceBackfillCursor(pool,guildId,channelId,cursor);
+    if(!await advanceBackfillCursor(pool,guildId,channelId,cursor,stillAuthorized))break;
     if(page.size<requested)break;
   }
   console.log("History sync pass",{channelId,processed:count});
@@ -619,23 +629,34 @@ client.once(Events.ClientReady,()=>{
         if(stopping)break;
         const baseline=recoveryBaselines.get(channelId)??null;
         try{
+          const stillAuthorized=()=>{
+            const current=allowed.get(channelId);
+            return permissionActive(current)&&sameAuthorizationLease(current,permission);
+          };
           const channel=await scheduleRest(()=>client.channels.fetch(channelId),
             {priority:1,label:"gap-recovery-channel"});
+          if(!stillAuthorized())continue;
           const result=await scanRecentGap({
             channel,
             fetchPage:options=>scheduleRest(()=>channel.messages.fetch(options),
               {priority:1,label:"gap-recovery-page"}),
             baselineMessageId:baseline,
             maxPages:recoveryMaxPages,
+            shouldContinue:stillAuthorized,
             onMessage:message=>record(message,"observed"),
           });
-          await recordRecoveryCheck(pool,permission.guildId,channelId,baseline,result);
+          if(!await recordRecoveryCheck(pool,permission.guildId,channelId,baseline,result,stillAuthorized))
+            continue;
           console.log("Discord recovery window",{channelId,status:result.status,
             pages:result.pagesScanned,processed:result.messagesProcessed});
         }catch(error){
           failures++;
           try{
-            await recordRecoveryCheck(pool,permission.guildId,channelId,baseline,{status:"failed"});
+            const stillAuthorized=()=>{
+              const current=allowed.get(channelId);
+              return permissionActive(current)&&sameAuthorizationLease(current,permission);
+            };
+            await recordRecoveryCheck(pool,permission.guildId,channelId,baseline,{status:"failed"},stillAuthorized);
           }catch{
             console.error("Recovery failure status could not be saved",channelId);
             process.exitCode=1;
