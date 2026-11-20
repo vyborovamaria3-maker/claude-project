@@ -227,11 +227,18 @@ npm run erase-user
 
 The command first acquires the Collector's singleton advisory lock and requires
 the configured spool directory to already exist; it never creates a replacement
-spool when the path is missing. It then removes matching encrypted events from
-the persistent Spool by author ID and by every known stored message ID
-(including partial Gateway events without an author ID), then fsyncs the directory. It takes the source-wide advisory write lock to serialize against concurrent
-observation/edit/delete, retention and coverage writes. It deletes matching message
-content, revisions and associated coverage failures, and writes one
+spool when the path is missing. Before unlinking anything, it refuses to proceed
+if the spool contains a pending non-delete event without an author identity, or
+if the source database contains legacy message/revision content whose author
+cannot be established. Those records cannot safely be attributed to the
+requester; an operator must reconcile them before retrying. New partial Gateway
+events without an author ID are stored without message content and are hydrated
+before any content can enter PostgreSQL. Once the preflight passes, the command
+removes matching encrypted events from the persistent Spool by author ID and
+by every known stored message ID, then fsyncs the directory. It takes the
+source-wide advisory write lock to serialize against concurrent
+observation/edit/delete, retention and coverage writes. It deletes matching
+message content, revisions and associated coverage failures, and writes one
 metadata-only `user_requested` tombstone per message in the same transaction
 as the source Outbox event. The Outbox contains no author ID or message body;
 Intelligence retracts the matching evidence when ETL delivers the tombstones.
