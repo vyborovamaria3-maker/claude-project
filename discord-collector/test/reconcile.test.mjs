@@ -110,3 +110,9 @@ test("invalid recovery budgets rejected",async()=>{
     channel,baselineMessageId:null,maxPages:0,onMessage:async()=>{}
   }),/budget/);
 });
+
+test("history writes retry under a renewed active lease before advancing the backfill cursor",()=>{
+  const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
+  assert.match(source,/async function record\(message,kind,authorizationRetry=0\)/);
+  assert.match(source,/\["not-authorized","authorization-expired"\]\.includes\(result\.status\)[\s\S]*isEventCurrentlyAuthorized\(allowed,observation\)[\s\S]*authorization_changed_during_source_write/);
+});
