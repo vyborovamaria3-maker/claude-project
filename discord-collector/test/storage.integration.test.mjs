@@ -359,6 +359,40 @@ test("unhydratable message coverage is recorded before acknowledgement and expir
   }
 });
 
+test("source observation rechecks the current authorization lease inside its transaction",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const id="923456789012345698";
+  try{
+    await installSchema(pool);
+    const observation=normalizeMessage({
+      id,guildId,channelId,author:{id:"423456789012345697"},
+      content:"must not survive a concurrent channel revocation",
+      createdAt:new Date(),editedAt:null,
+    },"observed",new Date().toISOString(),guildId);
+    const result=await storeObservation(
+      pool,observation,30,new Date(),allowed.get(channelId).expiresAt,()=>false,
+    );
+    assert.deepEqual(result,{status:"not-authorized"});
+    const rows=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_messages WHERE message_id=$1",[id],
+    );
+    assert.equal(rows.rows[0].n,0);
+    const outbox=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1",
+      ["discord:message:"+channelId+":"+id+":%"],
+    );
+    assert.equal(outbox.rows[0].n,0);
+  }finally{
+    await pool.query("DELETE FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1",
+      ["discord:message:"+channelId+":"+id+":%"]).catch(()=>{});
+    await pool.query("DELETE FROM discord_message_revisions WHERE message_id=$1",[id]).catch(()=>{});
+    await pool.query("DELETE FROM discord_messages WHERE message_id=$1",[id]).catch(()=>{});
+    await pool.query("DELETE FROM discord_message_tombstones WHERE message_id=$1",[id]).catch(()=>{});
+    await pool.end();
+  }
+});
+
 test("user erasure refuses to claim completion while legacy authorless message or revision content remains",{skip:!URL},async()=>{
   const {default:pg}=await import("pg");
   const pool=new pg.Pool({connectionString:URL,max:2});
