@@ -6,7 +6,7 @@ import {mkdtempSync,rmSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {randomBytes} from "node:crypto";
-import {installSchema,storeObservation,purgeExpired,getRecoveryBaseline,recordRecoveryCheck,recordCoverageFailure,findUserMessageIds,eraseUserMessages} from "../src/storage.mjs";
+import {installSchema,storeObservation,purgeExpired,getRecoveryBaseline,recordRecoveryCheck,recordCoverageFailure,findUserMessageIds,eraseUserMessages,assertNoUnattributedRetainedContent} from "../src/storage.mjs";
 
 const URL=process.env.DISCORD_TEST_DATABASE_URL;
 const guildId="123456789012345678";
@@ -355,6 +355,52 @@ test("unhydratable message coverage is recorded before acknowledgement and expir
     assert.equal(remaining.rows[0].n,0);
   }finally{
     await pool.query("DELETE FROM discord_coverage_failures WHERE message_id=$1",[coverageMessageId]).catch(()=>{});
+    await pool.end();
+  }
+});
+
+test("user erasure refuses to claim completion while legacy authorless message or revision content remains",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const orphanId=(9_000_000_000_000_000_000n+
+    BigInt(randomBytes(4).readUInt32BE(0))*1_000_000_000n+
+    BigInt(randomBytes(4).readUInt32BE(0))).toString();
+  const revisionKey="d".repeat(64);
+  try{
+    await installSchema(pool);
+    await pool.query(
+      "INSERT INTO discord_messages "+
+      "(message_id,guild_id,channel_id,author_id,occurred_at,observed_at,content,content_sha256) "+
+      "VALUES($1,$2,$3,NULL,NOW(),NOW(),'legacy unattributed content',$4)",
+      [orphanId,guildId,channelId,revisionKey],
+    );
+    await pool.query(
+      "INSERT INTO discord_message_revisions "+
+      "(message_id,guild_id,channel_id,revision_key,event_kind,observed_at,content_sha256,content) "+
+      "VALUES($1,$2,$3,$4,'observed',NOW(),$5,'legacy unattributed revision')",
+      [orphanId,guildId,channelId,revisionKey,revisionKey],
+    );
+    await assert.rejects(
+      assertNoUnattributedRetainedContent(pool),
+      /unattributed_discord_content_requires_operator_review/,
+    );
+    await pool.query(
+      "UPDATE discord_messages SET content=NULL,content_sha256=NULL WHERE message_id=$1",
+      [orphanId],
+    );
+    await assert.rejects(
+      assertNoUnattributedRetainedContent(pool),
+      /unattributed_discord_content_requires_operator_review/,
+      "revision payloads must also be checked when the current message row is already scrubbed",
+    );
+    await pool.query(
+      "UPDATE discord_message_revisions SET content=NULL,content_sha256=NULL WHERE message_id=$1",
+      [orphanId],
+    );
+    await assert.doesNotReject(assertNoUnattributedRetainedContent(pool));
+  }finally{
+    await pool.query("DELETE FROM discord_message_revisions WHERE message_id=$1",[orphanId]).catch(()=>{});
+    await pool.query("DELETE FROM discord_messages WHERE message_id=$1",[orphanId]).catch(()=>{});
     await pool.end();
   }
 });
