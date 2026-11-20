@@ -116,11 +116,13 @@ function decryptRecord(raw,expectedSequence,key){
 }
 
 export class IngressSpool {
-  constructor({directory,key,maxBytes=512*1024*1024,maxEvents=100_000}){
+  constructor({directory,key,maxBytes=512*1024*1024,maxEvents=100_000,createDirectory=true}){
     if(typeof directory!=="string"||!directory.trim()||!isAbsolute(directory))
       throw new TypeError("DISCORD_INGRESS_SPOOL_DIR must be an explicit absolute path");
     if(!Buffer.isBuffer(key)||key.length!==32)
       throw new TypeError("Ingress spool requires a 32-byte encryption key");
+    if(typeof createDirectory!=="boolean")
+      throw new TypeError("Ingress spool createDirectory must be a boolean");
     if(!Number.isSafeInteger(maxBytes)||maxBytes<1)
       throw new RangeError("Ingress spool maxBytes must be a positive safe integer");
     if(!Number.isSafeInteger(maxEvents)||maxEvents<1)
@@ -131,6 +133,7 @@ export class IngressSpool {
     this.key=Buffer.from(key);
     this.maxBytes=maxBytes;
     this.maxEvents=maxEvents;
+    this.createDirectory=createDirectory;
     this.pending=new Map();
     this.pendingBytes=0;
     this.nextSequence=1n;
@@ -143,8 +146,10 @@ export class IngressSpool {
     if(this.opened)throw new Error("Ingress spool is already open");
     try{
       let createdDirectory=false;
-      try{mkdirSync(this.directory,{mode:0o700});createdDirectory=true}
-      catch(error){if(error.code!=="EEXIST")throw error}
+      if(this.createDirectory){
+        try{mkdirSync(this.directory,{mode:0o700});createdDirectory=true}
+        catch(error){if(error.code!=="EEXIST")throw error}
+      }
       const initial=lstatSync(this.directory);
       if(initial.isSymbolicLink()||!initial.isDirectory())
         throw new Error("Ingress spool path must be a real directory, not a symlink");
