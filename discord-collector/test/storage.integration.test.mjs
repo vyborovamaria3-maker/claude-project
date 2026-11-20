@@ -6,7 +6,7 @@ import {mkdtempSync,rmSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {randomBytes} from "node:crypto";
-import {installSchema,storeObservation,purgeExpired,getRecoveryBaseline,recordRecoveryCheck,recordCoverageFailure,findUserMessageIds,eraseUserMessages,assertNoUnattributedRetainedContent} from "../src/storage.mjs";
+import {installSchema,storeObservation,purgeExpired,getRecoveryBaseline,recordRecoveryCheck,recordCoverageFailure,findUserMessageIds,eraseUserMessages,assertNoUnattributedRetainedContent,advanceBackfillCursor} from "../src/storage.mjs";
 
 const URL=process.env.DISCORD_TEST_DATABASE_URL;
 const guildId="123456789012345678";
@@ -390,6 +390,35 @@ test("coverage failures do not retain author IDs after channel authorization is 
     assert.equal(rows.rows[0].n,0);
   }finally{
     await pool.query("DELETE FROM discord_coverage_failures WHERE message_id=$1",[id]).catch(()=>{});
+    await pool.end();
+  }
+});
+
+test("recovery and backfill cursors do not write metadata after authorization is revoked",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const id="923456789012345695";
+  try{
+    await installSchema(pool);
+    const recovery=await recordRecoveryCheck(
+      pool,guildId,channelId,id,{status:"failed"},()=>false,
+    );
+    assert.equal(recovery,false);
+    const cursor=await advanceBackfillCursor(pool,guildId,channelId,id,()=>false);
+    assert.equal(cursor,false);
+    const recoveryRows=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_recovery_checks WHERE baseline_message_id=$1",[id],
+    );
+    assert.equal(recoveryRows.rows[0].n,0);
+    const cursorRows=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_backfill_cursors WHERE channel_id=$1 AND before_message_id=$2",
+      [channelId,id],
+    );
+    assert.equal(cursorRows.rows[0].n,0);
+  }finally{
+    await pool.query("DELETE FROM discord_recovery_checks WHERE baseline_message_id=$1",[id]).catch(()=>{});
+    await pool.query("DELETE FROM discord_backfill_cursors WHERE channel_id=$1 AND before_message_id=$2",
+      [channelId,id]).catch(()=>{});
     await pool.end();
   }
 });
