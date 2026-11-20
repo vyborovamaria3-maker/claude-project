@@ -93,7 +93,7 @@ test("user-requested Discord deletion retracts prior evidence and persists the r
     );
     assert.deepEqual(state.rows,[{deletion_reason:"user_requested"}]);
     const after=await destinationPool.query(
-      "SELECT COUNT(*)::int AS n FROM entity_evidence WHERE source_system='discord' AND evidence_source_id=$1 AND source_event_kind IN ('message_observed','message_edited')",
+      "SELECT COUNT(*)::int AS n FROM entity_evidence WHERE source_system='discord' AND evidence_source_id=$1 AND event_kind IN ('message_observed','message_edited')",
       ["discord:message:"+channelId+":"+messageId],
     );
     assert.equal(after.rows[0].n,0);
