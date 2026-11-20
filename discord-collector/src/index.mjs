@@ -389,6 +389,11 @@ async function processSpoolEntry(entry,{allowHydration=true}={}){
       return {ack:true,status:"coverage-gap"};
     }
   }
+  // Discord MESSAGE_UPDATE also fires for metadata-only changes such as pins
+  // and flags. If neither the Gateway event nor the hydrated message has a
+  // source edit timestamp, it is not a content revision and must not stop replay.
+  if(event.kind==="edited"&&!message.editedAt&&!event.editedAt)
+    return {ack:true,status:"non-content-update"};
   const observation=normalizeMessage(message,event.kind,event.receivedAt,event.guildId);
   if(!allowedObservation(allowed,observation))return {ack:true,status:"not-allowed"};
   const currentPermission=allowed.get(event.channelId);
