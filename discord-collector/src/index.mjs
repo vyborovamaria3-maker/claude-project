@@ -331,7 +331,7 @@ async function processSpoolEntry(entry,{allowHydration=true}={}){
     editedAt:event.editedAt?new Date(event.editedAt):null,
   };
   const needsHydration=event.kind!=="deleted"&&
-    (!event.createdAt||(event.kind==="edited"&&(!event.editedAt||event.content===null)));
+    (!event.createdAt||!event.authorId||(event.kind==="edited"&&(!event.editedAt||event.content===null)));
   if(needsHydration&&!allowHydration){
     // Keep this exact encrypted record at the head of the queue. The Gateway
     // must be allowed to connect before REST hydration can be attempted.
