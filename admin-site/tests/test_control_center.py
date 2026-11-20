@@ -262,6 +262,17 @@ class ControlCenterTest(unittest.TestCase):
             })
             forwarded = "127.0.0.1, 127.0.0.1"
             with TestClient(create_app()) as client:
+                blocked_network = client.post(
+                    "/api/login",
+                    headers={
+                        "origin":"https://admin.example.com",
+                        "host":"admin.example.com",
+                        "x-forwarded-for":"203.0.113.50, 127.0.0.1",
+                    },
+                    json={"username":"admin","password":"correct-password"},
+                )
+                self.assertEqual(blocked_network.status_code, 403)
+
                 rejected = client.post(
                     "/api/login",
                     headers={"origin":"https://evil.example", "host":"evil.example", "x-forwarded-for":forwarded},

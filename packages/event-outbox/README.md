@@ -20,6 +20,11 @@ No source DB is modified by this package and no collectors are rewired.
 - PostgreSQL claims use SKIP LOCKED and short transactions; SQLite claims use
   BEGIN IMMEDIATE and short transactions. Do not hold a source transaction
   during network I/O.
+- Every claim exposes immutable `createdAt` normalized from source
+  `outbox_events.created_at`. PostgreSQL writers stamp `created_at` with
+  `clock_timestamp()` at the insert statement; SQLite writers persist their
+  emission timestamp. A malformed/missing timestamp rolls back the claim
+  before lease ownership is committed.
 - An event delivered successfully but not ACKed may be redelivered.
 - Consumer must enforce UNIQUE(source,eventKind,eventKey).
 - Backfill/replay, live schema migrations and actual consumer wiring are

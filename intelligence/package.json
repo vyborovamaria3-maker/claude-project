@@ -22,7 +22,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --check scripts/backtest.mjs && node --check scripts/refresh-cross-platform.mjs && node --check scripts/dispatch-telegram-alerts.mjs && node --check scripts/analyze-ai.mjs && node --check scripts/ai-runtime.mjs && node --check scripts/ai-source-snapshot.mjs && node --check scripts/ai-source-watch.mjs && node --check scripts/token-analysis.mjs && node --check scripts/token-request-runtime.mjs && node --test tests/*.test.mjs",
+    "test": "npm run build && node --check scripts/backtest.mjs && node --check scripts/refresh-cross-platform.mjs && node --check scripts/supervise.mjs && node --check scripts/run-invalidations.mjs && node --check scripts/dispatch-telegram-alerts.mjs && node --check scripts/analyze-ai.mjs && node --check scripts/ai-runtime.mjs && node --check scripts/outbox-health.mjs && node --check scripts/etl-connections.mjs && node --check scripts/ai-source-snapshot.mjs && node --check scripts/ai-source-watch.mjs && node --check scripts/token-analysis.mjs && node --check scripts/token-request-runtime.mjs && node --test tests/*.test.mjs",
     "check": "npm run typecheck && npm run test",
     "etl:status": "node scripts/run.mjs --status",
     "etl:once": "node scripts/run.mjs --once",
@@ -41,7 +41,8 @@
     "analyze-ai": "node scripts/analyze-ai.mjs",
     "dispatch-telegram-alerts": "node scripts/dispatch-telegram-alerts.mjs",
     "token:report": "npm run build && node scripts/local-token-report.mjs",
-    "ai:gateway": "node ai-gateway/start.mjs"
+    "ai:gateway": "node ai-gateway/start.mjs",
+    "etl:fingerprint-backfill": "node scripts/backfill-inbox-fingerprints.mjs"
   },
   "exports": {
     ".": {

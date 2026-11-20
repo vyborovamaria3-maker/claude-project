@@ -1,0 +1,362 @@
+\set ON_ERROR_STOP on
+\pset pager off
+
+SELECT EXISTS (
+  SELECT 1 FROM pg_roles WHERE rolname = :'migrator_user'
+) AS migrator_exists \gset
+\if :migrator_exists
+\else
+  \echo 'Migration role is missing; role provisioning must run first'
+  DO $$
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$$;
+\endif
+
+SELECT EXISTS (
+  SELECT 1
+  FROM (VALUES (:'app_user'), (:'backup_user'), (:'readonly_user')) AS restricted(role_name)
+  WHERE NOT EXISTS (
+    SELECT 1 FROM pg_roles WHERE rolname = restricted.role_name
+  )
+) AS has_missing_restricted_roles \gset
+\if :has_missing_restricted_roles
+  \echo 'Production migration blocked: app, backup or read-only role is missing'
+  DO $$
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$$;
+\endif
+
+SELECT COALESCE((
+  SELECT pg_get_userbyid(datdba) = :'bootstrap_user'
+  FROM pg_database
+  WHERE datname = current_database()
+), false) AS bootstrap_owns_database \gset
+\if :bootstrap_owns_database
+\else
+  \echo 'Production migration blocked: database owner differs from the configured bootstrap identity'
+  DO $$
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$$;
+\endif
+
+SELECT EXISTS (
+  SELECT 1
+  FROM pg_database d
+  CROSS JOIN LATERAL aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) acl
+  WHERE d.datname = current_database()
+    AND acl.grantee = 0
+    AND acl.privilege_type IN ('CONNECT', 'CREATE', 'TEMPORARY')
+) AS has_public_database_access \gset
+\if :has_public_database_access
+  \echo 'Production migration blocked: PUBLIC retains CONNECT or TEMPORARY on the database'
+  DO $$
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$$;
+\endif
+
+SELECT EXISTS (
+  SELECT 1
+  FROM (VALUES (:'app_user'), (:'backup_user'), (:'readonly_user')) AS restricted(role_name)
+  WHERE has_database_privilege(restricted.role_name, current_database(), 'CREATE')
+     OR has_database_privilege(restricted.role_name, current_database(), 'TEMPORARY')
+) AS has_restricted_database_privileges \gset
+\if :has_restricted_database_privileges
+  \echo 'Production migration blocked: runtime, backup or read-only role has database CREATE or TEMPORARY'
+  DO $$
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$$;
+\endif
+
+SELECT has_database_privilege(:'migrator_user', current_database(), 'CREATE') AS migrator_can_create_database \gset
+\if :migrator_can_create_database
+  \echo 'Production migration blocked: migration role must not have database CREATE'
+  DO $$
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$$;
+\endif
+
+SELECT has_database_privilege(:'migrator_user', current_database(), 'TEMPORARY') AS migrator_can_create_temporary \gset
+\if :migrator_can_create_temporary
+  \echo 'Production migration blocked: migration role must not have database TEMPORARY'
+  DO $$
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$$;
+\endif
+
+-- The automated grant/default-privilege model currently covers public only.
+-- Extension-only schemas are excluded; any non-public application schema
+-- requires its own reviewed grants and default privileges before migration.
+WITH extension_members AS (
+  SELECT classid, objid
+  FROM pg_depend
+  WHERE deptype = 'e'
+),
+application_objects AS (
+  SELECT
+    n.nspname AS schema_name,
+    'relation'::text AS object_kind,
+    n.nspname || '.' || c.relname AS object_name,
+    c.relowner AS owner_oid
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname <> 'information_schema'
+    AND n.nspname NOT LIKE 'pg_%'
+    AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
+    AND NOT EXISTS (
+      SELECT 1 FROM extension_members e
+      WHERE e.classid = 'pg_class'::regclass AND e.objid = c.oid
+    )
+
+  UNION ALL
+
+  SELECT
+    n.nspname,
+    'routine'::text,
+    n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')',
+    p.proowner
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname <> 'information_schema'
+    AND n.nspname NOT LIKE 'pg_%'
+    AND NOT EXISTS (
+      SELECT 1 FROM extension_members e
+      WHERE e.classid = 'pg_proc'::regclass AND e.objid = p.oid
+    )
+
+  UNION ALL
+
+  SELECT
+    n.nspname,
+    'type'::text,
+    n.nspname || '.' || t.typname,
+    t.typowner
+  FROM pg_type t
+  JOIN pg_namespace n ON n.oid = t.typnamespace
+  WHERE n.nspname <> 'information_schema'
+    AND n.nspname NOT LIKE 'pg_%'
+    -- Include user-defined base, composite, domain, enum, range, multirange and pseudo-types.
+    AND t.typtype IN ('b', 'c', 'd', 'e', 'm', 'p', 'r')
+    AND NOT EXISTS (
+      SELECT 1 FROM extension_members e
+      WHERE e.classid = 'pg_type'::regclass AND e.objid = t.oid
+    )
+),
+migrator AS (
+  SELECT oid, rolname FROM pg_roles WHERE rolname = :'migrator_user'
+),
+application_schemas AS (
+  SELECT DISTINCT n.oid, n.nspname
+  FROM pg_namespace n
+  JOIN application_objects o ON o.schema_name = n.nspname
+)
+SELECT
+  EXISTS (
+    SELECT 1
+    FROM application_objects o CROSS JOIN migrator m
+    WHERE o.owner_oid <> m.oid
+  ) AS has_non_migrator_objects,
+  EXISTS (
+    SELECT 1
+    FROM application_schemas
+    WHERE nspname <> 'public'
+  ) AS has_unsupported_application_schema,
+  EXISTS (
+    SELECT 1
+    FROM application_schemas s CROSS JOIN migrator m
+    WHERE NOT has_schema_privilege(m.rolname, s.oid, 'CREATE')
+  ) AS has_app_schema_without_create,
+  EXISTS (
+    SELECT 1
+    FROM pg_namespace s
+    WHERE s.nspname <> 'information_schema'
+      AND s.nspname NOT LIKE 'pg_%'
+      AND (
+        has_schema_privilege(:'app_user', s.oid, 'CREATE')
+        OR has_schema_privilege(:'backup_user', s.oid, 'CREATE')
+        OR has_schema_privilege(:'readonly_user', s.oid, 'CREATE')
+      )
+  ) AS has_restricted_schema_create,
+  EXISTS (
+    SELECT 1
+    FROM pg_namespace s CROSS JOIN migrator m
+    WHERE s.nspname <> 'public'
+      AND s.nspname <> 'information_schema'
+      AND s.nspname NOT LIKE 'pg_%'
+      AND has_schema_privilege(m.rolname, s.oid, 'CREATE')
+  ) AS has_migrator_nonpublic_schema_create,
+  EXISTS (
+    SELECT 1
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) acl
+    WHERE n.nspname <> 'information_schema'
+      AND n.nspname NOT LIKE 'pg_%'
+      AND p.prosecdef
+      AND acl.grantee = 0
+      AND acl.privilege_type = 'EXECUTE'
+      AND NOT EXISTS (
+        SELECT 1 FROM extension_members e
+        WHERE e.classid = 'pg_proc'::regclass AND e.objid = p.oid
+      )
+  ) AS has_public_security_definer_execute
+\gset
+
+\if :has_unsupported_application_schema
+  \echo 'Production migration blocked: non-public application schema requires separately reviewed grants and default privileges'
+  DO $$
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$$;
+\endif
+
+\if :has_non_migrator_objects
+  \echo 'Production migration blocked: non-extension application objects are not owned by the migration role.'
+  \echo 'Run the catalog inventory, review an explicit object-level ownership allowlist, and rehearse forward/rollback on an isolated restore.'
+  \echo 'This guard is read-only and does not execute REASSIGN OWNED or alter database objects.'
+  DO $$
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$$;
+\endif
+
+\if :has_app_schema_without_create
+  \echo 'Production migration blocked: migration role lacks CREATE on an application schema'
+  DO $$
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$$;
+\endif
+
+\if :has_restricted_schema_create
+  \echo 'Production migration blocked: runtime, backup or read-only role has CREATE on an application schema'
+  DO $$
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$$;
+\endif
+
+\if :has_migrator_nonpublic_schema_create
+  \echo 'Production migration blocked: migration role has CREATE outside the approved public schema'
+  DO $$
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$$;
+\endif
+
+\if :has_public_security_definer_execute
+  \echo 'Production migration blocked: SECURITY DEFINER function is executable by PUBLIC; review and grant execution explicitly'
+  DO $$
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$$;
+\endif
+
+SELECT has_schema_privilege(:'migrator_user', 'public', 'CREATE') AS migrator_can_create \gset
+\if :migrator_can_create
+\else
+  \echo 'Production migration blocked: migration role lacks CREATE on public schema'
+  DO $$
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$$;
+\endif
+
+SELECT EXISTS (
+  SELECT 1
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) acl
+  WHERE n.nspname = 'public'
+    AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+    AND acl.grantee = 0
+) AS has_public_table_privileges \gset
+\if :has_public_table_privileges
+  \echo 'Production migration blocked: PUBLIC retains privileges on application tables or views'
+  DO $$
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$$;
+\endif
+
+SELECT EXISTS (
+  SELECT 1
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('S', c.relowner))) acl
+  WHERE n.nspname = 'public'
+    AND c.relkind = 'S'
+    AND acl.grantee = 0
+) AS has_public_sequence_privileges \gset
+\if :has_public_sequence_privileges
+  \echo 'Production migration blocked: PUBLIC retains privileges on application sequences'
+  DO $$
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$$;
+\endif
+
+SELECT EXISTS (
+  SELECT 1
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public'
+    AND CASE
+      WHEN c.relkind = 'S'
+        THEN has_sequence_privilege(:'app_user', c.oid, 'UPDATE')
+      ELSE false
+    END
+) AS has_runtime_sequence_update \gset
+\if :has_runtime_sequence_update
+  \echo 'Production migration blocked: runtime role can UPDATE an application sequence (setval)'
+  DO $seqcheck$
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$seqcheck$;
+\endif
+
+SELECT EXISTS (
+  SELECT 1
+  FROM pg_default_acl d
+  CROSS JOIN LATERAL aclexplode(d.defaclacl) acl
+  WHERE d.defaclrole = (SELECT oid FROM pg_roles WHERE rolname = :'migrator_user')
+    AND d.defaclobjtype = 'S'
+    AND acl.privilege_type = 'UPDATE'
+    AND acl.grantee IN (
+      0,
+      (SELECT oid FROM pg_roles WHERE rolname = :'app_user')
+    )
+) AS has_unsafe_future_sequence_update \gset
+\if :has_unsafe_future_sequence_update
+  \echo 'Production migration blocked: PUBLIC or runtime role has default sequence UPDATE/setval privilege'
+  DO $seqcheck$
+BEGIN
+  RAISE EXCEPTION 'Provisioning preflight failed; see the diagnostic immediately above';
+END
+$seqcheck$;
+\endif
+
+\echo 'POSTGRES_MIGRATOR_OWNERSHIP_OK objects=owned schema_create=true'

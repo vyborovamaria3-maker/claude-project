@@ -117,7 +117,9 @@ try{
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM outbox_events").get().n,0);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_seed_raw_revisions").get().n,0);
   assert.equal(persistEvents(db,"wallet",wallet,[tx]),1);
-  const rows=db.prepare("SELECT event_kind,payload FROM outbox_events ORDER BY id").all();
+  const rows=db.prepare("SELECT event_kind,payload,created_at FROM outbox_events ORDER BY id").all();
+  assert.ok(rows.every(row=>Date.parse(row.created_at)>now),
+    "wallet, swap and revision outbox rows must use wall-clock source emission time, not fixture observedAt");
   assert.deepEqual(rows.map(r=>r.event_kind),[
     "wallet_transaction_observed","token_swap_evidence_observed",
     "token_swap_evidence_revision",

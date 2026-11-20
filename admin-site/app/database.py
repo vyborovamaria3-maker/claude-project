@@ -18,21 +18,29 @@ from .config import DataSourceConfig
 from .postgres_pool import build_postgres_pool
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+# Normalize column names before matching so snake_case, camelCase and
+# punctuation variants receive the same protection. Do not mask generic
+# "token" columns: token mints/symbols are public product identifiers.
 SENSITIVE_TOKENS = (
     "password",
-    "hashed_password",
     "secret",
     "private",
     "mnemonic",
     "seed",
-    "api_key",
     "apikey",
-    "access_token",
-    "refresh_token",
+    "accesstoken",
+    "refreshtoken",
     "session",
     "cookie",
     "authorization",
-    "init_data",
+    "initdata",
+    "credential",
+    "bottoken",
+    "jwttoken",
+    "webhooktoken",
+    "authtoken",
+    "apitoken",
+    "bearertoken",
 )
 _METADATA_TTL_SECONDS = 30.0
 
@@ -58,7 +66,7 @@ def _json_value(value: Any) -> Any:
 
 
 def is_sensitive(column: str) -> bool:
-    normalized = column.strip().lower()
+    normalized = re.sub(r"[^a-z0-9]", "", column.strip().lower())
     return any(token in normalized for token in SENSITIVE_TOKENS)
 
 

@@ -16,13 +16,13 @@ This runbook applies to:
 | `*_app` | API/worker/bot runtime | SELECT, INSERT, UPDATE, DELETE; no schema creation |
 | `*_readonly` | Admin/source inspection | SELECT only; read-only transactions |
 
-The provisioner is idempotent, rejects restricted identities as its bootstrap login, removes role memberships from restricted roles, and sets default privileges for objects created by the migration identity.
+The provisioner is idempotent, rejects restricted identities as its bootstrap login, removes role memberships from restricted roles, and sets default privileges for objects created by the migration identity. It pre-provisions `pgcrypto` for Memecoin Intelligence and ensures the default `public` schema exists as bootstrap. Solana Subscription's immutable Prisma initial migration still executes `CREATE SCHEMA IF NOT EXISTS public`, which PostgreSQL requires database-level CREATE for even when the schema already exists. The migration-only wrapper checks `_prisma_migrations` first and grants CREATE only when the initial baseline is not yet recorded; it revokes the privilege after `prisma migrate deploy` and from an EXIT trap on failure. The bootstrap password is removed from the child environment before Prisma runs. This privilege must never remain on the runtime role. Keep initial SQL/Prisma migrations immutable.
 
-The application containers do not receive the bootstrap or migrator passwords. SolSub Web receives only public `NEXT_PUBLIC_*` configuration. The `.env` files are excluded from both Docker build contexts.
+The application containers do not receive the bootstrap or migrator passwords. SolSub Web receives only public `NEXT_PUBLIC_*` configuration. Deployment `.env` files are excluded from both Docker build contexts.
 
 ## Fresh database deployment
 
-Use unique, high-entropy values for bootstrap, app, migrator and read-only passwords. Do not reuse one password across roles.
+Use unique, high-entropy values for bootstrap, app, migrator and read-only passwords. Do not reuse one password across roles. Both production Compose files attach to the external `potapoff_default` network; ensure it exists (normally created by the main Solana Launcher stack) before starting either stack.
 
 For Memecoin Intelligence:
 
@@ -48,9 +48,9 @@ The migration profile starts PostgreSQL and the role provisioner as dependencies
 
 ## Existing database volumes — mandatory cutover gate
 
-**Do not run the migration profile against an existing production volume until the ownership cutover has been rehearsed and approved.**
+**Do not start the updated production Compose stack, run its role provisioner, or run the migration profile against an existing production volume until the ownership cutover has been rehearsed and approved.**
 
-The role provisioner grants runtime DML on existing public tables and SELECT to the read-only identity. It intentionally does not transfer existing table, sequence, type, view, function or schema ownership. Existing objects may still belong to the former bootstrap identity; a non-owner migrator cannot alter them merely because it has schema CREATE.
+The role provisioner runs automatically when the stack starts. It creates/rotates the restricted role credentials and changes grants on existing public objects. It intentionally does not transfer existing table, sequence, type, view, function or schema ownership. Existing objects may still belong to the former bootstrap identity; a non-owner migrator cannot alter them merely because it has schema CREATE.
 
 Before cutover:
 
@@ -72,13 +72,18 @@ The predeploy workflow runs `.github/scripts/test-readonly-source-roles.sh` agai
 - distinct, non-superuser app/migrator/read-only roles;
 - no restricted-role memberships or escalation to bootstrap;
 - runtime DML on existing and migration-created tables;
-- migrator-only schema creation and alteration;
+- migrator-only schema creation and alteration without database-level CREATE;
 - default privileges for future tables and sequences;
 - read-only SELECT and rejection of write privileges;
-- rejection when the provisioner is invoked as a restricted identity.
+- rejection when the provisioner is invoked as any restricted identity;
+- the real Memecoin SQL migration chain under the migrator identity.
 
-Compose and Dockerfile regression tests also verify that runtime services use app credentials, migration services are opt-in one-shot jobs, the SolSub API runner starts Node directly (the runtime image intentionally has no npm CLI), and deployment `.env` files are excluded from Docker build contexts.
+The SolSub quality workflow separately applies the real Prisma migrations and seed using `solsub_migrator`, then verifies app DML, read-only SELECT and DDL denial.
+
+Compose and Dockerfile regression tests verify that runtime services use app credentials, migration services are opt-in one-shot jobs, the SolSub API runner starts Node directly (the runtime image intentionally has no npm CLI), and deployment `.env` files are excluded from Docker build contexts.
 
 ## Operational caveat
 
-The new Compose configuration requires `POSTGRES_APP_PASSWORD` and `POSTGRES_MIGRATOR_PASSWORD` in addition to the existing bootstrap and read-only credentials. Populate these in the deployment secret store before deploying the updated Compose files. Existing volumes remain **blocked** until the ownership inventory and restore rehearsal are complete.
+The new Compose configuration requires `POSTGRES_APP_PASSWORD` and `POSTGRES_MIGRATOR_PASSWORD` in addition to the existing bootstrap and read-only credentials. Populate these in the deployment secret store before an approved deployment. Existing volumes remain **blocked** until the ownership inventory and restore rehearsal are complete.
+
+Memecoin's migration no longer tries to install `pgcrypto`: PostgreSQL 16 provides `gen_random_uuid()` in core, so the migration role does not need database-level CREATE just to install an extension.

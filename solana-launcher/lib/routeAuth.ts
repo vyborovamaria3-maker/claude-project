@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getBackendBaseUrl } from "@/lib/authProxy";
 
@@ -10,6 +11,22 @@ function authorizationFor(request: NextRequest): string | null {
 
   const sessionToken = request.cookies.get(SESSION_COOKIE)?.value;
   return sessionToken ? `Bearer ${sessionToken}` : null;
+}
+
+/**
+ * Machine-to-machine authentication for the single internal X collection
+ * route. The caller is still subject to proxy rate limits. Never expose this
+ * key through NEXT_PUBLIC_* configuration.
+ */
+export function hasValidInternalServiceKey(request: NextRequest): boolean {
+  const expected = process.env.INTERNAL_SERVICE_API_KEY?.trim();
+  const provided = request.headers.get("x-internal-service-key")?.trim();
+  if (!expected || !provided) return false;
+
+  const expectedBytes = Buffer.from(expected, "utf8");
+  const providedBytes = Buffer.from(provided, "utf8");
+  return expectedBytes.length === providedBytes.length
+    && timingSafeEqual(expectedBytes, providedBytes);
 }
 
 export async function requireProdAuth(req: NextRequest) {

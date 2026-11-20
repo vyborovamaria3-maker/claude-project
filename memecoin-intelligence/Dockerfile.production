@@ -4,13 +4,22 @@ COPY package*.json ./
 RUN npm install --no-audit --no-fund
 COPY . .
 RUN npm run build
+
+# One-shot migration image keeps Prisma/tsx-style tooling available only in the
+# explicitly invoked migration profile. It is never used as an API/worker runtime.
+FROM build AS migrator
+ENV NODE_ENV=production
+USER node
+CMD ["npm", "run", "db:migrate"]
+
+FROM build AS runtime-deps
 RUN npm prune --omit=dev
 
 FROM node:20-alpine AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
-COPY --from=build --chown=node:node /app/package.json ./package.json
-COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=runtime-deps --chown=node:node /app/package.json ./package.json
+COPY --from=runtime-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 USER node
 EXPOSE 3001

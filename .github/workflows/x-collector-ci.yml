@@ -30,8 +30,10 @@ jobs:
       run:
         working-directory: x-collector
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22'
           cache: npm
@@ -51,3 +53,63 @@ jobs:
       - run: npm run test:postgres
         env:
           REPLY_TEST_DATABASE_URL: postgresql://collector:isolated_ci_fixture@127.0.0.1:5432/x_collector_test
+
+      - name: PostgreSQL backup and isolated restore round-trip
+        env:
+          DATABASE_URL: postgresql://collector:isolated_ci_fixture@127.0.0.1:5432/x_collector_test
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/x-collector-ci.dump"
+          corrupt="${archive}.corrupt"
+          restore_db="x_collector_restore_ci"
+          restore_container="x-collector-pg-restore-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm -f "$restore_container" >/dev/null 2>&1 || true
+            rm -f "$archive" "$corrupt"
+          }
+          trap cleanup EXIT
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DROP TABLE IF EXISTS public.x_backup_restore_fixture"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE TABLE public.x_backup_restore_fixture(id integer PRIMARY KEY, marker text NOT NULL)"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "INSERT INTO public.x_backup_restore_fixture VALUES(1,'x-collector-ci-fixture')"
+          pg_dump --dbname="$DATABASE_URL" --format=custom --no-owner --no-acl --file="$archive"
+          test -s "$archive"
+          pg_restore --list "$archive" >/dev/null
+
+          # The runner's pg_dump may be newer than the PostgreSQL 16 source.
+          # Restore into an isolated matching PostgreSQL 17 target so newer
+          # archive settings are never sent to the PG16 service.
+          docker run -d --rm --network none --name "$restore_container" \
+            -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17-alpine >/dev/null
+          ready=0
+          for i in $(seq 1 60); do
+            # The official image starts a temporary server during initdb.
+            # Wait for initdb completion before probing the final server.
+            if docker logs "$restore_container" 2>&1 | grep -q "PostgreSQL init process complete; ready for start up."; then
+              # The bootstrap server listens only on a Unix socket. TCP
+              # loopback is available only after the final postmaster starts.
+              if docker exec "$restore_container" pg_isready -h 127.0.0.1 -U postgres -d postgres >/dev/null 2>&1 \
+                && docker exec "$restore_container" psql -h 127.0.0.1 -U postgres -d postgres -X -Atq \
+                  -v ON_ERROR_STOP=1 -c "SELECT 1" 2>/dev/null | grep -qx "1"; then
+                ready=1
+                break
+              fi
+            fi
+            sleep 1
+          done
+          if test "$ready" != 1; then
+            echo "Disposable PostgreSQL 17 restore target failed to reach final ready state" >&2
+            docker logs "$restore_container" >&2 || true
+            exit 1
+          fi
+          docker exec "$restore_container" createdb -h 127.0.0.1 -U postgres "$restore_db"
+          docker exec -i "$restore_container" pg_restore -h 127.0.0.1 -U postgres -d "$restore_db" \
+            --no-owner --no-privileges --exit-on-error --single-transaction < "$archive"
+          restored="$(docker exec "$restore_container" psql -h 127.0.0.1 -U postgres -d "$restore_db" -v ON_ERROR_STOP=1 -Atc "SELECT marker FROM public.x_backup_restore_fixture WHERE id=1")"
+          test "$restored" = "x-collector-ci-fixture"
+          head -c 64 "$archive" > "$corrupt"
+          if pg_restore --list "$corrupt" >/dev/null 2>&1; then
+            echo "ERROR: truncated X PostgreSQL backup was accepted" >&2
+            exit 1
+          fi
+          echo "X_COLLECTOR_PG_BACKUP_RESTORE_OK isolated_restore=true corrupt_archive_rejected=true"

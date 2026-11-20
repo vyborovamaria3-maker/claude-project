@@ -7,6 +7,7 @@ export type SqliteStatement = {
 };
 export type SqliteDb = { exec(sql: string): unknown; prepare(sql: string): SqliteStatement };
 
+// Production uses the wall-clock default; explicit timestamps are reserved for deterministic fixtures.
 export function emitSqlite(db: SqliteDb, event: OutboxEvent, createdAt = new Date()): void {
   validateOutboxEvent(event);
   const date = createdAt.toISOString();
@@ -18,9 +19,21 @@ export function emitSqlite(db: SqliteDb, event: OutboxEvent, createdAt = new Dat
       JSON.stringify(event.payload),date,date);
 }
 
+function databaseTimestampToIso(value: unknown, field: string): string {
+  if (typeof value !== "string" || !/(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) {
+    throw new TypeError("Invalid outbox " + field + " timestamp");
+  }
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    throw new TypeError("Invalid outbox " + field + " timestamp");
+  }
+  return date.toISOString();
+}
+
 function rowToEvent(row: Record<string, unknown>, leaseOwner: string, leaseUntil: string): ClaimedEvent {
   return {
-    id:String(row.id),sourceSystem:String(row.source_system) as OutboxEvent["sourceSystem"],
+    id:String(row.id),createdAt:databaseTimestampToIso(row.created_at, "created_at"),
+    sourceSystem:String(row.source_system) as OutboxEvent["sourceSystem"],
     eventKind:String(row.event_kind),eventKey:String(row.event_key),
     schemaVersion:String(row.schema_version),payload:JSON.parse(String(row.payload)) as Record<string,unknown>,
     attempts:Number(row.attempts),leaseOwner,leaseUntil,
@@ -42,10 +55,13 @@ export function claimSqlite(db: SqliteDb, options: ClaimOptions): ClaimedEvent[]
         AND next_attempt_at <= ?
         AND (lease_until IS NULL OR lease_until <= ?)
       ORDER BY id LIMIT ?`).all(stamp,stamp,options.batchSize) as Record<string,unknown>[];
+    // Normalize all claimed rows before updating lease ownership. A bad
+    // created_at must roll back rather than strand an invisible claim.
+    const claimed = rows.map(row=>rowToEvent(row,options.workerId,leaseUntil));
     const stmt=db.prepare(`UPDATE outbox_events SET lease_owner=?,lease_until=? WHERE id=?`);
     for (const row of rows) stmt.run(options.workerId,leaseUntil,row.id);
     db.exec("COMMIT");open=false;
-    return rows.map(row=>rowToEvent(row,options.workerId,leaseUntil));
+    return claimed;
   } catch(error) {
     if(open) {try{db.exec("ROLLBACK")}catch{/* preserve */}}
     throw error;

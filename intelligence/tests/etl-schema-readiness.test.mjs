@@ -7,21 +7,56 @@ import {checkDestination} from "../scripts/etl-connections.mjs";
 
 test("delivery readiness fails closed when token-link migration 004 is missing",async()=>{
   const calls=[];
-  const query=async sql=>{
-    calls.push(sql);
-    return {rows:[{inbox:true,registry:true,evidence:true,timeline:true,token_links:false}]};
+  const canonicalDef="CHECK (envelope_sha256 IS NULL OR (length(envelope_sha256) = 64 AND envelope_sha256 ~ '^[0-9a-f]+$'))";
+  // Fake pool that evaluates the canonical CHECK for probe INSERTs.
+  const makePool=(row)=>({
+    query:async(sql,params)=>{
+      calls.push(sql);
+      if(/^INSERT INTO intelligence_inbox_envelope_probe/.test(sql)){
+        const value=params?.[0];
+        if(value!==null && !/^[0-9a-f]{64}$/.test(String(value))){
+          throw new Error("probe row violates check");
+        }
+        return {rows:[]};
+      }
+      if(/^(CREATE TEMP TABLE|ALTER TABLE intelligence_inbox_envelope_probe|DROP TABLE IF EXISTS)/.test(sql)){
+        return {rows:[]};
+      }
+      return {rows:[row]};
+    },
+  });
+  const baseRow={
+    inbox:true,registry:true,evidence:true,timeline:true,token_links:true,
+    inbox_fingerprint:true,inbox_envelope_fingerprint:true,
+    inbox_envelope_fingerprint_constraint:true,
+    inbox_envelope_fingerprint_definition:canonicalDef,
   };
-  await assert.rejects(checkDestination({query}),/001\+002\+004/);
+  await assert.rejects(checkDestination(makePool({
+    inbox:true,registry:true,evidence:true,timeline:true,token_links:false,
+    inbox_fingerprint:true,inbox_envelope_fingerprint:true,
+  })),/001\+002\+004/);
   assert.match(calls[0],/token_link_observations/);
-  await assert.doesNotReject(checkDestination({query:async()=>({rows:[{
-    inbox:true,registry:true,evidence:true,timeline:true,token_links:true,
-  }]})}));
-  await assert.rejects(checkDestination({query:async()=>({rows:[{
-    inbox:true,registry:true,evidence:true,timeline:true,token_links:true,
-    blockchain_revisions:false,
-  }]})},{requireBlockchainRevisions:true}),/migration 005/);
+  await assert.doesNotReject(checkDestination(makePool(baseRow)));
+  await assert.rejects(checkDestination(makePool({
+    ...baseRow,blockchain_revisions:false,
+  }),{requireBlockchainRevisions:true}),/migration 005/);
+  await assert.rejects(checkDestination(makePool({
+    ...baseRow,inbox_fingerprint:false,
+  })),/migration 017/);
+  await assert.rejects(checkDestination(makePool({
+    ...baseRow,inbox_envelope_fingerprint:false,
+  }),{requireEnvelopeFingerprint:true}),/migration 019/);
+  await assert.rejects(checkDestination(makePool({
+    ...baseRow,inbox_envelope_fingerprint_constraint:false,
+  }),{requireEnvelopeFingerprint:true}),/migration 019/,
+  "a partially applied or unvalidated migration 019 must not pass readiness");
+  // A constraint flag without a usable definition must fail closed.
+  await assert.rejects(checkDestination(makePool({
+    ...baseRow,inbox_envelope_fingerprint_definition:undefined,
+  }),{requireEnvelopeFingerprint:true}),/019 envelope fingerprint contract violated/,
+  "readiness must not trust a validated CHECK it cannot behaviorally verify");
 });
-test("temporary PostgreSQL target refuses only-001/002 then accepts 004",{
+test("temporary PostgreSQL target requires additive 004, 005, 017 and 019 before V2-capable source claims",{
   skip:!process.env.INTELLIGENCE_TEST_DB_URL,
 },async()=>{
   const url=process.env.INTELLIGENCE_TEST_DB_URL;
@@ -39,11 +74,78 @@ test("temporary PostgreSQL target refuses only-001/002 then accepts 004",{
     await assert.rejects(checkDestination(pool),/001\+002\+004/);
     await admin.query(await readFile(new URL(
       "../migrations/004_token_link_observations.sql",import.meta.url),"utf8"));
-    await assert.doesNotReject(checkDestination(pool));
-    await assert.rejects(checkDestination(pool,{requireBlockchainRevisions:true}),/migration 005/);
+    await assert.rejects(checkDestination(pool),/migration 017/);
+    await admin.query(await readFile(new URL(
+      "../migrations/017_inbox_payload_fingerprint.sql",import.meta.url),"utf8"));
+    await assert.rejects(
+      checkDestination(pool,{requireEnvelopeFingerprint:true}),/migration 019/,
+      "V2-capable delivery must fail before claiming when migration 019 is missing",
+    );
+    const migration019=await readFile(new URL(
+      "../migrations/019_inbox_envelope_fingerprint.sql",import.meta.url),"utf8");
+    // A validated, same-named but incorrect CHECK must not masquerade as 019.
+    await admin.query("ALTER TABLE intelligence_inbox ADD COLUMN envelope_sha256 TEXT");
+    await admin.query("ALTER TABLE intelligence_inbox ADD CONSTRAINT intelligence_inbox_envelope_sha256_check CHECK (envelope_sha256 IS NULL) NOT VALID");
+    await admin.query("ALTER TABLE intelligence_inbox VALIDATE CONSTRAINT intelligence_inbox_envelope_sha256_check");
+    await assert.rejects(checkDestination(pool,{requireEnvelopeFingerprint:true}),/migration 019/);
+    await assert.rejects(admin.query(migration019),/unexpected definition/);
+    await admin.query("ALTER TABLE intelligence_inbox DROP CONSTRAINT intelligence_inbox_envelope_sha256_check");
+    await admin.query(migration019);
+    await assert.doesNotReject(checkDestination(pool,{requireEnvelopeFingerprint:true}));
+    // The readiness gate must reject every weakened CHECK variant by behavior:
+    // wrong length, wrong regex, OR instead of AND, inverted NULL logic.
+    const weakenedVariants=[
+      "CHECK (envelope_sha256 IS NULL OR length(envelope_sha256)=63)",
+      "CHECK (envelope_sha256 IS NULL OR (length(envelope_sha256)=64 "
+        +"AND envelope_sha256 ~ '^[0-9a-fA-F]+$'))",
+      "CHECK (envelope_sha256 IS NULL OR length(envelope_sha256)=64 "
+        +"OR envelope_sha256 ~ '^[0-9a-f]+$')",
+      "CHECK (envelope_sha256 IS NOT NULL AND length(envelope_sha256)=64 "
+        +"AND envelope_sha256 ~ '^[0-9a-f]+$')",
+    ];
+    for(const variantDef of weakenedVariants){
+      await admin.query(
+        "ALTER TABLE intelligence_inbox DROP CONSTRAINT intelligence_inbox_envelope_sha256_check",
+      );
+      await admin.query(
+        "ALTER TABLE intelligence_inbox ADD CONSTRAINT "
+        +"intelligence_inbox_envelope_sha256_check "+variantDef,
+      );
+      await assert.rejects(
+        checkDestination(pool,{requireEnvelopeFingerprint:true}),
+        /019 envelope fingerprint contract violated/,
+        "weakened CHECK must not pass readiness: "+variantDef,
+      );
+    }
+    // A NOT VALID constraint must fail closed even when its definition is exact.
+    await admin.query(
+      "ALTER TABLE intelligence_inbox DROP CONSTRAINT intelligence_inbox_envelope_sha256_check",
+    );
+    await admin.query(
+      "ALTER TABLE intelligence_inbox ADD CONSTRAINT "
+      +"intelligence_inbox_envelope_sha256_check CHECK (envelope_sha256 IS NULL "
+      +"OR (length(envelope_sha256)=64 AND envelope_sha256 ~ '^[0-9a-f]+$')) NOT VALID",
+    );
+    await assert.rejects(
+      checkDestination(pool,{requireEnvelopeFingerprint:true}),
+      /migration 019/,
+      "NOT VALID constraint must not pass readiness",
+    );
+    await admin.query(
+      "ALTER TABLE intelligence_inbox DROP CONSTRAINT intelligence_inbox_envelope_sha256_check",
+    );
+    await admin.query(migration019);
+    await assert.rejects(checkDestination(pool,{
+      requireBlockchainRevisions:true,requireEnvelopeFingerprint:true,
+    }),/migration 005/);
     await admin.query(await readFile(new URL(
       "../migrations/005_blockchain_swap_evidence_revisions.sql",import.meta.url),"utf8"));
-    await assert.doesNotReject(checkDestination(pool,{requireBlockchainRevisions:true}));
+    await admin.query("INSERT INTO intelligence_inbox(source_system,event_kind,event_key,schema_version,evidence_source_id) VALUES('x','tweet_observed','snapshot-1','x-unattributed-snapshot-v1','x:tweet:1')");
+    await assert.doesNotReject(checkDestination(pool,{
+      requireBlockchainRevisions:true,requireEnvelopeFingerprint:true,
+    }),"destination-only unattributed snapshots are not source-outbox fingerprint backfill candidates");
+    await admin.query("INSERT INTO intelligence_inbox(source_system,event_kind,event_key,schema_version,evidence_source_id) VALUES('tg','message_observed','legacy-1','tg-message-v1','tg:message:1')");
+    await assert.rejects(checkDestination(pool),/legacy Intelligence inbox fingerprints pending/);
   }finally{
     if(pool)await pool.end();
     await admin.query("SET search_path TO public");

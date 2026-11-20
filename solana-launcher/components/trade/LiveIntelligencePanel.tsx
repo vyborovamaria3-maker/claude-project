@@ -264,7 +264,7 @@ export default function LiveIntelligencePanel() {
     });
 
     const results = await Promise.allSettled([
-      fetchJson<TwitterStats>(`/api/trade/dev-twitter?${xParams}`, controller.signal),
+      fetchJson<TwitterStats>(`/api/trade/dev-twitter?${xParams}`, controller.signal, { method: "POST" }),
       fetchJson<SocialTimeline>(`${BACKEND}/api/v1/social/token/${encodeURIComponent(contract)}?${tgParams}`, controller.signal),
       fetchJson<Market>(`/api/token-ohlcv?mint=${encodeURIComponent(contract)}`, controller.signal),
       fetchJson<{ items: Channel[] }>(`${BACKEND}/api/v1/telegram/channels?limit=100`, controller.signal),
@@ -326,7 +326,7 @@ export default function LiveIntelligencePanel() {
     try {
       const { x: xParams, tg: tgParams } = buildSocialSourceParams(currentMint, LIVE_OPTIONS);
       const results = await Promise.allSettled([
-        fetchJson<TwitterStats>(`/api/trade/dev-twitter?${xParams}`),
+        fetchJson<TwitterStats>(`/api/trade/dev-twitter?${xParams}`, undefined, { method: "POST" }),
         fetchJson<SocialTimeline>(`${BACKEND}/api/v1/social/token/${encodeURIComponent(currentMint)}?${tgParams}`),
         fetchJson<Market>(`/api/token-ohlcv?mint=${encodeURIComponent(currentMint)}`),
       ]);

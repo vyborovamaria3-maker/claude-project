@@ -15,6 +15,8 @@ def strong_settings() -> Settings:
         admin_password_hash="scrypt$16384$8$1$YWJjZGVmZ2hpamtsbW5vcA$" + ("QQ" * 32),
         session_secret="s" * 64,
         secure_cookie=True,
+        trust_proxy=True,
+        trusted_proxy_hops=1,
         allowed_networks=[ipaddress.ip_network("10.0.0.0/8")],
         allowed_origins=["https://admin.potapoff.fun"],
         solana_rpc_url="https://api.mainnet-beta.solana.com",
@@ -25,6 +27,8 @@ def strong_settings() -> Settings:
 def production_env() -> dict[str, str]:
     return {
         "ADMIN_REQUIRE_NETWORK_ALLOWLIST": "true",
+        "ADMIN_TRUST_PROXY": "true",
+        "ADMIN_TRUSTED_PROXY_HOPS": "1",
         "ADMIN_REQUIRE_MFA": "true",
         "ADMIN_TOTP_SECRET": "JBSWY3DPEHPK3PXP",
         "ADMIN_REQUIRE_REAUTH": "true",
@@ -52,6 +56,28 @@ class ProductionSecurityPolicyTests(unittest.TestCase):
                 with patch.dict(os.environ, env, clear=False):
                     with self.assertRaises(RuntimeError):
                         strong_settings().validate()
+
+    def test_production_rejects_default_route_network_allowlists(self) -> None:
+        for cidr in ("0.0.0.0/0", "::/0"):
+            with self.subTest(cidr=cidr):
+                settings = strong_settings()
+                settings.allowed_networks = [ipaddress.ip_network(cidr)]
+                with patch.dict(os.environ, production_env(), clear=False):
+                    with self.assertRaisesRegex(RuntimeError, "default-route CIDRs"):
+                        settings.validate()
+
+    def test_production_requires_the_configured_reverse_proxy_chain(self) -> None:
+        settings = strong_settings()
+        settings.trust_proxy = False
+        with patch.dict(os.environ, production_env(), clear=False):
+            with self.assertRaisesRegex(RuntimeError, "ADMIN_TRUST_PROXY"):
+                settings.validate()
+
+        settings = strong_settings()
+        settings.trusted_proxy_hops = 2
+        with patch.dict(os.environ, production_env(), clear=False):
+            with self.assertRaisesRegex(RuntimeError, "ADMIN_TRUSTED_PROXY_HOPS"):
+                settings.validate()
 
     def test_production_rejects_plaintext_admin_password(self) -> None:
         settings = strong_settings()

@@ -12,6 +12,8 @@ from typing import Any, Callable
 import psycopg
 from psycopg.rows import dict_row
 
+from .postgres_schema_policy import preprovisioned_schema_enabled
+
 
 class TaskState(str, Enum):
     QUEUED = "queued"
@@ -82,7 +84,8 @@ class PostgresTaskQueue:
         self._stop = threading.Event()
         self._started = False
         self._instance_id = uuid.uuid4().hex
-        self._init_schema()
+        if not preprovisioned_schema_enabled():
+            self._init_schema()
 
     def _connect(self):
         return psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=5)

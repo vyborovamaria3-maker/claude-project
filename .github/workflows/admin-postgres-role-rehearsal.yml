@@ -1,0 +1,63 @@
+name: Admin PostgreSQL 17 restricted-role rehearsal
+
+on:
+  pull_request:
+    paths:
+      - "admin-site/**"
+      - ".github/workflows/admin-postgres-role-rehearsal.yml"
+  push:
+    branches: [main]
+    paths:
+      - "admin-site/**"
+      - ".github/workflows/admin-postgres-role-rehearsal.yml"
+
+permissions:
+  contents: read
+
+# This hosted-runner CI fixture has no production network or credentials.
+concurrency:
+  group: admin-postgres-roles-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  admin-restricted-runtime:
+    name: PG17 preprovisioned Admin DML-only startup
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: potapoff_admin_test
+          POSTGRES_USER: potapoff_admin
+          POSTGRES_PASSWORD: ci-admin-state-password
+        ports:
+          - 55434:5432
+        options: >-
+          --health-cmd "pg_isready -U potapoff_admin -d potapoff_admin_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ADMIN_STATE_TEST_DSN: postgresql://potapoff_admin:ci-admin-state-password@127.0.0.1:55434/potapoff_admin_test
+      ADMIN_PG_SCHEMA_MODE: legacy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: admin-site/requirements.txt
+      - name: Install Admin dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r admin-site/requirements.txt
+      - name: Verify test syntax
+        run: |
+          python -m py_compile \
+            admin-site/app/postgres_schema_policy.py \
+            admin-site/scripts/test_postgres_preprovisioned_roles.py
+      - name: Prove restricted role and DML-only Admin startup
+        run: python admin-site/scripts/test_postgres_preprovisioned_roles.py

@@ -2,6 +2,7 @@ import "dotenv/config";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
+import { ANALYSIS_VERSION } from "../../src/analytics/extract.js";
 
 test("a recycled username cannot redirect public discovery evidence to the previous peer", {
   skip: !process.env.DATABASE_URL,
@@ -76,7 +77,7 @@ test("a recycled username cannot redirect public discovery evidence to the previ
   }
 });
 
-test("v4 leaves pending, unverified Solana address records unresolved", {
+test("v5 leaves pending, unverified Solana address records unresolved", {
   skip: !process.env.DATABASE_URL,
 }, async () => {
   const {pool,migrate} = await import("../../src/db.js");
@@ -103,12 +104,12 @@ test("v4 leaves pending, unverified Solana address records unresolved", {
     finally {tx.release();}
     const candidate = await pool.query<{resolution_status:string}>(`
       SELECT resolution_status FROM tg_token_candidates
-      WHERE source_id=$1 AND message_id=451 AND candidate_key=$2 AND analysis_version=4`,
+      WHERE source_id=$1 AND message_id=451 AND candidate_key=$2 AND analysis_version=${ANALYSIS_VERSION}`,
       [source.rows[0].id,address]);
     assert.equal(candidate.rows[0]?.resolution_status,"unresolved");
     const mentions = await pool.query<{count:number}>(`
       SELECT count(*)::integer AS count FROM tg_token_mentions
-      WHERE source_id=$1 AND message_id=451 AND mint=$2 AND analysis_version=4 AND orphaned=FALSE`,
+      WHERE source_id=$1 AND message_id=451 AND mint=$2 AND analysis_version=${ANALYSIS_VERSION} AND orphaned=FALSE`,
       [source.rows[0].id,address]);
     assert.equal(mentions.rows[0].count,0);
   } finally {
@@ -117,7 +118,7 @@ test("v4 leaves pending, unverified Solana address records unresolved", {
   }
 });
 
-test("v4 re-analysis reuses a recent RPC-verified negative mint result", {
+test("v5 re-analysis reuses a recent RPC-verified negative mint result", {
   skip: !process.env.DATABASE_URL,
 }, async () => {
   const {pool,migrate} = await import("../../src/db.js");
@@ -145,13 +146,13 @@ test("v4 re-analysis reuses a recent RPC-verified negative mint result", {
     finally{tx.release();}
     const result=await pool.query<{resolution_status:string;provider:string}>(`
       SELECT resolution_status,provider FROM tg_token_candidates
-      WHERE source_id=$1 AND message_id=777 AND candidate_key=$2 AND analysis_version=4`,
+      WHERE source_id=$1 AND message_id=777 AND candidate_key=$2 AND analysis_version=${ANALYSIS_VERSION}`,
       [source,address]);
     assert.equal(result.rows[0]?.resolution_status,"not_token");
     assert.equal(result.rows[0]?.provider,"alchemy-solana-rpc");
     const active=(await pool.query<{total:number}>(`
       SELECT count(*)::integer AS total FROM tg_token_mentions
-      WHERE source_id=$1 AND message_id=777 AND analysis_version=4 AND orphaned=FALSE`,
+      WHERE source_id=$1 AND message_id=777 AND analysis_version=${ANALYSIS_VERSION} AND orphaned=FALSE`,
       [source])).rows[0].total;
     assert.equal(active,0);
   } finally {
@@ -181,7 +182,7 @@ test("old verified metadata without strict mint layout attestation stays unconfi
     }catch(error){await tx.query("ROLLBACK");throw error;}finally{tx.release();}
     const candidate=(await pool.query<{resolution_status:string}>(`
       SELECT resolution_status FROM tg_token_candidates
-      WHERE source_id=$1 AND message_id=881 AND candidate_key=$2 AND analysis_version=4`,[source,mint])).rows[0];
+      WHERE source_id=$1 AND message_id=881 AND candidate_key=$2 AND analysis_version=${ANALYSIS_VERSION}`,[source,mint])).rows[0];
     assert.equal(candidate.resolution_status,"unresolved");
     const mentions=(await pool.query<{count:number}>(`
       SELECT count(*)::integer AS count FROM tg_token_mentions
@@ -193,7 +194,7 @@ test("old verified metadata without strict mint layout attestation stays unconfi
   }
 });
 
-test("v4 re-analysis reuses an already verified Solana mint, including hidden entities", {
+test("v5 re-analysis reuses an already verified Solana mint, including hidden entities", {
   skip: !process.env.DATABASE_URL,
 }, async () => {
   const {pool,migrate} = await import("../../src/db.js");
@@ -223,10 +224,10 @@ test("v4 re-analysis reuses an already verified Solana mint, including hidden en
       SELECT resolution_status,analysis_version FROM tg_token_candidates
       WHERE source_id=$1 AND message_id=121 AND candidate_key=$2`,[sourceId,mint]);
     assert.equal(row.rows[0]?.resolution_status,"confirmed_token");
-    assert.equal(row.rows[0]?.analysis_version,4);
+    assert.equal(row.rows[0]?.analysis_version,ANALYSIS_VERSION);
     const mention=await pool.query<{count:number}>(`
       SELECT count(*)::integer AS count FROM tg_token_mentions
-      WHERE source_id=$1 AND message_id=121 AND mint=$2 AND analysis_version=4 AND orphaned=FALSE`,[sourceId,mint]);
+      WHERE source_id=$1 AND message_id=121 AND mint=$2 AND analysis_version=${ANALYSIS_VERSION} AND orphaned=FALSE`,[sourceId,mint]);
     assert.ok(mention.rows[0].count>=1);
     const marker=await pool.query<{entities_observed_at:Date|null}>(`
       SELECT entities_observed_at FROM tg_messages WHERE source_id=$1 AND message_id=121`,[sourceId]);

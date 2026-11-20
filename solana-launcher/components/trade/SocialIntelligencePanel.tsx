@@ -150,7 +150,7 @@ export default function SocialIntelligencePanel({ requestOnly = false }: { reque
         });
 
       const [xResult, tgResult, marketResult, channelResult] = await Promise.allSettled([
-        fetchJson<TwitterStats>(`/api/trade/dev-twitter?${xParams}`, controller.signal),
+        fetchJson<TwitterStats>(`/api/trade/dev-twitter?${xParams}`, controller.signal, { method: "POST" }),
         fetchJson<SocialTimeline>(
           `${BACKEND}/api/v1/social/token/${encodeURIComponent(contract)}?${tgParams}`,
           controller.signal,

@@ -15,6 +15,17 @@ export function requiredEnv(name,env=process.env) {
   return value;
 }
 
+export function postgresSourcePoolOptions(source,write,env=process.env){
+  if(!["x","tg"].includes(source)||typeof write!=="boolean")throw new Error("invalid PostgreSQL source connection mode");
+  return {
+    connectionString:requiredEnv(source==="x"?"X_SOURCE_DATABASE_URL":"TG_SOURCE_DATABASE_URL",env),
+    max:2,connectionTimeoutMillis:5000,
+    query_timeout:30_000,statement_timeout:30_000,
+    application_name:write?"potapoff-intelligence-source-writer":"potapoff-intelligence-source-reader",
+    ...(write?{}:{options:"-c default_transaction_read_only=on"}),
+  };
+}
+
 export function sourceConnection(source,write) {
   if(source==="blockchain"){
     const filename=requiredEnv("SOLANA_TRADE_DB_PATH");
@@ -35,11 +46,7 @@ export function sourceConnection(source,write) {
     }catch(error){db.close();throw error;}
   }
   if(!["x","tg"].includes(source))throw new Error("unknown source");
-  const url=requiredEnv(source==="x"?"X_SOURCE_DATABASE_URL":"TG_SOURCE_DATABASE_URL");
-  const pool=new pg.Pool({
-    connectionString:url,max:2,connectionTimeoutMillis:5000,
-    query_timeout:30_000,statement_timeout:30_000,
-  });
+  const pool=new pg.Pool(postgresSourcePoolOptions(source,write));
   return {
     kind:"pg",connection:pool,
     close:async()=>pool.end(),
@@ -57,6 +64,56 @@ export async function checkPgOutbox(pool){
   if(!rows[0]?.present)throw new Error("source outbox schema is not installed");
 }
 
+// Verify the deployed envelope-fingerprint CHECK by behavior, not by text
+// fragments. Fragment matching accepts weakened variants (length >= 8,
+// uppercase-permitting regex, OR instead of AND, inverted NULL logic), so the
+// readiness gate replays the actual constraint expression against boundary
+// values on a throwaway temp table before any V2-capable source claim.
+const ENVELOPE_PROBE_VALUES=[
+  [null,false],["a".repeat(64),false],["A".repeat(64),true],
+  ["a".repeat(63),true],["a".repeat(65),true],["g".repeat(64),true],
+];
+
+export async function assertEnvelopeFingerprintContract(pool,definition){
+  if(typeof definition!=="string" || !/^CHECK\b/i.test(definition)){
+    throw new Error(
+      "destination Intelligence migration 019 envelope fingerprint contract violated: "
+      +"missing or non-CHECK constraint",
+    );
+  }
+  await pool.query("CREATE TEMP TABLE intelligence_inbox_envelope_probe (envelope_sha256 text)");
+  try{
+    await pool.query(
+      "ALTER TABLE intelligence_inbox_envelope_probe "
+      +"ADD CONSTRAINT intelligence_inbox_envelope_probe_check "+definition,
+    );
+    for(const [value,mustReject] of ENVELOPE_PROBE_VALUES){
+      try{
+        await pool.query(
+          "INSERT INTO intelligence_inbox_envelope_probe(envelope_sha256) VALUES ($1)",
+          [value],
+        );
+      }catch{
+        if(!mustReject){
+          throw new Error(
+            "destination Intelligence migration 019 envelope fingerprint contract violated: "
+            +"constraint rejects a valid value",
+          );
+        }
+        continue;
+      }
+      if(mustReject){
+        throw new Error(
+          "destination Intelligence migration 019 envelope fingerprint contract violated: "
+          +"constraint accepts a value that must be rejected",
+        );
+      }
+    }
+  }finally{
+    await pool.query("DROP TABLE IF EXISTS intelligence_inbox_envelope_probe");
+  }
+}
+
 export async function checkDestination(pool,options={}){
   const result=await pool.query(`SELECT
     to_regclass('intelligence_inbox') IS NOT NULL AS inbox,
@@ -64,14 +121,53 @@ export async function checkDestination(pool,options={}){
     to_regclass('entity_evidence') IS NOT NULL AS evidence,
     to_regclass('timeline_events') IS NOT NULL AS timeline,
     to_regclass('token_link_observations') IS NOT NULL AS token_links,
-    to_regclass('blockchain_swap_evidence_revisions') IS NOT NULL AS blockchain_revisions`);
+    to_regclass('blockchain_swap_evidence_revisions') IS NOT NULL AS blockchain_revisions,
+    EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('intelligence_inbox')
+      AND attname='payload_sha256' AND NOT attisdropped) AS inbox_fingerprint,
+    EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('intelligence_inbox')
+      AND attname='envelope_sha256' AND NOT attisdropped) AS inbox_envelope_fingerprint,
+    EXISTS (SELECT 1 FROM pg_constraint
+      WHERE conrelid=to_regclass('intelligence_inbox')
+        AND conname='intelligence_inbox_envelope_sha256_check'
+        AND contype='c'
+        AND convalidated) AS inbox_envelope_fingerprint_constraint,
+    (SELECT pg_get_constraintdef(oid) FROM pg_constraint
+      WHERE conrelid=to_regclass('intelligence_inbox')
+        AND conname='intelligence_inbox_envelope_sha256_check')
+      AS inbox_envelope_fingerprint_definition`);
   const row=result.rows[0];
   // Every consumer may encounter token-link events, so reject missing 004 before claiming.
   if(!row?.inbox||!row.registry||!row.evidence||!row.timeline||!row.token_links){
     throw new Error("destination Intelligence migrations 001+002+004 required");
   }
+  if(!row.inbox_fingerprint){
+    throw new Error("destination Intelligence migration 017 required before source claims");
+  }
+  if(options.requireEnvelopeFingerprint===true){
+    if(!row.inbox_envelope_fingerprint || !row.inbox_envelope_fingerprint_constraint){
+      throw new Error(
+        "destination Intelligence migration 019 required before V2-capable source claims",
+      );
+    }
+    await assertEnvelopeFingerprintContract(
+      pool,row.inbox_envelope_fingerprint_definition,
+    );
+  }
   if(options.requireBlockchainRevisions===true && !row.blockchain_revisions){
     throw new Error("destination Intelligence migration 005 required before Blockchain claim");
+  }
+  // A legacy inbox identity with no payload fingerprint is not a safe
+  // idempotent duplicate. Consumers must not claim source events until every
+  // legacy row has been verified against its source outbox. The bounded
+  // backfill opts into this one precondition explicitly.
+  if(options.allowLegacyFingerprints!==true){
+    const pending=await pool.query(
+      "SELECT EXISTS (SELECT 1 FROM intelligence_inbox WHERE payload_sha256 IS NULL " +
+      "AND NOT (source_system='x' AND schema_version='x-unattributed-snapshot-v1')) AS pending",
+    );
+    if(pending.rows[0]?.pending===true){
+      throw new Error("legacy Intelligence inbox fingerprints pending; run the bounded source-outbox backfill before source claims");
+    }
   }
 }
 

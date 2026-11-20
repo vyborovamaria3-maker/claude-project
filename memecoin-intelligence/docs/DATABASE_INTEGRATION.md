@@ -33,3 +33,21 @@ The `embedding real[]` column is intentionally portable. It can later be migrate
 ## Optional Telegram AI schema
 
 Apply `db/migrations/004_telegram_qwen_ai.sql` only when the destination project needs Telegram analysis. It adds its own `telegram_*` namespace of tables and does not change X/token tables. The application uses composite `(id, sent_at)` references so partitioned Telegram messages remain portable in PostgreSQL 16.
+
+
+## Production PostgreSQL identities
+
+Production Compose separates four identities:
+
+- bootstrap (`POSTGRES_USER`) is used only for database initialization and role provisioning;
+- `memecoin_migrator` owns schema objects created by the one-shot migration profile;
+- `memecoin_app` has runtime DML privileges but no schema creation;
+- `memecoin_readonly` is SELECT-only and defaults transactions to read-only.
+
+The production API and worker use the app identity. Run migrations explicitly with:
+
+```bash
+docker compose -f docker-compose.production.yml --profile migrate run --rm migrator
+```
+
+This command is for a new database or a database whose object ownership cutover has already been rehearsed and approved. Existing objects remain owned by their current owner until an explicit, reviewed cutover; the role provisioner does not perform a database-wide ownership transfer. See [the operational cutover runbook](../../docs/operations/MEMECOIN_SOLSUB_DB_ROLE_CUTOVER.md).

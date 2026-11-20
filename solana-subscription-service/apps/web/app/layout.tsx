@@ -9,7 +9,7 @@ function isLocalhostHost(host: string) {
 }
 
 export async function generateMetadata(): Promise<Metadata> {
-  const host = headers().get("host") ?? "";
+  const host = (await headers()).get("host") ?? "";
 
   return {
     title: "SolSub",

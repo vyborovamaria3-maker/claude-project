@@ -34,6 +34,7 @@
 ```bash
 cd admin-site
 cp .env.example .env
+cp .env.intelligence.example .env.intelligence
 cp sources.example.json sources.json
 cp logs.example.json logs.json
 
@@ -44,9 +45,14 @@ docker compose build
 docker compose run --rm admin python scripts/hash_password.py
 # вставьте результат в ADMIN_PASSWORD_HASH
 
+# После всех изменений .env сформируйте ограниченный runtime-файл.
+bash deploy/refresh-runtime-env.sh
+
 docker network create potapoff-shared || true
 docker compose up -d
 ```
+
+`.env` используется Compose и provisioner. `deploy/refresh-runtime-env.sh` формирует `.env.runtime` из `.env` только по allowlist `.env.runtime.example`; bootstrap-, migrator-, backup- и subscription-admin секреты в контейнер админки не передаются. Файл `.env.runtime` создаётся с правами `0600` и игнорируется Git. `.env.intelligence` предназначен только для worker. Повторно запускайте helper после изменения `.env`.
 
 Обновите DSN в `sources.json` под реальные read-only credentials и сетевые имена контейнеров.
 

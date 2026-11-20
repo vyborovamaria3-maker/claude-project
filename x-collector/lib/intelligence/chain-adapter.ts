@@ -1,6 +1,6 @@
-export type SupportedChain = "ethereum" | "solana" | "bitcoin";
+export type SupportedChain = "solana";
 
-export const SUPPORTED_CHAINS: readonly SupportedChain[] = ["ethereum", "solana", "bitcoin"];
+export const SUPPORTED_CHAINS: readonly SupportedChain[] = ["solana"];
 
 export type ChainTransaction = {
   chain: SupportedChain;
@@ -36,14 +36,28 @@ export class ChainValidationError extends Error {
   }
 }
 
-const BASE58_ALPHABET = /^[1-9A-HJ-NP-Za-km-z]+$/;
-const ETHEREUM_ADDRESS = /^0x[\da-f]{40}$/i;
-const ETHEREUM_HASH = /^0x[\da-f]{64}$/i;
-const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
-const SOLANA_SIGNATURE = /^[1-9A-HJ-NP-Za-km-z]{64,88}$/;
-const BITCOIN_BECH32 = /^bc1[0-9ac-hj-np-z]{11,71}$/;
-const BITCOIN_BASE58 = /^[1-9A-HJ-NP-Za-km-z]{25,35}$/;
-const BITCOIN_HASH = /^[\da-f]{64}$/i;
+const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+/** Count decoded Base58 bytes without Number precision loss. */
+function isBase58ByteLength(value: string, requiredBytes: number): boolean {
+  if (value.length < 1 || value.length > 128) return false;
+  let number = 0n;
+  for (const char of value) {
+    const digit = BASE58.indexOf(char);
+    if (digit < 0) return false;
+    number = number * 58n + BigInt(digit);
+  }
+  let bytes = 0;
+  while (number > 0n) {
+    number >>= 8n;
+    bytes++;
+  }
+  for (const char of value) {
+    if (char !== "1") break;
+    bytes++;
+  }
+  return bytes === requiredBytes;
+}
 
 export function isSupportedChain(value: string): value is SupportedChain {
   return (SUPPORTED_CHAINS as readonly string[]).includes(value);
@@ -54,35 +68,24 @@ export function assertSupportedChain(value: string): SupportedChain {
   return value;
 }
 
-function isBitcoinAddress(value: string): boolean {
-  if (/^bc1/i.test(value)) {
-    if (value !== value.toLowerCase() && value !== value.toUpperCase()) return false;
-    return BITCOIN_BECH32.test(value.toLowerCase());
-  }
-  return BITCOIN_BASE58.test(value) && BASE58_ALPHABET.test(value);
-}
-
 export function validateAddress(chain: SupportedChain, value: string): boolean {
-  if (chain === "ethereum") return ETHEREUM_ADDRESS.test(value);
-  if (chain === "solana") return SOLANA_ADDRESS.test(value) && BASE58_ALPHABET.test(value);
-  return isBitcoinAddress(value);
+  return chain === "solana" && isBase58ByteLength(value, 32);
 }
 
 export function validateTransactionHash(chain: SupportedChain, value: string): boolean {
-  if (chain === "ethereum") return ETHEREUM_HASH.test(value);
-  if (chain === "solana") return SOLANA_SIGNATURE.test(value) && BASE58_ALPHABET.test(value);
-  return BITCOIN_HASH.test(value);
+  return chain === "solana" && isBase58ByteLength(value, 64);
 }
 
 export function normalizeAddress(chain: SupportedChain, value: string): string {
-  if (!validateAddress(chain, value)) throw new ChainValidationError(chain, value, "address");
-  if (chain === "ethereum") return value.toLowerCase();
-  if (chain === "bitcoin" && /^bc1/i.test(value)) return value.toLowerCase();
+  if (!isSupportedChain(chain) || !validateAddress(chain, value)) {
+    throw new ChainValidationError(chain, value, "address");
+  }
   return value;
 }
 
 export function normalizeTransactionHash(chain: SupportedChain, value: string): string {
-  if (!validateTransactionHash(chain, value)) throw new ChainValidationError(chain, value, "transaction hash");
-  if (chain === "ethereum" || chain === "bitcoin") return value.toLowerCase();
+  if (!isSupportedChain(chain) || !validateTransactionHash(chain, value)) {
+    throw new ChainValidationError(chain, value, "transaction hash");
+  }
   return value;
 }

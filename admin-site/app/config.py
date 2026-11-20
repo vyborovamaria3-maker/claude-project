@@ -127,6 +127,14 @@ class Settings:
             raise RuntimeError("ADMIN_ALLOWED_ORIGINS must be configured in production")
         if production and not self.allowed_networks:
             raise RuntimeError("ADMIN_ALLOWED_NETWORKS must be configured in production")
+        if production and any(network.prefixlen == 0 for network in self.allowed_networks):
+            raise RuntimeError(
+                "ADMIN_ALLOWED_NETWORKS must not include default-route CIDRs (0.0.0.0/0 or ::/0)"
+            )
+        if production and not self.trust_proxy:
+            raise RuntimeError("ADMIN_TRUST_PROXY must be enabled behind the production loopback Nginx proxy")
+        if production and self.trusted_proxy_hops != 1:
+            raise RuntimeError("ADMIN_TRUSTED_PROXY_HOPS must be 1 for the configured production Nginx proxy")
         if production and not _env_bool("ADMIN_REQUIRE_NETWORK_ALLOWLIST"):
             raise RuntimeError("ADMIN_REQUIRE_NETWORK_ALLOWLIST must be enabled in production")
         if production and not _env_bool("ADMIN_REQUIRE_MFA"):

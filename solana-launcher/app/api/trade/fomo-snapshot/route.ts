@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
-import { GET as getTwitterStats } from "../dev-twitter/route";
+import { POST as getTwitterStats } from "../dev-twitter/route";
 import { fetchBackendSocial } from "@/lib/trade/backend-social-proxy";
 import { buildSocialSourceParams } from "@/lib/trade/social-intelligence-api";
 import {
@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
     const params = buildSocialSourceParams(mint, FOMO_CAPTURE_OPTIONS);
     const xUrl = new URL("/api/trade/dev-twitter", request.nextUrl.origin);
     for (const [key, value] of params.x) xUrl.searchParams.append(key, value);
-    const xRequest = new NextRequest(xUrl, { method: "GET", headers: { Accept: "application/json" } });
+    const xRequest = new NextRequest(xUrl, { method: "POST", headers: { Accept: "application/json" } });
 
     const [xResponse, tgResponse] = await Promise.all([
       getTwitterStats(xRequest),

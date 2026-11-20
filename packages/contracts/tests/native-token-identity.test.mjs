@@ -7,7 +7,7 @@ import {
 const mint = "So11111111111111111111111111111111111111112";
 const secondMint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
-test("TG tuple, X mint and chain swap mint resolve to one shared token ID", () => {
+test("TG tuple, X mint and chain swap mint resolve to one shared Solana token ID", () => {
   // Native stores are independent; only known/verified evidence is eligible
   // for a token-link event. Identity normalization is not that verification.
   const tg = canonicalTokenIdFromNative("solana-mainnet", mint);
@@ -18,19 +18,15 @@ test("TG tuple, X mint and chain swap mint resolve to one shared token ID", () =
   assert.deepEqual(parseTokenId(tg), {chain:"solana",address:mint,mint,id:tg});
 });
 
-test("different mints, ambiguous tickers and mismatched chains never join", () => {
+test("different mints, ambiguous tickers and unsupported networks never join", () => {
   assert.notEqual(canonicalTokenIdFromNative("solana-mainnet",mint),
     canonicalTokenIdFromNative("solana-mainnet",secondMint));
   for (const raw of ["$SOL","SOL","So1111...","",null,undefined]) {
     assert.throws(() => canonicalTokenIdFromNative("solana-mainnet",raw));
   }
-  for (const chain of ["solana-devnet","solana-testnet","polygon","Solana",""]) {
+  for (const chain of ["solana-devnet","solana-testnet","polygon","ethereum","base","arbitrum","bitcoin","Solana",""]) {
     assert.throws(() => canonicalTokenIdFromNative(chain,mint), /Unsupported/);
   }
-  const evm="0x"+"Aa".repeat(20);
-  assert.equal(canonicalTokenIdFromNative("base",evm),"base:"+evm.toLowerCase());
-  assert.notEqual(canonicalTokenIdFromNative("base",evm),
-    canonicalTokenIdFromNative("ethereum",evm));
 });
 
 test("address syntax does not assert mint verification or token ownership", () => {

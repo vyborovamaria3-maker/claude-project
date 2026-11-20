@@ -7,9 +7,12 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ADMIN_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 REPO_DIR="$(cd -- "$ADMIN_DIR/.." && pwd)"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/potapoff-admin}"
+DEPLOYED_SHA_FILE="${DEPLOYED_SHA_FILE:-$BACKUP_ROOT/DEPLOYED_GIT_SHA}"
 EXPECTED_ORIGIN="${EXPECTED_ORIGIN:-https://admin.potapoff.fun}"
 EXPECTED_COMMIT="${EXPECTED_COMMIT:-}"
 COMPOSE=(docker compose --project-directory "$ADMIN_DIR" -f "$ADMIN_DIR/docker-compose.yml")
+source "$SCRIPT_DIR/deployed-sha.sh"
+ADMIN_STATE_MIGRATION_APPLIED=0
 
 log() { printf '[deploy] %s\n' "$*"; }
 die() { printf '[deploy] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -65,6 +68,8 @@ preflight() {
   [[ -f "$ADMIN_DIR/.env.intelligence" ]] || die "missing $ADMIN_DIR/.env.intelligence"
   [[ -f "$ADMIN_DIR/sources.json" ]] || die "missing $ADMIN_DIR/sources.json"
   [[ -f "$ADMIN_DIR/logs.json" ]] || die "missing $ADMIN_DIR/logs.json"
+  bash "$SCRIPT_DIR/refresh-runtime-env.sh"
+  [[ -f "$ADMIN_DIR/.env.runtime" ]] || die "runtime environment was not generated"
 
   [[ "$(env_get ADMIN_ENVIRONMENT)" == "production" ]] || die "ADMIN_ENVIRONMENT must be production"
   require_nonempty ADMIN_PASSWORD_HASH
@@ -77,6 +82,9 @@ preflight() {
   require_true ADMIN_REQUIRE_MFA
   require_true ADMIN_REQUIRE_REAUTH
   require_true ADMIN_REQUIRE_NETWORK_ALLOWLIST
+  require_true ADMIN_TRUST_PROXY
+  require_nonempty ADMIN_TRUSTED_PROXY_HOPS
+  [[ "$(env_get ADMIN_TRUSTED_PROXY_HOPS)" == "1" ]] || die "ADMIN_TRUSTED_PROXY_HOPS must be 1 for the configured local Nginx proxy"
   require_true ADMIN_SESSION_BIND_IP
   require_true ADMIN_SESSION_BIND_USER_AGENT
 
@@ -89,6 +97,13 @@ preflight() {
   state_password="$(env_get ADMIN_STATE_DB_PASSWORD)"
   allowed_networks="$(env_get ADMIN_ALLOWED_NETWORKS)"
   workers="$(env_get ADMIN_WEB_WORKERS)"; workers="${workers:-1}"
+  local -a allowed_network_list
+  local network
+  IFS=',' read -r -a allowed_network_list <<< "$allowed_networks"
+  for network in "${allowed_network_list[@]}"; do
+    network="${network//[[:space:]]/}"
+    [[ "$network" != "0.0.0.0/0" && "$network" != "::/0" ]] || die "ADMIN_ALLOWED_NETWORKS must not include default-route CIDRs"
+  done
   [[ ${#session_secret} -ge 32 ]] || die "ADMIN_SESSION_SECRET must be at least 32 characters"
   [[ ${#state_password} -ge 24 ]] || die "ADMIN_STATE_DB_PASSWORD should be at least 24 characters"
   [[ "$workers" =~ ^[1-8]$ ]] || die "ADMIN_WEB_WORKERS must be between 1 and 8"
@@ -120,12 +135,17 @@ preflight() {
 }
 
 backup_state() {
-  local stamp dir
+  local stamp dir current_sha previous_sha
+  current_sha="$(git -C "$REPO_DIR" rev-parse --verify HEAD)"
+  previous_sha="$(resolve_previous_deployed_sha "$REPO_DIR" "$DEPLOYED_SHA_FILE" "${PREVIOUS_GIT_SHA:-}")" || die "cannot establish the previously deployed Git SHA"
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  dir="$BACKUP_ROOT/$stamp"
-  install -d -m 0700 "$BACKUP_ROOT" "$dir"
-  git -C "$REPO_DIR" rev-parse HEAD > "$dir/git-sha.txt"
-  for file in .env .env.intelligence sources.json logs.json; do
+  install -d -m 0700 "$BACKUP_ROOT"
+  dir="$(mktemp -d "$BACKUP_ROOT/$stamp.XXXXXX")"
+  if [[ -n "$previous_sha" ]]; then
+    printf "%s\n" "$previous_sha" > "$dir/git-sha.txt"
+  fi
+  printf "%s\n" "$current_sha" > "$dir/target-git-sha.txt"
+  for file in .env .env.runtime .env.intelligence sources.json logs.json; do
     if [[ -f "$ADMIN_DIR/$file" ]]; then
       cp -a "$ADMIN_DIR/$file" "$dir/$file"
       chmod 0600 "$dir/$file" || true
@@ -133,11 +153,22 @@ backup_state() {
   done
   docker inspect potapoff-admin > "$dir/potapoff-admin.inspect.json" 2>/dev/null || true
   docker inspect potapoff-intelligence > "$dir/potapoff-intelligence.inspect.json" 2>/dev/null || true
-  if docker inspect potapoff-admin >/dev/null 2>&1; then
-    docker cp potapoff-admin:/var/lib/potapoff-admin/audit.db "$dir/audit.db" 2>/dev/null || true
-  fi
   printf '%s\n' "$dir" > "$BACKUP_ROOT/LATEST"
   log "backup created: $dir"
+}
+
+backup_legacy_admin_state() {
+  local backup_dir
+  backup_dir="$(cat "$BACKUP_ROOT/LATEST")"
+  if "${COMPOSE[@]}" run --rm --no-deps admin-db-provisioner sh -c 'test -f "$ADMIN_AUDIT_DB"'; then
+    log "capturing a consistent SQLite audit snapshot after Admin writes are stopped"
+    "${COMPOSE[@]}" run --rm --no-deps admin-db-provisioner \
+      python scripts/backup_admin_state_sqlite.py > "$backup_dir/audit.db"
+    [[ -s "$backup_dir/audit.db" ]] || die "SQLite admin state backup is empty"
+    chmod 0600 "$backup_dir/audit.db"
+  else
+    log "no legacy SQLite admin state found; backup skipped"
+  fi
 }
 
 verify_sources() {
@@ -168,9 +199,11 @@ PY
 }
 
 migrate_admin_state() {
-  if "${COMPOSE[@]}" run --rm --no-deps admin sh -c 'test -f "$ADMIN_AUDIT_DB"'; then
-    log "migrating SQLite admin state to shared PostgreSQL"
-    "${COMPOSE[@]}" run --rm --no-deps admin python scripts/migrate_admin_state_to_postgres.py
+  ADMIN_STATE_MIGRATION_APPLIED=0
+  if "${COMPOSE[@]}" run --rm --no-deps admin-db-provisioner sh -c 'test -f "$ADMIN_AUDIT_DB"'; then
+    log "migrating SQLite admin state to shared PostgreSQL with the dedicated migration role"
+    "${COMPOSE[@]}" run --rm --no-deps admin-db-provisioner python scripts/migrate_admin_state_to_postgres.py
+    ADMIN_STATE_MIGRATION_APPLIED=1
   else
     log "no legacy SQLite admin state found; migration skipped"
   fi
@@ -202,6 +235,27 @@ deploy() {
   preflight
   backup_state
 
+  local admin_was_running=0 admin_stopped=0 admin_cutover_started=0
+  restore_previous_admin_on_failure() {
+    local status="$1"
+    trap - EXIT
+    if (( status != 0 && admin_was_running == 1 && admin_stopped == 1 &&
+          admin_cutover_started == 0 && ADMIN_STATE_MIGRATION_APPLIED == 0 )); then
+      log "deployment failed before SQLite cutover; restarting the previous Admin container"
+      docker start potapoff-admin >/dev/null 2>&1 || true
+      wait_healthy potapoff-admin 120 || true
+    elif (( status != 0 && admin_stopped == 1 &&
+            admin_cutover_started == 0 && ADMIN_STATE_MIGRATION_APPLIED == 1 )); then
+      log "SQLite-to-PostgreSQL migration completed; previous Admin remains stopped to prevent divergent writes"
+      log "Operator recovery must roll forward or explicitly restore the captured SQLite snapshot"
+    elif (( status != 0 && admin_stopped == 1 && admin_cutover_started == 1 )); then
+      log "Admin cutover was started; automatic restart of the previous container is suppressed"
+      log "Inspect the new Admin health and use the documented rollback procedure if needed"
+    fi
+    exit "$status"
+  }
+  trap 'restore_previous_admin_on_failure "$?"' EXIT
+
   docker network inspect potapoff-shared >/dev/null 2>&1 || docker network create potapoff-shared >/dev/null
   log "building immutable runtime images"
   "${COMPOSE[@]}" build --pull admin intelligence-worker
@@ -211,6 +265,22 @@ deploy() {
   wait_healthy potapoff-admin-postgres 120
 
   verify_sources
+
+  # Freeze the legacy SQLite writer before taking the final snapshot and
+  # migrating it. This prevents audit/revocation rows being committed after
+  # the migration snapshot but before the Admin container cutover.
+  if [[ "$(docker inspect -f '{{.State.Running}}' potapoff-admin 2>/dev/null || true)" == "true" ]]; then
+    admin_was_running=1
+    admin_stopped=1
+    log "stopping the previous Admin container to freeze legacy SQLite writes"
+    "${COMPOSE[@]}" stop --timeout 30 admin
+  fi
+  backup_legacy_admin_state
+
+  # Provision restricted roles and the schema before attempting the SQLite
+  # cutover. The migration itself runs separately with the migrator identity.
+  log "provisioning restricted Admin PostgreSQL roles and schema"
+  "${COMPOSE[@]}" run --rm --no-deps admin-db-provisioner
   migrate_admin_state
 
   log "capturing PostgreSQL backup after migration"
@@ -225,10 +295,15 @@ deploy() {
   fi
 
   log "cutting over admin and intelligence containers"
+  admin_cutover_started=1
   "${COMPOSE[@]}" up -d admin intelligence-worker
   wait_healthy potapoff-admin 180
   wait_healthy potapoff-intelligence 180
   smoke
+  local deployed_sha
+  deployed_sha="$(write_deployed_sha "$REPO_DIR" "$DEPLOYED_SHA_FILE")" || die "could not persist the successfully deployed Git SHA"
+  log "recorded successfully deployed commit=$deployed_sha"
+  trap - EXIT
   log "DEPLOY_OK backup=$backup_dir"
 }
 

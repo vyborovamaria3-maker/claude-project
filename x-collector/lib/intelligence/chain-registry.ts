@@ -54,15 +54,12 @@ class DatabaseChainAdapter implements BlockchainAdapter {
   constructor(private readonly db: ChainQueryable, readonly chain: SupportedChain) {}
 
   private variants(value: string): string[] {
-    const normalized =
-      this.chain === "ethereum" || this.chain === "bitcoin"
-        ? value.toLowerCase()
-        : value;
-    return [...new Set([value, normalized])];
+    // Solana public keys are case-sensitive; no cross-network normalization.
+    return [value];
   }
 
   async getTransaction(hash: string): Promise<ChainTransaction | null> {
-    const variants = [...new Set([hash, normalizeTransactionHash(this.chain, hash)])];
+    const variants = [normalizeTransactionHash(this.chain, hash)];
     const result = await this.db.query<{
       hash: string;
       amount: string;

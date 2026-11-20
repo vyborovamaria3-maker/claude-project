@@ -100,6 +100,21 @@ class AdminSecurityHardeningTest(unittest.TestCase):
         self.assertIn("function cell(value)", app_js)
         self.assertIn("escapeHtml(text", app_js)
 
+    def test_sensitive_database_columns_cover_auth_and_bot_tokens_without_masking_public_mints(self):
+        from app.database import is_sensitive
+
+        for column in (
+            "bot_token", "botToken", "telegramBotToken", "jwt_token",
+            "webhookToken", "auth-token", "apiToken", "bearer_token",
+            "refreshToken", "access_token", "privateKey", "initData",
+        ):
+            with self.subTest(column=column):
+                self.assertTrue(is_sensitive(column), column)
+
+        for column in ("token_mint", "token_symbol", "mint_address", "wallet_address"):
+            with self.subTest(column=column):
+                self.assertFalse(is_sensitive(column), column)
+
     def test_login_form_preserves_invalid_credentials_message(self):
         response = self.client.post("/api/login", json={"username":"admin","password":"wrong"})
         self.assertEqual(response.status_code, 401)

@@ -19,7 +19,7 @@ permissions:
   contents: read
 jobs:
   collector:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16
@@ -44,6 +44,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Install PostgreSQL 16 client tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client-16
+          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+          export PATH="/usr/lib/postgresql/16/bin:$PATH"
+          pg_dump --version | grep -Eq ' 16[.]'
+          pg_restore --version | grep -Eq ' 16[.]'
+          psql --version | grep -Eq ' 16[.]'
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Typecheck

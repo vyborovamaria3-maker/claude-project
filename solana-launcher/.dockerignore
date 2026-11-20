@@ -14,5 +14,10 @@ tmp
 **/.env.*
 *.pem
 *.key
+backend.env*
+*.env
+**/*.env
+*.env.*
+**/*.env.*
 storage-state.json
 *.storage-state.json

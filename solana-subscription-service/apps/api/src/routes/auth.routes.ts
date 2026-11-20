@@ -3,9 +3,9 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { asyncHandler } from "../utils/async-handler";
 import { clearAuthCookies, setAuthCookies } from "../security/cookies";
-import { isRefreshTokenActive, revokeRefreshToken, signAccessToken, signRefreshToken, verifyRefreshToken } from "../security/tokens";
+import { revokeRefreshToken, rotateRefreshToken, signAccessToken, signRefreshToken, verifyRefreshToken } from "../security/tokens";
 import { verifyTelegramLoginWidget, verifyTelegramMiniAppInitData } from "../security/telegram";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, requireCsrf } from "../middleware/auth";
 
 const router = Router();
 
@@ -50,6 +50,7 @@ router.post(
 
 router.post(
   "/refresh",
+  requireCsrf,
   asyncHandler(async (req, res) => {
     const refreshToken = req.cookies?.refresh_token as string | undefined;
     if (!refreshToken) {
@@ -57,14 +58,13 @@ router.post(
     }
 
     const payload = verifyRefreshToken(refreshToken);
-    const active = await isRefreshTokenActive(payload.jti, payload.sub);
-    if (!active) {
+    // Sign the access token before the atomic Redis rotation so a local signing
+    // error cannot revoke the only valid refresh token.
+    const accessToken = signAccessToken(payload.sub, payload.telegramId);
+    const nextRefreshToken = await rotateRefreshToken(payload.jti, payload.sub, payload.telegramId);
+    if (!nextRefreshToken) {
       return res.status(401).json({ error: "REFRESH_TOKEN_REVOKED" });
     }
-
-    await revokeRefreshToken(payload.jti);
-    const accessToken = signAccessToken(payload.sub, payload.telegramId);
-    const nextRefreshToken = await signRefreshToken(payload.sub, payload.telegramId);
     const csrfToken = setAuthCookies(res, accessToken, nextRefreshToken);
     res.json({ ok: true, csrfToken });
   })
@@ -72,6 +72,7 @@ router.post(
 
 router.post(
   "/logout",
+  requireCsrf,
   asyncHandler(async (req, res) => {
     const refreshToken = req.cookies?.refresh_token as string | undefined;
     if (refreshToken) {

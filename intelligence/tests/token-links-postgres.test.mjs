@@ -7,7 +7,7 @@ import {
   buildEntityRef,buildEvidenceRef,buildVerifiedTokenLinkEvent,
   buildTokenLinksInvalidatedEvent,formatSourceId,formatAuthorId,formatTokenId,canonicalTokenIdFromNative,
 } from "@claude-project/contracts";
-import {runDeliveryBatch,queryActiveTokenLinks,queryTokenTimeline,storeEncryptedEventText,readEncryptedEventText} from "../dist/index.js";
+import {runDeliveryBatch,processInvalidationBatch,queryActiveTokenLinks,queryTokenTimeline,storeEncryptedEventText,readEncryptedEventText} from "../dist/index.js";
 
 const url=process.env.INTELLIGENCE_TEST_DB_URL;
 const mint="So11111111111111111111111111111111111111112";
@@ -45,7 +45,9 @@ function invalidated(at){
   });
 }
 function envelope(event){
-  return {...event,id:"1",attempts:0,leaseOwner:"worker",
+  const observedAt=event.payload.registryEvent.evidenceRef.observedAt;
+  const createdAt=new Date(Date.parse(observedAt)+1000).toISOString();
+  return {...event,id:"1",createdAt,attempts:0,leaseOwner:"worker",
     leaseUntil:"2026-10-20T02:00:00Z"};
 }
 async function send(destination,event){
@@ -70,10 +72,11 @@ test("real PostgreSQL: late arrivals, edit retractions, historical as-of and rep
   try{
     await admin.query('CREATE SCHEMA "'+schema+'"');
     await admin.query('SET search_path TO "'+schema+'"');
-    for(const filename of ["001_entity_registry.sql","002_timeline.sql","003_feature_store.sql",
+    for(const filename of ["001_entity_registry.sql","017_inbox_payload_fingerprint.sql","002_timeline.sql","003_feature_store.sql",
       "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql",
       "006_cross_platform_analytics.sql","008_alert_status_history.sql","009_ai_analysis.sql",
-      "010_intelligence_governance.sql"]){
+      "010_intelligence_governance.sql","013_invalidation_retry_schedule.sql",
+      "018_event_revision_invalidation.sql"]){
       await admin.query(await readFile(new URL("../migrations/"+filename,import.meta.url),"utf8"));
     }
     pool=new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:3});
@@ -224,8 +227,32 @@ test("real PostgreSQL: late arrivals, edit retractions, historical as-of and rep
       GROUP BY source_system ORDER BY source_system`);
     assert.deepEqual(retractions.rows,[{source_system:"tg",n:1},{source_system:"x",n:1}],
       "one recomputation per independent source retraction; duplicates do not enqueue again");
-    assert.equal((await pool.query("SELECT count(*)::integer AS n FROM analytics_invalidation_log")).rows[0].n,
-      (await pool.query("SELECT count(*)::integer AS n FROM analytics_invalidation_queue")).rows[0].n);
+    const queueCount=(await pool.query(
+      "SELECT count(*)::integer AS n FROM analytics_invalidation_queue"
+    )).rows[0].n;
+    const auditedCount=(await pool.query(
+      "SELECT count(DISTINCT invalidation_id)::integer AS n FROM analytics_invalidation_log"
+    )).rows[0].n;
+    assert.equal(auditedCount,queueCount,
+      "every queued invalidation has an append-only audit entry");
+
+    // Verified-link assertions and their retractions intentionally have no
+    // timeline_events row. The worker must resolve their source day from the
+    // registry's entity_evidence row and complete the queue without retries.
+    const invalidationClient=await pool.connect();
+    let invalidationResult;
+    try{
+      invalidationResult=await processInvalidationBatch(invalidationClient,20);
+    }finally{
+      invalidationClient.release();
+    }
+    assert.equal(invalidationResult.completed,queueCount);
+    assert.equal(invalidationResult.retried,0);
+    assert.equal(invalidationResult.failed,0);
+    const unfinished=(await pool.query(
+      "SELECT count(*)::integer AS n FROM analytics_invalidation_queue WHERE status<>'completed'"
+    )).rows[0].n;
+    assert.equal(unfinished,0,"all evidence-only link invalidations must complete");
   }finally{
     if(pool)await pool.end();
     await admin.query("SET search_path TO public");

@@ -459,9 +459,11 @@ function ensurePilotScope(db, seedToken, pilotBudgetCredits = 1000000, pilotBudg
   }).immediate();
   return scopeId;
 }
-function startCollectionRun(db, args, scopeId = null) {
+function startCollectionRun(db, args, scopeId = null, at = Date.now()) {
+  // The optional `at` parameter exists so regression tests can pin one
+  // controlled billing-period time; production keeps the real clock.
+  const now = Number.isFinite(at) ? at : Date.now();
   const runId = randomUUID();
-  const now = Date.now();
   db.prepare(
     "INSERT INTO chain_collection_runs(run_id,scope_id,started_at,run_budget_credits,monthly_budget_credits,monthly_baseline_credits,budget_period_start_day,budget_period_start_day_confirmed,page_credit_estimate,max_objects,max_runtime_ms,status) " +
     "VALUES(?,?,?,?,?,?,?,?,?,?,?,'running')"

@@ -1,11 +1,18 @@
-# Baseline: supplied ZIP, 2026-10-12
+# Current architecture — source-verified baseline and dated updates
 
-Repository inventory: x-collector (Node/TypeScript), solana-launcher (Next.js plus Python backend/frontend), intelligence (Python ingestion/scoring), admin-site, memecoin-intelligence, cockpit-tools, subscription service, Telegram miniapp and supporting scripts. This audit follows the collector execution paths; other products are inventoried, not exhaustively reviewed.
+**The old 2026-10-12 baseline below is historical and is not the whole-repository architecture.** It was scoped mainly to X Collector and must not be used as the source of truth for all products.
 
-Collector: scripts/scheduler.ts schedules analytics and enqueueTasks under PostgreSQL advisory locks. lib/trade/tasks.ts owns durable x_tasks, retry and x_tasks_dlq; claim uses FOR UPDATE SKIP LOCKED. scripts/worker.ts claims one task, validates schemas, reserves x_accounts, decrypts sessions, calls searchTweets/fetchUserTimeline/fetchAccountProfile and saves through collector-store.ts. These are real Playwright operations, including list/history modes and incremental batches. An opt-in X_COLLECTOR=src search path uses src/x/task-handler.ts/searchX.
+The source-audit snapshot and target design are preserved as dated artifacts:
 
-Storage: lib/trade/pg.ts is the shared pool; migrations.ts lists required SQL migrations (including repeated numeric prefixes). Tweets, observations, task links, profiles, archives and raw intelligence events are persisted. src/intelligence/entities/processor.ts extracts deterministic entities; scripts/intelligence-worker.ts normalizes raw events with savepoints and bounded failures. Reply publication has a separate existing runtime and official API adapter.
+- [ARCHITECTURE_AS_IS_20261101.md](ARCHITECTURE_AS_IS_20261101.md) — source audit performed at exact repository HEAD `6273d9fb9f2f987c4ee7932cea0e10f77129f7d9`. It is a dated baseline, not proof of current live deployment.
+- [ARCHITECTURE_TARGET_20261101.md](ARCHITECTURE_TARGET_20261101.md) — target architecture, Solana-only.
 
-Operations: WorkerRegistry persists heartbeat/counters in x_workers. Dashboard exposes existing analytics and collector control with Basic Auth/origin guards. Launcher lib/xcollector.ts starts processes using spawn and tracks handles in memory; it is a local controller, not a durable distributed supervisor. Dockerfile/compose.reply.yml target the reply module. No Redis/BullMQ dependency in collector package.
+Subsequent repository/runtime and release-gate changes are recorded in [RELEASE_GATE_REVIEW_20261103.md](RELEASE_GATE_REVIEW_20261103.md), including the later Node 22 workflow alignment and exact-head CI snapshot. Use that review together with the current PR/check pages rather than silently treating the 2026-11-01 audit SHA as the latest code.
 
-Baseline verification: npm ci succeeded; strict TypeScript passed. Existing tests include PGlite SQL, browser fixtures and optional real PostgreSQL integration. Live X credentials were not provided.
+Status vocabulary:
+- source implementation is not proof of deployment;
+- Compose configuration is not proof that a service is running;
+- CI fixtures are not live production evidence;
+- production DBs, credentials, off-host restore and RPO/RTO remain NOT VERIFIED unless a separate operator record says otherwise.
+
+The previous 2026-10-12 baseline is retained in Git history. Do not copy its runtime assumptions into new documentation without rechecking the current manifests, lockfiles and Compose definitions.

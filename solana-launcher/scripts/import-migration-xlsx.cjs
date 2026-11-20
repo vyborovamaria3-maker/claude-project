@@ -4,11 +4,11 @@ const path = require('node:path');
 const safeXlsx = require('./xlsx-safe-package/index.cjs');
 const originalLoad = Module._load;
 
-// The TypeScript importer historically imports the package name "xlsx". Keep
+// The TypeScript importer imports the local package name "potapoff-safe-xlsx". Keep
 // its source/API stable while forcing that one tooling process onto the local,
 // bounded reader. No code in this process can load the legacy SheetJS module.
 Module._load = function potapoffSafeXlsxLoad(request, parent, isMain) {
-  if (request === 'xlsx') return safeXlsx;
+  if (request === 'potapoff-safe-xlsx') return safeXlsx;
   return originalLoad.call(this, request, parent, isMain);
 };
 

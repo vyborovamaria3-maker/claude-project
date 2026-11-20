@@ -99,7 +99,7 @@ bash /opt/potapoff-deploy/scripts/verify-backup-restore.sh /opt/potapoff-deploy/
 3. Only after the operator confirms a legitimate rotation, update **both** scoped GitHub Secrets `SERVER_SSH_KNOWN_HOSTS` (correct `[hostname]:port` format when port is not 22) and `SERVER_SSH_HOST_KEY_SHA256`. Remove the stale conflicting key from the secret contents; do not blindly delete all SSH trust entries.
 4. Run `SSH connection check` manually on `main`. Capture run URL and sanitized result; verify it uses the pinned SSH helper and the approved target.
 5. Run `POTAPoff backup` manually. Check its exit code and location of a completed, checksum-verified backup (no paths, credentials or archive contents in public issue comments).
-6. On the trusted host, run `verify-backup-restore.sh` against the approved completed backup. It restores into a *disposable no-network Docker* PostgreSQL instance, not into production. Preserve a sanitized checksum/row-count/result summary, and additionally cover independent X/TG PostgreSQL and chain SQLite stores; these are **not** backed up by the POTAPoff server workflow automatically.
+6. On the trusted host, run `verify-backup-restore.sh` against the approved completed backup. It restores into a *disposable no-network Docker* PostgreSQL instance, not into production. Preserve a sanitized checksum/row-count/result summary. X/TG PostgreSQL still require independent restore evidence; Blockchain `trade.db` is now included in the central bundle described in section 8.
 7. Only then consider a controlled deployment using an exact reviewed main SHA with a documented rollback, current Security Gates, and a production smoke test. Verify which `workflow_run` triggers/approvals actually fired; a successful `POTAPoff release images` workflow is not permission to claim deployment succeeded.
 
 **Scoped prevention change:** the release-images workflow now ignores **documentation-only pushes** under `docs/**` and `**/*.md(x)`. A mixed docs + code/config/workflow push still triggers the existing main/CI/image gates. `workflow_dispatch` remains available for an explicitly authorized main release. This removes unnecessary production image publication from readme/architecture-only merges, but does **not** fix the SSH trust incident or restore backups by itself.
@@ -125,3 +125,82 @@ The `POTAPoff production deploy` `workflow_run` path is intentionally **disabled
 **Operator approval sequence:** confirm the genuine SSH host fingerprint through an independent trusted channel; repair pinned GitHub Secrets without disabling strict checking; successfully run manual SSH check, production backup, disposable verified product/admin restore, and production predeploy and smoke tests; configure required `main` branch reviews and repository/environment protection. **Only then** explicitly set `POTAPOFF_AUTODEPLOY_ENABLED=true` under GitHub Settings → Secrets and variables → Actions → Variables (with suitable environment/repository control and independent review). Remove/disable the variable to pause further automatic deployments. `workflow_dispatch` remains available for an operator's intentional manual deployment, still subject to strict release SHA/SSH/predeploy checks.
 
 Until that approval, merging release-workflow corrections can still publish images, **but must not attempt automatic production deployment**.
+
+
+## 8. Unified recovery set and source-to-consumer rehearsal — 2026-10-31 (Draft PR #212)
+
+This section supersedes the historical statements above that the central
+POTAPoff backup omitted SQLite stores. The integrated Draft branch keeps the
+two independent SQLite databases distinct and includes both in one recovery
+set alongside the two PostgreSQL dumps.
+
+### Central POTAPoff backup contents
+
+- `postgres.dump`: product PostgreSQL custom-format dump.
+- `admin-postgres.dump`: Control Center PostgreSQL custom-format dump.
+- `trade.db`: Blockchain SQLite store at the frontend container's
+  `/app/data/trade.db`, captured with `better-sqlite3` SQLite Online Backup
+  API. The source is checked, the snapshot receives a full integrity check,
+  and the synthetic test proves a committed WAL-only row is present.
+- `intelligence.sqlite`: separate Python Intelligence worker database at
+  `/var/lib/potapoff-intelligence/intelligence.sqlite3` in the
+  `potapoff-intelligence` container and `intelligence-state` volume. It is
+  captured with Python's `sqlite3.Connection.backup()`, integrity-checked,
+  and included as a standalone file.
+- Deployment configuration and Control Center server-only configuration
+  required by the existing recovery procedure.
+
+The script builds the recovery set in a private `.incomplete-*` directory,
+rejects missing database sources and symlinks, creates one SHA256 manifest
+covering every regular file, verifies that manifest, and atomically promotes
+the directory only after all required artifacts succeed. A failed attempt
+removes its incomplete directory. The Python worker's temporary snapshot path
+is unique per backup and is cleaned on success or failure.
+
+### Isolated restore evidence
+
+`verify-backup-restore.sh` verifies the complete manifest, restores both
+PostgreSQL custom-format dumps into a network-isolated disposable container,
+and independently restores/checks copies of both SQLite files. The synthetic
+ARCH-02 rehearsal additionally:
+- keeps both the Blockchain SQLite writer and Python Intelligence SQLite
+  writer open with committed rows still in WAL and confirms that both rows
+  survive their respective Online Backup API snapshots;
+- creates a separate Python Intelligence worker and named test volume and
+  verifies the restored fixture row after the WAL-aware snapshot;
+- rejects corrupted PostgreSQL, Blockchain SQLite and Python Intelligence
+  SQLite artifacts;
+- rejects symlinked configuration and missing SQLite source containers;
+- confirms that failed backups do not leave incomplete recovery directories.
+
+These are disposable CI fixtures. They do not prove a real host backup,
+off-host encrypted copy, live production restore, retention, or measured
+RPO/RTO.
+
+### Separate Node Intelligence PostgreSQL and producer integration
+
+The Node cross-source Intelligence PostgreSQL target configured by
+`INTELLIGENCE_DATABASE_URL` is **not** the Python worker's SQLite database
+and is not included in the central POTAPoff bundle. The producer integration
+workflow runs a synthetic custom-format PostgreSQL dump/restore into a
+network-isolated PostgreSQL 17 container, verifies a marker row, and rejects a
+truncated archive. The X Collector quality workflow has its own isolated
+custom-format PostgreSQL restore check. Neither establishes a production
+backup owner or schedule for the Node ETL target or the local X/TG databases.
+
+The producer-to-consumer integration invokes the actual bounded X verifier
+and X outbox emitter, the Telegram parsed-mint verifier and outbox emitter,
+the Blockchain swap-revision writer, and the real Intelligence batch consumer.
+Provider HTTPS responses are mocked; no browser, Telegram session, live RPC,
+production database or external account is used. It verifies source-specific
+provenance, tombstone/retraction behavior, independent Blockchain evidence,
+destination commit/ACK ordering and replay behavior. It is not a live
+collection or sustained-load test.
+
+**Evidence boundary:** the combined recovery and integration work remains in
+Draft PR #212. No production server, live database, SSH secret, provider
+account, off-host backup or deployment was accessed. Keep ARCH-02 and issue
+[#172](https://github.com/vyborovamaria3-maker/claude-project/issues/172)
+OPEN until a named operator inventories physical stores, verifies effective
+grants, creates an approved off-host backup, executes a real isolated restore,
+and records actual restore duration, RPO and RTO.

@@ -152,7 +152,7 @@ export default function DevForensicsPanel({ mint, symbol, devAddress }: Props) {
     setLoadingTw(true);
     setErrorTw(null);
     try {
-      const r = await fetch(`/api/trade/dev-twitter?mint=${encodeURIComponent(mint)}&symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+      const r = await fetch(`/api/trade/dev-twitter?mint=${encodeURIComponent(mint)}&symbol=${encodeURIComponent(symbol)}`, { method: "POST", cache: "no-store" });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
       setTwitter(d);
@@ -168,7 +168,7 @@ export default function DevForensicsPanel({ mint, symbol, devAddress }: Props) {
     setLoadingFo(true);
     setErrorFo(null);
     try {
-      const r = await fetch(`/api/trade/dev-forensics?creator=${encodeURIComponent(devAddress)}`, { cache: "no-store" });
+      const r = await fetch(`/api/trade/dev-forensics?creator=${encodeURIComponent(devAddress)}`, { method: "POST", cache: "no-store" });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
       setForensics(d);

@@ -11,7 +11,9 @@ async function writeUnattributedXSnapshot(tx,row){
   const occurredAt=new Date(published).toISOString();
   const key=`x:ai:tweet:${row.tweet_id}:snapshot:${ms}`,ref=`x:tweet:${row.tweet_id}`;
   // The legacy collector has handles but no stable user IDs. Keep authors/tokens unknown.
-  // This explicit source snapshot is not an unverified registry/outbox envelope.
+  // This explicit source snapshot has no source outbox row or RegistryEvent. Its
+  // dedicated schema is intentionally exempt from source-outbox fingerprint
+  // backfill; the destination timeline row below is its replay guard.
   const inbox=await tx.query(`INSERT INTO intelligence_inbox(source_system,event_kind,event_key,schema_version,evidence_source_id)
     VALUES('x','tweet_observed',$1,'x-unattributed-snapshot-v1',$2)
     ON CONFLICT(source_system,event_kind,event_key) DO UPDATE SET event_key=EXCLUDED.event_key

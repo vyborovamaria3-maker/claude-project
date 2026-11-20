@@ -63,7 +63,13 @@ COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/scripts/configure-telegram.mjs ./scripts/configure-telegram.mjs
 
-RUN groupadd --system potapoff \
+# The standalone server only needs Node.js; remove the bundled npm/corepack
+# toolchain so its vulnerable package-manager dependencies are not shipped.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+    /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+    && ! command -v npm \
+    && ! command -v npx \
+    && groupadd --system potapoff \
     && useradd --system --gid potapoff --home-dir /app --shell /usr/sbin/nologin potapoff \
     && mkdir -p /app/data
 
@@ -73,7 +79,9 @@ EXPOSE 3000
 # Copy both packages explicitly because server-side code imports Playwright.
 COPY --from=builder /app/node_modules/playwright ./node_modules/playwright
 COPY --from=builder /app/node_modules/playwright-core ./node_modules/playwright-core
-RUN test -f /app/node_modules/playwright-core/browsers.json \
+# The production backup command uses the same native SQLite driver as the app.
+RUN node -e "require('better-sqlite3')" \
+    && test -f /app/node_modules/playwright-core/browsers.json \
     && chown -R potapoff:potapoff /app
 
 ENV PORT=3000

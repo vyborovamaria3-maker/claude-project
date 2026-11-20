@@ -74,8 +74,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Install TG dependencies without opening Telegram sessions
-        run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
+          cache: npm
+          cache-dependency-path: tg-collector/package-lock.json
+      - name: Install locked TG dependencies without opening Telegram sessions
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Typecheck native TG emitters
         run: npm run typecheck
       - name: Test verified mint events, edit/delete retractions and transaction rollback
@@ -101,8 +103,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Install X dependencies without Playwright browsers
-        run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
+          cache: npm
+          cache-dependency-path: x-collector/package-lock.json
+      - name: Install locked X dependencies without Playwright browsers
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Typecheck native X verification emitters
         run: npm run typecheck
       - name: Test tweet revision, bounded RPC verifier and native PGlite outbox

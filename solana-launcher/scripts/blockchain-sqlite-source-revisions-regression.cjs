@@ -9,7 +9,7 @@ const previous=process.cwd();
 process.chdir(root);
 require("ts-node").register({skipProject:true,transpileOnly:true,
  compilerOptions:{module:"commonjs",moduleResolution:"node",esModuleInterop:true}});
-const {getDb}=require("../lib/trade/db");
+const {getDb,getReadOnlyDb}=require("../lib/trade/db");
 const db=getDb();
 try {
  const getRevision=()=>db.prepare("SELECT revision FROM database_source_revisions WHERE name='migration_wallet_rows'").get().revision;
@@ -29,8 +29,18 @@ try {
  db.prepare("INSERT INTO wallet_tags(wallet,tag,updated_at) VALUES(?,?,?)").run("wallet-two","test",Date.now());
  assert.equal(db.prepare("SELECT revision FROM database_source_revisions WHERE name='wallet_tags'").get().revision,otherBefore+1);
  assert.equal(getDb(),db,"getDb must reuse initialized connection");
+ const readonly=getReadOnlyDb();
+ assert.equal(readonly.pragma("query_only",{simple:true}),1,"read-only connection must enable query_only");
+ assert.equal(readonly.prepare("SELECT COUNT(*) AS n FROM migration_wallet_rows").get().n,1);
+ assert.throws(
+  ()=>readonly.prepare("UPDATE migration_wallet_rows SET pnl=99 WHERE wallet='wallet-two'").run(),
+  /readonly|query_only/i,
+  "read-only connection must reject writes"
+ );
  console.log("[blockchain-sqlite-source-revisions] OK: DB-backed UPDATE/DELETE/INSERT invalidation even with unchanged MAX(rowid)");
 } finally {
+ global.__TRADE_DB_READONLY__?.close();
+ global.__TRADE_DB_READONLY__=undefined;
  db.close();
  global.__TRADE_DB__=undefined;
  process.chdir(previous);

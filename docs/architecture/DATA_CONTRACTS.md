@@ -24,11 +24,10 @@ Verified against repository main at `8dc7c2943ef08978f55009b15c86cd451517b654` o
 | --- | --- | --- |
 | Solana token | `solana:<full-base58-mint>` | Address must decode to exactly 32 bytes; syntactic validity does **not** prove it is a token mint |
 | Solana wallet | `solana:<full-base58-address>` | Same address format; must not confuse a token account with a verified owner |
-| EVM token/wallet | `ethereum/base/arbitrum:0x<40-hex-lowercase>` | Explicit chain, lower-case normalized |
 | X author | `x:<stable-numeric-author-id>` | Never a mutable `@handle` |
 | X source | `x:account:<stable-numeric-id>` | Account identity, not author promotion/ownership evidence |
 | TG source | `tg:source:<stable-numeric-peer-id>` | Never `tg_sources.id` local surrogate or mutable username |
-| Evidence | `x:tweet:<tweet_id>`; `tg:message:<peer_id>:<message_id>`; `chain:tx:<chain>:<signature-or-hash>` | Provenance refers to source observation; identity and event revision are distinct |
+| Evidence | `x:tweet:<tweet_id>`; `tg:message:<peer_id>:<message_id>`; `chain:tx:solana:<64-byte-base58-signature>` | Provenance refers to source observation; identity and event revision are distinct |
 
 **Adapter discrepancy:** Telegram `tg_tokens.chain_id` / candidates may use `solana-mainnet`, while shared `Chain` uses `solana`. A versioned adapter must explicitly map *verified* mainnet Solana records to the canonical chain. Reject unsupported networks and ambiguous IDs. Preserve native source strings for audit.
 
@@ -131,3 +130,39 @@ For planned boundary choices, see [ADR-0001](ARCHITECTURE_DECISIONS/0001-indepen
 A bounded opt-in X mint verification CLI **already exists** at [`x-collector/scripts/verify-x-token-links.ts`](../../x-collector/scripts/verify-x-token-links.ts). It uses a dedicated source-row-lock/recheck after a valid RPC mint-account proof, enforces three independent opt-ins, RPC budgets and a dry-run default; it does not run automatically with X collection. See [X_MINT_VERIFICATION](X_MINT_VERIFICATION.md). The TG resolver has an opt-in transactional verified source producer. Blockchain is a separate supported/unsupported provider-parsed revision record; neither a raw wallet observation nor a chain revision proves a settled trade or PnL.
 
 Open [#166](https://github.com/vyborovamaria3-maker/claude-project/pull/166) and [#167](https://github.com/vyborovamaria3-maker/claude-project/pull/167) remain draft AI/read-model proposals: reconcile scopes before enabling provider calls or running new migrations. The physical production DB inventory remains unverified, and no real source collection, paid RPC, backup/restore or live cross-source emission was executed in this documentation work.
+
+
+## Solana-only target decision — 2026-11-01
+
+This addendum supersedes earlier references in this historical inventory that described EVM chains as supported product networks.
+
+**Approved target scope: Solana only.** New canonical token IDs, verified token links, Blockchain evidence and cross-source token timelines must use `solana:<full-base58-mint>`. Do not add Ethereum, Base, Arbitrum, Bitcoin or other chain collectors/producers.
+
+The canonical cross-source path has now been narrowed to Solana:
+- `packages/contracts` accepts only Solana token/wallet IDs and Solana transaction signatures;
+- Node Intelligence rejects non-Solana chain transaction evidence;
+- X Collector's optional JSON importer and database adapter accept Solana only;
+- TG graph extraction v5 emits only Solana address links. The historical SQL target kind `evm_address` remains readable for existing rows; it is not emitted by the current parser.
+
+Remaining legacy paths are outside the canonical cross-source contract:
+- KOL and Telegram dataset/curator modules still contain EVM address extraction or lookup code;
+- `solana-wallet-warmup` retains cross-chain bridge prototype configuration.
+
+These paths are **not a supported multi-chain product architecture** and require separate retirement/review. Existing EVM/Bitcoin historical rows are preserved; no applied SQL migration is rewritten by this change.
+
+The Solana-only decision does not change the independent source ownership model: X and TG remain social evidence sources; Blockchain remains a logical module inside Solana Launcher until an explicit extraction decision is implemented. See [ARCHITECTURE_AS_IS_20261101](ARCHITECTURE_AS_IS_20261101.md) and [ARCHITECTURE_TARGET_20261101](ARCHITECTURE_TARGET_20261101.md).
+
+
+## 2026-11-04 follow-up — inbox identity and source delivery
+
+The current PR #212 integration candidate contains X/TG/Blockchain producer adapters and a synthetic producer-to-consumer test. This is offline/CI evidence, not live provider validation.
+
+The candidate adds an additive Intelligence schema revision 017 for inbox payload fingerprints. New intelligence_inbox rows store SHA-256 of the complete normalized RegistryEvent, including sorted entity references and evidence provenance. A repeated source_system/event_kind/event_key is a duplicate only when schema version, evidence source ID and payload fingerprint all match. A changed entity set or evidence revision is rejected as an identity collision before source ACK. Legacy rows with payload_sha256 NULL are not silently accepted as duplicates.
+
+For an existing destination, apply migration 017_inbox_payload_fingerprint.sql to the isolated/approved Intelligence database before enabling source claims. The bounded backfill utility reads retained source outbox rows in read-only transactions and, only when explicitly opted in, writes the fingerprint column in the destination. It does not claim, ACK, migrate or mutate source databases. Rows whose original source event is missing or ambiguous remain unverified and must not be guessed.
+
+checkDestination now fails closed when the inbox fingerprint column is absent. New installations receive the column in migration 001; existing installations require additive migration 017. Migration 007 remains optional where pgvector is not installed.
+
+During a staged rollout where migration 010 is present but migration 018 has not yet added revision coalescing, source delivery writes invalidations using migration 010's event-key uniqueness and audit log. It must not ACK a revision while silently skipping the queue. After migration 018 is applied, delivery uses the evidence-level coalescing key; the legacy path may temporarily retain multiple rows for separate revisions. If migration 018 has only partially added its columns, delivery still uses event-key uniqueness and populates any newly-added `coalesce_key` with the event key, preserving the ability to finish building the coalescing index without creating duplicate coalescing keys.
+
+The foreground Intelligence supervisor remains opt-in. Its existence does not prove a persistent production service, live source access or automatic restart after host reboot.

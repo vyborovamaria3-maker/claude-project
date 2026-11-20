@@ -1,9 +1,13 @@
 name: Memecoin Intelligence CI
 
-# P1 runner isolation: pull_request events execute untrusted PR code and are not
-# allowed on the shared self-hosted runner. CI for PRs runs in the dedicated
-# PR-safe workflows instead (repository-hygiene, security-gates).
+# P1 runner isolation: pull_request events execute untrusted PR code and must
+# never land on the shared self-hosted runner, so they run on ephemeral
+# GitHub-hosted runners. Push to main keeps the self-hosted selection.
 on:
+  pull_request:
+    paths:
+      - "memecoin-intelligence/**"
+      - ".github/workflows/memecoin-intelligence.yml"
   push:
     branches: [main]
     paths:
@@ -16,7 +20,8 @@ permissions:
 # Runner selection is controlled centrally by POTAPOFF_RUNNER; self-hosted is the default.
 jobs:
   validate:
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     defaults:
       run:
         working-directory: memecoin-intelligence
@@ -35,13 +40,19 @@ jobs:
         run: npm run build
       - name: Validate production Compose
         env:
+          POSTGRES_USER: memecoin
+          POSTGRES_DB: memecoin
           POSTGRES_PASSWORD: ci-postgres-password
+          POSTGRES_APP_PASSWORD: ci-postgres-app-password
+          POSTGRES_MIGRATOR_PASSWORD: ci-postgres-migrator-password
+          POSTGRES_READONLY_PASSWORD: ci-postgres-readonly-password
           REDIS_PASSWORD: ci-redis-password
           INTERNAL_ADMIN_API_KEY: ci-admin-key
         run: docker compose -f docker-compose.production.yml config >/dev/null
 
   security:
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     defaults:
       run:
         working-directory: memecoin-intelligence
@@ -55,8 +66,8 @@ jobs:
       - name: Dependency audit
         # Aligned with the repo-standard production dependency audit
         # (security/audit/npm-audit-policy.mjs): the dev tree carries the
-        # unfixed picomatch ReDoS advisory (GHSA-fc5q-39xc-vjpf) via
-        # build tooling (vite/vitest/chokidar), which would keep a full-tree
+        # unfixed picomatch ReDoS advisory (GHSA-fc5q-39xc-vjpf) via build
+        # tooling (vite/vitest/chokidar), which would keep a full-tree
         # --audit-level=high gate permanently red until upstream publishes a
         # fix. The production tree is audited fail-closed against high/
         # critical findings.

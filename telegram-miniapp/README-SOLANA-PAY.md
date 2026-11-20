@@ -1,140 +1,74 @@
-# Telegram Mini App + Solana Pay (USDT)
+# Telegram MiniApp + Solana Pay — prototype notes
 
-Telegram Mini App с оплатой подписки через Solana Pay (1000 USDT на 1 год).
+Этот документ описывает prototype flow оплаты через Solana Pay. Он не является подтверждением production deployment, фактического приёма платежей или того, что подписки уже централизованы в этом приложении.
 
-## Архитектура
+## Фактическая структура
 
-```
+```text
 telegram-miniapp/
-├── backend-new/          # Node.js + Express + Prisma + PostgreSQL
-│   ├── src/
-│   │   ├── config/       # Конфигурация
-│   │   ├── controllers/  # API handlers
-│   │   ├── services/     # Solana, DB логика
-│   │   └── index.ts      # Express сервер
-│   ├── prisma/schema.prisma  # User, Payment модели
-│   └── .env.example
-├── frontend/             # React + Vite (адаптирован)
-│   ├── src/
-│   │   ├── components/PayButton.tsx      # Кнопка оплаты
-│   │   ├── components/SubscriptionStatus.tsx  # Статус подписки
-│   │   ├── hooks/useSubscription.ts      # Проверка статуса
-│   │   ├── lib/telegram.ts               # Telegram WebApp SDK
-│   │   ├── lib/api.ts                    # API клиент
-│   │   └── App.tsx                       # Основной компонент
-│   └── .env.example
-└── backend/            # Python бот (aiogram) - запуск Mini App
-    └── bot.py
+├── frontend/       # Vite + React + Telegram WebApp SDK
+├── bot/            # Node.js + node-telegram-bot-api
+└── backend-new/    # Node.js + Express + Prisma
 ```
 
-## Быстрый старт
+Каталога `backend/` с Python/aiogram в текущей ревизии нет. Старые инструкции запуска Python bot удалены как не соответствующие исходникам.
 
-### 1. Подготовка окружения
+## Storage — важно
 
-Создайте `.env` файлы:
+`backend-new/prisma/schema.prisma` задаёт:
 
-**backend-new/.env:**
+```prisma
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+```
+
+Актуальный пример в `backend-new/.env.example`:
+
 ```env
-PORT=3001
-DATABASE_URL=postgresql://user:pass@localhost:5432/miniapp
-SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY
-USDT_MINT=Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB
-MERCHANT_WALLET=YOUR_SOLANA_WALLET_ADDRESS
-HELIUS_API_KEY=your_helius_api_key
-HELIUS_WEBHOOK_SECRET=your_webhook_secret
-FRONTEND_URL=https://your-frontend.vercel.app
-TELEGRAM_BOT_TOKEN=your_bot_token
+DATABASE_URL=file:./dev.db
 ```
 
-**frontend/.env:**
-```env
-VITE_API_URL=https://your-backend.render.com
-```
+Поэтому прежний пример `postgresql://...` в этом документе был неверен для текущей схемы. PostgreSQL нельзя считать текущим backend storage без отдельного изменения Prisma provider, миграции и restore-tested перехода.
 
-### 2. База данных
+## Подпроект backend-new
 
-```bash
-cd backend-new
-npm install
-npx prisma generate
-npx prisma migrate dev --name init
-npm run dev
-```
+Точка входа: `backend-new/src/index.ts`.
 
-### 3. Фронтенд
+В коде объявлены:
+- `GET /health`;
+- `POST /api/subscription/create`;
+- `GET /api/subscription/status`;
+- `POST /webhook/helius`;
+- `GET /webhook/helius/health`.
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+Backend config находится в `backend-new/src/config`; Prisma models — User и Payment. Пример env — `backend-new/.env.example`.
 
-### 4. Python бот (запуск Mini App)
+## Frontend и bot
 
-```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python bot.py
-```
+Frontend:
+- каталог `frontend/`;
+- Vite + React;
+- API base URL через `VITE_API_URL`.
 
-## Helius Webhook настройка
+Bot:
+- каталог `bot/`;
+- Node.js `node-telegram-bot-api`;
+- ожидает `BOT_TOKEN` и `WEBAPP_URL`;
+- polling runtime.
 
-1. Зарегистрируйтесь на [helius.dev](https://helius.dev)
-2. Создайте Webhook с URL: `https://your-backend.com/webhook/helius`
-3. Выберите события: `NATIVE_TRANSFERS`, `TOKEN_TRANSFERS`
-4. Укажите account address: ваш `MERCHANT_WALLET`
+Эти части — отдельные процессы. Их наличие в монорепозитории не доказывает, что они развёрнуты вместе.
 
-## Flow оплаты
+## Ограничения
 
-1. Пользователь открывает Mini App из бота
-2. Нажимает "Pay 1000 USDT"
-3. Backend создает payment запись с unique memo
-4. Открывается Solana Pay deep link (Phantom/Solflare)
-5. Пользователь подтверждает транзакцию
-6. Helius отправляет webhook на backend
-7. Backend подтверждает платеж и активирует подписку (+365 дней)
-8. Frontend определяет активную подписку через polling
+1. 1000 USDT / 1 year — параметр, указанный в prototype UI/боте; не утверждение о реальном тарифе.
+2. Не считать webhook/transaction confirmation live-verified без отдельного теста с Solana RPC и Helius.
+3. Не считать подписку в этой SQLite базe канонической для Solana Launcher или SolSub.
+4. До production use требуются security review, payment replay/idempotency review, webhook signature verification, DB migration strategy, backup/restore и операторский runbook.
+5. В архитектурном аудите 2026-11-01 live deployment, live wallet, реальные webhook credentials и платежи не проверялись.
 
-## Проверка работы
+## Связанные документы
 
-- **Health check:** `GET http://localhost:3001/health`
-- **Webhook health:** `GET http://localhost:3001/webhook/helius/health`
-- **Create payment:** `POST http://localhost:3001/api/subscription/create`
-- **Check status:** `GET http://localhost:3001/api/subscription/status?userId=123456`
-
-## Деплой
-
-### Backend (Render/Railway/DigitalOcean)
-```bash
-npm install
-npm run build
-npm start
-```
-
-### Frontend (Vercel)
-```bash
-npm install
-npm run build
-```
-
-### Helius Webhook URL
-```
-https://your-backend.onrender.com/webhook/helius
-```
-
-## Безопасность
-
-- ✅ Валидация Telegram initData на сервере (опционально)
-- ✅ Проверка подписи Helius webhook
-- ✅ HTTPS обязательно для production
-- ✅ Отдельный merchant wallet (не основной!)
-- ✅ Unique memo для каждого платежа
-
-## Лимиты
-
-- Цена фиксированная: 1000 USDT
-- Подписка: 365 дней (1 год)
-- Сеть: Solana Mainnet
-- Токен: USDT (Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB)
+- [Telegram MiniApp inventory](README.md)
+- [Solana Subscription Service](../solana-subscription-service/README.md)

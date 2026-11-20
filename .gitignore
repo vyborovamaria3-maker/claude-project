@@ -8,6 +8,7 @@
 **/.env.production
 **/.env.development
 **/.env.intelligence
+**/.env.runtime
 **/secrets/
 **/*.pem
 **/*.key

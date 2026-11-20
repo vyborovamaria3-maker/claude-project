@@ -381,7 +381,7 @@ test("real isolated PostgreSQL: token timeline and retraction-aware links are sa
   try{
     await admin.query('CREATE SCHEMA "'+schema+'"');
     await admin.query('SET search_path TO "'+schema+'"');
-    for(const file of ["001_entity_registry.sql","002_timeline.sql","003_feature_store.sql",
+    for(const file of ["001_entity_registry.sql","017_inbox_payload_fingerprint.sql","002_timeline.sql","003_feature_store.sql",
       "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql","006_cross_platform_analytics.sql",
       "008_alert_status_history.sql","009_ai_analysis.sql"]){
       await admin.query(await readFile(new URL("../migrations/"+file,import.meta.url),"utf8"));

@@ -1,0 +1,125 @@
+name: Solana Subscription Web Quality
+
+on:
+  pull_request:
+    paths:
+      - "solana-subscription-service/**"
+      - ".github/workflows/solsub-web-quality.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "solana-subscription-service/**"
+      - ".github/workflows/solsub-web-quality.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: solana-subscription-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: solana-subscription-service/package-lock.json
+      - name: Install locked workspace dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Verify React and React DOM resolve to one compatible runtime
+        run: |
+          node <<'NODE'
+          const { createRequire } = require("node:module");
+          const webRequire = createRequire(require.resolve("./apps/web/package.json"));
+          const reactPath = webRequire.resolve("react");
+          const reactDomPath = webRequire.resolve("react-dom");
+          const reactFromDomPath = createRequire(reactDomPath).resolve("react");
+          const reactVersion = webRequire("react").version;
+          const reactDomVersion = webRequire("react-dom").version;
+          if (reactPath !== reactFromDomPath || reactVersion !== reactDomVersion) {
+            throw new Error(JSON.stringify({
+              reactPath, reactFromDomPath, reactVersion, reactDomVersion
+            }, null, 2));
+          }
+          console.log(`React runtime pair verified: React ${reactVersion}, React DOM ${reactDomVersion}`);
+          NODE
+      - name: Typecheck web workspace
+        run: npm run typecheck -w @solsub/web
+      - name: Build web workspace
+        run: npm run build -w @solsub/web
+
+  database-roles:
+    name: PostgreSQL migrator/runtime/read-only role rehearsal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: solsub_role_ci
+          POSTGRES_USER: solsub_bootstrap
+          POSTGRES_PASSWORD: ci-bootstrap-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U solsub_bootstrap -d solsub_role_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    defaults:
+      run:
+        working-directory: solana-subscription-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: solana-subscription-service/package-lock.json
+      - name: Install locked workspace dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Build shared package and generate Prisma Client
+        run: npm run build -w @solsub/shared && npm run build -w @solsub/api
+      - name: Provision least-privilege roles as bootstrap
+        env:
+          POSTGRES_APP_USER: solsub_app
+          POSTGRES_APP_PASSWORD: ci-app-password
+          POSTGRES_MIGRATOR_USER: solsub_migrator
+          POSTGRES_MIGRATOR_PASSWORD: ci-migrator-password
+          POSTGRES_READONLY_USER: solsub_readonly
+          POSTGRES_READONLY_PASSWORD: ci-readonly-password
+        run: |
+          docker run --rm --network host \
+            -e PGHOST=127.0.0.1 \
+            -e PGPORT=5432 \
+            -e PGDATABASE=solsub_role_ci \
+            -e PGUSER=solsub_bootstrap \
+            -e PGPASSWORD=ci-bootstrap-password \
+            -e POSTGRES_APP_USER -e POSTGRES_APP_PASSWORD \
+            -e POSTGRES_MIGRATOR_USER -e POSTGRES_MIGRATOR_PASSWORD \
+            -e POSTGRES_READONLY_USER -e POSTGRES_READONLY_PASSWORD \
+            -v "$PWD/scripts/provision-readonly-role.sql:/provision/readonly-role.sql:ro" \
+            -v "$PWD/scripts/run-readonly-role-provisioner.sh:/provision/run-readonly-role-provisioner.sh:ro" \
+            postgres:16-alpine /bin/sh /provision/run-readonly-role-provisioner.sh
+      - name: Install PostgreSQL client for the migration privilege wrapper
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Apply Prisma migrations with temporary database CREATE, then revoke it
+        env:
+          DATABASE_URL: postgresql://solsub_migrator:ci-migrator-password@127.0.0.1:5432/solsub_role_ci?schema=public
+          PGHOST: 127.0.0.1
+          PGPORT: "5432"
+          POSTGRES_DB: solsub_role_ci
+          POSTGRES_BOOTSTRAP_USER: solsub_bootstrap
+          POSTGRES_BOOTSTRAP_PASSWORD: ci-bootstrap-password
+          POSTGRES_MIGRATOR_USER: solsub_migrator
+        run: sh scripts/run-prisma-migrations.sh
+      - name: Verify runtime DML, read-only SELECT and DDL boundaries
+        env:
+          APP_DATABASE_URL: postgresql://solsub_app:ci-app-password@127.0.0.1:5432/solsub_role_ci?schema=public
+          MIGRATOR_DATABASE_URL: postgresql://solsub_migrator:ci-migrator-password@127.0.0.1:5432/solsub_role_ci?schema=public
+          READONLY_DATABASE_URL: postgresql://solsub_readonly:ci-readonly-password@127.0.0.1:5432/solsub_role_ci?schema=public
+        run: node scripts/test-database-role-smoke.mjs

@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
-import {randomUUID} from "node:crypto";
+import {randomInt,randomUUID} from "node:crypto";
 import {test} from "node:test";
 import type {TelegramClient} from "telegram";
+import {ANALYSIS_VERSION} from "../../src/analytics/extract.js";
+
+const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+function randomSolanaAddress(): string {
+  // 29 leading zero bytes plus a 3-byte Base58 suffix: always a 32-byte key.
+  return "1".repeat(29) + BASE58[20 + randomInt(BASE58.length - 20)] +
+    BASE58[randomInt(BASE58.length)] + BASE58[randomInt(BASE58.length)];
+}
 
 test("ambiguous ticker history is retracted; mint+cashtag counts once", {
   skip: !process.env.DATABASE_URL,
@@ -12,7 +20,7 @@ test("ambiguous ticker history is retracted; mint+cashtag counts once", {
   await migrate();
   const suffix=randomUUID().replaceAll("-","").slice(0,10);
   const ticker="Z"+suffix.slice(0,8).toUpperCase();
-  const a="mint_a_"+suffix,b="mint_b_"+suffix,chain="solana-mainnet";
+  const a=randomSolanaAddress(),b=randomSolanaAddress(),chain="solana-mainnet";
   const source=(await pool.query<{id:string}>(
     "INSERT INTO tg_sources(identifier) VALUES($1) RETURNING id::text",["audit_"+suffix])).rows[0].id;
   const day=new Date().toISOString().slice(0,10);
@@ -28,16 +36,16 @@ test("ambiguous ticker history is retracted; mint+cashtag counts once", {
         VALUES($1,901,'cashtag only',now()),($1,902,'explicit mint + cashtag',now())`,[source]);
       await tx.query(`INSERT INTO tg_ticker_mentions
         (source_id,message_id,chain_id,ticker,raw_text,analysis_version,message_date)
-        VALUES($1,901,$2,$3,$3,4,now()),($1,902,$2,$3,$3,4,now())`,
+        VALUES($1,901,$2,$3,$3,${ANALYSIS_VERSION},now()),($1,902,$2,$3,$3,${ANALYSIS_VERSION},now())`,
         [source,chain,ticker]);
       await tx.query(`INSERT INTO tg_token_candidates(source_id,message_id,chain_id,
         candidate_type,candidate_key,raw_value,analysis_version)
-        VALUES($1,902,$2,'address',$3,$3,4)`,[source,chain,a]);
+        VALUES($1,902,$2,'address',$3,$3,${ANALYSIS_VERSION})`,[source,chain,a]);
       await tx.query(`INSERT INTO tg_token_mentions(source_id,message_id,chain_id,mint,
         mention_type,resolution_status,confidence,message_date,analysis_version)
-        VALUES($1,901,$2,$3,'ticker','confirmed',1,now(),4),
-          ($1,902,$2,$3,'ticker','confirmed',1,now(),4),
-          ($1,902,$2,$3,'mint','confirmed',1,now(),4)`,[source,chain,a]);
+        VALUES($1,901,$2,$3,'ticker','confirmed',1,now(),${ANALYSIS_VERSION}),
+          ($1,902,$2,$3,'ticker','confirmed',1,now(),${ANALYSIS_VERSION}),
+          ($1,902,$2,$3,'mint','confirmed',1,now(),${ANALYSIS_VERSION})`,[source,chain,a]);
       const withdrawn=await retractAmbiguousTickerMentions(tx);
       assert.deepEqual(withdrawn.rows.map(row=>String(row.mint)),[a]);
       const mentions=await tx.query<{message_id:string;mention_type:string;orphaned:boolean}>(`
@@ -48,7 +56,7 @@ test("ambiguous ticker history is retracted; mint+cashtag counts once", {
       await refreshTokenChannelMetrics(tx,source,[day]);
       const daily=await tx.query<{confirmed_token_mentions:number}>(`
         SELECT confirmed_token_mentions FROM tg_channel_metrics_daily
-        WHERE source_id=$1 AND day=$2 AND analysis_version=4`,[source,day]);
+        WHERE source_id=$1 AND day=$2 AND analysis_version=${ANALYSIS_VERSION}`,[source,day]);
       assert.equal(daily.rows[0].confirmed_token_mentions,1);
       await refreshTokenVelocity(tx);
       const velocity=await tx.query<{mentions:number}>(`
@@ -102,7 +110,7 @@ test("RPC candidate promotion ignores soft-deleted message observations",{
   const {activeMintOccurrences}=await import("../../src/analytics/token-candidate-occurrences.js");
   await migrate();
   const suffix=randomUUID().replaceAll("-","").slice(0,12);
-  const mint="mint_"+suffix;
+  const mint=randomSolanaAddress();
   const source=(await pool.query<{id:string}>(
     "INSERT INTO tg_sources(identifier) VALUES($1) RETURNING id::text",
     ["dead_mint_"+suffix])).rows[0].id;
@@ -111,8 +119,8 @@ test("RPC candidate promotion ignores soft-deleted message observations",{
       VALUES($1,911,'live',now(),NULL),($1,912,'deleted',now(),now())`,[source]);
     await pool.query(`INSERT INTO tg_token_candidates(
       source_id,message_id,chain_id,candidate_type,candidate_key,raw_value,analysis_version,resolution_status)
-      VALUES($1,911,'solana-mainnet','address',$2,$2,4,'confirmed_token'),
-        ($1,912,'solana-mainnet','address',$2,$2,4,'confirmed_token')`,[source,mint]);
+      VALUES($1,911,'solana-mainnet','address',$2,$2,${ANALYSIS_VERSION},'confirmed_token'),
+        ($1,912,'solana-mainnet','address',$2,$2,${ANALYSIS_VERSION},'confirmed_token')`,[source,mint]);
     const tx=await pool.connect();
     try {
       const rows=await activeMintOccurrences(tx,mint);

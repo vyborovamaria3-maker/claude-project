@@ -1,9 +1,13 @@
 name: Admin Control Center CI & Security
 
-# P1 runner isolation: pull_request events execute untrusted PR code and are not
-# allowed on the shared self-hosted runner. CI for PRs runs in the dedicated
-# PR-safe workflows instead (repository-hygiene, security-gates).
+# P1 runner isolation: pull_request events execute untrusted PR code and must
+# never land on the shared self-hosted runner, so they run on ephemeral
+# GitHub-hosted runners. Push to main keeps the self-hosted selection.
 on:
+  pull_request:
+    paths:
+      - "admin-site/**"
+      - ".github/workflows/admin-control-center.yml"
   push:
     branches:
       - main
@@ -22,7 +26,8 @@ concurrency:
 jobs:
   test:
     name: Regression and syntax checks
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 15
     services:
       postgres:
@@ -62,7 +67,8 @@ jobs:
 
   security:
     name: Python and dependency security
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 15
 
     steps:
@@ -137,7 +143,8 @@ jobs:
 
   docker:
     name: Compose, image and container security
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 20
 
     steps:
@@ -148,7 +155,12 @@ jobs:
         run: |
           cp admin-site/.env.example admin-site/.env
           sed -i 's/^ADMIN_STATE_DB_PASSWORD=.*/ADMIN_STATE_DB_PASSWORD=ci-compose-password/' admin-site/.env
+          sed -i 's/^ADMIN_STATE_APP_PASSWORD=.*/ADMIN_STATE_APP_PASSWORD=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/' admin-site/.env
+          sed -i 's/^ADMIN_STATE_MIGRATOR_PASSWORD=.*/ADMIN_STATE_MIGRATOR_PASSWORD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/' admin-site/.env
+          sed -i 's/^ADMIN_STATE_BACKUP_PASSWORD=.*/ADMIN_STATE_BACKUP_PASSWORD=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/' admin-site/.env
+          sed -i 's/^ADMIN_STATE_RUNTIME_PASSWORD=.*/ADMIN_STATE_RUNTIME_PASSWORD=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/' admin-site/.env
           sed -i 's/^SUBSCRIPTION_ADMIN_KEY=.*/SUBSCRIPTION_ADMIN_KEY=ci-subscription-admin-key/' admin-site/.env
+          bash admin-site/deploy/refresh-runtime-env.sh
           cp admin-site/.env.intelligence.example admin-site/.env.intelligence
           cp admin-site/sources.example.json admin-site/sources.json
           cp admin-site/logs.example.json admin-site/logs.json

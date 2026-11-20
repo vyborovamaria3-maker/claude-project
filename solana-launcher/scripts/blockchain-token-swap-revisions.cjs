@@ -59,11 +59,12 @@ function emitTokenSwapRevisionOutbox(db,input){
   if(!enabled())return false;
   const event=buildTokenSwapRevisionEvent(input);
   if(!event)return false;
-  const now=new Date(input.observedAt).toISOString();
+  // created_at is the source emission clock, not the evidence observation clock.
+  const createdAt=new Date().toISOString();
   const result=db.prepare("INSERT OR IGNORE INTO outbox_events "+
     "(source_system,event_kind,event_key,schema_version,payload,created_at,next_attempt_at) "+
     "VALUES(?,?,?,?,?,?,?)").run(event.sourceSystem,event.eventKind,event.eventKey,
-      event.schemaVersion,JSON.stringify(event.payload),now,now);
+      event.schemaVersion,JSON.stringify(event.payload),createdAt,createdAt);
   return result.changes===1;
 }
 module.exports={buildTokenSwapRevisionEvent,emitTokenSwapRevisionOutbox};

@@ -11,7 +11,7 @@ test("PostgreSQL timeline excludes late-observed historical events", {skip:!url}
   await db.connect();
   try{
     await db.query("BEGIN");
-    for(const migration of ["001_entity_registry.sql","002_timeline.sql"]){
+    for(const migration of ["001_entity_registry.sql","017_inbox_payload_fingerprint.sql","002_timeline.sql"]){
       await db.query(await readFile(new URL("../migrations/"+migration,import.meta.url),"utf8"));
     }
     const token=formatTokenId("solana","So11111111111111111111111111111111111111112");

@@ -1,6 +1,6 @@
 # Collector-backed API AI analysis
 
-Apply migrations 001–006, 008, 009, **010_intelligence_governance.sql**, **011_validation_preregistration.sql**, **012_ai_shared_budget.sql** and **013_invalidation_retry_schedule.sql** to the separate Intelligence destination before enabling the AI runtime. Migration 007/pgvector is optional and is not needed for sentiment, narratives or explanations. Do not apply these migrations to collector databases.
+Apply migrations 001–006, 008, 009, **010_intelligence_governance.sql**, **011_validation_preregistration.sql**, **012_ai_shared_budget.sql**, **013_invalidation_retry_schedule.sql**, **017_inbox_payload_fingerprint.sql** and **018_event_revision_invalidation.sql** to the separate Intelligence destination before enabling the AI runtime. Migration 007/pgvector is optional and is not needed for sentiment, narratives or explanations. Do not apply these migrations to collector databases.
 
 ## Execution
 

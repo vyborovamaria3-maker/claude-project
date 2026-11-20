@@ -11,6 +11,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 from .postgres_pool import pooled_connection
+from .postgres_schema_policy import preprovisioned_schema_enabled
 
 
 _SCHEMA_LOCK_ID = 726824730
@@ -29,7 +30,10 @@ class PostgresAdminSessionStore:
         self.pool = pool
         self._ip_binding = ip_binding
         self._ua_binding = ua_binding
-        self._init_schema()
+        if preprovisioned_schema_enabled():
+            self._cleanup_expired()
+        else:
+            self._init_schema()
 
     def _connect(self):
         return pooled_connection(self.pool, self.dsn, row_factory=dict_row, connect_timeout=5)
@@ -61,6 +65,14 @@ class PostgresAdminSessionStore:
                 )"""
             )
             cur.execute("CREATE INDEX IF NOT EXISTS ix_revoked_admin_sessions_expires ON revoked_admin_sessions(expires_at)")
+            cur.execute("DELETE FROM admin_security_sessions WHERE expires_at<=%s", (now,))
+            cur.execute("DELETE FROM revoked_admin_sessions WHERE expires_at<=%s", (now,))
+
+    def _cleanup_expired(self) -> None:
+        # Data maintenance is DML and remains valid for restricted runtime.
+        # No CREATE TABLE/INDEX is attempted in preprovisioned mode.
+        now = int(time.time())
+        with self._connect() as db, db.cursor() as cur:
             cur.execute("DELETE FROM admin_security_sessions WHERE expires_at<=%s", (now,))
             cur.execute("DELETE FROM revoked_admin_sessions WHERE expires_at<=%s", (now,))
 

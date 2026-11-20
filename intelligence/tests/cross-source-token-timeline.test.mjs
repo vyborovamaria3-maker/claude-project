@@ -89,7 +89,7 @@ test("three isolated source outboxes produce one evidence-backed token timeline 
       await admin.query(POSTGRES_OUTBOX_DDL);
     }
     await admin.query('SET search_path TO "' + schemas.dst + '"');
-    for (const name of ["001_entity_registry.sql", "002_timeline.sql"]) {
+    for (const name of ["001_entity_registry.sql","017_inbox_payload_fingerprint.sql", "002_timeline.sql"]) {
       await admin.query(await readFile(new URL("../migrations/" + name, import.meta.url), "utf8"));
     }
     const poolFor = schema => new pg.Pool({

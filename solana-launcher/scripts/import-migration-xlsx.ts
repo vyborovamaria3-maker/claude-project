@@ -3,10 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { execFileSync } from "node:child_process";
-import * as XLSX from "xlsx";
+
+import { resolveImportPath, listXlsxFiles } from "./import-path-safety.cjs";
+import * as XLSX from "potapoff-safe-xlsx";
 import {
   getCreatorForMint,
 } from "../lib/trade/dev";
+import { rebuildWalletSummary } from "../lib/trade/wallet-summary";
 import {
   getDb,
   persistDevWallet,
@@ -123,22 +126,9 @@ function printUsage() {
  * Ensures the resolved path stays within the project root or the Desktop data folder
  */
 function sanitizePath(inputPath: string): string {
-  // Resolve to absolute path
-  const resolved = path.resolve(inputPath);
-  
-  // Ensure path is within project root or is the default directory
   const projectRoot = path.resolve(PROJECT_ROOT);
-  const defaultDir = path.resolve(DEFAULT_INPUT_DIR);
-  
-  const desktopBase = path.resolve("C:\\Users\\Рафаил\\Desktop\\База данных");
-
-  // Allow paths within project root or the Desktop data folder
-  if (resolved.startsWith(projectRoot) || resolved.startsWith(defaultDir) || resolved.startsWith(desktopBase)) {
-    return resolved;
-  }
-  
-  // Reject paths trying to escape to parent directories (../..)
-  throw new Error(`Path traversal detected: ${inputPath} resolves outside allowed directories`);
+  const desktopBase = path.resolve(DEFAULT_INPUT_DIR);
+  return resolveImportPath(inputPath, [projectRoot, desktopBase]);
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -331,23 +321,6 @@ function detectSheetKind(headers: string[]): MigrationWorkbookKind {
   return "unknown";
 }
 
-function listXlsxFiles(root: string): string[] {
-  const files: string[] = [];
-  const stack = [root];
-  while (stack.length > 0) {
-    const current = stack.pop()!;
-    if (!fs.existsSync(current)) continue;
-    const stat = fs.statSync(current);
-    if (stat.isFile()) {
-      if (current.toLowerCase().endsWith(".xlsx")) files.push(current);
-      continue;
-    }
-    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-      stack.push(path.join(current, entry.name));
-    }
-  }
-  return files.sort((a, b) => a.localeCompare(b));
-}
 
 function extractWorkbook(filePath: string): ParsedWorkbook {
   const wb = XLSX.readFile(filePath, { cellDates: false, cellNF: false, cellText: true, raw: false });
@@ -853,8 +826,8 @@ async function main() {
   }
 
   const targetFiles = args.file
-    ? [path.resolve(PROJECT_ROOT, args.file)]
-    : listXlsxFiles(path.resolve(args.dir));
+    ? [sanitizePath(args.file)]
+    : listXlsxFiles(sanitizePath(args.dir));
 
   if (targetFiles.length === 0) {
     console.error("No .xlsx files found.");
@@ -876,8 +849,11 @@ async function main() {
     console.log(JSON.stringify(result));
   }
 
+  const walletSummary = rebuildWalletSummary(db);
+
   console.log(JSON.stringify({
     importedFiles: results.length,
+    walletSummary,
     totalTokenRows: results.reduce((sum, row) => sum + row.tokenRows, 0),
     totalWalletRows: results.reduce((sum, row) => sum + row.walletRows, 0),
     resolvedCreators: results.reduce((sum, row) => sum + row.resolvedCreators, 0),

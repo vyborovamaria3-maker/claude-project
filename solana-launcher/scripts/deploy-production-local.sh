@@ -64,6 +64,8 @@ require_cmd curl
 require_cmd install
 require_cmd flock
 require_cmd tar
+require_cmd awk
+require_cmd mktemp
 
 docker compose version >/dev/null 2>&1 || fail 'docker compose plugin is required'
 
@@ -124,8 +126,11 @@ install -m 0644 "$SOURCE_ROOT/solana-launcher/docker-compose.production.yml" "$C
 install -m 0644 "$SOURCE_ROOT/solana-launcher/docker-compose.local-build.yml" "$LOCAL_BUILD_FILE"
 install -m 0644 "$SOURCE_ROOT/solana-launcher/nginx/nginx.conf" "$DEPLOY_DIR/nginx/nginx.conf"
 install -m 0644 "$SOURCE_ROOT/solana-launcher/prometheus/prometheus.yml" "$DEPLOY_DIR/prometheus/prometheus.yml"
+install -m 0644 "$SOURCE_ROOT/solana-launcher/scripts/postgres-role-restoration-fingerprint.sql" "$DEPLOY_DIR/scripts/postgres-role-restoration-fingerprint.sql"
+install -m 0644 "$SOURCE_ROOT/solana-launcher/scripts/provision-postgres-roles.sql" "$DEPLOY_DIR/scripts/provision-postgres-roles.sql"
 install -m 0700 \
   "$SOURCE_ROOT/solana-launcher/scripts/backup-production.sh" \
+  "$SOURCE_ROOT/solana-launcher/scripts/verify-backup-restore.sh" \
   "$SOURCE_ROOT/solana-launcher/scripts/healthcheck-production.sh" \
   "$SOURCE_ROOT/solana-launcher/scripts/deploy-production.sh" \
   "$DEPLOY_DIR/scripts/"
@@ -146,6 +151,18 @@ export ADMIN_IMAGE_TAG="$DEPLOY_SHA"
 export DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}"
 export COMPOSE_DOCKER_CLI_BUILD="${COMPOSE_DOCKER_CLI_BUILD:-1}"
 
+# The first production Compose validation runs before deploy-production.sh.
+# Materialize its runtime env file here as well, using the same allowlist.
+runtime_tmp="$(mktemp "$DEPLOY_DIR/.env.runtime.XXXXXX")"
+if ! awk -F= '$1 !~ /^POSTGRES_/ && $1 != "REDIS_PASSWORD" { print }' "$DEPLOY_DIR/.env.server" > "$runtime_tmp"; then
+  rm -f "$runtime_tmp"
+  fail "unable to generate production runtime environment from .env.server"
+fi
+if ! chmod 600 "$runtime_tmp" || ! mv -f "$runtime_tmp" "$DEPLOY_DIR/.env.runtime"; then
+  rm -f "$runtime_tmp"
+  fail "unable to install production runtime environment"
+fi
+
 BUILD_COMPOSE=(
   docker compose
   --env-file "$DEPLOY_DIR/.env.server"
@@ -160,6 +177,7 @@ log "Validating production Compose"
 [[ -f "$ADMIN_DIR/.env.intelligence" ]] || fail "$ADMIN_DIR/.env.intelligence must be a regular file"
 [[ -f "$ADMIN_DIR/sources.json" ]] || fail "$ADMIN_DIR/sources.json must be a regular file"
 [[ -f "$ADMIN_DIR/logs.json" ]] || fail "$ADMIN_DIR/logs.json must be a regular file"
+bash "$ADMIN_DIR/deploy/refresh-runtime-env.sh"
 
 log "Validating Control Center Compose"
 docker compose --project-directory "$ADMIN_DIR" -f "$ADMIN_COMPOSE_FILE" config --quiet
@@ -191,14 +209,7 @@ mkdir -p "$ADMIN_STAGE_DIR"
 trap 'rm -rf "$ADMIN_STAGE_DIR"' ERR
 
 log "Staging Control Center source"
-tar \
-  --exclude='admin-site/.env' \
-  --exclude='admin-site/.env.*' \
-  --exclude='admin-site/sources.json' \
-  --exclude='admin-site/logs.json' \
-  --exclude='admin-site/__pycache__' \
-  --exclude='admin-site/**/__pycache__' \
-  -C "$SOURCE_ROOT" -cf - admin-site \
+git -C "$SOURCE_ROOT" archive --format=tar "$DEPLOY_SHA" admin-site \
   | tar -C "$ADMIN_STAGE_DIR" -xf -
 
 test -r "$ADMIN_STAGE_DIR/admin-site/docker-compose.yml"

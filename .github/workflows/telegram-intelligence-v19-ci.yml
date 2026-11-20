@@ -1,9 +1,28 @@
 name: Telegram Intelligence v19 CI
 
-# P1 runner isolation: pull_request events execute untrusted PR code and are not
-# allowed on the shared self-hosted runner. This workflow now runs for trusted
-# refs only: push to main, or manual dispatch on main.
+# P1 runner isolation: pull_request events execute untrusted PR code and must
+# never land on the shared self-hosted runner, so they run on ephemeral
+  # GitHub-hosted runners. Push to main and manual dispatch on main keep the
+  # central self-hosted selection; dispatch jobs refuse non-main refs.
 on:
+  pull_request:
+    paths:
+      - "solana-launcher/backend/**"
+      - "solana-launcher/app/miniapp/**"
+      - "solana-launcher/app/api/miniapp/**"
+      - "solana-launcher/lib/telegram/**"
+      - "solana-launcher/telegram-bot/**"
+      - "solana-launcher/app/telegram-intelligence/**"
+      - "solana-launcher/app/api/tginvite/**"
+      - "solana-launcher/components/tginvite/**"
+      - "solana-launcher/lib/tginvite-*.ts"
+      - "solana-launcher/lib/routeAuth.ts"
+      - "solana-launcher/components/SidebarNav.tsx"
+      - "solana-launcher/lib/siteDesign.ts"
+      - "solana-launcher/docker-compose.production.yml"
+      - "solana-launcher/scripts/deploy-production.sh"
+      - "solana-launcher/scripts/healthcheck-production.sh"
+      - ".github/workflows/telegram-intelligence-v19-ci.yml"
   push:
     branches:
       - main
@@ -35,7 +54,7 @@ permissions:
 jobs:
   backend:
     if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     env:
       SECRET_KEY: a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9
     defaults:
@@ -66,7 +85,7 @@ jobs:
 
   frontend:
     if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     defaults:
       run:
         working-directory: solana-launcher
@@ -74,7 +93,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: solana-launcher/package-lock.json
       - name: Install frontend
@@ -88,7 +107,7 @@ jobs:
 
   compose:
     if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || vars.POTAPOFF_RUNNER || 'self-hosted' }}
     defaults:
       run:
         working-directory: solana-launcher
@@ -98,14 +117,22 @@ jobs:
         run: |
           : > backend.env
           : > .env.server
+          # Compose requires env_file to exist even when CI injects values via step env.
+          : > .env.runtime
       - name: Validate production Compose
         env:
           IMAGE_TAG: test
           POSTGRES_PASSWORD: test-postgres
+          POSTGRES_APP_PASSWORD: ci-postgres-app
+          POSTGRES_MIGRATOR_PASSWORD: ci-postgres-migrator
+          POSTGRES_BACKUP_PASSWORD: ci-postgres-backup
+          POSTGRES_READONLY_PASSWORD: ci-postgres-readonly
+          REDIS_PASSWORD: ci-redis
           RABBITMQ_PASSWORD: test-rabbit
           SECRET_KEY: a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9
           KOL_INTERNAL_KEY: ci-kol-internal-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm
           SUBSCRIPTION_INTERNAL_KEY: ci-subscription-internal-abcdefghijklmnopqrstuvwxyz
+          INTERNAL_SERVICE_API_KEY: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
           TELEGRAM_BOT_TOKEN: test-token
           TELEGRAM_WEBHOOK_URL: https://example.invalid/api/telegram/webhook
           TELEGRAM_WEBHOOK_SECRET: ci-webhook-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm

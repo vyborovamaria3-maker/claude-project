@@ -57,7 +57,7 @@ test("ARCH-08 X/TG source snapshots commit to independent outboxes, then real In
       "(1,42,'2026-10-19T23:00:00Z',$1,$1,'deleted private TG text')",[observedTG]);
 
     await admin.query('SET search_path TO "'+schemas.dst+'"');
-    for(const file of ["001_entity_registry.sql","002_timeline.sql"]){
+    for(const file of ["001_entity_registry.sql","017_inbox_payload_fingerprint.sql","002_timeline.sql"]){
       await admin.query(await readFile(new URL("../migrations/"+file,import.meta.url),"utf8"));
     }
     for(const [name,schema] of Object.entries(schemas)){

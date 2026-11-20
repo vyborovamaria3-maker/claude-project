@@ -8,6 +8,8 @@ export type OutboxEvent = Readonly<{
 
 export type ClaimedEvent = OutboxEvent & Readonly<{
   id: string;
+  /** Immutable source outbox insertion timestamp; V2 emittedAt must derive only from this value. */
+  createdAt: string;
   attempts: number;
   leaseOwner: string;
   leaseUntil: string;

@@ -1,60 +1,61 @@
-# Telegram Mini App Premium Swap (demo)
+# Telegram MiniApp — demo / legacy subproject
 
-## Что внутри
-- Бот на aiogram 3 + SQLite + bcrypt (логин 32 символа, пароль в хэше)
-- Демо-оплата 1000 USDT с выбором сети (mock), выдача логина
-- Watchlist + быстрый swap-просмотр (mock)
-- Фронтенд: Vite + React + TS + Tailwind + framer-motion + lucide, Telegram WebApp SDK, темы RU/EN
+Этот каталог содержит несколько самостоятельных подпроектов. Не путать его с `solana-subscription-service` или MiniApp внутри Solana Launcher.
 
-## Запуск фронтенда (Vite)
+## Фактическая структура
+
+| Каталог | Технологии | Назначение |
+|---|---|---|
+| `frontend/` | Vite, React 18, TypeScript, Telegram WebApp SDK | Отдельный web frontend |
+| `bot/` | Node.js, TypeScript, `node-telegram-bot-api` | Telegram bot, который отправляет ссылку на MiniApp |
+| `backend-new/` | Node.js, Express, Prisma | Отдельный API для payment/subscription prototype; Prisma schema сейчас использует SQLite |
+
+**Важно:** на текущей ревизии каталога `backend/` нет. Старые инструкции про Python/aiogram и `backend/bot.py` не соответствуют дереву исходников. Текущий Node bot расположен в `bot/`.
+
+## Локальный запуск
+
+### Frontend
+
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
-Задеплойте на Vercel/Netlify, URL вставьте в WEBAPP_URL и в BotFather (/setdomain).
 
-## Запуск бота (polling)
+### Telegram bot
+
 ```bash
-cd backend
-python -m venv .venv
-. .venv/bin/activate  # Windows: .venv\\Scripts\\activate
-pip install -r requirements.txt
-export BOT_TOKEN=... WEBAPP_URL=https://your-frontend.example.com
-python bot.py
+cd bot
+npm ci
 ```
 
-## Webhook через ngrok (опционально)
+В окружении нужны `BOT_TOKEN` и `WEBAPP_URL`. Код использует polling через `node-telegram-bot-api`.
+
 ```bash
-ngrok http 8080
-export WEBHOOK_URL=https://<ngrok-id>.ngrok.io/webhook
-python bot.py
+npm run dev
 ```
-В BotFather: /setdomain -> ваш https домен (ngrok/VPS). 
 
-## Docker
+### Backend API
+
 ```bash
-cd backend
-docker build -t tg-miniapp .
-docker run -e BOT_TOKEN=... -e WEBAPP_URL=... -p 8080:8080 tg-miniapp
-# либо docker compose
+cd backend-new
+npm ci
+npx prisma generate
+npx prisma migrate dev
+npm run dev
 ```
 
-## Протокол WebAppData
-- payment: {action:'payment', amount_usdt:1000, network:'Solana'}
-- access: {action:'access', password:'...'}
-- watchlist: {action:'watchlist', symbol:'SOL', note:'...'}
-- create: {action:'create', title:'...', description:'...'}
+Фактический datasource находится в `backend-new/prisma/schema.prisma` и имеет provider `sqlite`. Пример конфигурации — `backend-new/.env.example`, где `DATABASE_URL=file:./dev.db`.
 
-## Переменные окружения
-- BOT_TOKEN — токен бота
-- WEBAPP_URL — URL фронтенда
-- WEBHOOK_URL — опционально, если webhook
-- DATABASE_PATH — путь к SQLite (miniapp.db по умолчанию)
-- WEBAPP_HOST, WEBAPP_PORT — для webhook-сервера
+Не использовать PostgreSQL URL из старых копий документации без отдельной миграции Prisma datasource и проверенного migration plan.
 
-## Замечания
-- Оплата — mock, без Telegram Payments. Для реальной оплаты нужен provider token.
-- SQLite подходит для прототипа. Для продакшена используйте Postgres.
-- HTTPS обязателен для Mini App. 
-```
+## Статус и ограничения
+
+- Это отдельный demo/legacy subproject, а не подтверждённая production subscription platform.
+- Старый README описывал mock/demo оплату и mock watchlist/swap.
+- Наличие Express handlers и Prisma models не доказывает, что Telegram bot, frontend, webhook и реальные платежи запущены.
+- Не использовать этот проект как канонический источник подписок, пока не принято и не выполнено отдельное решение о миграции на Solana Subscription Service.
+- Секреты, bot token, RPC key и webhook secret не добавлять в Git.
+- Реальные платежи и live webhooks не проверялись в рамках архитектурного аудита 2026-11-01.
+
+Для отдельной схемы Solana Pay см. [README-SOLANA-PAY.md](README-SOLANA-PAY.md); он также является описанием prototype и не подтверждает production deployment.

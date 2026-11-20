@@ -36,8 +36,10 @@ try{
   assert.equal(db.prepare("SELECT count(*) AS n FROM outbox_events").get().n,2,
     "changed raw evidence creates a new immutable revision");
   assert.equal(db.prepare("SELECT raw_revision FROM chain_seed_events").get().raw_revision,2);
-  const event=db.prepare("SELECT payload FROM outbox_events ORDER BY id LIMIT 1").get();
+  const event=db.prepare("SELECT payload,created_at FROM outbox_events ORDER BY id LIMIT 1").get();
   const body=JSON.parse(event.payload);
+  assert.ok(Date.parse(event.created_at)>=Date.parse(body.registryEvent.evidenceRef.observedAt),
+    "SQLite source created_at must be stamped at or after source insertion, not copied from observedAt");
   assert.deepEqual(body.registryEvent.entityRefs.map(x=>x.kind),["wallet"]);
   assert.equal(body.registryEvent.evidenceRef.sourceId,"chain:tx:solana:"+signature);
   assert.equal(body.timelineEvent.kind,"chain_transaction");
