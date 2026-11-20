@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
 import {scanRecentGap} from "../src/reconcile.mjs";
+import {RestScheduler} from "../src/rest-scheduler.mjs";
 
 const root=1300000000000000000n;
 const ids=Array.from({length:250},(_,i)=>String(root+BigInt(250-i)));
@@ -33,6 +35,36 @@ test("recover full bounded recent gap across multiple pages",async()=>{
   assert.equal(channel.requests[0].limit,100);
   assert.equal(channel.requests[1].before,ids[99]);
 });
+test("each recovery page is scheduled separately so higher-priority work can interleave",async()=>{
+  const channel=fakeChannel();
+  const scheduler=new RestScheduler();
+  const order=[];
+  let preflight;
+  let pageNumber=0;
+  const fetchPage=options=>scheduler.run(async()=>{
+    pageNumber++;
+    order.push("page-"+pageNumber);
+    const result=await channel.messages.fetch(options);
+    if(pageNumber===1){
+      preflight=scheduler.run(()=>{order.push("preflight")},{priority:0});
+    }
+    return result;
+  },{priority:1,label:"gap-recovery-page"});
+  const result=await scanRecentGap({
+    channel,fetchPage,baselineMessageId:ids[239],maxPages:5,onMessage:async()=>{},
+  });
+  await preflight;
+  assert.equal(result.status,"bounded_recovery");
+  assert.deepEqual(order.slice(0,3),["page-1","preflight","page-2"]);
+  assert.equal(pageNumber,3);
+});
+
+test("collector wires every recovery page through the priority REST scheduler",()=>{
+  const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
+  assert.match(source,/fetchPage:options=>scheduleRest\(\(\)=>channel\.messages\.fetch\(options\),\s*\{priority:1,label:"gap-recovery-page"\}\)/);
+  assert.doesNotMatch(source,/scheduleRest\(async\(\)=>\{[\s\S]{0,300}scanRecentGap\(/);
+});
+
 test("budget exhausted must never claim full recovery",async()=>{
   const channel=fakeChannel();
   const r=await scanRecentGap({
