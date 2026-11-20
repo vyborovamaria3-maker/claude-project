@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {chmodSync,mkdtempSync,mkdirSync,readFileSync,readdirSync,renameSync,rmSync,statSync,writeFileSync,symlinkSync} from "node:fs";
+import {chmodSync,existsSync,mkdtempSync,mkdirSync,readFileSync,readdirSync,renameSync,rmSync,statSync,writeFileSync,symlinkSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {randomBytes} from "node:crypto";
@@ -247,6 +247,22 @@ test("spool refuses symlink directories and unexpected files",()=>{
     writeFileSync(join(f.directory,"unexpected.txt"),"no",{mode:0o600});
     assert.throws(()=>new IngressSpool({directory:f.directory,key:f.key}).open(),/Unexpected file/i);
   }finally{f.cleanup()}
+});
+
+test("user erasure refuses to create a missing spool directory",()=>{
+  const parent=mkdtempSync(join(tmpdir(),"potapoff-discord-spool-erasure-"));
+  const directory=join(parent,"missing-spool");
+  const key=randomBytes(32);
+  try{
+    assert.throws(
+      ()=>new IngressSpool({directory,key,createDirectory:false}).open(),
+      error=>error.code==="ENOENT",
+    );
+    assert.equal(existsSync(directory),false);
+  }finally{
+    key.fill(0);
+    rmSync(parent,{recursive:true,force:true});
+  }
 });
 
 test("user-requested erasure removes matching encrypted spool events durably",()=>{
