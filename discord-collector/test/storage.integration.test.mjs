@@ -32,25 +32,23 @@ test("source schema upgrades an old tombstone reason constraint and remains idem
     await admin.query('SET search_path TO "'+schema+'"');
     // Model a database created before user_requested was added to the
     // source-side deletion-reason constraint.
-    await admin.query(\`
-      CREATE TABLE discord_message_tombstones(
-        message_id TEXT PRIMARY KEY,
-        guild_id TEXT NOT NULL,
-        channel_id TEXT NOT NULL,
-        deleted_at TIMESTAMPTZ NOT NULL,
-        deletion_reason TEXT NOT NULL
-          CONSTRAINT discord_message_tombstones_deletion_reason_check
-          CHECK(deletion_reason IN ('deleted','retention_expired','channel_revoked')),
-        CHECK(
-          message_id ~ '^[1-9][0-9]{14,21}$'
-          AND guild_id ~ '^[1-9][0-9]{14,21}$'
-          AND channel_id ~ '^[1-9][0-9]{14,21}$'
-          AND message_id::numeric<=18446744073709551615
-          AND guild_id::numeric<=18446744073709551615
-          AND channel_id::numeric<=18446744073709551615
-        )
-      )
-    \`);
+    const legacyDdl=[
+      "CREATE TABLE discord_message_tombstones(",
+      "message_id TEXT PRIMARY KEY,",
+      "guild_id TEXT NOT NULL,",
+      "channel_id TEXT NOT NULL,",
+      "deleted_at TIMESTAMPTZ NOT NULL,",
+      "deletion_reason TEXT NOT NULL CONSTRAINT discord_message_tombstones_deletion_reason_check ",
+      "CHECK(deletion_reason IN ('deleted','retention_expired','channel_revoked')),",
+      "CHECK(message_id ~ '^[1-9][0-9]{14,21}$' ",
+      "AND guild_id ~ '^[1-9][0-9]{14,21}$' ",
+      "AND channel_id ~ '^[1-9][0-9]{14,21}$' ",
+      "AND message_id::numeric<=18446744073709551615 ",
+      "AND guild_id::numeric<=18446744073709551615 ",
+      "AND channel_id::numeric<=18446744073709551615)",
+      ")",
+    ].join("\n");
+    await admin.query(legacyDdl);
     pool=new pg.Pool({connectionString:URL,options:"-c search_path="+schema,max:2});
     const before=await pool.query(
       "SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint "+
