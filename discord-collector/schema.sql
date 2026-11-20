@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS discord_messages (
 );
 ALTER TABLE discord_messages ADD COLUMN IF NOT EXISTS revision_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS discord_messages_channel_time ON discord_messages(channel_id,occurred_at);
+CREATE INDEX IF NOT EXISTS discord_messages_author_message ON discord_messages(author_id,message_id) WHERE author_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS discord_message_revisions (
  message_id TEXT NOT NULL, guild_id TEXT NOT NULL, channel_id TEXT NOT NULL,
  revision_key TEXT NOT NULL CHECK(length(revision_key)=64),
