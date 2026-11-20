@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
-import {validateAuthorization,normalizeMessage,allowedObservation,isMetadataOnlyMessageUpdate} from "../src/events.mjs";
+import {validateAuthorization,normalizeMessage,allowedObservation,isMetadataOnlyMessageUpdate,isEventCurrentlyAuthorized} from "../src/events.mjs";
 const guildId="123456789012345678";
 const channelId="223456789012345678";
 const messageId="323456789012345678";
