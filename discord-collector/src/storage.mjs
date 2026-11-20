@@ -402,12 +402,6 @@ export async function recordCoverageFailure(pool,event,retentionDays,authorizati
 
 
 /**
- * Erase every retained message/revision for one Discord author and emit
- * metadata-only destination tombstones in the same source transaction.
- * Table locks serialize this one-off DSAR operation against concurrent
- * observation, edit, delete, retention and coverage writes.
- */
-/**
  * Older Collector versions could retain content for partial messages whose
  * author was unavailable. Such rows cannot be attributed to a DSAR safely;
  * refuse to report an erasure as complete until an operator reconciles them.
@@ -438,6 +432,12 @@ export async function findUserMessageIds(pool,authorIdInput){
   return result.rows.map(row=>row.message_id);
 }
 
+/**
+ * Erase every retained message/revision for one Discord author and emit
+ * metadata-only destination tombstones in the same source transaction.
+ * The exclusive source-write lock serializes this DSAR operation against
+ * observations, edits, deletes, retention and coverage writes.
+ */
 export async function eraseUserMessages(pool,authorIdInput){
   const authorId=requireSnowflake(authorIdInput,"author");
   const client=await pool.connect();
