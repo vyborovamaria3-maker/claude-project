@@ -66,4 +66,6 @@ test("collector resumes spool replay on shard ready and session resume",()=>{
   const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
   assert.match(source,/client\.on\(Events\.ShardReady,resumeSpoolReplay\)/);
   assert.match(source,/client\.on\(Events\.ShardResume,resumeSpoolReplay\)/);
+  assert.match(source,/if\(startupComplete&&client\.isReady\(\)&&!stopping\)/);
+  assert.match(source,/startupComplete=true;\s*await drainSpool\(\)/);
 });
