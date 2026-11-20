@@ -82,7 +82,7 @@ const runPermissionPreflight=createDiscordPermissionPreflightRunner({
 });
 let startupSpoolSweep={eventsErased:0};
 let startupPurge={rowsErased:0,tombstonesQueued:0};
-let startupComplete=false;
+let clientReadySeen=false;
 async function releaseSourceDatabase(){
   try{
     if(singletonLockHeld)
@@ -456,7 +456,7 @@ client.on(Events.MessageBulkDelete,messages=>{
 // ClientReady fires only once. Resume durable backlog after reconnect even
 // when no new message arrives to trigger enqueueGatewayEvent.
 const resumeSpoolReplay=()=>{
-  if(startupComplete&&client.isReady()&&!stopping)void drainSpool().catch(()=>{});
+  if(clientReadySeen&&client.isReady()&&!stopping)void drainSpool().catch(()=>{});
 };
 client.on(Events.ShardReady,resumeSpoolReplay);
 client.on(Events.ShardResume,resumeSpoolReplay);
@@ -633,6 +633,7 @@ permissionPreflightTimer=setInterval(startPermissionPreflight,permissionPrefligh
 permissionPreflightTimer.unref();
 
 client.once(Events.ClientReady,()=>{
+  clientReadySeen=true;
   startupTask=(async()=>{
     console.log("Collector connected",{channels:allowed.size,pendingIngressEvents:spool.pendingCount});
     // Replay durable Gateway events before optional history reconciliation.
@@ -688,10 +689,7 @@ client.once(Events.ClientReady,()=>{
         catch(error){failures++;console.error("History backfill failed",channelId,error?.code??"backfill_failed")}
       }
     }
-    if(!stopping){
-      startupComplete=true;
-      await drainSpool();
-    }
+    if(!stopping)await drainSpool();
   })();
   void startupTask.catch(()=>{
     failures++;
