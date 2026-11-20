@@ -290,8 +290,9 @@ default.
   record left by a crash before rename is recovered. A corrupt or partial
   temporary record fails closed; it is never silently discarded.
 - A durable backlog is drained again after Gateway shard readiness/resume, not
-  only on the initial ClientReady event or when another message arrives. Initial
-  startup reconciliation completes before reconnect-triggered replay is enabled.
+  only on the initial ClientReady event or when another message arrives. The
+  initial permission preflight, source schema and recovery baselines are ready
+  before Gateway login, so reconnect replay is safe during optional startup sync.
 - The spool is bounded by bytes and event count. If it fills or a durable write
   fails, the Collector stops accepting events, records a known coverage gap
   where the database is available, and shuts down instead of dropping events
