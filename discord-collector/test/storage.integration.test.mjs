@@ -372,6 +372,28 @@ test("unhydratable message coverage is recorded before acknowledgement and expir
   }
 });
 
+test("coverage failures do not retain author IDs after channel authorization is revoked",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const id="923456789012345696";
+  try{
+    await installSchema(pool);
+    const recorded=await recordCoverageFailure(pool,{
+      kind:"edited",guildId,channelId,messageId:id,
+      authorId:"423456789012345696",
+      receivedAt:new Date().toISOString(),
+    },30,()=>false);
+    assert.equal(recorded,false);
+    const rows=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_coverage_failures WHERE message_id=$1",[id],
+    );
+    assert.equal(rows.rows[0].n,0);
+  }finally{
+    await pool.query("DELETE FROM discord_coverage_failures WHERE message_id=$1",[id]).catch(()=>{});
+    await pool.end();
+  }
+});
+
 test("source observation rechecks the current authorization lease inside its transaction",{skip:!URL},async()=>{
   const {default:pg}=await import("pg");
   const pool=new pg.Pool({connectionString:URL,max:2});
