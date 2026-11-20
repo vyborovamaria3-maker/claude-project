@@ -289,6 +289,9 @@ default.
 - Events replay in durable sequence order after restart. A valid temporary
   record left by a crash before rename is recovered. A corrupt or partial
   temporary record fails closed; it is never silently discarded.
+- A durable backlog is drained again after Gateway shard readiness/resume, not
+  only on the initial ClientReady event or when another message arrives. Initial
+  startup reconciliation completes before reconnect-triggered replay is enabled.
 - The spool is bounded by bytes and event count. If it fills or a durable write
   fails, the Collector stops accepting events, records a known coverage gap
   where the database is available, and shuts down instead of dropping events
