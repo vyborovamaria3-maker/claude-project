@@ -252,7 +252,7 @@ async function verifyPermissions(snapshot){
   }
 }
 
-async function record(message,kind){
+async function record(message,kind,authorizationRetry=0){
   const channelId=String(message.channelId??message.channel?.id??"");
   const permission=allowed.get(channelId);
   if(!permissionActive(permission))return {status:"not-allowed"};
@@ -262,8 +262,17 @@ async function record(message,kind){
     const current=allowed.get(channelId);
     return permissionActive(current)&&sameAuthorizationLease(current,permission);
   };
-  return await storeObservation(pool,observation,permission.retentionDays,
+  const result=await storeObservation(pool,observation,permission.retentionDays,
     new Date(),permission.expiresAt,stillAuthorized);
+  if(["not-authorized","authorization-expired"].includes(result.status)&&
+     isEventCurrentlyAuthorized(allowed,observation)){
+    if(authorizationRetry>=2)
+      throw new Error("authorization_changed_during_source_write");
+    // A renewed lease still authorizes this channel. Re-evaluate retention and
+    // retry instead of letting backfill advance its cursor past a lost event.
+    return record(message,kind,authorizationRetry+1);
+  }
+  return result;
 }
 
 async function persistCoverageGap(channelId){
