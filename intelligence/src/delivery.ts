@@ -388,11 +388,14 @@ async function applyDiscordMessageTombstone(
       ON CONFLICT(evidence_source_id) DO UPDATE SET
         deleted_at=LEAST(discord_message_tombstones.deleted_at,EXCLUDED.deleted_at),
         deletion_reason=CASE
-          WHEN discord_message_tombstones.deletion_reason='deleted' THEN 'deleted'
-          WHEN EXCLUDED.deletion_reason='deleted' THEN 'deleted'
+          WHEN discord_message_tombstones.deletion_reason='user_requested' THEN 'user_requested'
           WHEN EXCLUDED.deletion_reason='user_requested' THEN 'user_requested'
+          WHEN EXCLUDED.deletion_reason='deleted' THEN 'deleted'
           ELSE discord_message_tombstones.deletion_reason END,
-        deletion_event_key=EXCLUDED.deletion_event_key`,[
+        deletion_event_key=CASE
+          WHEN discord_message_tombstones.deletion_reason='user_requested'
+            THEN discord_message_tombstones.deletion_event_key
+          ELSE EXCLUDED.deletion_event_key END`,[
       sourceId,channelId,messageId,body.registryEvent.evidenceRef.observedAt,reason,event.eventKey,
     ]);
     await retractDiscordMessageEvidence(tx,sourceId);
