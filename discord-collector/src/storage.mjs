@@ -281,7 +281,7 @@ export async function purgeExpired(pool,allowed,{allowEmpty=false,exclusive=fals
       [channelIds,guildIds],
     );
     const coverageFailures=await client.query(
-      "DELETE FROM discord_coverage_failures c WHERE c.expires_at<=NOW() OR NOT EXISTS ("+
+      "DELETE FROM discord_coverage_failures c WHERE NOT EXISTS ("+
       "SELECT 1 FROM unnest($1::text[],$2::text[]) AS a(channel_id,guild_id) "+
       "WHERE a.channel_id=c.channel_id AND a.guild_id=c.guild_id) OR EXISTS ("+
       "SELECT 1 FROM unnest($1::text[],$2::text[],$3::integer[]) AS a(channel_id,guild_id,retention_days) "+
