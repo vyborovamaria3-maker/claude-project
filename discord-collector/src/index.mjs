@@ -452,6 +452,14 @@ client.on(Events.MessageBulkDelete,messages=>{
   for(const message of messages.values())enqueueGatewayEvent("deleted",message);
 });
 
+// ClientReady fires only once. Resume durable backlog after reconnect even
+// when no new message arrives to trigger enqueueGatewayEvent.
+const resumeSpoolReplay=()=>{
+  if(client.isReady()&&!stopping)void drainSpool().catch(()=>{});
+};
+client.on(Events.ShardReady,resumeSpoolReplay);
+client.on(Events.ShardResume,resumeSpoolReplay);
+
 async function backfill(guildId,channelId,maxMessages){
   const permission=allowed.get(channelId);
   if(!permissionActive(permission)||permission.guildId!==guildId)return;
