@@ -290,22 +290,22 @@ export async function purgeExpired(pool,allowed,{allowEmpty=false,exclusive=fals
       [channelIds,guildIds,authorized.map(item=>item.retentionDays)],
     );
 
-    for(const item of authorized){
-      const expired=await client.query(
-        "SELECT message_id,guild_id,channel_id FROM discord_messages "+
-        "WHERE channel_id=$1 AND guild_id=$2 AND deleted_at IS NULL "+
-        "AND COALESCE(occurred_at,observed_at)<NOW()-($3::integer*INTERVAL '1 day')",
-        [item.channelId,item.guildId,item.retentionDays],
-      );
-      tombstonesQueued+=await enqueueErasureTombstones(client,expired.rows,"retention_expired");
-      if(expired.rows.length){
-        const ids=expired.rows.map(row=>row.message_id);
-        const revisions=await client.query(
-          "DELETE FROM discord_message_revisions WHERE message_id=ANY($1::text[])",[ids]);
-        const messages=await client.query(
-          "DELETE FROM discord_messages WHERE message_id=ANY($1::text[])",[ids]);
-        removed+=revisions.rowCount+messages.rowCount;
-      }
+    const expired=await client.query(
+      "SELECT m.message_id,m.guild_id,m.channel_id FROM discord_messages m "+
+      "JOIN unnest($1::text[],$2::text[],$3::integer[]) AS a(channel_id,guild_id,retention_days) "+
+      "ON a.channel_id=m.channel_id AND a.guild_id=m.guild_id "+
+      "WHERE m.deleted_at IS NULL "+
+      "AND COALESCE(m.occurred_at,m.observed_at)<NOW()-(a.retention_days*INTERVAL '1 day')",
+      [channelIds,guildIds,authorized.map(item=>item.retentionDays)],
+    );
+    tombstonesQueued+=await enqueueErasureTombstones(client,expired.rows,"retention_expired");
+    if(expired.rows.length){
+      const ids=expired.rows.map(row=>row.message_id);
+      const revisions=await client.query(
+        "DELETE FROM discord_message_revisions WHERE message_id=ANY($1::text[])",[ids]);
+      const messages=await client.query(
+        "DELETE FROM discord_messages WHERE message_id=ANY($1::text[])",[ids]);
+      removed+=revisions.rowCount+messages.rowCount;
     }
     await client.query("COMMIT");
     return {rowsErased:removed,tombstonesQueued,coverageFailuresErased:coverageFailures.rowCount};
