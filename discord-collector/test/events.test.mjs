@@ -93,6 +93,11 @@ test("message revisions stable and deletion drops raw body",()=>{
  assert.equal(erased.contentSha,null);
  assert.notEqual(first.revisionKey,erased.revisionKey);
 });
+test("retained observations and edits require an author ID for later erasure",()=>{
+ assert.throws(()=>normalizeMessage({...mock,author:null},"observed"),/author ID for erasure/);
+ assert.throws(()=>normalizeMessage({...mock,author:null,editedAt:new Date("2024-05-01T01:00:00Z")},"edited"),/author ID for erasure/);
+ assert.doesNotThrow(()=>normalizeMessage({id:messageId,channelId},"deleted",new Date().toISOString(),guildId));
+});
 test("partial deletion can be resolved only with trusted allowed guild id",()=>{
  const deletion=normalizeMessage({id:messageId,channelId},"deleted",new Date().toISOString(),guildId);
  assert.equal(deletion.guildId,guildId);
