@@ -76,3 +76,8 @@ test("corrupt spool diagnostics cannot interrupt fail-closed replay shutdown han
   assert.equal(safeOldestPending({oldestPending:{event:{channelId:"123456789012345678"}}}).event.channelId,
     "123456789012345678");
 });
+
+test("authorization reload waits for an in-flight replay and retries the spool under the new lease",()=>{
+  const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
+  assert.match(source,/const pendingDrain=drainPromise;[\s\S]*if\(pendingDrain\)await pendingDrain\.catch\(\(\)=>\{\}\);[\s\S]*if\(!stopping\)await drainSpool\(\)/);
+});
