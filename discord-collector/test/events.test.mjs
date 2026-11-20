@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
 import {validateAuthorization,normalizeMessage,allowedObservation} from "../src/events.mjs";
 const guildId="123456789012345678";
 const channelId="223456789012345678";
@@ -10,6 +11,11 @@ const valid={version:2,mode:"collect",guilds:[{guild_id:guildId,channel_ids:[cha
  reviewed_by:"test",retention_days:30}]};
 const mock={id:messageId,guildId,channelId,author:{id:"423456789012345678"},
  content:"Solana token!",createdAt:new Date("2024-05-01T00:00:00Z"),editedAt:null};
+test("Gateway snapshots never retain content when the author identity is missing",()=>{
+ const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
+ assert.match(source,/content:authorId!==null&&typeof message\.content==="string"\?message\.content:null/);
+});
+
 test("default deny missing guild/channel permission",()=>{
  assert.throws(()=>validateAuthorization({guilds:[]}));
  assert.throws(()=>validateAuthorization({guilds:[{guild_id:guildId,channel_ids:[channelId],retention_days:30}]}));
