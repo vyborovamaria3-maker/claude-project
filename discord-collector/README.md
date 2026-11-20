@@ -273,6 +273,9 @@ default.
 - Every accepted Gateway create, edit, single-delete or bulk-delete event is
   reduced to an explicit field allowlist. Attachments, embeds, reactions,
   member profiles, display names and arbitrary Gateway payloads are not spooled.
+- Every retained observed/edited message must have a valid author ID for later
+  source-local erasure. Events missing that identity are hydrated before commit;
+  content is not stored if the author cannot be established.
 - The Gateway callback synchronously writes an AES-256-GCM encrypted event
   record, fsyncs the file, atomically renames it to its ready name, and fsyncs
   the containing directory before returning.
