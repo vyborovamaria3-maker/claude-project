@@ -32,3 +32,12 @@ export async function replaySpoolEntries({
   return {acknowledged,blocked:blockSequenceIsSet(blockedSequence),blockedSequence};
 }
 function blockSequenceIsSet(value){return value!==null;}
+
+/**
+ * Diagnostics must never prevent the fail-closed shutdown path. A corrupt or
+ * unreadable head record can make the spool getter throw while handling replay.
+ */
+export function safeOldestPending(spool){
+  try{return spool?.oldestPending??null}
+  catch{return null}
+}
