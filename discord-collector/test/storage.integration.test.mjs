@@ -457,6 +457,38 @@ test("source observation rechecks the current authorization lease inside its tra
   }
 });
 
+test("coverage retention follows the current channel policy when the retention window is extended",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const id="923456789012345694";
+  const receivedAt=new Date(Date.now()-40*24*60*60*1000).toISOString();
+  const extended=new Map([...allowed].map(([channel,permission])=>[
+    channel,{...permission,retentionDays:90},
+  ]));
+  try{
+    await installSchema(pool);
+    await recordCoverageFailure(pool,{
+      kind:"edited",guildId,channelId,messageId:id,
+      authorId:"423456789012345694",receivedAt,
+    },30);
+    await purgeExpired(pool,extended);
+    const retained=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_coverage_failures WHERE message_id=$1",[id],
+    );
+    assert.equal(retained.rows[0].n,1,
+      "an old expires_at value must not override the currently authorized 90-day retention");
+    await purgeExpired(pool,allowed);
+    const expired=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_coverage_failures WHERE message_id=$1",[id],
+    );
+    assert.equal(expired.rows[0].n,0,
+      "shortening the policy must still erase records beyond the new 30-day window");
+  }finally{
+    await pool.query("DELETE FROM discord_coverage_failures WHERE message_id=$1",[id]).catch(()=>{});
+    await pool.end();
+  }
+});
+
 test("user erasure refuses to claim completion while legacy authorless message or revision content remains",{skip:!URL},async()=>{
   const {default:pg}=await import("pg");
   const pool=new pg.Pool({connectionString:URL,max:2});
