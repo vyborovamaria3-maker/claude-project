@@ -98,6 +98,20 @@ test("first-time channel is explicitly unverified",async()=>{
   });
   assert.equal(r.status,"initial_unverified");
 });
+test("first-time recovery is complete only after the REST history is exhausted",async()=>{
+  const messages=ids.slice(0,12);
+  const channel={messages:{fetch:async({limit})=>new Map(messages.slice(0,limit).map(id=>[id,{id}]))}};
+  const complete=await scanRecentGap({
+    channel,baselineMessageId:null,maxPages:2,onMessage:async()=>{},
+  });
+  assert.equal(complete.ranOutOfHistory,true);
+  assert.equal(complete.status,"bounded_recovery");
+  const bounded=await scanRecentGap({
+    channel:fakeChannel(),baselineMessageId:null,maxPages:1,onMessage:async()=>{},
+  });
+  assert.equal(bounded.ranOutOfHistory,false);
+  assert.equal(bounded.status,"initial_unverified");
+});
 test("provider permission failure surfaces, no false success",async()=>{
   const channel={messages:{fetch:async()=>{throw new Error("403 Forbidden")}}};
   await assert.rejects(scanRecentGap({
