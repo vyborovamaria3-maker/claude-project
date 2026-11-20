@@ -56,8 +56,14 @@ try{
     tombstonesQueued:result.tombstonesQueued,
     coverageFailuresErased:result.coverageFailuresErased,
   }));
-}catch{
-  console.error("Discord user erasure failed; no author ID or database details were logged");
+}catch(error){
+  const safeCode=error?.message==="unattributed_discord_content_requires_operator_review"||
+    error?.message==="unattributed_ingress_event_pending"||
+    error?.message==="collector_already_running"||
+    error?.message==="discord_source_schema_incomplete"
+    ? error.message
+    : error?.code==="ENOENT" ? "ingress_spool_unavailable" : "discord_user_erasure_failed";
+  console.error("Discord user erasure failed",safeCode);
   process.exitCode=1;
 }finally{
   try{spool?.close()}catch{}
