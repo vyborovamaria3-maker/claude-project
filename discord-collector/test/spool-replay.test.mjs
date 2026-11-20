@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
-import {replaySpoolEntries} from "../src/spool-replay.mjs";
+import {replaySpoolEntries,safeOldestPending} from "../src/spool-replay.mjs";
 
 test("replay stops at a hydration barrier and leaves the blocked and later events unacknowledged",async()=>{
   const processed=[];
@@ -68,4 +68,11 @@ test("collector resumes spool replay on shard ready and session resume",()=>{
   assert.match(source,/client\.on\(Events\.ShardResume,resumeSpoolReplay\)/);
   assert.match(source,/if\(clientReadySeen&&client\.isReady\(\)&&!stopping\)/);
   assert.match(source,/client\.once\(Events\.ClientReady,\(\)=>\{\s*clientReadySeen=true;/);
+});
+
+test("corrupt spool diagnostics cannot interrupt fail-closed replay shutdown handling",()=>{
+  const spool={get oldestPending(){throw new Error("ciphertext read failed")}};
+  assert.equal(safeOldestPending(spool),null);
+  assert.equal(safeOldestPending({oldestPending:{event:{channelId:"123456789012345678"}}}).event.channelId,
+    "123456789012345678");
 });
