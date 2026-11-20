@@ -1,7 +1,7 @@
 import {readAuthorizationFile} from "./authorization-file.mjs";
 import {Client,GatewayIntentBits,Events,Partials} from "discord.js";
 import pg from "pg";
-import {validateAuthorization,normalizeMessage,allowedObservation} from "./events.mjs";
+import {validateAuthorization,normalizeMessage,allowedObservation,isMetadataOnlyMessageUpdate} from "./events.mjs";
 import {installSchema,storeObservation,getBackfillCursor,advanceBackfillCursor,purgeExpired,getRecoveryBaseline,recordRecoveryCheck,recordCoverageFailure} from "./storage.mjs";
 import {scanRecentGap} from "./reconcile.mjs";
 import {IngressSpool,parseIngressSpoolKey} from "./ingress-spool.mjs";
@@ -392,7 +392,7 @@ async function processSpoolEntry(entry,{allowHydration=true}={}){
   // Discord MESSAGE_UPDATE also fires for metadata-only changes such as pins
   // and flags. If neither the Gateway event nor the hydrated message has a
   // source edit timestamp, it is not a content revision and must not stop replay.
-  if(event.kind==="edited"&&!message.editedAt&&!event.editedAt)
+  if(isMetadataOnlyMessageUpdate(event,message))
     return {ack:true,status:"non-content-update"};
   const observation=normalizeMessage(message,event.kind,event.receivedAt,event.guildId);
   if(!allowedObservation(allowed,observation))return {ack:true,status:"not-allowed"};
