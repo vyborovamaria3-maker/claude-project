@@ -82,6 +82,7 @@ const runPermissionPreflight=createDiscordPermissionPreflightRunner({
 });
 let startupSpoolSweep={eventsErased:0};
 let startupPurge={rowsErased:0,tombstonesQueued:0};
+let startupComplete=false;
 async function releaseSourceDatabase(){
   try{
     if(singletonLockHeld)
@@ -455,7 +456,7 @@ client.on(Events.MessageBulkDelete,messages=>{
 // ClientReady fires only once. Resume durable backlog after reconnect even
 // when no new message arrives to trigger enqueueGatewayEvent.
 const resumeSpoolReplay=()=>{
-  if(client.isReady()&&!stopping)void drainSpool().catch(()=>{});
+  if(startupComplete&&client.isReady()&&!stopping)void drainSpool().catch(()=>{});
 };
 client.on(Events.ShardReady,resumeSpoolReplay);
 client.on(Events.ShardResume,resumeSpoolReplay);
@@ -680,11 +681,16 @@ client.once(Events.ClientReady,()=>{
       }
     }
     const max=Number(process.env.DISCORD_BACKFILL_MAX_MESSAGES||0);
-    if(process.env.DISCORD_BACKFILL_ENABLED!=="true"||!Number.isInteger(max)||max<=0)return;
-    for(const [channelId,permission] of allowed){
-      if(stopping)break;
-      try{await backfill(permission.guildId,channelId,max)}
-      catch(error){failures++;console.error("History backfill failed",channelId,error?.code??"backfill_failed")}
+    if(process.env.DISCORD_BACKFILL_ENABLED==="true"&&Number.isInteger(max)&&max>0){
+      for(const [channelId,permission] of allowed){
+        if(stopping)break;
+        try{await backfill(permission.guildId,channelId,max)}
+        catch(error){failures++;console.error("History backfill failed",channelId,error?.code??"backfill_failed")}
+      }
+    }
+    if(!stopping){
+      startupComplete=true;
+      await drainSpool();
     }
   })();
   void startupTask.catch(()=>{
