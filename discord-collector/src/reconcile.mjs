@@ -59,7 +59,7 @@ export async function scanRecentGap({channel,fetchPage,baselineMessageId,maxPage
     }
   }
   let status;
-  if(floor===null)status="initial_unverified";
+  if(floor===null)status=ranOutOfHistory?"bounded_recovery":"initial_unverified";
   else if(reachedBaseline)status="bounded_recovery";
   else status="gap_unresolved";
   return {status,pagesScanned:pages,messagesProcessed:processed,
