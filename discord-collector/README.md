@@ -301,6 +301,13 @@ default.
   Gateway is ready. Replay stops at that hydration barrier and does not process
   later events out of order. Transient REST/storage failures leave the event
   pending; only Discord's explicit Unknown Message response is terminal.
+- Every source write rechecks the current authorization lease under the shared
+  source-write lock. Channel revocation takes the exclusive lock before purge,
+  so in-flight message, coverage and recovery writes cannot land after erasure.
+  Backfill cursors and recovery watermarks use the same guarded write boundary.
+- Restart gap recovery schedules each REST page independently, allowing higher
+  priority permission checks to run between pages instead of waiting for an
+  entire multi-page recovery scan.
 - A terminally unhydratable event is written to
   `discord_coverage_failures` with guild/channel/message identity, optional
   source-local author ID, event kind, receive time and a bounded failure code.
