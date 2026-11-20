@@ -204,6 +204,7 @@ test("invalid event identifiers, content bounds, timestamps and extra fields are
     assert.throws(()=>f.spool.append(event({kind:"deleted",content:"must not persist"})),/cannot retain/i);
     assert.throws(()=>f.spool.append(event({createdAt:null})),/publication timestamp/i);
     assert.throws(()=>f.spool.append(event({kind:"deleted",authorId,content:null})),/author identifiers/i);
+    assert.throws(()=>f.spool.append(event({authorId:null})),/author identity for erasure/i);
     assert.doesNotThrow(()=>f.spool.append(event({createdAt:null,content:null,authorId:null})));
   }finally{f.cleanup()}
 });
@@ -269,7 +270,7 @@ test("user-requested erasure removes matching encrypted spool events durably",()
   const f=fixture();
   try{
     f.spool.append(event({messageId:"623456789012345678"}));
-    f.spool.append(event({messageId:"723456789012345678",authorId:null}));
+    f.spool.append(event({messageId:"723456789012345678",authorId:null,content:null}));
     f.spool.append(event({messageId:"823456789012345678",authorId:"923456789012345678"}));
     const result=f.spool.eraseAuthor(authorId,["723456789012345678"]);
     assert.equal(result.eventsErased,2);
@@ -282,6 +283,21 @@ test("user-requested erasure removes matching encrypted spool events durably",()
       assert.deepEqual(pending.map(item=>item.event.messageId),["823456789012345678"]);
       assert.equal(pending[0].event.authorId,"923456789012345678");
     }finally{reopened.close()}
+  }finally{f.cleanup()}
+});
+
+test("user erasure refuses unknown authorless pending events before deleting any spool record",()=>{
+  const f=fixture();
+  try{
+    f.spool.append(event({messageId:"623456789012345678"}));
+    f.spool.append(event({messageId:"723456789012345678",authorId:null,content:null}));
+    assert.throws(()=>f.spool.eraseAuthor(authorId),/unattributed_ingress_event_pending/);
+    assert.equal(f.spool.pendingCount,2);
+    assert.deepEqual(
+      f.spool.listPending().map(item=>item.sequence),
+      ["1","2"],
+      "the fail-closed preflight must not partially unlink matching records",
+    );
   }finally{f.cleanup()}
 });
 
