@@ -266,15 +266,16 @@ function snapshotGatewayEvent(kind,message,permission){
   const channelId=String(message.channelId??message.channel?.id??"");
   const createdAt=isoOrNull(message.createdAt,message.createdTimestamp);
   const retainPersonalFields=kind!=="deleted"&&createdAt!==null;
+  const authorId=retainPersonalFields&&message.author?.id?String(message.author.id):null;
   return {
     kind,
     messageId:String(message.id??""),
     guildId:String(message.guildId??message.guild?.id??permission.guildId),
     channelId,
-    // Without a trustworthy publication timestamp, keep only identifiers needed
-    // to hydrate the event later; never retain author/content beyond retention.
-    authorId:retainPersonalFields&&message.author?.id?String(message.author.id):null,
-    content:retainPersonalFields&&typeof message.content==="string"?message.content:null,
+    // Content is retained only when its author can be tied to the source row.
+    // Authorless partial events remain identifier-only until REST hydration.
+    authorId,
+    content:authorId!==null&&typeof message.content==="string"?message.content:null,
     createdAt,
     editedAt:isoOrNull(message.editedAt,message.editedTimestamp),
     receivedAt:new Date().toISOString(),
@@ -591,13 +592,16 @@ client.once(Events.ClientReady,()=>{
         if(stopping)break;
         const baseline=recoveryBaselines.get(channelId)??null;
         try{
-          const result=await scheduleRest(async()=>{
-            const channel=await client.channels.fetch(channelId);
-            return scanRecentGap({
-              channel,baselineMessageId:baseline,maxPages:recoveryMaxPages,
-              onMessage:message=>record(message,"observed")
-            });
-          },{priority:1,label:"gap-recovery"});
+          const channel=await scheduleRest(()=>client.channels.fetch(channelId),
+            {priority:1,label:"gap-recovery-channel"});
+          const result=await scanRecentGap({
+            channel,
+            fetchPage:options=>scheduleRest(()=>channel.messages.fetch(options),
+              {priority:1,label:"gap-recovery-page"}),
+            baselineMessageId:baseline,
+            maxPages:recoveryMaxPages,
+            onMessage:message=>record(message,"observed"),
+          });
           await recordRecoveryCheck(pool,permission.guildId,channelId,baseline,result);
           console.log("Discord recovery window",{channelId,status:result.status,
             pages:result.pagesScanned,processed:result.messagesProcessed});
