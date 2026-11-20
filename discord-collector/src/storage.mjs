@@ -88,6 +88,12 @@ async function enqueueErasureTombstones(client,rows,reason){
 }
 
 export async function storeObservation(pool, o, retentionDays, clock=new Date(), authorizationExpiresAt=null, authorizationCheck=()=>true){
+  if(!o||typeof o!=="object"||!["observed","edited","deleted"].includes(o.kind))
+    throw new TypeError("Invalid Discord source observation");
+  requireSnowflake(o.messageId,"message");
+  requireSnowflake(o.guildId,"guild");
+  requireSnowflake(o.channelId,"channel");
+  if(o.kind!=="deleted")requireSnowflake(o.authorId,"author");
   if(typeof authorizationCheck!=="function")throw new TypeError("Authorization check must be a function");
   if(isExpiredObservation(o,retentionDays,clock))return {status:"expired"};
   if(authorizationExpiresAt!==null&&authorizationExpiresAt!==undefined&&(!Number.isFinite(Date.parse(authorizationExpiresAt))||
