@@ -473,10 +473,12 @@ test("coverage retention follows the current channel policy when the retention w
     },30);
     await purgeExpired(pool,extended);
     const retained=await pool.query(
-      "SELECT COUNT(*)::int AS n FROM discord_coverage_failures WHERE message_id=$1",[id],
+      "SELECT COUNT(*)::int AS n,MAX(expires_at) AS expires_at FROM discord_coverage_failures WHERE message_id=$1",[id],
     );
     assert.equal(retained.rows[0].n,1,
       "an old expires_at value must not override the currently authorized 90-day retention");
+    assert.ok(new Date(retained.rows[0].expires_at).getTime()>Date.now(),
+      "the persisted expiry must be recomputed when the policy window is extended");
     await purgeExpired(pool,allowed);
     const expired=await pool.query(
       "SELECT COUNT(*)::int AS n FROM discord_coverage_failures WHERE message_id=$1",[id],
