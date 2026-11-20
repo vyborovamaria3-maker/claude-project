@@ -161,7 +161,10 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date(),
         "(message_id,guild_id,channel_id,deleted_at,deletion_reason) "+
         "VALUES($1,$2,$3,$4,$5) ON CONFLICT(message_id) DO UPDATE SET "+
         "deleted_at=LEAST(discord_message_tombstones.deleted_at,EXCLUDED.deleted_at),"+
-        "deletion_reason=CASE WHEN EXCLUDED.deletion_reason='deleted' THEN 'deleted' "+
+        "deletion_reason=CASE "+
+        "WHEN discord_message_tombstones.deletion_reason='user_requested' THEN 'user_requested' "+
+        "WHEN EXCLUDED.deletion_reason='user_requested' THEN 'user_requested' "+
+        "WHEN EXCLUDED.deletion_reason='deleted' THEN 'deleted' "+
         "ELSE discord_message_tombstones.deletion_reason END",
         [o.messageId,o.guildId,o.channelId,o.observedAt,o.deletionReason??"deleted"]);
       await client.query(
