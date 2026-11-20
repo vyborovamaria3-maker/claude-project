@@ -160,6 +160,7 @@ try{
 console.log("Discord permission preflight passed",{
   checkedGuilds:initialPermissionReport.checkedGuilds,
   checkedChannels:initialPermissionReport.checkedChannels,
+  rateLimitResponses:restRateLimitResponses,
 });
 const client=new Client({
   intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent],
@@ -563,13 +564,16 @@ function startPermissionPreflight(){
     console.log("Discord periodic permission preflight passed",{
       checkedChannels:report.checkedChannels,
       checkedGuilds:report.checkedGuilds,
+      rateLimitResponses:restRateLimitResponses,
     });
   }).catch(()=>{
     if(stopping)return;
     failures++;
     acceptingEvents=false;
     process.exitCode=1;
-    console.error("Discord permission preflight failed; collection stopped","permission_preflight_failed");
+    console.error("Discord permission preflight failed; collection stopped",{
+      code:"permission_preflight_failed",rateLimitResponses:restRateLimitResponses,
+    });
     void shutdown();
   });
 }
