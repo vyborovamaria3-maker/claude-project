@@ -150,3 +150,17 @@ export function allowedObservation(allowed, observation){
 export function isMetadataOnlyMessageUpdate(event,message){
   return event?.kind==="edited"&&!message?.editedAt&&!event?.editedAt;
 }
+
+/**
+ * A write can lose its original lease while waiting on PostgreSQL. If the
+ * channel is still authorized under a renewed/current lease, keep the spool
+ * event for replay instead of ACKing and silently losing the observation.
+ */
+export function isEventCurrentlyAuthorized(allowed,event,nowMs=Date.now()){
+  if(!(allowed instanceof Map)||!event||typeof event!=="object")return false;
+  const permission=allowed.get(event.channelId);
+  if(!permission||permission.guildId!==event.guildId)return false;
+  if(permission.expiresAt===undefined||permission.expiresAt===null)return true;
+  const expiresAt=Date.parse(permission.expiresAt);
+  return Number.isFinite(expiresAt)&&expiresAt>nowMs;
+}
