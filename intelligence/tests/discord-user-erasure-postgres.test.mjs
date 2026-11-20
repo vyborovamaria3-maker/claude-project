@@ -59,6 +59,8 @@ test("user-requested Discord deletion retracts prior evidence and persists the r
     ]){
       await admin.query(await readFile(new URL("../migrations/"+name,import.meta.url),"utf8"));
     }
+    // Reapplying the additive migration must preserve the validated reason set.
+    await admin.query(await readFile(new URL("../migrations/024_discord_user_requested_erasure.sql",import.meta.url),"utf8"));
     destinationPool=new pg.Pool({connectionString:url,options:"-c search_path="+destinationSchema,max:3});
 
     const observedKey="discord:message:"+channelId+":"+messageId+":"+revisionA;
