@@ -367,6 +367,28 @@ export async function recordCoverageFailure(pool,event,retentionDays){
  * Table locks serialize this one-off DSAR operation against concurrent
  * observation, edit, delete, retention and coverage writes.
  */
+/**
+ * Older Collector versions could retain content for partial messages whose
+ * author was unavailable. Such rows cannot be attributed to a DSAR safely;
+ * refuse to report an erasure as complete until an operator reconciles them.
+ */
+export async function assertNoUnattributedRetainedContent(queryable){
+  const result=await queryable.query(`
+    SELECT EXISTS(
+      SELECT 1 FROM discord_messages m
+      WHERE m.author_id IS NULL
+        AND (m.content IS NOT NULL OR m.content_sha256 IS NOT NULL)
+      UNION ALL
+      SELECT 1 FROM discord_message_revisions r
+      LEFT JOIN discord_messages m ON m.message_id=r.message_id
+      WHERE (m.message_id IS NULL OR m.author_id IS NULL)
+        AND (r.content IS NOT NULL OR r.content_sha256 IS NOT NULL)
+    ) AS present
+  `);
+  if(result.rows[0]?.present===true)
+    throw new Error("unattributed_discord_content_requires_operator_review");
+}
+
 export async function findUserMessageIds(pool,authorIdInput){
   const authorId=requireSnowflake(authorIdInput,"author");
   const result=await pool.query(
@@ -384,6 +406,7 @@ export async function eraseUserMessages(pool,authorIdInput){
     // Exclusive form waits for every source writer and prevents new writes
     // until Spool and source rows have been erased by the operator command.
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('potapoff:discord-source-write',0))");
+    await assertNoUnattributedRetainedContent(client);
     const selected=await client.query(
       "SELECT message_id,guild_id,channel_id FROM discord_messages "+
       "WHERE author_id=$1 ORDER BY message_id FOR UPDATE",
