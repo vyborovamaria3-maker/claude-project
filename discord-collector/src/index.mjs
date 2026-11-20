@@ -208,6 +208,17 @@ function permissionActive(permission){
   return Number.isFinite(expiry)&&expiry>Date.now();
 }
 
+function sameAuthorizationLease(current,expected){
+  return Boolean(current&&expected&&
+    current.guildId===expected.guildId&&
+    current.retentionDays===expected.retentionDays&&
+    current.permissionReference===expected.permissionReference&&
+    current.policyReviewReference===expected.policyReviewReference&&
+    current.permissionExpiresAt===expected.permissionExpiresAt&&
+    current.policyReviewExpiresAt===expected.policyReviewExpiresAt&&
+    current.expiresAt===expected.expiresAt);
+}
+
 function permissionPreflightSummary(report){
   return {
     status:report.status,
@@ -246,7 +257,12 @@ async function record(message,kind){
   if(!permissionActive(permission))return {status:"not-allowed"};
   const observation=normalizeMessage(message,kind,new Date().toISOString(),permission.guildId);
   if(!allowedObservation(allowed,observation))return {status:"not-allowed"};
-  return await storeObservation(pool,observation,permission.retentionDays,new Date(),permission.expiresAt);
+  const stillAuthorized=()=>{
+    const current=allowed.get(channelId);
+    return permissionActive(current)&&sameAuthorizationLease(current,permission);
+  };
+  return await storeObservation(pool,observation,permission.retentionDays,
+    new Date(),permission.expiresAt,stillAuthorized);
 }
 
 async function persistCoverageGap(channelId){
@@ -367,8 +383,12 @@ async function processSpoolEntry(entry,{allowHydration=true}={}){
   const currentPermission=allowed.get(event.channelId);
   if(!permissionActive(currentPermission)||currentPermission.guildId!==event.guildId)
     return {ack:true,status:"not-authorized"};
+  const stillAuthorized=()=>{
+    const current=allowed.get(event.channelId);
+    return permissionActive(current)&&sameAuthorizationLease(current,currentPermission);
+  };
   const result=await storeObservation(pool,observation,currentPermission.retentionDays,
-    new Date(),currentPermission.expiresAt);
+    new Date(),currentPermission.expiresAt,stillAuthorized);
   return {ack:true,status:result.status};
 }
 
@@ -477,7 +497,7 @@ async function reloadAuthorization(){
   if(retained.size!==allowed.size){
     allowed=retained;
     const revokedSpool=spool.sweepExpired(allowed);
-    const revokedPurge=await purgeExpired(pool,allowed,{allowEmpty:nextErasureOnly||allowed.size===0});
+    const revokedPurge=await purgeExpired(pool,allowed,{allowEmpty:nextErasureOnly||allowed.size===0,exclusive:true});
     console.log("Discord revoked-channel erasure",{
       queuedEventsErased:revokedSpool.eventsErased,
       sourceRowsErased:revokedPurge.rowsErased,
@@ -505,7 +525,7 @@ async function reloadAuthorization(){
   scheduleAuthorizationExpiry(allowed);
 
   const spoolResult=spool.sweepExpired(allowed);
-  const purgeResult=await purgeExpired(pool,allowed,{allowEmpty:erasureOnly});
+  const purgeResult=await purgeExpired(pool,allowed,{allowEmpty:erasureOnly,exclusive:true});
   console.log("Discord authorization policy reloaded",{
     activeChannels:allowed.size,
     expiredChannels:allowed.expiredChannels.length,
