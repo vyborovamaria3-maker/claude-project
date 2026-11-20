@@ -340,7 +340,7 @@ test("configured permission preflight runner forwards the shared pacing and rate
 
 test("collector startup and recurring permission checks share the configured preflight runner",()=>{
   const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
-  assert.match(source,/initialPermissionReport=await runPermissionPreflight\\(allowed\\)/);
-  assert.match(source,/scheduleRest\\(\\(\\)=>runPermissionPreflight\\(snapshot\\)/);
-  assert.match(source,/createDiscordPermissionPreflightRunner\\(\\{[\\s\\S]*minRequestIntervalMs:permissionPreflightMinRequestIntervalMs,[\\s\\S]*onRateLimit:\\(\\)=>\\{restRateLimitResponses\\+\\+\\}/);
+  assert.match(source,/initialPermissionReport=await runPermissionPreflight\(allowed\)/);
+  assert.match(source,/scheduleRest\(\(\)=>runPermissionPreflight\(snapshot\)/);
+  assert.match(source,/createDiscordPermissionPreflightRunner\(\{[\s\S]*minRequestIntervalMs:permissionPreflightMinRequestIntervalMs,[\s\S]*onRateLimit:\(\)=>\{restRateLimitResponses\+\+\}/);
 });
