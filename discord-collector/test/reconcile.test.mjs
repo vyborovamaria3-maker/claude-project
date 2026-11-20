@@ -65,6 +65,24 @@ test("collector wires every recovery page through the priority REST scheduler",(
   assert.doesNotMatch(source,/scheduleRest\(async\(\)=>\{[\s\S]{0,300}scanRecentGap\(/);
 });
 
+test("recovery stops at the next safe boundary when authorization is revoked",async()=>{
+  const channel=fakeChannel();
+  let authorized=true;
+  const delivered=[];
+  const result=await scanRecentGap({
+    channel,baselineMessageId:ids[239],maxPages:5,
+    shouldContinue:()=>authorized,
+    onMessage:async message=>{
+      delivered.push(message.id);
+      authorized=false;
+    },
+  });
+  assert.equal(result.status,"gap_unresolved");
+  assert.equal(result.pagesScanned,1);
+  assert.equal(result.messagesProcessed,1);
+  assert.equal(delivered.length,1);
+});
+
 test("budget exhausted must never claim full recovery",async()=>{
   const channel=fakeChannel();
   const r=await scanRecentGap({
