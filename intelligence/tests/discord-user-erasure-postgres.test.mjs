@@ -104,6 +104,25 @@ test("user-requested Discord deletion retracts prior evidence and persists the r
       [deletionKey],
     );
     assert.equal(deletionTimeline.rows[0].n,1);
+
+    const laterDeletionKey="discord:message:"+channelId+":"+messageId+":"+"c".repeat(64);
+    await emit({
+      kind:"deleted",channelId,messageId,revisionKey:"c".repeat(64),
+      observedAt:"2026-11-19T12:02:00.000Z",contentErased:true,
+      deletionReason:"deleted",producerVersion,
+    },"message_deleted",laterDeletionKey);
+    const laterDelete=await runDeliveryBatch(source,destinationPool,{
+      workerId:"discord-user-erasure-late-delete",batchSize:1,leaseMs:120000,
+    });
+    assert.equal(laterDelete.delivered,1);
+    const preserved=await destinationPool.query(
+      "SELECT deletion_reason,deletion_event_key FROM discord_message_tombstones WHERE evidence_source_id=$1",
+      ["discord:message:"+channelId+":"+messageId],
+    );
+    assert.deepEqual(preserved.rows,[{
+      deletion_reason:"user_requested",deletion_event_key:deletionKey,
+    }],"later ordinary deletes must not overwrite the original DSAR tombstone");
+
   }finally{
     if(destinationPool)await destinationPool.end();
     if(sourcePool)await sourcePool.end();
