@@ -6,9 +6,12 @@ import {isDiscordSnowflake} from "@claude-project/contracts";
  * be inferred from a limited window. A historical backfill is separate.
  */
 
-export async function scanRecentGap({channel,baselineMessageId,maxPages,onMessage}){
+export async function scanRecentGap({channel,fetchPage,baselineMessageId,maxPages,onMessage}){
   if(!channel?.messages?.fetch || typeof onMessage!=="function")
     throw new TypeError("A readable authorized channel and onMessage callback are required");
+  if(fetchPage!==undefined&&typeof fetchPage!=="function")
+    throw new TypeError("Recovery page scheduler must be a function");
+  const fetch=fetchPage??(options=>channel.messages.fetch(options));
   if(!Number.isInteger(maxPages)||maxPages<1||maxPages>50)
     throw new RangeError("Recovery page budget must be between 1 and 50");
   if(baselineMessageId!==null && (!isDiscordSnowflake(String(baselineMessageId))))
@@ -20,7 +23,7 @@ export async function scanRecentGap({channel,baselineMessageId,maxPages,onMessag
   let ranOutOfHistory=false;
   const floor=baselineMessageId===null?null:BigInt(baselineMessageId);
   for(let i=0;i<maxPages;i++){
-    const batch=await channel.messages.fetch({limit:100,...(cursor?{before:cursor}:{})});
+    const batch=await fetch({limit:100,...(cursor?{before:cursor}:{})});
     pages++;
     if(batch.size===0){
       ranOutOfHistory=true;
