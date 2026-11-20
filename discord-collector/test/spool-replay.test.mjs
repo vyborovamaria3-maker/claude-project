@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
 import {replaySpoolEntries} from "../src/spool-replay.mjs";
 
 test("replay stops at a hydration barrier and leaves the blocked and later events unacknowledged",async()=>{
@@ -59,4 +60,10 @@ test("replay requires an explicit ACK decision",async()=>{
     acknowledge:()=>{},
     flushAcks:()=>{},
   }),/explicitly return an ACK decision/);
+});
+
+test("collector resumes spool replay on shard ready and session resume",()=>{
+  const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
+  assert.match(source,/client\.on\(Events\.ShardReady,resumeSpoolReplay\)/);
+  assert.match(source,/client\.on\(Events\.ShardResume,resumeSpoolReplay\)/);
 });
