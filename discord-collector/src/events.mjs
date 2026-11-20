@@ -145,3 +145,8 @@ export function allowedObservation(allowed, observation){
   const expiresAt=Date.parse(permission.expiresAt);
   return Number.isFinite(expiresAt)&&expiresAt>Date.now();
 }
+
+/** Discord MESSAGE_UPDATE also fires for metadata-only changes such as pins and flags. */
+export function isMetadataOnlyMessageUpdate(event,message){
+  return event?.kind==="edited"&&!message?.editedAt&&!event?.editedAt;
+}
