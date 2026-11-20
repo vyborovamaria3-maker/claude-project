@@ -324,7 +324,7 @@ export async function getRecoveryBaseline(pool,channelId){
   const pending=await pool.query(
     "SELECT baseline_message_id FROM discord_recovery_checks "+
     "WHERE channel_id=$1 AND status IN ('gap_unresolved','failed') AND resolved_at IS NULL "+
-    "AND baseline_message_id IS NOT NULL ORDER BY checked_at ASC LIMIT 1",[channelId]);
+    "ORDER BY checked_at ASC LIMIT 1",[channelId]);
   if(pending.rows[0])return pending.rows[0].baseline_message_id;
   const latest=await pool.query(
     "SELECT message_id FROM discord_messages WHERE channel_id=$1 "+
