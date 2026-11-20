@@ -87,7 +87,8 @@ async function enqueueErasureTombstones(client,rows,reason){
   return queued;
 }
 
-export async function storeObservation(pool, o, retentionDays, clock=new Date(), authorizationExpiresAt=null){
+export async function storeObservation(pool, o, retentionDays, clock=new Date(), authorizationExpiresAt=null, authorizationCheck=()=>true){
+  if(typeof authorizationCheck!=="function")throw new TypeError("Authorization check must be a function");
   if(isExpiredObservation(o,retentionDays,clock))return {status:"expired"};
   if(authorizationExpiresAt!==null&&authorizationExpiresAt!==undefined&&(!Number.isFinite(Date.parse(authorizationExpiresAt))||
      Date.parse(authorizationExpiresAt)<=Date.now()))return {status:"authorization-expired"};
@@ -97,6 +98,12 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date(),
     // Shared source-write lock lets an explicit author erasure acquire the
     // exclusive form and serialize against observations, retention and gaps.
     await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('potapoff:discord-source-write',0))");
+    // Authorization may be revoked while this write waits for a DB connection.
+    // Recheck under the source-write lock before touching retained data.
+    if(!authorizationCheck()){
+      await client.query("ROLLBACK");
+      return {status:"not-authorized"};
+    }
     // Serialize create/edit/delete races for one globally unique Discord message.
     await client.query("SELECT pg_advisory_xact_lock(hashtext('discord'),hashtext($1))",[o.messageId]);
     if(authorizationExpiresAt!==null&&authorizationExpiresAt!==undefined&&(!Number.isFinite(Date.parse(authorizationExpiresAt))||
@@ -198,6 +205,10 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date(),
          o.editedAt,o.content,o.contentSha,o.revisionAt]);
     }
     if(!stale)await emitDiscordObservation(client,o);
+    if(!authorizationCheck()){
+      await client.query("ROLLBACK");
+      return {status:"not-authorized"};
+    }
     if(authorizationExpiresAt!==null&&authorizationExpiresAt!==undefined&&(!Number.isFinite(Date.parse(authorizationExpiresAt))||
        Date.parse(authorizationExpiresAt)<=Date.now())){
       await client.query("ROLLBACK");
@@ -209,14 +220,16 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date(),
   finally{client.release()}
 }
 
-export async function purgeExpired(pool,allowed,{allowEmpty=false}={}){
+export async function purgeExpired(pool,allowed,{allowEmpty=false,exclusive=false}={}){
   // Revocation and retention emit durable erasure tombstones BEFORE local rows
   // are removed. The same transaction contains the source Outbox inserts.
   if(!(allowed instanceof Map)||(!allowEmpty&&allowed.size===0))throw new Error("No authorized channels");
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
-    await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('potapoff:discord-source-write',0))");
+    await client.query(exclusive
+      ? "SELECT pg_advisory_xact_lock(hashtextextended('potapoff:discord-source-write',0))"
+      : "SELECT pg_advisory_xact_lock_shared(hashtextextended('potapoff:discord-source-write',0))");
     let removed=0;
     let tombstonesQueued=0;
     const authorized=[...allowed.entries()]
