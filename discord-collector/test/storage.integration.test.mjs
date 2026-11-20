@@ -20,6 +20,19 @@ const allowed=validateAuthorization({version:2,mode:"collect",guilds:[{
   reviewed_by:"ci"
 }]});
 
+test("storage boundary rejects authorless observations even when normalization is bypassed",async()=>{
+  const invalid={
+    kind:"observed",messageId,guildId,channelId,authorId:null,
+    occurredAt:new Date().toISOString(),observedAt:new Date().toISOString(),
+    editedAt:null,revisionAt:new Date().toISOString(),content:"must not be retained",
+    contentSha:"a".repeat(64),revisionKey:"b".repeat(64),
+  };
+  await assert.rejects(
+    storeObservation({connect:()=>{throw new Error("database must not be touched")}},invalid,30),
+    /Invalid Discord author Snowflake/,
+  );
+});
+
 test("source schema upgrades an old tombstone reason constraint and remains idempotent",{skip:!URL},async()=>{
   const {default:pg}=await import("pg");
   const suffix=randomBytes(5).toString("hex");
