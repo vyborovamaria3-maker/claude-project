@@ -132,3 +132,20 @@ test("invalid IDs, event types and timestamps rejected",()=>{
  assert.throws(()=>normalizeMessage(mock,"unknown"));
  assert.throws(()=>normalizeMessage(mock,"observed","2024-05-01T10:00:00"));
 });
+
+test("a renewed active lease keeps an in-flight spool event retryable",()=>{
+ const event={channelId,guildId};
+ const renewed=new Map([[channelId,{
+  guildId,retentionDays:90,permissionReference:"renewed-consent",
+  expiresAt:"2026-12-20T00:00:00.000Z",
+ }]]);
+ assert.equal(isEventCurrentlyAuthorized(renewed,event,Date.parse("2026-11-20T00:00:00Z")),true);
+ const revoked=new Map([[channelId,{
+  guildId:"923456789012345699",expiresAt:"2026-12-20T00:00:00.000Z",
+ }]]);
+ assert.equal(isEventCurrentlyAuthorized(revoked,event,Date.parse("2026-11-20T00:00:00Z")),false);
+ const expired=new Map([[channelId,{
+  guildId,expiresAt:"2026-11-19T00:00:00.000Z",
+ }]]);
+ assert.equal(isEventCurrentlyAuthorized(expired,event,Date.parse("2026-11-20T00:00:00Z")),false);
+});
