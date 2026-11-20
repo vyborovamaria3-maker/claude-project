@@ -117,6 +117,8 @@ export function normalizeMessage(message, kind, observedAt=new Date().toISOStrin
     throw new TypeError("observedAt must be an aware ISO timestamp");
   const authorId=message.author?.id ? String(message.author.id) : null;
   if(authorId&&!isDiscordSnowflake(authorId))throw new TypeError("Invalid author id");
+  if(kind!=="deleted"&&!authorId)
+    throw new TypeError("Observed/edited Discord messages require an author ID for erasure");
   const content=kind==="deleted"?null:(typeof message.content==="string"?message.content:null);
   const contentSha=content===null?null:createHash("sha256").update(content).digest("hex");
   const editedAt=message.editedAt instanceof Date ? message.editedAt.toISOString() : null;
