@@ -571,6 +571,13 @@ async function reloadAuthorization(){
     sourceRowsErased:purgeResult.rowsErased,
     erasureTombstonesQueued:purgeResult.tombstonesQueued,
   });
+  // If an in-flight replay deferred an event while its lease changed, retry it
+  // under the newly committed allowlist before waiting for another Gateway event.
+  if(!erasureOnly&&!stopping){
+    const pendingDrain=drainPromise;
+    if(pendingDrain)await pendingDrain.catch(()=>{});
+    if(!stopping)await drainSpool();
+  }
   if(erasureOnly){
     acceptingEvents=false;
     console.log("No active Discord authorization remains; stopping after erasure");
