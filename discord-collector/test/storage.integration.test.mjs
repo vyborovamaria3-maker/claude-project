@@ -410,6 +410,14 @@ test("user-requested erasure removes all author content and emits content-free t
       createdAt:new Date(now.getTime()-60*60*1000),editedAt:null,
     },"observed",now.toISOString(),guildId);
     assert.equal((await storeObservation(pool,replay,30)).status,"tombstoned");
+    const laterDelete=normalizeMessage({id:ids[0],channelId},"deleted",
+      new Date(now.getTime()+60_000).toISOString(),guildId);
+    assert.equal((await storeObservation(pool,laterDelete,30)).status,"deleted");
+    const preservedSourceReason=await pool.query(
+      "SELECT deletion_reason FROM discord_message_tombstones WHERE message_id=$1",[ids[0]],
+    );
+    assert.equal(preservedSourceReason.rows[0].deletion_reason,"user_requested",
+      "a later ordinary Discord delete must not overwrite the DSAR reason");
   }finally{
     await pool.query("DELETE FROM outbox_events WHERE source_system='discord' AND event_key LIKE ANY($1::text[])",
       [ids.map(id=>"discord:message:%:"+id+":%")]).catch(()=>{});
