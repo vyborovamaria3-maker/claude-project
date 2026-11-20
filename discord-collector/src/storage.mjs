@@ -328,13 +328,19 @@ export async function getRecoveryBaseline(pool,channelId){
   return latest.rows[0]?.message_id??null;
 }
 
-export async function recordRecoveryCheck(pool,guildId,channelId,baseline,results){
+export async function recordRecoveryCheck(pool,guildId,channelId,baseline,results,authorizationCheck=()=>true){
   const status=results.status;
   if(!["initial_unverified","bounded_recovery","gap_unresolved","failed"].includes(status))
     throw new TypeError("Unrecognized recovery status");
+  if(typeof authorizationCheck!=="function")throw new TypeError("Authorization check must be a function");
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('potapoff:discord-source-write',0))");
+    if(!authorizationCheck()){
+      await client.query("ROLLBACK");
+      return false;
+    }
     await client.query(
       "INSERT INTO discord_recovery_checks "+
       "(guild_id,channel_id,baseline_message_id,status,pages_scanned,messages_processed) "+
@@ -347,7 +353,12 @@ export async function recordRecoveryCheck(pool,guildId,channelId,baseline,result
         "AND status IN ('gap_unresolved','failed') AND resolved_at IS NULL",
         [channelId,baseline]);
     }
+    if(!authorizationCheck()){
+      await client.query("ROLLBACK");
+      return false;
+    }
     await client.query("COMMIT");
+    return true;
   }catch(e){await client.query("ROLLBACK");throw e}
   finally{client.release()}
 }
@@ -470,10 +481,27 @@ export async function getBackfillCursor(pool,channelId){
   return rows[0]?.before_message_id??null;
 }
 
-export async function advanceBackfillCursor(pool,guildId,channelId,beforeId){
-  await pool.query(
-    "INSERT INTO discord_backfill_cursors(guild_id,channel_id,before_message_id,updated_at) "+
-    "VALUES($1,$2,$3,NOW()) ON CONFLICT(channel_id) DO UPDATE SET "+
-    "before_message_id=EXCLUDED.before_message_id,updated_at=NOW()",
-    [guildId,channelId,beforeId]);
+export async function advanceBackfillCursor(pool,guildId,channelId,beforeId,authorizationCheck=()=>true){
+  if(typeof authorizationCheck!=="function")throw new TypeError("Authorization check must be a function");
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('potapoff:discord-source-write',0))");
+    if(!authorizationCheck()){
+      await client.query("ROLLBACK");
+      return false;
+    }
+    await client.query(
+      "INSERT INTO discord_backfill_cursors(guild_id,channel_id,before_message_id,updated_at) "+
+      "VALUES($1,$2,$3,NOW()) ON CONFLICT(channel_id) DO UPDATE SET "+
+      "before_message_id=EXCLUDED.before_message_id,updated_at=NOW()",
+      [guildId,channelId,beforeId]);
+    if(!authorizationCheck()){
+      await client.query("ROLLBACK");
+      return false;
+    }
+    await client.query("COMMIT");
+    return true;
+  }catch(error){await client.query("ROLLBACK");throw error}
+  finally{client.release()}
 }
