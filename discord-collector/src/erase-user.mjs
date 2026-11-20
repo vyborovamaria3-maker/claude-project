@@ -1,6 +1,6 @@
 import pg from "pg";
 import {IngressSpool,parseIngressSpoolKey} from "./ingress-spool.mjs";
-import {eraseUserMessages,findUserMessageIds,installSchema} from "./storage.mjs";
+import {assertNoUnattributedRetainedContent,eraseUserMessages,findUserMessageIds,installSchema} from "./storage.mjs";
 
 const authorId=process.env.DISCORD_ERASURE_AUTHOR_ID;
 if(process.env.DISCORD_USER_ERASURE_ENABLED!=="true")
@@ -25,6 +25,9 @@ try{
     throw new Error("collector_already_running");
 
   await installSchema(pool);
+  // Never claim a targeted erasure is complete when legacy authorless content
+  // cannot be attributed to the requester.
+  await assertNoUnattributedRetainedContent(pool);
   const knownMessageIds=await findUserMessageIds(pool,authorId);
   const key=parseIngressSpoolKey(process.env.DISCORD_INGRESS_SPOOL_KEY);
   try{
