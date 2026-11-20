@@ -29,7 +29,7 @@ try{
   const key=parseIngressSpoolKey(process.env.DISCORD_INGRESS_SPOOL_KEY);
   try{
     spool=new IngressSpool({
-      directory:process.env.DISCORD_INGRESS_SPOOL_DIR,key,
+      directory:process.env.DISCORD_INGRESS_SPOOL_DIR,key,createDirectory:false,
     }).open();
   }finally{key.fill(0)}
   const spoolResult=spool.eraseAuthor(authorId,knownMessageIds);
