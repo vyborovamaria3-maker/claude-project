@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
-import {validateAuthorization,normalizeMessage,allowedObservation} from "../src/events.mjs";
+import {validateAuthorization,normalizeMessage,allowedObservation,isMetadataOnlyMessageUpdate} from "../src/events.mjs";
 const guildId="123456789012345678";
 const channelId="223456789012345678";
 const messageId="323456789012345678";
@@ -14,6 +14,13 @@ const mock={id:messageId,guildId,channelId,author:{id:"423456789012345678"},
 test("Gateway snapshots never retain content when the author identity is missing",()=>{
  const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
  assert.match(source,/content:authorId!==null&&typeof message\.content==="string"\?message\.content:null/);
+});
+
+test("metadata-only MESSAGE_UPDATE events do not become content revisions",()=>{
+ assert.equal(isMetadataOnlyMessageUpdate({kind:"edited"},{editedAt:null}),true);
+ assert.equal(isMetadataOnlyMessageUpdate({kind:"edited",editedAt:"2026-11-19T12:00:00.000Z"},{editedAt:null}),false);
+ assert.equal(isMetadataOnlyMessageUpdate({kind:"edited"},{editedAt:new Date("2026-11-19T12:00:00.000Z")}),false);
+ assert.equal(isMetadataOnlyMessageUpdate({kind:"observed"},{editedAt:null}),false);
 });
 
 test("default deny missing guild/channel permission",()=>{
