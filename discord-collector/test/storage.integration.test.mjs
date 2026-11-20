@@ -384,6 +384,16 @@ test("user erasure refuses to claim completion while legacy authorless message o
       assertNoUnattributedRetainedContent(pool),
       /unattributed_discord_content_requires_operator_review/,
     );
+    await assert.rejects(
+      eraseUserMessages(pool,"423456789012345689"),
+      /unattributed_discord_content_requires_operator_review/,
+      "the erasure transaction itself must fail closed if a caller skips the CLI preflight",
+    );
+    const stillPresent=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_messages WHERE message_id=$1 AND content IS NOT NULL",
+      [orphanId],
+    );
+    assert.equal(stillPresent.rows[0].n,1);
     await pool.query(
       "UPDATE discord_messages SET content=NULL,content_sha256=NULL WHERE message_id=$1",
       [orphanId],
