@@ -1,7 +1,7 @@
 import {readAuthorizationFile} from "./authorization-file.mjs";
 import {Client,GatewayIntentBits,Events,Partials} from "discord.js";
 import pg from "pg";
-import {validateAuthorization,normalizeMessage,allowedObservation,isMetadataOnlyMessageUpdate} from "./events.mjs";
+import {validateAuthorization,normalizeMessage,allowedObservation,isMetadataOnlyMessageUpdate,isEventCurrentlyAuthorized} from "./events.mjs";
 import {installSchema,storeObservation,getBackfillCursor,advanceBackfillCursor,purgeExpired,getRecoveryBaseline,recordRecoveryCheck,recordCoverageFailure} from "./storage.mjs";
 import {scanRecentGap} from "./reconcile.mjs";
 import {IngressSpool,parseIngressSpoolKey} from "./ingress-spool.mjs";
@@ -381,9 +381,13 @@ async function processSpoolEntry(entry,{allowHydration=true}={}){
       const recorded=await recordCoverageFailure(
         pool,event,currentPermission.retentionDays,stillAuthorized,
       );
-      if(!recorded)return {ack:true,status:"not-authorized"};
-      await recordRecoveryCheck(pool,currentPermission.guildId,event.channelId,
+      if(!recorded)return isEventCurrentlyAuthorized(allowed,event)
+        ? {ack:false,status:"authorization-changed"}
+        : {ack:true,status:"not-authorized"};
+      const recoveryRecorded=await recordRecoveryCheck(pool,currentPermission.guildId,event.channelId,
         recoveryBaselines.get(event.channelId)??null,{status:"failed"},stillAuthorized);
+      if(!recoveryRecorded&&isEventCurrentlyAuthorized(allowed,event))
+        return {ack:false,status:"authorization-changed"};
       failures++;
       process.exitCode=1;
       console.error("Discord ingress event could not be hydrated; durable coverage gap recorded",event.kind);
@@ -406,6 +410,9 @@ async function processSpoolEntry(entry,{allowHydration=true}={}){
   };
   const result=await storeObservation(pool,observation,currentPermission.retentionDays,
     new Date(),currentPermission.expiresAt,stillAuthorized);
+  if(["not-authorized","authorization-expired"].includes(result.status)&&
+     isEventCurrentlyAuthorized(allowed,event))
+    return {ack:false,status:"authorization-changed"};
   return {ack:true,status:result.status};
 }
 
