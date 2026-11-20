@@ -280,14 +280,18 @@ export async function purgeExpired(pool,allowed,{allowEmpty=false,exclusive=fals
       "WHERE a.channel_id=c.channel_id AND a.guild_id=c.guild_id)",
       [channelIds,guildIds],
     );
-    const coverageFailures=await client.query(
-      "DELETE FROM discord_coverage_failures c WHERE NOT EXISTS ("+
-      "SELECT 1 FROM unnest($1::text[],$2::text[]) AS a(channel_id,guild_id) "+
-      "WHERE a.channel_id=c.channel_id AND a.guild_id=c.guild_id) OR EXISTS ("+
-      "SELECT 1 FROM unnest($1::text[],$2::text[],$3::integer[]) AS a(channel_id,guild_id,retention_days) "+
+    await client.query(
+      "UPDATE discord_coverage_failures c SET expires_at=c.received_at+(a.retention_days*INTERVAL '1 day') "+
+      "FROM unnest($1::text[],$2::text[],$3::integer[]) AS a(channel_id,guild_id,retention_days) "+
       "WHERE a.channel_id=c.channel_id AND a.guild_id=c.guild_id "+
-      "AND c.received_at<NOW()-(a.retention_days*INTERVAL '1 day'))",
+      "AND c.expires_at IS DISTINCT FROM c.received_at+(a.retention_days*INTERVAL '1 day')",
       [channelIds,guildIds,authorized.map(item=>item.retentionDays)],
+    );
+    const coverageFailures=await client.query(
+      "DELETE FROM discord_coverage_failures c WHERE c.expires_at<=NOW() OR NOT EXISTS ("+
+      "SELECT 1 FROM unnest($1::text[],$2::text[]) AS a(channel_id,guild_id) "+
+      "WHERE a.channel_id=c.channel_id AND a.guild_id=c.guild_id)",
+      [channelIds,guildIds],
     );
 
     const expired=await client.query(
