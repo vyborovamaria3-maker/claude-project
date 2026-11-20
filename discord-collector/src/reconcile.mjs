@@ -6,11 +6,13 @@ import {isDiscordSnowflake} from "@claude-project/contracts";
  * be inferred from a limited window. A historical backfill is separate.
  */
 
-export async function scanRecentGap({channel,fetchPage,baselineMessageId,maxPages,onMessage}){
+export async function scanRecentGap({channel,fetchPage,baselineMessageId,maxPages,onMessage,shouldContinue=()=>true}){
   if(!channel?.messages?.fetch || typeof onMessage!=="function")
     throw new TypeError("A readable authorized channel and onMessage callback are required");
   if(fetchPage!==undefined&&typeof fetchPage!=="function")
     throw new TypeError("Recovery page scheduler must be a function");
+  if(typeof shouldContinue!=="function")
+    throw new TypeError("Recovery continuation check must be a function");
   const fetch=fetchPage??(options=>channel.messages.fetch(options));
   if(!Number.isInteger(maxPages)||maxPages<1||maxPages>50)
     throw new RangeError("Recovery page budget must be between 1 and 50");
@@ -22,7 +24,7 @@ export async function scanRecentGap({channel,fetchPage,baselineMessageId,maxPage
   let reachedBaseline=false;
   let ranOutOfHistory=false;
   const floor=baselineMessageId===null?null:BigInt(baselineMessageId);
-  for(let i=0;i<maxPages;i++){
+  for(let i=0;i<maxPages&&shouldContinue();i++){
     const batch=await fetch({limit:100,...(cursor?{before:cursor}:{})});
     pages++;
     if(batch.size===0){
@@ -39,6 +41,7 @@ export async function scanRecentGap({channel,fetchPage,baselineMessageId,maxPage
     if(cursor!==null && BigInt(oldest)>=BigInt(cursor))
       throw new Error("Non-decreasing recovery page cursor");
     for(const message of sorted){
+      if(!shouldContinue())break;
       const id=String(message.id);
       if(!isDiscordSnowflake(id))throw new Error("Invalid REST message ID");
       if(floor!==null && BigInt(id)<=floor){
@@ -48,7 +51,7 @@ export async function scanRecentGap({channel,fetchPage,baselineMessageId,maxPage
       await onMessage(message);
       processed++;
     }
-    if(reachedBaseline)break;
+    if(reachedBaseline||!shouldContinue())break;
     cursor=oldest;
     if(batch.size<100){
       ranOutOfHistory=true;
