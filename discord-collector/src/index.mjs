@@ -369,7 +369,14 @@ async function processSpoolEntry(entry,{allowHydration=true}={}){
         return {ack:true,status:"not-authorized"};
       // A terminal Unknown Message is not hydratable. Persist a per-message,
       // content-free coverage failure before ACK so analytics can see the gap.
-      await recordCoverageFailure(pool,event,currentPermission.retentionDays);
+      const stillAuthorized=()=>{
+        const current=allowed.get(event.channelId);
+        return permissionActive(current)&&sameAuthorizationLease(current,currentPermission);
+      };
+      const recorded=await recordCoverageFailure(
+        pool,event,currentPermission.retentionDays,stillAuthorized,
+      );
+      if(!recorded)return {ack:true,status:"not-authorized"};
       await recordRecoveryCheck(pool,currentPermission.guildId,event.channelId,
         recoveryBaselines.get(event.channelId)??null,{status:"failed"});
       failures++;
