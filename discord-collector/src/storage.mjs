@@ -353,8 +353,9 @@ export async function recordRecoveryCheck(pool,guildId,channelId,baseline,result
 }
 
 
-export async function recordCoverageFailure(pool,event,retentionDays){
+export async function recordCoverageFailure(pool,event,retentionDays,authorizationCheck=()=>true){
   requireRetention(retentionDays);
+  if(typeof authorizationCheck!=="function")throw new TypeError("Authorization check must be a function");
   if(!event||typeof event!=="object"||
      !["observed","edited","deleted"].includes(event.kind)||
      typeof event.receivedAt!=="string"||!Number.isFinite(Date.parse(event.receivedAt)))
@@ -367,6 +368,10 @@ export async function recordCoverageFailure(pool,event,retentionDays){
   try{
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('potapoff:discord-source-write',0))");
+    if(!authorizationCheck()){
+      await client.query("ROLLBACK");
+      return false;
+    }
     await client.query(
       "INSERT INTO discord_coverage_failures "+
       "(guild_id,channel_id,message_id,author_id,event_kind,received_at,failure_code,expires_at) "+
@@ -374,7 +379,12 @@ export async function recordCoverageFailure(pool,event,retentionDays){
       "ON CONFLICT(guild_id,channel_id,message_id,event_kind,received_at) DO NOTHING",
       [guildId,channelId,messageId,authorId,event.kind,event.receivedAt,retentionDays],
     );
+    if(!authorizationCheck()){
+      await client.query("ROLLBACK");
+      return false;
+    }
     await client.query("COMMIT");
+    return true;
   }catch(error){await client.query("ROLLBACK");throw error}
   finally{client.release()}
 }
