@@ -213,6 +213,8 @@ export class IngressSpool {
   append(input){
     if(!this.opened)throw new Error("Ingress spool is not open");
     const event=validateEvent(input);
+    if(event.kind!=="deleted"&&event.content!==null&&event.authorId===null)
+      throw new TypeError("Ingress content requires an author identity for erasure");
     const sequence=this.nextSequence.toString();
     const padded=sequence.padStart(20,"0");
     if(padded.length!==20)throw new RangeError("Ingress spool sequence exhausted");
@@ -306,10 +308,19 @@ export class IngressSpool {
     if(!Array.isArray(messageIds)||messageIds.some(id=>!isDiscordSnowflake(id)))
       throw new TypeError("Invalid Discord message ID set for author erasure");
     const targetMessages=new Set(messageIds);
+    const entries=[...this.pending.values()];
+    // An authorless non-delete event cannot be attributed safely. Refuse the
+    // entire operation before unlinking anything; otherwise it could be
+    // hydrated after this DSAR run and reintroduce the requested author's data.
+    for(const entry of entries){
+      const event=decryptRecord(readFileSync(entry.path,"utf8"),entry.sequence,this.key);
+      if(event.kind!=="deleted"&&event.authorId===null&&!targetMessages.has(event.messageId))
+        throw new Error("unattributed_ingress_event_pending");
+    }
     let eventsErased=0;
     // Decrypt one record at a time; remove direct author matches and records
     // for known author-owned messages whose partial Gateway event lacks authorId.
-    for(const entry of [...this.pending.values()]){
+    for(const entry of entries){
       const event=decryptRecord(readFileSync(entry.path,"utf8"),entry.sequence,this.key);
       if(event.authorId===authorId||targetMessages.has(event.messageId)){
         this.ack(entry.sequence);
