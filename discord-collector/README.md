@@ -26,7 +26,7 @@ Intelligence AI runtime.
   Developer Portal where required; an operator must attest to this separately.
 - Written community permission, platform-policy review, retention schedule,
   and a named operator responsible for revocation and erasure.
-- Destination Intelligence migrations 001, 002, 004, 017, 019, 022 and 023.
+- Destination Intelligence migrations 001, 002, 004, 017, 019, 022, 023 and 024.
 - Real bot tokens, spool encryption keys, raw messages, authorization files
   and source DB URLs must never be committed or exposed to central events,
   AI prompts or logs.
@@ -196,6 +196,7 @@ committed `.env` file:
 - `DISCORD_MESSAGE_CONTENT_INTENT_CONFIRMED=true` (operator attestation of portal access)
 - `DISCORD_PERMISSION_PREFLIGHT_MAX_CHANNELS=1000` (default 1,000; maximum 10,000)
 - `DISCORD_PERMISSION_PREFLIGHT_INTERVAL_MS=300000` (default 5 minutes; 1–15 minutes)
+- `DISCORD_PERMISSION_PREFLIGHT_MIN_REQUEST_INTERVAL_MS=25` (minimum delay between preflight REST requests; default 25 ms)
 - `DISCORD_ALLOW_ERASURE_ONLY=true` only for an explicitly approved empty-allowlist erasure run
 
 Use a dedicated spool directory for this source database; do not share it with another Collector. A PostgreSQL session advisory lock enforces one Collector per source database.
@@ -224,11 +225,12 @@ DISCORD_INGRESS_SPOOL_KEY=REDACTED \
 npm run erase-user
 ```
 
-The command first acquires the Collector's singleton advisory lock, then
-removes matching encrypted events from the persistent Spool by author ID and
-by every known stored message ID (including partial Gateway events without an
-author ID), then fsyncs the directory. It takes source-table locks to serialize against concurrent
-observation/edit/delete and coverage writes. It deletes matching message
+The command first acquires the Collector's singleton advisory lock and requires
+the configured spool directory to already exist; it never creates a replacement
+spool when the path is missing. It then removes matching encrypted events from
+the persistent Spool by author ID and by every known stored message ID
+(including partial Gateway events without an author ID), then fsyncs the directory. It takes the source-wide advisory write lock to serialize against concurrent
+observation/edit/delete, retention and coverage writes. It deletes matching message
 content, revisions and associated coverage failures, and writes one
 metadata-only `user_requested` tombstone per message in the same transaction
 as the source Outbox event. The Outbox contains no author ID or message body;
