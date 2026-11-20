@@ -6,7 +6,7 @@ import {installSchema,storeObservation,getBackfillCursor,advanceBackfillCursor,p
 import {scanRecentGap} from "./reconcile.mjs";
 import {IngressSpool,parseIngressSpoolKey} from "./ingress-spool.mjs";
 import {createDiscordPermissionPreflightRunner} from "./permission-preflight.mjs";
-import {replaySpoolEntries} from "./spool-replay.mjs";
+import {replaySpoolEntries,safeOldestPending} from "./spool-replay.mjs";
 import {RestScheduler} from "./rest-scheduler.mjs";
 
 if(process.env.DISCORD_COLLECTOR_ENABLED!=="true"){
@@ -431,9 +431,9 @@ function drainSpool({allowHydration=true}={}){
       if(spool.pendingCount>0)await new Promise(resolve=>setImmediate(resolve));
     }
   })().catch(error=>{
-    const oldest=spool.oldestPending;
     failures++;
     acceptingEvents=false;
+    const oldest=safeOldestPending(spool);
     process.exitCode=1;
     console.error("Discord durable ingress replay stopped; event retained for restart",
       error?.code??"ingress_replay_failed");
