@@ -5,7 +5,7 @@ import {validateAuthorization,normalizeMessage,allowedObservation} from "./event
 import {installSchema,storeObservation,getBackfillCursor,advanceBackfillCursor,purgeExpired,getRecoveryBaseline,recordRecoveryCheck,recordCoverageFailure} from "./storage.mjs";
 import {scanRecentGap} from "./reconcile.mjs";
 import {IngressSpool,parseIngressSpoolKey} from "./ingress-spool.mjs";
-import {runDiscordPermissionPreflight} from "./permission-preflight.mjs";
+import {createDiscordPermissionPreflightRunner} from "./permission-preflight.mjs";
 import {replaySpoolEntries} from "./spool-replay.mjs";
 import {RestScheduler} from "./rest-scheduler.mjs";
 
@@ -69,11 +69,17 @@ const restScheduler=new RestScheduler({maxPending:100});
 async function scheduleRest(task,options){
   try{return await restScheduler.run(task,options)}
   catch(error){
-    if(error?.status===429||error?.code===429)restRateLimitResponses++;
+    if((error?.status===429||error?.code===429)&&error?.code!=="discord_rate_limited")restRateLimitResponses++;
     throw error;
   }
 }
 let restRateLimitResponses=0;
+const runPermissionPreflight=createDiscordPermissionPreflightRunner({
+  token:botToken,
+  maxChannels:permissionPreflightMaxChannels,
+  minRequestIntervalMs:permissionPreflightMinRequestIntervalMs,
+  onRateLimit:()=>{restRateLimitResponses++},
+});
 let startupSpoolSweep={eventsErased:0};
 let startupPurge={rowsErased:0,tombstonesQueued:0};
 async function releaseSourceDatabase(){
@@ -135,11 +141,7 @@ if(erasureOnly){
 
 let initialPermissionReport;
 try{
-  initialPermissionReport=await runDiscordPermissionPreflight({
-    authorization:allowed,
-    token:botToken,
-    maxChannels:permissionPreflightMaxChannels,
-  });
+  initialPermissionReport=await runPermissionPreflight(allowed);
   if(!initialPermissionReport.ok)
     throw new Error("Discord permission preflight rejected one or more authorized channels");
 }catch{
@@ -223,13 +225,7 @@ async function verifyPermissions(snapshot){
   if(permissionPreflightRunning)await permissionPreflightTask;
   if(permissionPreflightFailed)throw new Error("Discord permission verification already failed");
   permissionPreflightRunning=true;
-  const task=scheduleRest(()=>runDiscordPermissionPreflight({
-    authorization:snapshot,
-    token:botToken,
-    maxChannels:permissionPreflightMaxChannels,
-    minRequestIntervalMs:permissionPreflightMinRequestIntervalMs,
-    onRateLimit:()=>{restRateLimitResponses++},
-  }),{priority:0,label:"permission-preflight"});
+  const task=scheduleRest(()=>runPermissionPreflight(snapshot),{priority:0,label:"permission-preflight"});
   permissionPreflightTask=task;
   try{
     const report=await task;

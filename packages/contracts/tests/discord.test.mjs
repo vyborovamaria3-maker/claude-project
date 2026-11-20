@@ -33,13 +33,12 @@ test("Discord evidence IDs reject malformed Snowflakes",()=>{
  assert.throws(()=>buildEvidenceRef({sourceKind:"discord_message",channelId,messageId:"bad",observedAt}),/Snowflake/i);
 });
 test("Discord deletion reason is explicit and restricted",()=>{
- const e=buildDiscordMessageEnvelope({kind:"deleted",channelId,messageId,revisionKey:revision,
-  observedAt,emittedAt,contentErased:true,deletionReason:"retention_expired",producerVersion:"0.1.0"});
- assert.deepEqual(e.payload.messageDeletion,{contentErased:true,reason:"retention_expired"});
- assert.deepEqual(e.payload.timelineEvent.payload,{contentErased:true,reason:"retention_expired"});
- const requested=buildDiscordMessageEnvelope({kind:"deleted",channelId,messageId,revisionKey:revision,
-  observedAt,emittedAt,contentErased:true,deletionReason:"user_requested",producerVersion:"0.1.0"});
- assert.deepEqual(requested.payload.messageDeletion,{contentErased:true,reason:"user_requested"});
+ for(const reason of ["deleted","retention_expired","channel_revoked","user_requested"]){
+  const event=buildDiscordMessageEnvelope({kind:"deleted",channelId,messageId,revisionKey:revision,
+   observedAt,emittedAt,contentErased:true,deletionReason:reason,producerVersion:"0.1.0"});
+  assert.deepEqual(event.payload.messageDeletion,{contentErased:true,reason});
+  assert.deepEqual(event.payload.timelineEvent.payload,{contentErased:true,reason});
+ }
  assert.throws(()=>buildDiscordMessageEnvelope({kind:"deleted",channelId,messageId,revisionKey:revision,
   observedAt,emittedAt,contentErased:true,deletionReason:"unknown",producerVersion:"0.1.0"}),/deletion reason/);
 });

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {runDiscordPermissionPreflight} from "../src/permission-preflight.mjs";
+import {readFileSync} from "node:fs";
+import {createDiscordPermissionPreflightRunner,runDiscordPermissionPreflight} from "../src/permission-preflight.mjs";
 
 const botId="123456789012345678";
 const guildId="223456789012345678";
@@ -314,4 +315,32 @@ test("plain HTTP API overrides are rejected",async()=>{
     authorization:authorization(),token:"token",fetchImpl:async()=>jsonResponse({}),
     baseUrl:"http://discord.test/api/v10",now,
   }),/HTTPS/);
+});
+
+
+test("configured permission preflight runner forwards the shared pacing and rate-limit settings",async()=>{
+  const allowed=authorization();
+  const onRateLimit=()=>{};
+  let received;
+  const runner=createDiscordPermissionPreflightRunner({
+    token:"configured-secret",
+    maxChannels:42,
+    minRequestIntervalMs:37,
+    onRateLimit,
+    run:async options=>{received=options;return {ok:true};},
+  });
+  const result=await runner(allowed);
+  assert.deepEqual(result,{ok:true});
+  assert.equal(received.authorization,allowed);
+  assert.equal(received.token,"configured-secret");
+  assert.equal(received.maxChannels,42);
+  assert.equal(received.minRequestIntervalMs,37);
+  assert.equal(received.onRateLimit,onRateLimit);
+});
+
+test("collector startup and recurring permission checks share the configured preflight runner",()=>{
+  const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
+  assert.match(source,/initialPermissionReport=await runPermissionPreflight\\(allowed\\)/);
+  assert.match(source,/scheduleRest\\(\\(\\)=>runPermissionPreflight\\(snapshot\\)/);
+  assert.match(source,/createDiscordPermissionPreflightRunner\\(\\{[\\s\\S]*minRequestIntervalMs:permissionPreflightMinRequestIntervalMs,[\\s\\S]*onRateLimit:\\(\\)=>\\{restRateLimitResponses\\+\\+\\}/);
 });

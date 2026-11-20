@@ -377,3 +377,23 @@ export async function runDiscordPermissionPreflight({
 
   return makeReport({checkedAt,botId:bot.id,groups,topLevelError:stopAfterApiFailure});
 }
+
+
+/**
+ * Bind one immutable runtime configuration to both startup and recurring
+ * permission checks. Keeping the pacing and rate-limit callback here prevents
+ * the initial Gateway gate from silently diverging from periodic rechecks.
+ */
+export function createDiscordPermissionPreflightRunner({
+  token,
+  maxChannels,
+  minRequestIntervalMs=0,
+  onRateLimit=()=>{},
+  run=runDiscordPermissionPreflight,
+}={}){
+  if(typeof run!=="function")throw new TypeError("A permission preflight runner is required");
+  if(typeof onRateLimit!=="function")throw new TypeError("onRateLimit must be a function");
+  return authorization=>run({
+    authorization,token,maxChannels,minRequestIntervalMs,onRateLimit,
+  });
+}
