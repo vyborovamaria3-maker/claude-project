@@ -746,7 +746,7 @@ async function reloadAuthorization(){
   if(!erasureOnly&&!stopping){
     const pendingDrain=drainPromise;
     if(pendingDrain)await pendingDrain.catch(()=>{});
-    if(!stopping)await drainSpool();
+    if(!stopping)await resumeSpoolAndRecovery();
   }
   if(erasureOnly){
     acceptingEvents=false;
