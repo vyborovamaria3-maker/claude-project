@@ -43,3 +43,14 @@ test("REST scheduler rejects invalid priorities and callbacks",async()=>{
   assert.throws(()=>scheduler.run(null),/function/);
   assert.throws(()=>scheduler.run(()=>{}, {priority:4}),/priority/);
 });
+
+test("REST scheduler continues draining queued work after a request fails during an API outage",async()=>{
+  const scheduler=new RestScheduler({maxPending:2});
+  const failed=scheduler.run(async()=>{
+    throw Object.assign(new Error("Discord REST unavailable"),{status:503});
+  },{priority:0});
+  const next=scheduler.run(async()=>"recovered",{priority:1});
+  await assert.rejects(failed,/Discord REST unavailable/);
+  assert.equal(await next,"recovered");
+  assert.equal(scheduler.pendingCount,0);
+});
