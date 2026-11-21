@@ -147,3 +147,9 @@ test("authorization reload treats transient preflight exceptions as a pause, not
   assert.match(source,/catch\(error\)\{[\s\S]*isTransientDiscordRestError\(error\)[\s\S]*pauseForPermissionPreflight\(\{[\s\S]*return;/);
   assert.match(source,/if\(permissionPreflightRunning\)\{\s*try\{await permissionPreflightTask\}\s*catch\(error\)[\s\S]*discord_rest_scheduler_queue_full/);
 });
+
+test("Gateway shard resume reconciles a recent coverage gap after replay",()=>{
+  const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
+  assert.match(source,/resumeSpoolAndRecovery\(\{reconcileGap:true\}\)/);
+  assert.match(source,/\(recoveryPendingAfterPreflightPause\|\|reconcileGap\)/);
+});
