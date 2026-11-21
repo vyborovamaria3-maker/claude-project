@@ -174,6 +174,66 @@ test("durable spool replay after source commit does not duplicate the transactio
   }
 });
 
+test("a PostgreSQL rollback leaves the encrypted spool event for replay and later ACK",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const directory=mkdtempSync(join(tmpdir(),"potapoff-discord-spool-rollback-"));
+  const key=randomBytes(32);
+  const id="923456789012345693";
+  const eventKeyPattern="discord:message:"+channelId+":"+id+":%";
+  let spool;
+  try{
+    await installSchema(pool);
+    spool=new IngressSpool({directory,key}).open();
+    const now=new Date();
+    const createdAt=new Date(now.getTime()-60*60*1000);
+    const message={id,guildId,channelId,author:{id:"423456789012345693"},
+      content:"transaction must roll back before the spool ACK",createdAt,editedAt:null};
+    const snapshot={
+      kind:"observed",messageId:id,guildId,channelId,authorId:message.author.id,
+      content:message.content,createdAt:createdAt.toISOString(),editedAt:null,
+      receivedAt:now.toISOString(),
+    };
+    spool.append(snapshot);
+    const observation=normalizeMessage(message,"observed",snapshot.receivedAt,guildId);
+    await pool.query("CREATE OR REPLACE FUNCTION fail_discord_spool_rollback_fixture() RETURNS trigger LANGUAGE plpgsql AS $ BEGIN RAISE EXCEPTION 'spool rollback fixture'; END $");
+    await pool.query("CREATE TRIGGER fail_discord_spool_rollback_fixture BEFORE INSERT ON outbox_events FOR EACH ROW EXECUTE FUNCTION fail_discord_spool_rollback_fixture()");
+    await assert.rejects(storeObservation(pool,observation,30),/spool rollback fixture/);
+    assert.equal(spool.pendingCount,1,"failed source transaction must not ACK the durable ingress event");
+    const rolledBack=await pool.query(
+      "SELECT (SELECT COUNT(*) FROM discord_messages WHERE message_id=$1)::int AS messages,"+
+      "(SELECT COUNT(*) FROM discord_message_revisions WHERE message_id=$1)::int AS revisions",
+      [id],
+    );
+    assert.deepEqual(rolledBack.rows[0],{messages:0,revisions:0});
+    await pool.query("DROP TRIGGER fail_discord_spool_rollback_fixture ON outbox_events");
+    await pool.query("DROP FUNCTION fail_discord_spool_rollback_fixture()");
+    spool.close();
+    spool=new IngressSpool({directory,key}).open();
+    const [replayed]=spool.listPending();
+    assert.equal(replayed.event.messageId,id);
+    assert.equal((await storeObservation(pool,observation,30)).status,"stored");
+    assert.equal(spool.ack(replayed.sequence),true);
+    spool.flushAcks();
+    assert.equal(spool.pendingCount,0);
+    const outbox=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1",
+      [eventKeyPattern],
+    );
+    assert.equal(outbox.rows[0].n,1);
+  }finally{
+    await pool.query("DROP TRIGGER IF EXISTS fail_discord_spool_rollback_fixture ON outbox_events").catch(()=>{});
+    await pool.query("DROP FUNCTION IF EXISTS fail_discord_spool_rollback_fixture()").catch(()=>{});
+    await pool.query("DELETE FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1",
+      [eventKeyPattern]).catch(()=>{});
+    await pool.query("DELETE FROM discord_message_revisions WHERE message_id=$1",[id]).catch(()=>{});
+    await pool.query("DELETE FROM discord_messages WHERE message_id=$1",[id]).catch(()=>{});
+    try{spool?.close()}catch{}
+    await pool.end();
+    rmSync(directory,{recursive:true,force:true});
+  }
+});
+
 test("PostgreSQL revisions, stale history, deletions and revoke/retention", {skip:!URL},async()=>{
   const {default:pg}=await import("pg");
   const pool=new pg.Pool({connectionString:URL,max:2});
