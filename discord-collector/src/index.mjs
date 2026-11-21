@@ -243,6 +243,7 @@ let permissionPreflightTask=Promise.resolve();
 let permissionPreflightRunning=false;
 let permissionPreflightFailed=false;
 let permissionPreflightPaused=false;
+let recoveryPendingAfterPreflightPause=false;
 let permissionPreflightRetryTimer=null;
 let permissionPreflightRetryAttempt=0;
 let permissionPreflightPauseTask=Promise.resolve();
@@ -411,7 +412,8 @@ function scheduleSpoolReplayRetry(error){
   const delay=retryDelayMs(spoolReplayRetryAttempt++,{baseMs,maxMs:300_000});
   spoolReplayRetryTimer=setTimeout(()=>{
     spoolReplayRetryTimer=null;
-    if(clientReadySeen&&client.isReady()&&!stopping&&!spoolReplayRetryTimer)void drainSpool().catch(()=>{});
+    if(clientReadySeen&&client.isReady()&&!stopping&&!spoolReplayRetryTimer)
+      void resumeSpoolAndRecovery().catch(()=>{});
   },delay);
   spoolReplayRetryTimer.unref();
   return delay;
@@ -568,7 +570,7 @@ client.on(Events.MessageBulkDelete,messages=>{
 // ClientReady fires only once. Resume durable backlog after reconnect even
 // when no new message arrives to trigger enqueueGatewayEvent.
 const resumeSpoolReplay=()=>{
-  if(clientReadySeen&&client.isReady()&&!stopping)void drainSpool().catch(()=>{});
+  if(clientReadySeen&&client.isReady()&&!stopping)void resumeSpoolAndRecovery().catch(()=>{});
 };
 client.on(Events.ShardReady,resumeSpoolReplay);
 client.on(Events.ShardResume,resumeSpoolReplay);
@@ -651,6 +653,16 @@ async function recoverRecentGaps(){
       }
       console.error("Discord gap recovery failed",channelId,error?.code??"recovery_failed");
     }
+  }
+}
+
+async function resumeSpoolAndRecovery(){
+  if(stopping||permissionPreflightPaused||!clientReadySeen||!client.isReady())return;
+  await drainSpool();
+  if(recoveryPendingAfterPreflightPause&&!stopping&&!permissionPreflightPaused&&
+     !spoolReplayRetryTimer&&spool.pendingCount===0){
+    await recoverRecentGaps();
+    recoveryPendingAfterPreflightPause=false;
   }
 }
 
@@ -796,6 +808,7 @@ async function pauseForPermissionPreflight(report){
   if(stopping)return;
   if(!permissionPreflightPaused){
     permissionPreflightPaused=true;
+    recoveryPendingAfterPreflightPause=true;
     acceptingEvents=false;
     if(spoolReplayRetryTimer){
       clearTimeout(spoolReplayRetryTimer);
@@ -866,10 +879,8 @@ function startPermissionPreflight({retry=false}={}){
         checkedGuilds:report.checkedGuilds,
         pendingEvents:spool.pendingCount,
       });
-      if(clientReadySeen&&client.isReady()){
-        await drainSpool();
-        await recoverRecentGaps();
-      }
+      if(clientReadySeen&&client.isReady())
+        await resumeSpoolAndRecovery();
       return;
     }
     console.log("Discord periodic permission preflight passed",{
@@ -900,6 +911,7 @@ client.once(Events.ClientReady,()=>{
     await drainSpool();
     if(stopping)return;
     await recoverRecentGaps();
+    if(!permissionPreflightPaused)recoveryPendingAfterPreflightPause=false;
     const max=Number(process.env.DISCORD_BACKFILL_MAX_MESSAGES||0);
     if(process.env.DISCORD_BACKFILL_ENABLED==="true"&&Number.isInteger(max)&&max>0){
       for(const [channelId,permission] of allowed){
