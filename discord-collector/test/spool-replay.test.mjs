@@ -81,3 +81,13 @@ test("authorization reload waits for an in-flight replay and retries the spool u
   const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
   assert.match(source,/const pendingDrain=drainPromise;[\s\S]*if\(pendingDrain\)await pendingDrain\.catch\(\(\)=>\{\}\);[\s\S]*if\(!stopping\)await drainSpool\(\)/);
 });
+
+test("collector retains a transiently blocked spool head and retries with capped backoff",()=>{
+  const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
+  assert.match(source,/isTransientDiscordRestError\(error\)/);
+  assert.match(source,/retryable\.code="DISCORD_REST_TRANSIENT"/);
+  assert.match(source,/scheduleSpoolReplayRetry\(error\)/);
+  assert.match(source,/retryDelayMs\(spoolReplayRetryAttempt\+\+,[\s\S]*maxMs:300_000/);
+  assert.match(source,/encrypted ingress backlog retained/);
+  assert.match(source,/clearTimeout\(spoolReplayRetryTimer\)/);
+});
