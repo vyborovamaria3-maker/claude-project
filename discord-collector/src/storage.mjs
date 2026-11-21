@@ -16,6 +16,15 @@ export async function installSchema(pool){
 function requireRetention(days){
   if(!Number.isInteger(days)||days<1||days>365)throw new TypeError("Invalid retention days");
 }
+const SNOWFLAKE=/^[1-9][0-9]{14,21}$/;
+const MAX_SNOWFLAKE=18446744073709551615n;
+function requireSnowflake(value,name){
+  // Snowflakes must remain decimal strings; accepting a JS Number can silently
+  // round an identifier before a destructive erasure operation.
+  if(typeof value!=="string"||!SNOWFLAKE.test(value)||BigInt(value)>MAX_SNOWFLAKE)
+    throw new TypeError("Invalid Discord "+name+" Snowflake");
+  return value;
+}
 
 export function isExpiredObservation(observation,retentionDays,clock=new Date()){
   requireRetention(retentionDays);
@@ -78,15 +87,47 @@ async function enqueueErasureTombstones(client,rows,reason){
   return queued;
 }
 
-export async function storeObservation(pool, o, retentionDays, clock=new Date(), authorizationExpiresAt=null){
+async function expiredAtDatabaseClock(client,observation,retentionDays){
+  if(observation.kind==="deleted")return false;
+  const result=await client.query(
+    "SELECT $1::timestamptz < clock_timestamp()-($2::integer*INTERVAL '1 day') AS expired",
+    [observation.occurredAt,retentionDays],
+  );
+  return result.rows[0]?.expired===true;
+}
+
+export async function storeObservation(pool, o, retentionDays, clock=new Date(), authorizationExpiresAt=null, authorizationCheck=()=>true){
+  if(!o||typeof o!=="object"||!["observed","edited","deleted"].includes(o.kind))
+    throw new TypeError("Invalid Discord source observation");
+  requireSnowflake(o.messageId,"message");
+  requireSnowflake(o.guildId,"guild");
+  requireSnowflake(o.channelId,"channel");
+  if(o.kind!=="deleted")requireSnowflake(o.authorId,"author");
+  if(typeof authorizationCheck!=="function")throw new TypeError("Authorization check must be a function");
   if(isExpiredObservation(o,retentionDays,clock))return {status:"expired"};
   if(authorizationExpiresAt!==null&&authorizationExpiresAt!==undefined&&(!Number.isFinite(Date.parse(authorizationExpiresAt))||
      Date.parse(authorizationExpiresAt)<=Date.now()))return {status:"authorization-expired"};
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
+    // Shared source-write lock lets an explicit author erasure acquire the
+    // exclusive form and serialize against observations, retention and gaps.
+    await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('potapoff:discord-source-write',0))");
+    // Authorization may be revoked while this write waits for a DB connection.
+    // Recheck under the source-write lock before touching retained data.
+    if(!authorizationCheck()){
+      await client.query("ROLLBACK");
+      return {status:"not-authorized"};
+    }
     // Serialize create/edit/delete races for one globally unique Discord message.
     await client.query("SELECT pg_advisory_xact_lock(hashtext('discord'),hashtext($1))",[o.messageId]);
+    // A transaction can wait behind another message writer long enough for a
+    // previously valid observation to cross its retention deadline. Recheck
+    // against PostgreSQL wall-clock time after the per-message lock is held.
+    if(await expiredAtDatabaseClock(client,o,retentionDays)){
+      await client.query("ROLLBACK");
+      return {status:"expired"};
+    }
     if(authorizationExpiresAt!==null&&authorizationExpiresAt!==undefined&&(!Number.isFinite(Date.parse(authorizationExpiresAt))||
        Date.parse(authorizationExpiresAt)<=Date.now())){
       await client.query("ROLLBACK");
@@ -149,7 +190,10 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date(),
         "(message_id,guild_id,channel_id,deleted_at,deletion_reason) "+
         "VALUES($1,$2,$3,$4,$5) ON CONFLICT(message_id) DO UPDATE SET "+
         "deleted_at=LEAST(discord_message_tombstones.deleted_at,EXCLUDED.deleted_at),"+
-        "deletion_reason=CASE WHEN EXCLUDED.deletion_reason='deleted' THEN 'deleted' "+
+        "deletion_reason=CASE "+
+        "WHEN discord_message_tombstones.deletion_reason='user_requested' THEN 'user_requested' "+
+        "WHEN EXCLUDED.deletion_reason='user_requested' THEN 'user_requested' "+
+        "WHEN EXCLUDED.deletion_reason='deleted' THEN 'deleted' "+
         "ELSE discord_message_tombstones.deletion_reason END",
         [o.messageId,o.guildId,o.channelId,o.observedAt,o.deletionReason??"deleted"]);
       await client.query(
@@ -183,6 +227,14 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date(),
          o.editedAt,o.content,o.contentSha,o.revisionAt]);
     }
     if(!stale)await emitDiscordObservation(client,o);
+    if(!authorizationCheck()){
+      await client.query("ROLLBACK");
+      return {status:"not-authorized"};
+    }
+    if(await expiredAtDatabaseClock(client,o,retentionDays)){
+      await client.query("ROLLBACK");
+      return {status:"expired"};
+    }
     if(authorizationExpiresAt!==null&&authorizationExpiresAt!==undefined&&(!Number.isFinite(Date.parse(authorizationExpiresAt))||
        Date.parse(authorizationExpiresAt)<=Date.now())){
       await client.query("ROLLBACK");
@@ -194,13 +246,16 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date(),
   finally{client.release()}
 }
 
-export async function purgeExpired(pool,allowed,{allowEmpty=false}={}){
+export async function purgeExpired(pool,allowed,{allowEmpty=false,exclusive=false}={}){
   // Revocation and retention emit durable erasure tombstones BEFORE local rows
   // are removed. The same transaction contains the source Outbox inserts.
   if(!(allowed instanceof Map)||(!allowEmpty&&allowed.size===0))throw new Error("No authorized channels");
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
+    await client.query(exclusive
+      ? "SELECT pg_advisory_xact_lock(hashtextextended('potapoff:discord-source-write',0))"
+      : "SELECT pg_advisory_xact_lock_shared(hashtextextended('potapoff:discord-source-write',0))");
     let removed=0;
     let tombstonesQueued=0;
     const authorized=[...allowed.entries()]
@@ -245,26 +300,39 @@ export async function purgeExpired(pool,allowed,{allowEmpty=false}={}){
       "WHERE a.channel_id=c.channel_id AND a.guild_id=c.guild_id)",
       [channelIds,guildIds],
     );
+    await client.query(
+      "UPDATE discord_coverage_failures c SET expires_at=c.received_at+(a.retention_days*INTERVAL '1 day') "+
+      "FROM unnest($1::text[],$2::text[],$3::integer[]) AS a(channel_id,guild_id,retention_days) "+
+      "WHERE a.channel_id=c.channel_id AND a.guild_id=c.guild_id "+
+      "AND c.expires_at IS DISTINCT FROM c.received_at+(a.retention_days*INTERVAL '1 day')",
+      [channelIds,guildIds,authorized.map(item=>item.retentionDays)],
+    );
+    const coverageFailures=await client.query(
+      "DELETE FROM discord_coverage_failures c WHERE c.expires_at<=NOW() OR NOT EXISTS ("+
+      "SELECT 1 FROM unnest($1::text[],$2::text[]) AS a(channel_id,guild_id) "+
+      "WHERE a.channel_id=c.channel_id AND a.guild_id=c.guild_id)",
+      [channelIds,guildIds],
+    );
 
-    for(const item of authorized){
-      const expired=await client.query(
-        "SELECT message_id,guild_id,channel_id FROM discord_messages "+
-        "WHERE channel_id=$1 AND guild_id=$2 AND deleted_at IS NULL "+
-        "AND COALESCE(occurred_at,observed_at)<NOW()-($3::integer*INTERVAL '1 day')",
-        [item.channelId,item.guildId,item.retentionDays],
-      );
-      tombstonesQueued+=await enqueueErasureTombstones(client,expired.rows,"retention_expired");
-      if(expired.rows.length){
-        const ids=expired.rows.map(row=>row.message_id);
-        const revisions=await client.query(
-          "DELETE FROM discord_message_revisions WHERE message_id=ANY($1::text[])",[ids]);
-        const messages=await client.query(
-          "DELETE FROM discord_messages WHERE message_id=ANY($1::text[])",[ids]);
-        removed+=revisions.rowCount+messages.rowCount;
-      }
+    const expired=await client.query(
+      "SELECT m.message_id,m.guild_id,m.channel_id FROM discord_messages m "+
+      "JOIN unnest($1::text[],$2::text[],$3::integer[]) AS a(channel_id,guild_id,retention_days) "+
+      "ON a.channel_id=m.channel_id AND a.guild_id=m.guild_id "+
+      "WHERE m.deleted_at IS NULL "+
+      "AND COALESCE(m.occurred_at,m.observed_at)<NOW()-(a.retention_days*INTERVAL '1 day')",
+      [channelIds,guildIds,authorized.map(item=>item.retentionDays)],
+    );
+    tombstonesQueued+=await enqueueErasureTombstones(client,expired.rows,"retention_expired");
+    if(expired.rows.length){
+      const ids=expired.rows.map(row=>row.message_id);
+      const revisions=await client.query(
+        "DELETE FROM discord_message_revisions WHERE message_id=ANY($1::text[])",[ids]);
+      const messages=await client.query(
+        "DELETE FROM discord_messages WHERE message_id=ANY($1::text[])",[ids]);
+      removed+=revisions.rowCount+messages.rowCount;
     }
     await client.query("COMMIT");
-    return {rowsErased:removed,tombstonesQueued};
+    return {rowsErased:removed,tombstonesQueued,coverageFailuresErased:coverageFailures.rowCount};
   }catch(e){await client.query("ROLLBACK");throw e}
   finally{client.release()}
 }
@@ -276,7 +344,7 @@ export async function getRecoveryBaseline(pool,channelId){
   const pending=await pool.query(
     "SELECT baseline_message_id FROM discord_recovery_checks "+
     "WHERE channel_id=$1 AND status IN ('gap_unresolved','failed') AND resolved_at IS NULL "+
-    "AND baseline_message_id IS NOT NULL ORDER BY checked_at ASC LIMIT 1",[channelId]);
+    "ORDER BY checked_at ASC LIMIT 1",[channelId]);
   if(pending.rows[0])return pending.rows[0].baseline_message_id;
   const latest=await pool.query(
     "SELECT message_id FROM discord_messages WHERE channel_id=$1 "+
@@ -284,13 +352,19 @@ export async function getRecoveryBaseline(pool,channelId){
   return latest.rows[0]?.message_id??null;
 }
 
-export async function recordRecoveryCheck(pool,guildId,channelId,baseline,results){
+export async function recordRecoveryCheck(pool,guildId,channelId,baseline,results,authorizationCheck=()=>true){
   const status=results.status;
   if(!["initial_unverified","bounded_recovery","gap_unresolved","failed"].includes(status))
     throw new TypeError("Unrecognized recovery status");
+  if(typeof authorizationCheck!=="function")throw new TypeError("Authorization check must be a function");
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('potapoff:discord-source-write',0))");
+    if(!authorizationCheck()){
+      await client.query("ROLLBACK");
+      return false;
+    }
     await client.query(
       "INSERT INTO discord_recovery_checks "+
       "(guild_id,channel_id,baseline_message_id,status,pages_scanned,messages_processed) "+
@@ -303,8 +377,125 @@ export async function recordRecoveryCheck(pool,guildId,channelId,baseline,result
         "AND status IN ('gap_unresolved','failed') AND resolved_at IS NULL",
         [channelId,baseline]);
     }
+    if(!authorizationCheck()){
+      await client.query("ROLLBACK");
+      return false;
+    }
     await client.query("COMMIT");
+    return true;
   }catch(e){await client.query("ROLLBACK");throw e}
+  finally{client.release()}
+}
+
+
+export async function recordCoverageFailure(pool,event,retentionDays,authorizationCheck=()=>true){
+  requireRetention(retentionDays);
+  if(typeof authorizationCheck!=="function")throw new TypeError("Authorization check must be a function");
+  if(!event||typeof event!=="object"||
+     !["observed","edited","deleted"].includes(event.kind)||
+     typeof event.receivedAt!=="string"||!Number.isFinite(Date.parse(event.receivedAt)))
+    throw new TypeError("Invalid Discord coverage failure identity");
+  const guildId=requireSnowflake(event.guildId,"guild");
+  const channelId=requireSnowflake(event.channelId,"channel");
+  const messageId=requireSnowflake(event.messageId,"message");
+  const authorId=event.authorId==null?null:requireSnowflake(event.authorId,"author");
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('potapoff:discord-source-write',0))");
+    if(!authorizationCheck()){
+      await client.query("ROLLBACK");
+      return false;
+    }
+    await client.query(
+      "INSERT INTO discord_coverage_failures "+
+      "(guild_id,channel_id,message_id,author_id,event_kind,received_at,failure_code,expires_at) "+
+      "VALUES($1,$2,$3,$4,$5,$6,'message_not_found',$6::timestamptz+($7::integer*INTERVAL '1 day')) "+
+      "ON CONFLICT(guild_id,channel_id,message_id,event_kind,received_at) DO NOTHING",
+      [guildId,channelId,messageId,authorId,event.kind,event.receivedAt,retentionDays],
+    );
+    if(!authorizationCheck()){
+      await client.query("ROLLBACK");
+      return false;
+    }
+    await client.query("COMMIT");
+    return true;
+  }catch(error){await client.query("ROLLBACK");throw error}
+  finally{client.release()}
+}
+
+
+/**
+ * Older Collector versions could retain content for partial messages whose
+ * author was unavailable. Such rows cannot be attributed to a DSAR safely;
+ * refuse to report an erasure as complete until an operator reconciles them.
+ */
+export async function assertNoUnattributedRetainedContent(queryable){
+  const result=await queryable.query(`
+    SELECT EXISTS(
+      SELECT 1 FROM discord_messages m
+      WHERE m.author_id IS NULL
+        AND (m.content IS NOT NULL OR m.content_sha256 IS NOT NULL)
+      UNION ALL
+      SELECT 1 FROM discord_message_revisions r
+      LEFT JOIN discord_messages m ON m.message_id=r.message_id
+      WHERE (m.message_id IS NULL OR m.author_id IS NULL)
+        AND (r.content IS NOT NULL OR r.content_sha256 IS NOT NULL)
+    ) AS present
+  `);
+  if(result.rows[0]?.present===true)
+    throw new Error("unattributed_discord_content_requires_operator_review");
+}
+
+export async function findUserMessageIds(pool,authorIdInput){
+  const authorId=requireSnowflake(authorIdInput,"author");
+  const result=await pool.query(
+    "SELECT message_id FROM discord_messages WHERE author_id=$1 ORDER BY message_id",
+    [authorId],
+  );
+  return result.rows.map(row=>row.message_id);
+}
+
+/**
+ * Erase every retained message/revision for one Discord author and emit
+ * metadata-only destination tombstones in the same source transaction.
+ * The exclusive source-write lock serializes this DSAR operation against
+ * observations, edits, deletes, retention and coverage writes.
+ */
+export async function eraseUserMessages(pool,authorIdInput){
+  const authorId=requireSnowflake(authorIdInput,"author");
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    // Exclusive form waits for every source writer and prevents new writes
+    // until Spool and source rows have been erased by the operator command.
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('potapoff:discord-source-write',0))");
+    await assertNoUnattributedRetainedContent(client);
+    const selected=await client.query(
+      "SELECT message_id,guild_id,channel_id FROM discord_messages "+
+      "WHERE author_id=$1 ORDER BY message_id FOR UPDATE",
+      [authorId],
+    );
+    const rows=selected.rows;
+    const tombstonesQueued=await enqueueErasureTombstones(client,rows,"user_requested");
+    const ids=rows.map(row=>row.message_id);
+    let revisionsErased=0;
+    let messagesErased=0;
+    if(ids.length){
+      const revisions=await client.query(
+        "DELETE FROM discord_message_revisions WHERE message_id=ANY($1::text[])",[ids]);
+      const messages=await client.query(
+        "DELETE FROM discord_messages WHERE message_id=ANY($1::text[])",[ids]);
+      revisionsErased=revisions.rowCount;
+      messagesErased=messages.rowCount;
+    }
+    const coverage=await client.query(
+      "DELETE FROM discord_coverage_failures WHERE author_id=$1 OR message_id=ANY($2::text[])",
+      [authorId,ids],
+    );
+    await client.query("COMMIT");
+    return {messagesErased,revisionsErased,tombstonesQueued,coverageFailuresErased:coverage.rowCount};
+  }catch(error){await client.query("ROLLBACK");throw error}
   finally{client.release()}
 }
 
@@ -314,10 +505,27 @@ export async function getBackfillCursor(pool,channelId){
   return rows[0]?.before_message_id??null;
 }
 
-export async function advanceBackfillCursor(pool,guildId,channelId,beforeId){
-  await pool.query(
-    "INSERT INTO discord_backfill_cursors(guild_id,channel_id,before_message_id,updated_at) "+
-    "VALUES($1,$2,$3,NOW()) ON CONFLICT(channel_id) DO UPDATE SET "+
-    "before_message_id=EXCLUDED.before_message_id,updated_at=NOW()",
-    [guildId,channelId,beforeId]);
+export async function advanceBackfillCursor(pool,guildId,channelId,beforeId,authorizationCheck=()=>true){
+  if(typeof authorizationCheck!=="function")throw new TypeError("Authorization check must be a function");
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('potapoff:discord-source-write',0))");
+    if(!authorizationCheck()){
+      await client.query("ROLLBACK");
+      return false;
+    }
+    await client.query(
+      "INSERT INTO discord_backfill_cursors(guild_id,channel_id,before_message_id,updated_at) "+
+      "VALUES($1,$2,$3,NOW()) ON CONFLICT(channel_id) DO UPDATE SET "+
+      "before_message_id=EXCLUDED.before_message_id,updated_at=NOW()",
+      [guildId,channelId,beforeId]);
+    if(!authorizationCheck()){
+      await client.query("ROLLBACK");
+      return false;
+    }
+    await client.query("COMMIT");
+    return true;
+  }catch(error){await client.query("ROLLBACK");throw error}
+  finally{client.release()}
 }

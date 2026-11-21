@@ -156,7 +156,7 @@ function prepareDeliveryEvent(event: DeliveryEvent): PreparedDeliveryEvent {
       occurredAt: (raw.occurredAt ?? null) as string|null,
       contentSha256: (raw.contentSha256 ?? null) as string|null,
       contentErased: raw.contentErased as boolean|undefined,
-      deletionReason: raw.deletionReason as "deleted"|"retention_expired"|"channel_revoked"|undefined,
+      deletionReason: raw.deletionReason as "deleted"|"retention_expired"|"channel_revoked"|"user_requested"|undefined,
       producerVersion: raw.producerVersion as string,
     });
     if (envelope.sourceSystem !== event.sourceSystem || envelope.eventKind !== event.eventKind ||
@@ -380,16 +380,22 @@ async function applyDiscordMessageTombstone(
       throw new TypeError("Discord deletion lacks explicit content-erasure confirmation");
     }
     const requested=(deletion as Record<string,unknown>).reason;
-    const reason=["deleted","retention_expired","channel_revoked"].includes(String(requested))
+    const reason=["deleted","retention_expired","channel_revoked","user_requested"].includes(String(requested))
       ? String(requested) : "deleted";
     await tx.query(`INSERT INTO discord_message_tombstones
       (evidence_source_id,channel_id,message_id,deleted_at,deletion_reason,deletion_event_key)
       VALUES($1,$2,$3,$4,$5,$6)
       ON CONFLICT(evidence_source_id) DO UPDATE SET
         deleted_at=LEAST(discord_message_tombstones.deleted_at,EXCLUDED.deleted_at),
-        deletion_reason=CASE WHEN EXCLUDED.deletion_reason='deleted'
-          THEN 'deleted' ELSE discord_message_tombstones.deletion_reason END,
-        deletion_event_key=EXCLUDED.deletion_event_key`,[
+        deletion_reason=CASE
+          WHEN discord_message_tombstones.deletion_reason='user_requested' THEN 'user_requested'
+          WHEN EXCLUDED.deletion_reason='user_requested' THEN 'user_requested'
+          WHEN EXCLUDED.deletion_reason='deleted' THEN 'deleted'
+          ELSE discord_message_tombstones.deletion_reason END,
+        deletion_event_key=CASE
+          WHEN discord_message_tombstones.deletion_reason='user_requested'
+            THEN discord_message_tombstones.deletion_event_key
+          ELSE EXCLUDED.deletion_event_key END`,[
       sourceId,channelId,messageId,body.registryEvent.evidenceRef.observedAt,reason,event.eventKey,
     ]);
     await retractDiscordMessageEvidence(tx,sourceId);

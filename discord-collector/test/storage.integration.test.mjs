@@ -6,7 +6,7 @@ import {mkdtempSync,rmSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {randomBytes} from "node:crypto";
-import {installSchema,storeObservation,purgeExpired,getRecoveryBaseline,recordRecoveryCheck} from "../src/storage.mjs";
+import {installSchema,storeObservation,purgeExpired,getRecoveryBaseline,recordRecoveryCheck,recordCoverageFailure,findUserMessageIds,eraseUserMessages,assertNoUnattributedRetainedContent,advanceBackfillCursor} from "../src/storage.mjs";
 
 const URL=process.env.DISCORD_TEST_DATABASE_URL;
 const guildId="123456789012345678";
@@ -19,6 +19,90 @@ const allowed=validateAuthorization({version:2,mode:"collect",guilds:[{
   community_permission_reference:"test",community_permission_expires_at:"2026-12-19T00:00:00Z",
   reviewed_by:"ci"
 }]});
+
+test("storage boundary rejects authorless observations even when normalization is bypassed",async()=>{
+  const invalid={
+    kind:"observed",messageId,guildId,channelId,authorId:null,
+    occurredAt:new Date().toISOString(),observedAt:new Date().toISOString(),
+    editedAt:null,revisionAt:new Date().toISOString(),content:"must not be retained",
+    contentSha:"a".repeat(64),revisionKey:"b".repeat(64),
+  };
+  await assert.rejects(
+    storeObservation({connect:()=>{throw new Error("database must not be touched")}},invalid,30),
+    /Invalid Discord author Snowflake/,
+  );
+});
+
+test("source schema upgrades an old tombstone reason constraint and remains idempotent",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const suffix=randomBytes(5).toString("hex");
+  const schema="discord_legacy_schema_"+suffix;
+  const admin=new pg.Client({connectionString:URL});
+  let pool;
+  await admin.connect();
+  try{
+    await admin.query('CREATE SCHEMA "'+schema+'"');
+    await admin.query('SET search_path TO "'+schema+'"');
+    // Model a database created before user_requested was added to the
+    // source-side deletion-reason constraint.
+    const legacyDdl=[
+      "CREATE TABLE discord_message_tombstones(",
+      "message_id TEXT PRIMARY KEY,",
+      "guild_id TEXT NOT NULL,",
+      "channel_id TEXT NOT NULL,",
+      "deleted_at TIMESTAMPTZ NOT NULL,",
+      "deletion_reason TEXT NOT NULL CONSTRAINT discord_message_tombstones_deletion_reason_check ",
+      "CHECK(deletion_reason IN ('deleted','retention_expired','channel_revoked')),",
+      "CHECK(message_id ~ '^[1-9][0-9]{14,21}$' ",
+      "AND guild_id ~ '^[1-9][0-9]{14,21}$' ",
+      "AND channel_id ~ '^[1-9][0-9]{14,21}$' ",
+      "AND message_id::numeric<=18446744073709551615 ",
+      "AND guild_id::numeric<=18446744073709551615 ",
+      "AND channel_id::numeric<=18446744073709551615)",
+      ")",
+    ].join("\n");
+    await admin.query(legacyDdl);
+    pool=new pg.Pool({connectionString:URL,options:"-c search_path="+schema,max:2});
+    const before=await pool.query(
+      "SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint "+
+      "WHERE conrelid='discord_message_tombstones'::regclass "+
+      "AND conname='discord_message_tombstones_deletion_reason_check'",
+    );
+    assert.equal(before.rows.length,1);
+    assert.ok(!before.rows[0].definition.includes("user_requested"));
+
+    await installSchema(pool);
+    await pool.query(
+      "INSERT INTO discord_message_tombstones(message_id,guild_id,channel_id,deleted_at,deletion_reason) "+
+      "VALUES($1,$2,$3,NOW(),'user_requested')",
+      ["923456789012345691",guildId,channelId],
+    );
+    // Startup runs the source schema on every launch; a second application
+    // must neither restore the old CHECK nor create duplicate constraints.
+    await installSchema(pool);
+    await pool.query(
+      "INSERT INTO discord_message_tombstones(message_id,guild_id,channel_id,deleted_at,deletion_reason) "+
+      "VALUES($1,$2,$3,NOW(),'user_requested')",
+      ["923456789012345692",guildId,channelId],
+    );
+    const constraints=await pool.query(
+      "SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint "+
+      "WHERE conrelid='discord_message_tombstones'::regclass "+
+      "AND conname='discord_message_tombstones_deletion_reason_check'",
+    );
+    assert.equal(constraints.rows.length,1);
+    assert.ok(constraints.rows[0].definition.includes("user_requested"));
+    const rows=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_message_tombstones WHERE deletion_reason='user_requested'",
+    );
+    assert.equal(rows.rows[0].n,2);
+  }finally{
+    if(pool)await pool.end();
+    await admin.query("SET search_path TO public");
+    await admin.query('DROP SCHEMA IF EXISTS "'+schema+'" CASCADE');
+    await admin.end();
+  }
+});
 
 test("only one Discord Collector can hold the source database advisory lock",{skip:!URL},async()=>{
   const {default:pg}=await import("pg");
@@ -85,6 +169,66 @@ test("durable spool replay after source commit does not duplicate the transactio
     }
     await pool.query("DELETE FROM discord_message_revisions WHERE message_id=$1",[messageId]).catch(()=>{});
     await pool.query("DELETE FROM discord_messages WHERE message_id=$1",[messageId]).catch(()=>{});
+    await pool.end();
+    rmSync(directory,{recursive:true,force:true});
+  }
+});
+
+test("a PostgreSQL rollback leaves the encrypted spool event for replay and later ACK",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const directory=mkdtempSync(join(tmpdir(),"potapoff-discord-spool-rollback-"));
+  const key=randomBytes(32);
+  const id="923456789012345693";
+  const eventKeyPattern="discord:message:"+channelId+":"+id+":%";
+  let spool;
+  try{
+    await installSchema(pool);
+    spool=new IngressSpool({directory,key}).open();
+    const now=new Date();
+    const createdAt=new Date(now.getTime()-60*60*1000);
+    const message={id,guildId,channelId,author:{id:"423456789012345693"},
+      content:"transaction must roll back before the spool ACK",createdAt,editedAt:null};
+    const snapshot={
+      kind:"observed",messageId:id,guildId,channelId,authorId:message.author.id,
+      content:message.content,createdAt:createdAt.toISOString(),editedAt:null,
+      receivedAt:now.toISOString(),
+    };
+    spool.append(snapshot);
+    const observation=normalizeMessage(message,"observed",snapshot.receivedAt,guildId);
+    await pool.query("CREATE OR REPLACE FUNCTION fail_discord_spool_rollback_fixture() RETURNS trigger LANGUAGE plpgsql AS $fixture$ BEGIN RAISE EXCEPTION 'spool rollback fixture'; END $fixture$");
+    await pool.query("CREATE TRIGGER fail_discord_spool_rollback_fixture BEFORE INSERT ON outbox_events FOR EACH ROW EXECUTE FUNCTION fail_discord_spool_rollback_fixture()");
+    await assert.rejects(storeObservation(pool,observation,30),/spool rollback fixture/);
+    assert.equal(spool.pendingCount,1,"failed source transaction must not ACK the durable ingress event");
+    const rolledBack=await pool.query(
+      "SELECT (SELECT COUNT(*) FROM discord_messages WHERE message_id=$1)::int AS messages,"+
+      "(SELECT COUNT(*) FROM discord_message_revisions WHERE message_id=$1)::int AS revisions",
+      [id],
+    );
+    assert.deepEqual(rolledBack.rows[0],{messages:0,revisions:0});
+    await pool.query("DROP TRIGGER fail_discord_spool_rollback_fixture ON outbox_events");
+    await pool.query("DROP FUNCTION fail_discord_spool_rollback_fixture()");
+    spool.close();
+    spool=new IngressSpool({directory,key}).open();
+    const [replayed]=spool.listPending();
+    assert.equal(replayed.event.messageId,id);
+    assert.equal((await storeObservation(pool,observation,30)).status,"stored");
+    assert.equal(spool.ack(replayed.sequence),true);
+    spool.flushAcks();
+    assert.equal(spool.pendingCount,0);
+    const outbox=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1",
+      [eventKeyPattern],
+    );
+    assert.equal(outbox.rows[0].n,1);
+  }finally{
+    await pool.query("DROP TRIGGER IF EXISTS fail_discord_spool_rollback_fixture ON outbox_events").catch(()=>{});
+    await pool.query("DROP FUNCTION IF EXISTS fail_discord_spool_rollback_fixture()").catch(()=>{});
+    await pool.query("DELETE FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1",
+      [eventKeyPattern]).catch(()=>{});
+    await pool.query("DELETE FROM discord_message_revisions WHERE message_id=$1",[id]).catch(()=>{});
+    await pool.query("DELETE FROM discord_messages WHERE message_id=$1",[id]).catch(()=>{});
+    try{spool?.close()}catch{}
     await pool.end();
     rmSync(directory,{recursive:true,force:true});
   }
@@ -228,6 +372,53 @@ test("explicit erasure-only mode purges every source message and emits tombstone
   }
 });
 
+test("retention is rechecked after a source write waits on its per-message lock",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const blocker=await pool.connect();
+  const id="923456789012345697";
+  const eventKeyPattern="discord:message:"+channelId+":"+id+":%";
+  try{
+    await installSchema(pool);
+    const now=new Date();
+    const createdAt=new Date(now.getTime()-30*24*60*60*1000+3_000);
+    const observation=normalizeMessage({
+      id,guildId,channelId,author:{id:"423456789012345697"},
+      content:"must expire while waiting for the source lock",
+      createdAt,editedAt:null,
+    },"observed",now.toISOString(),guildId);
+    await blocker.query("BEGIN");
+    await blocker.query(
+      "SELECT pg_advisory_xact_lock(hashtext('discord'),hashtext($1))",[id],
+    );
+    let settled=false;
+    const pendingWrite=storeObservation(pool,observation,30).finally(()=>{settled=true});
+    await new Promise(resolve=>setTimeout(resolve,100));
+    assert.equal(settled,false,"the source write must be waiting on the held per-message lock");
+    await new Promise(resolve=>setTimeout(resolve,3_200));
+    await blocker.query("COMMIT");
+    const result=await pendingWrite;
+    assert.deepEqual(result,{status:"expired"});
+    const rows=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_messages WHERE message_id=$1",[id],
+    );
+    assert.equal(rows.rows[0].n,0);
+    const outbox=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1",
+      [eventKeyPattern],
+    );
+    assert.equal(outbox.rows[0].n,0);
+  }finally{
+    await blocker.query("ROLLBACK").catch(()=>{});
+    blocker.release();
+    await pool.query("DELETE FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1",
+      [eventKeyPattern]).catch(()=>{});
+    await pool.query("DELETE FROM discord_message_revisions WHERE message_id=$1",[id]).catch(()=>{});
+    await pool.query("DELETE FROM discord_messages WHERE message_id=$1",[id]).catch(()=>{});
+    await pool.end();
+  }
+});
+
 test("source transaction refuses to persist an event after its authorization lease expired",{skip:!URL},async()=>{
   const {default:pg}=await import("pg");
   const pool=new pg.Pool({connectionString:URL,max:2});
@@ -252,6 +443,312 @@ test("source transaction refuses to persist an event after its authorization lea
       ["discord:message:"+channelId+":"+messageId+":%"]).catch(()=>{});
     await pool.query("DELETE FROM discord_message_revisions WHERE message_id=$1",[messageId]).catch(()=>{});
     await pool.query("DELETE FROM discord_messages WHERE message_id=$1",[messageId]).catch(()=>{});
+    await pool.end();
+  }
+});
+
+test("unhydratable message coverage is recorded before acknowledgement and expires with retention",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const coverageMessageId="923456789012345681";
+  const receivedAt=new Date(Date.now()-31*24*60*60*1000).toISOString();
+  try{
+    await installSchema(pool);
+    const event={kind:"edited",guildId,channelId,messageId:coverageMessageId,
+      authorId:"423456789012345681",receivedAt};
+    await recordCoverageFailure(pool,event,365);
+    await recordCoverageFailure(pool,event,365);
+    const recorded=await pool.query(
+      "SELECT guild_id,channel_id,message_id,author_id,event_kind,failure_code FROM discord_coverage_failures WHERE message_id=$1",
+      [coverageMessageId],
+    );
+    assert.deepEqual(recorded.rows,[{
+      guild_id:guildId,channel_id:channelId,message_id:coverageMessageId,
+      author_id:"423456789012345681",event_kind:"edited",failure_code:"message_not_found",
+    }],"duplicate replay must not duplicate a durable coverage failure");
+    const purge=await purgeExpired(pool,allowed);
+    assert.equal(purge.coverageFailuresErased,1);
+    const remaining=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_coverage_failures WHERE message_id=$1",
+      [coverageMessageId],
+    );
+    assert.equal(remaining.rows[0].n,0);
+  }finally{
+    await pool.query("DELETE FROM discord_coverage_failures WHERE message_id=$1",[coverageMessageId]).catch(()=>{});
+    await pool.end();
+  }
+});
+
+test("coverage failures do not retain author IDs after channel authorization is revoked",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const id="923456789012345696";
+  try{
+    await installSchema(pool);
+    const recorded=await recordCoverageFailure(pool,{
+      kind:"edited",guildId,channelId,messageId:id,
+      authorId:"423456789012345696",
+      receivedAt:new Date().toISOString(),
+    },30,()=>false);
+    assert.equal(recorded,false);
+    const rows=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_coverage_failures WHERE message_id=$1",[id],
+    );
+    assert.equal(rows.rows[0].n,0);
+  }finally{
+    await pool.query("DELETE FROM discord_coverage_failures WHERE message_id=$1",[id]).catch(()=>{});
+    await pool.end();
+  }
+});
+
+test("recovery and backfill cursors do not write metadata after authorization is revoked",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const id="923456789012345695";
+  try{
+    await installSchema(pool);
+    const recovery=await recordRecoveryCheck(
+      pool,guildId,channelId,id,{status:"failed"},()=>false,
+    );
+    assert.equal(recovery,false);
+    const cursor=await advanceBackfillCursor(pool,guildId,channelId,id,()=>false);
+    assert.equal(cursor,false);
+    const recoveryRows=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_recovery_checks WHERE baseline_message_id=$1",[id],
+    );
+    assert.equal(recoveryRows.rows[0].n,0);
+    const cursorRows=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_backfill_cursors WHERE channel_id=$1 AND before_message_id=$2",
+      [channelId,id],
+    );
+    assert.equal(cursorRows.rows[0].n,0);
+  }finally{
+    await pool.query("DELETE FROM discord_recovery_checks WHERE baseline_message_id=$1",[id]).catch(()=>{});
+    await pool.query("DELETE FROM discord_backfill_cursors WHERE channel_id=$1 AND before_message_id=$2",
+      [channelId,id]).catch(()=>{});
+    await pool.end();
+  }
+});
+
+test("unresolved recovery with a null baseline remains the watermark after later Gateway inserts",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const emptyChannel="923456789012345699";
+  const laterMessage="923456789012345698";
+  try{
+    await installSchema(pool);
+    await recordRecoveryCheck(pool,guildId,emptyChannel,null,{
+      status:"gap_unresolved",pagesScanned:1,messagesProcessed:0,
+    });
+    await pool.query(
+      "INSERT INTO discord_messages(message_id,guild_id,channel_id,author_id,occurred_at,observed_at,content,content_sha256) "+
+      "VALUES($1,$2,$3,$4,NOW(),NOW(),$5,$6)",
+      [laterMessage,guildId,emptyChannel,"423456789012345699","later Gateway message","a".repeat(64)],
+    );
+    assert.equal(await getRecoveryBaseline(pool,emptyChannel),null,
+      "a null unresolved watermark must not be replaced by a later message ID");
+    await recordRecoveryCheck(pool,guildId,emptyChannel,null,{
+      status:"bounded_recovery",pagesScanned:2,messagesProcessed:5,
+    });
+    assert.equal(await getRecoveryBaseline(pool,emptyChannel),laterMessage,
+      "once the null-baseline gap is resolved, the current latest message becomes the baseline");
+  }finally{
+    await pool.query("DELETE FROM discord_recovery_checks WHERE channel_id=$1",[emptyChannel]).catch(()=>{});
+    await pool.query("DELETE FROM discord_messages WHERE message_id=$1",[laterMessage]).catch(()=>{});
+    await pool.end();
+  }
+});
+
+test("source observation rechecks the current authorization lease inside its transaction",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const id="923456789012345698";
+  try{
+    await installSchema(pool);
+    const observation=normalizeMessage({
+      id,guildId,channelId,author:{id:"423456789012345697"},
+      content:"must not survive a concurrent channel revocation",
+      createdAt:new Date(),editedAt:null,
+    },"observed",new Date().toISOString(),guildId);
+    const result=await storeObservation(
+      pool,observation,30,new Date(),allowed.get(channelId).expiresAt,()=>false,
+    );
+    assert.deepEqual(result,{status:"not-authorized"});
+    const rows=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_messages WHERE message_id=$1",[id],
+    );
+    assert.equal(rows.rows[0].n,0);
+    const outbox=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1",
+      ["discord:message:"+channelId+":"+id+":%"],
+    );
+    assert.equal(outbox.rows[0].n,0);
+  }finally{
+    await pool.query("DELETE FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1",
+      ["discord:message:"+channelId+":"+id+":%"]).catch(()=>{});
+    await pool.query("DELETE FROM discord_message_revisions WHERE message_id=$1",[id]).catch(()=>{});
+    await pool.query("DELETE FROM discord_messages WHERE message_id=$1",[id]).catch(()=>{});
+    await pool.query("DELETE FROM discord_message_tombstones WHERE message_id=$1",[id]).catch(()=>{});
+    await pool.end();
+  }
+});
+
+test("coverage retention follows the current channel policy when the retention window is extended",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const id="923456789012345694";
+  const receivedAt=new Date(Date.now()-40*24*60*60*1000).toISOString();
+  const extended=new Map([...allowed].map(([channel,permission])=>[
+    channel,{...permission,retentionDays:90},
+  ]));
+  try{
+    await installSchema(pool);
+    await recordCoverageFailure(pool,{
+      kind:"edited",guildId,channelId,messageId:id,
+      authorId:"423456789012345694",receivedAt,
+    },30);
+    await purgeExpired(pool,extended);
+    const retained=await pool.query(
+      "SELECT COUNT(*)::int AS n,MAX(expires_at) AS expires_at FROM discord_coverage_failures WHERE message_id=$1",[id],
+    );
+    assert.equal(retained.rows[0].n,1,
+      "an old expires_at value must not override the currently authorized 90-day retention");
+    assert.ok(new Date(retained.rows[0].expires_at).getTime()>Date.now(),
+      "the persisted expiry must be recomputed when the policy window is extended");
+    await purgeExpired(pool,allowed);
+    const expired=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_coverage_failures WHERE message_id=$1",[id],
+    );
+    assert.equal(expired.rows[0].n,0,
+      "shortening the policy must still erase records beyond the new 30-day window");
+  }finally{
+    await pool.query("DELETE FROM discord_coverage_failures WHERE message_id=$1",[id]).catch(()=>{});
+    await pool.end();
+  }
+});
+
+test("user erasure refuses to claim completion while legacy authorless message or revision content remains",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const orphanId=(9_000_000_000_000_000_000n+
+    BigInt(randomBytes(4).readUInt32BE(0))*1_000_000_000n+
+    BigInt(randomBytes(4).readUInt32BE(0))).toString();
+  const revisionKey="d".repeat(64);
+  try{
+    await installSchema(pool);
+    await pool.query(
+      "INSERT INTO discord_messages "+
+      "(message_id,guild_id,channel_id,author_id,occurred_at,observed_at,content,content_sha256) "+
+      "VALUES($1,$2,$3,NULL,NOW(),NOW(),'legacy unattributed content',$4)",
+      [orphanId,guildId,channelId,revisionKey],
+    );
+    await pool.query(
+      "INSERT INTO discord_message_revisions "+
+      "(message_id,guild_id,channel_id,revision_key,event_kind,observed_at,content_sha256,content) "+
+      "VALUES($1,$2,$3,$4,'observed',NOW(),$5,'legacy unattributed revision')",
+      [orphanId,guildId,channelId,revisionKey,revisionKey],
+    );
+    await assert.rejects(
+      assertNoUnattributedRetainedContent(pool),
+      /unattributed_discord_content_requires_operator_review/,
+    );
+    await assert.rejects(
+      eraseUserMessages(pool,"423456789012345689"),
+      /unattributed_discord_content_requires_operator_review/,
+      "the erasure transaction itself must fail closed if a caller skips the CLI preflight",
+    );
+    const stillPresent=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_messages WHERE message_id=$1 AND content IS NOT NULL",
+      [orphanId],
+    );
+    assert.equal(stillPresent.rows[0].n,1);
+    await pool.query(
+      "UPDATE discord_messages SET content=NULL,content_sha256=NULL WHERE message_id=$1",
+      [orphanId],
+    );
+    await assert.rejects(
+      assertNoUnattributedRetainedContent(pool),
+      /unattributed_discord_content_requires_operator_review/,
+      "revision payloads must also be checked when the current message row is already scrubbed",
+    );
+    await pool.query(
+      "UPDATE discord_message_revisions SET content=NULL,content_sha256=NULL WHERE message_id=$1",
+      [orphanId],
+    );
+    await assert.doesNotReject(assertNoUnattributedRetainedContent(pool));
+  }finally{
+    await pool.query("DELETE FROM discord_message_revisions WHERE message_id=$1",[orphanId]).catch(()=>{});
+    await pool.query("DELETE FROM discord_messages WHERE message_id=$1",[orphanId]).catch(()=>{});
+    await pool.end();
+  }
+});
+
+test("user-requested erasure removes all author content and emits content-free tombstones",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const authorId="423456789012345689";
+  const ids=["923456789012345682","923456789012345683"];
+  try{
+    await installSchema(pool);
+    const now=new Date();
+    for(let i=0;i<ids.length;i++){
+      const message={
+        id:ids[i],guildId,channelId:i===0?channelId:otherChannel,
+        author:{id:authorId},content:"private author message",
+        createdAt:new Date(now.getTime()-60*60*1000),editedAt:null,
+      };
+      const observation=normalizeMessage(message,"observed",now.toISOString(),guildId);
+      assert.equal((await storeObservation(pool,observation,30)).status,"stored");
+    }
+    await recordCoverageFailure(pool,{
+      kind:"edited",guildId,channelId,messageId:ids[0],authorId,
+      receivedAt:now.toISOString(),
+    },30);
+    assert.deepEqual(await findUserMessageIds(pool,authorId),ids.slice().sort());
+    await assert.rejects(eraseUserMessages(pool,Number(authorId)),/Invalid Discord author Snowflake/);
+    const result=await eraseUserMessages(pool,authorId);
+    assert.deepEqual(result,{
+      messagesErased:2,revisionsErased:2,tombstonesQueued:2,coverageFailuresErased:1,
+    });
+    const remaining=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_messages WHERE author_id=$1",[authorId]);
+    assert.equal(remaining.rows[0].n,0);
+    const revisions=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_message_revisions WHERE message_id=ANY($1::text[])",[ids]);
+    assert.equal(revisions.rows[0].n,0);
+    const tombstones=await pool.query(
+      "SELECT message_id,deletion_reason FROM discord_message_tombstones WHERE message_id=ANY($1::text[]) ORDER BY message_id",[ids]);
+    assert.deepEqual(tombstones.rows,ids.map(message_id=>({message_id,deletion_reason:"user_requested"})));
+    const outbox=await pool.query(
+      "SELECT payload->>'deletionReason' AS reason,payload::text AS payload FROM outbox_events "+
+      "WHERE source_system='discord' AND event_kind='message_deleted' AND event_key LIKE ANY($1::text[])",
+      [ids.map(id=>"discord:message:%:"+id+":%")]);
+    assert.equal(outbox.rows.length,2);
+    for(const row of outbox.rows){
+      assert.equal(row.reason,"user_requested");
+      assert.ok(!row.payload.includes(authorId));
+      assert.ok(!row.payload.includes("private author message"));
+    }
+    const replay=normalizeMessage({
+      id:ids[0],guildId,channelId,author:{id:authorId},content:"late replay",
+      createdAt:new Date(now.getTime()-60*60*1000),editedAt:null,
+    },"observed",now.toISOString(),guildId);
+    assert.equal((await storeObservation(pool,replay,30)).status,"tombstoned");
+    const laterDelete=normalizeMessage({id:ids[0],channelId},"deleted",
+      new Date(now.getTime()+60_000).toISOString(),guildId);
+    assert.equal((await storeObservation(pool,laterDelete,30)).status,"deleted");
+    const preservedSourceReason=await pool.query(
+      "SELECT deletion_reason FROM discord_message_tombstones WHERE message_id=$1",[ids[0]],
+    );
+    assert.equal(preservedSourceReason.rows[0].deletion_reason,"user_requested",
+      "a later ordinary Discord delete must not overwrite the DSAR reason");
+  }finally{
+    await pool.query("DELETE FROM outbox_events WHERE source_system='discord' AND event_key LIKE ANY($1::text[])",
+      [ids.map(id=>"discord:message:%:"+id+":%")]).catch(()=>{});
+    await pool.query("DELETE FROM discord_message_tombstones WHERE message_id=ANY($1::text[])",[ids]).catch(()=>{});
+    await pool.query("DELETE FROM discord_coverage_failures WHERE message_id=ANY($1::text[])",[ids]).catch(()=>{});
+    await pool.query("DELETE FROM discord_message_revisions WHERE message_id=ANY($1::text[])",[ids]).catch(()=>{});
+    await pool.query("DELETE FROM discord_messages WHERE message_id=ANY($1::text[])",[ids]).catch(()=>{});
     await pool.end();
   }
 });

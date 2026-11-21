@@ -16,7 +16,7 @@ export type DiscordMessageEnvelopeInput = Readonly<{
   occurredAt?: Date | string | null;
   contentSha256?: string | null;
   contentErased?: boolean;
-  deletionReason?: "deleted" | "retention_expired" | "channel_revoked";
+  deletionReason?: "deleted" | "retention_expired" | "channel_revoked" | "user_requested";
   producerVersion: string;
 }>;
 
@@ -53,7 +53,7 @@ export function buildDiscordMessageEnvelope(input: DiscordMessageEnvelopeInput):
     throw new TypeError("Discord deletion requires confirmed content erasure");
   }
   if (deleted && input.deletionReason !== undefined &&
-      !["deleted", "retention_expired", "channel_revoked"].includes(input.deletionReason)) {
+      !["deleted", "retention_expired", "channel_revoked", "user_requested"].includes(input.deletionReason)) {
     throw new TypeError("Invalid Discord deletion reason");
   }
   if (!deleted && input.deletionReason !== undefined) {

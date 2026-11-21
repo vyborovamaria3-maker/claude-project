@@ -257,7 +257,7 @@ const DISCORD_MESSAGE_DELETION: JsonSchema = {
   type: "object", required: ["contentErased"], additionalProperties: false,
   properties: {
     contentErased: { const: true },
-    reason: { type: "string", enum: ["deleted", "retention_expired", "channel_revoked"] },
+    reason: { type: "string", enum: ["deleted", "retention_expired", "channel_revoked", "user_requested"] },
   },
 };
 

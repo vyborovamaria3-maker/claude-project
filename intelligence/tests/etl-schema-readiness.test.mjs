@@ -30,6 +30,9 @@ test("delivery readiness fails closed when token-link migration 004 is missing",
     inbox_fingerprint:true,inbox_envelope_fingerprint:true,
     inbox_envelope_fingerprint_constraint:true,
     inbox_envelope_fingerprint_definition:canonicalDef,
+    discord_message_tombstones:true,discord_user_erasure_ready:true,
+    discord_evidence_definition:"CHECK (source_kind IN ('discord_message'))",
+    discord_timeline_definition:"CHECK (timeline_kind IN ('discord_message_published','discord_message_edited','discord_message_deleted'))",
   };
   await assert.rejects(checkDestination(makePool({
     inbox:true,registry:true,evidence:true,timeline:true,token_links:false,
@@ -140,6 +143,18 @@ test("temporary PostgreSQL target requires additive 004, 005, 017 and 019 before
     }),/migration 005/);
     await admin.query(await readFile(new URL(
       "../migrations/005_blockchain_swap_evidence_revisions.sql",import.meta.url),"utf8"));
+    await admin.query(await readFile(new URL(
+      "../migrations/022_discord_source_contracts.sql",import.meta.url),"utf8"));
+    await admin.query(await readFile(new URL(
+      "../migrations/023_discord_message_tombstones.sql",import.meta.url),"utf8"));
+    await assert.rejects(checkDestination(pool,{
+      requireEnvelopeFingerprint:true,requireDiscordEvidence:true,
+    }),/migration 024/);
+    await admin.query(await readFile(new URL(
+      "../migrations/024_discord_user_requested_erasure.sql",import.meta.url),"utf8"));
+    await assert.doesNotReject(checkDestination(pool,{
+      requireEnvelopeFingerprint:true,requireDiscordEvidence:true,
+    }));
     await admin.query("INSERT INTO intelligence_inbox(source_system,event_kind,event_key,schema_version,evidence_source_id) VALUES('x','tweet_observed','snapshot-1','x-unattributed-snapshot-v1','x:tweet:1')");
     await assert.doesNotReject(checkDestination(pool,{
       requireBlockchainRevisions:true,requireEnvelopeFingerprint:true,
@@ -152,4 +167,38 @@ test("temporary PostgreSQL target requires additive 004, 005, 017 and 019 before
     await admin.query('DROP SCHEMA IF EXISTS "'+schema+'" CASCADE');
     await admin.end();
   }
+});
+
+test("Discord destination readiness requires contracts, tombstones and user-erasure migration",async()=>{
+  const makePool=row=>({
+    query:async(sql,params)=>{
+      if(/^INSERT INTO intelligence_inbox_envelope_probe/.test(sql)){
+        const value=params?.[0];
+        if(value!==null&&!/^[0-9a-f]{64}$/.test(String(value)))throw new Error("probe row violates check");
+        return {rows:[]};
+      }
+      return {rows:[row]};
+    },
+  });
+  const base={
+    inbox:true,registry:true,evidence:true,timeline:true,token_links:true,
+    inbox_fingerprint:true,inbox_envelope_fingerprint:true,
+    inbox_envelope_fingerprint_constraint:true,
+    inbox_envelope_fingerprint_definition:"CHECK (envelope_sha256 IS NULL OR (length(envelope_sha256)=64 AND envelope_sha256 ~ '^[0-9a-f]+$'))",
+    discord_message_tombstones:true,discord_user_erasure_ready:true,
+    discord_evidence_definition:"CHECK (source_kind IN ('discord_message'))",
+    discord_timeline_definition:"CHECK (timeline_kind IN ('discord_message_published','discord_message_edited','discord_message_deleted'))",
+  };
+  await assert.doesNotReject(checkDestination(makePool(base),{
+    requireEnvelopeFingerprint:true,requireDiscordEvidence:true,
+  }));
+  await assert.rejects(checkDestination(makePool({...base,discord_user_erasure_ready:false}),{
+    requireEnvelopeFingerprint:true,requireDiscordEvidence:true,
+  }),/migration 024/);
+  await assert.rejects(checkDestination(makePool({...base,discord_message_tombstones:false}),{
+    requireEnvelopeFingerprint:true,requireDiscordEvidence:true,
+  }),/migration 023/);
+  await assert.rejects(checkDestination(makePool({...base,discord_timeline_definition:"CHECK (timeline_kind IN ('discord_message_published'))"}),{
+    requireEnvelopeFingerprint:true,requireDiscordEvidence:true,
+  }),/migration 022/);
 });

@@ -117,6 +117,8 @@ export function normalizeMessage(message, kind, observedAt=new Date().toISOStrin
     throw new TypeError("observedAt must be an aware ISO timestamp");
   const authorId=message.author?.id ? String(message.author.id) : null;
   if(authorId&&!isDiscordSnowflake(authorId))throw new TypeError("Invalid author id");
+  if(kind!=="deleted"&&!authorId)
+    throw new TypeError("Observed/edited Discord messages require an author ID for erasure");
   const content=kind==="deleted"?null:(typeof message.content==="string"?message.content:null);
   const contentSha=content===null?null:createHash("sha256").update(content).digest("hex");
   const editedAt=message.editedAt instanceof Date ? message.editedAt.toISOString() : null;
@@ -142,4 +144,23 @@ export function allowedObservation(allowed, observation){
   if(permission.expiresAt===undefined||permission.expiresAt===null)return true; // Legacy in-memory test fixtures only.
   const expiresAt=Date.parse(permission.expiresAt);
   return Number.isFinite(expiresAt)&&expiresAt>Date.now();
+}
+
+/** Discord MESSAGE_UPDATE also fires for metadata-only changes such as pins and flags. */
+export function isMetadataOnlyMessageUpdate(event,message){
+  return event?.kind==="edited"&&!message?.editedAt&&!event?.editedAt;
+}
+
+/**
+ * A write can lose its original lease while waiting on PostgreSQL. If the
+ * channel is still authorized under a renewed/current lease, keep the spool
+ * event for replay instead of ACKing and silently losing the observation.
+ */
+export function isEventCurrentlyAuthorized(allowed,event,nowMs=Date.now()){
+  if(!(allowed instanceof Map)||!event||typeof event!=="object")return false;
+  const permission=allowed.get(event.channelId);
+  if(!permission||permission.guildId!==event.guildId)return false;
+  if(permission.expiresAt===undefined||permission.expiresAt===null)return true;
+  const expiresAt=Date.parse(permission.expiresAt);
+  return Number.isFinite(expiresAt)&&expiresAt>nowMs;
 }

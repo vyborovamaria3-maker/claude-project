@@ -26,7 +26,7 @@ Intelligence AI runtime.
   Developer Portal where required; an operator must attest to this separately.
 - Written community permission, platform-policy review, retention schedule,
   and a named operator responsible for revocation and erasure.
-- Destination Intelligence migrations 001, 002, 004, 017, 019, 022 and 023.
+- Destination Intelligence migrations 001, 002, 004, 017, 019, 022, 023 and 024.
 - Real bot tokens, spool encryption keys, raw messages, authorization files
   and source DB URLs must never be committed or exposed to central events,
   AI prompts or logs.
@@ -137,10 +137,25 @@ message bodies during preflight.
 
 The same check runs every five minutes by default (configurable from one to
 fifteen minutes). Newly added channels are checked before they enter the live
-allowlist. If a periodic check cannot verify permissions, collection stops
-and the Gateway is disconnected. The preflight checks only the bot's current
-effective permissions; it does not replace written community consent,
-platform-policy review, or the separate Message Content intent attestation.
+allowlist. A transient API outage or rate-limit exhaustion during the startup
+preflight keeps the Gateway offline and retries with capped exponential
+backoff (1 second to 5 minutes; rate-limit retries start at 30 seconds). A
+channel-level failed recovery checkpoint is recorded before waiting.
+
+If a periodic preflight encounters a transient API outage, the Collector pauses
+Gateway event acceptance, preserves the encrypted spool, records an unresolved
+recovery checkpoint for each still-authorized channel, and retries the check
+with the same capped backoff. It does not keep collecting while current
+permissions cannot be verified. After a successful check, it resumes spool
+replay and runs bounded recent-history recovery when
+`DISCORD_GAP_RECOVERY_ENABLED=true`. If recovery is disabled or the page
+budget cannot reach the prior watermark, the gap remains explicitly unresolved.
+Permanent permission denial, expired authorization, invalid credentials or a
+least-privilege violation still fail closed and stop the Collector.
+
+The preflight checks only the bot's current effective permissions; it does not
+replace written community consent, platform-policy review, or the separate
+Message Content intent attestation.
 
 ### Run a permission check without starting collection
 
@@ -196,6 +211,7 @@ committed `.env` file:
 - `DISCORD_MESSAGE_CONTENT_INTENT_CONFIRMED=true` (operator attestation of portal access)
 - `DISCORD_PERMISSION_PREFLIGHT_MAX_CHANNELS=1000` (default 1,000; maximum 10,000)
 - `DISCORD_PERMISSION_PREFLIGHT_INTERVAL_MS=300000` (default 5 minutes; 1–15 minutes)
+- `DISCORD_PERMISSION_PREFLIGHT_MIN_REQUEST_INTERVAL_MS=25` (minimum delay between preflight REST requests; default 25 ms)
 - `DISCORD_ALLOW_ERASURE_ONLY=true` only for an explicitly approved empty-allowlist erasure run
 
 Use a dedicated spool directory for this source database; do not share it with another Collector. A PostgreSQL session advisory lock enforces one Collector per source database.
@@ -204,6 +220,49 @@ The encryption key is required whenever collection is enabled. The spool uses
 AES-256-GCM with a unique nonce per event. The spool directory must already be mode 0700 and event files must be mode 0600; unsafe or shared paths are rejected rather than silently chmodded. Losing the key makes pending events
 unrecoverable; changing the key while events remain queued prevents replay.
 Drain the spool before key rotation. There is no implicit key fallback.
+
+## User-requested message erasure
+
+A data-subject erasure operation can remove every currently retained message
+from one Discord author without sending the author ID to Intelligence.
+
+Run only after verifying the request and author identity through the approved
+operator process. The command is separate from collection, requires an
+explicit opt-in, and prints counts only:
+
+```sh
+cd discord-collector
+DISCORD_USER_ERASURE_ENABLED=true \
+DISCORD_ERASURE_AUTHOR_ID=REDACTED \
+DISCORD_SOURCE_DATABASE_URL=REDACTED \
+DISCORD_INGRESS_SPOOL_DIR=/var/lib/potapoff/discord-ingress \
+DISCORD_INGRESS_SPOOL_KEY=REDACTED \
+npm run erase-user
+```
+
+The command first acquires the Collector's singleton advisory lock and requires
+the configured spool directory to already exist; it never creates a replacement
+spool when the path is missing. Before unlinking anything, it refuses to proceed
+if the spool contains a pending non-delete event without an author identity, or
+if the source database contains legacy message/revision content whose author
+cannot be established. Those records cannot safely be attributed to the
+requester; an operator must reconcile them before retrying. New partial Gateway
+events without an author ID are stored without message content and are hydrated
+before any content can enter PostgreSQL. Once the preflight passes, the command
+removes matching encrypted events from the persistent Spool by author ID and
+by every known stored message ID, then fsyncs the directory. It takes the
+source-wide advisory write lock to serialize against concurrent
+observation/edit/delete, retention and coverage writes. It deletes matching
+message content, revisions and associated coverage failures, and writes one
+metadata-only `user_requested` tombstone per message in the same transaction
+as the source Outbox event. The Outbox contains no author ID or message body;
+Intelligence retracts the matching evidence when ETL delivers the tombstones.
+The command does not connect to Discord or require the Bot Token.
+
+This is a one-time erasure of currently retained data, not an author-level
+future collection opt-out. A separate suppression policy is required if the
+request also means that future messages from this author must never be
+collected.
 
 ## Disabled-by-default setup
 
@@ -236,24 +295,52 @@ default.
 - Every accepted Gateway create, edit, single-delete or bulk-delete event is
   reduced to an explicit field allowlist. Attachments, embeds, reactions,
   member profiles, display names and arbitrary Gateway payloads are not spooled.
+- Every retained observed/edited message must have a valid author ID for later
+  source-local erasure. Events missing that identity are hydrated before commit;
+  content is not stored if the author cannot be established.
 - The Gateway callback synchronously writes an AES-256-GCM encrypted event
   record, fsyncs the file, atomically renames it to its ready name, and fsyncs
   the containing directory before returning.
 - Events replay in durable sequence order after restart. A valid temporary
   record left by a crash before rename is recovered. A corrupt or partial
   temporary record fails closed; it is never silently discarded.
+- A durable backlog is drained again after Gateway shard readiness/resume, not
+  only on the initial ClientReady event or when another message arrives. The
+  initial permission preflight, source schema and recovery baselines are ready
+  before Gateway login, so reconnect replay is safe during optional startup sync.
 - The spool is bounded by bytes and event count. If it fills or a durable write
   fails, the Collector stops accepting events, records a known coverage gap
   where the database is available, and shuts down instead of dropping events
   and continuing.
 - Events remain encrypted on disk while the source database is unavailable.
-  They are removed from the spool only after the source transaction commits.
-  A crash between PostgreSQL commit and local acknowledgement causes a replay,
-  not a loss; source transaction idempotency and message tombstones make this
-  safe.
+  They are removed from the spool only after either the source transaction or
+  a content-free per-message coverage-failure record commits. A crash between
+  PostgreSQL commit and local acknowledgement causes an idempotent replay.
+- Events requiring REST hydration remain at the head of the spool until the
+  Gateway is ready. Replay stops at that hydration barrier and does not process
+  later events out of order. Transient REST network, 429 and 5xx failures leave
+  the event pending and retry with capped exponential backoff. Database/storage
+  failures remain fail-closed: the collector stops with the event retained.
+  Only Discord's explicit Unknown Message response is terminal.
+- Every source write rechecks the current authorization lease under the shared
+  source-write lock. Channel revocation takes the exclusive lock before purge,
+  so in-flight message, coverage and recovery writes cannot land after erasure.
+  Message retention is rechecked against PostgreSQL wall-clock time after the
+  per-message lock is acquired and again before COMMIT, so a write waiting on a
+  concurrent transaction cannot persist content after its retention deadline.
+  Backfill cursors and recovery watermarks use the same guarded write boundary.
+- Restart gap recovery schedules each REST page independently, allowing higher
+  priority permission checks to run between pages instead of waiting for an
+  entire multi-page recovery scan.
+- A terminally unhydratable event is written to
+  `discord_coverage_failures` with guild/channel/message identity, optional
+  source-local author ID, event kind, receive time and a bounded failure code.
+  The table contains no message text; author IDs never enter the Outbox or
+  central Intelligence. Rows are idempotent across replay and expire with the
+  channel's retention policy. A channel-level unresolved recovery check is also recorded.
 - Message edits are hydrated from Discord only after the original Gateway
   dispatch is durably spooled. If an edit can no longer be fetched, the
-  collector records an unresolved coverage check and continues so a following
+  per-message coverage failure is committed before ACK so a following
   deletion can still be applied.
 - Spool startup and periodic retention sweeps erase queued events for revoked
   channels and expired messages. Source retention/revocation emits explicit
@@ -284,7 +371,7 @@ default.
 - Synchronous per-event fsync intentionally trades throughput for durability
   and can block the Node event loop. Load-test the actual persistent disk and
   Discord heartbeat behaviour at expected peak message rates before rollout.
-- Pending backlog is logged once per minute with event count and encrypted byte count; no message content or author IDs are logged. A full spool stops collection. The Collector drains any recoverable backlog before Gateway reconnect to reduce restart-time capacity pressure. Alerting, disk-capacity monitoring and an
+- Pending backlog is logged once per minute with event count and encrypted byte count; no message content or author IDs are logged. A full spool stops collection. During a REST hydration outage, the Collector retries without ACKing the blocked head; Gateway events continue entering the encrypted spool until its configured capacity is reached. At capacity, collection stops rather than dropping the event. During a failed periodic permission preflight, Gateway event acceptance is paused entirely until permissions can be verified again. The Collector drains any recoverable backlog before Gateway reconnect to reduce restart-time capacity pressure. Alerting, disk-capacity monitoring and an
   operator runbook for safely restoring capacity are required.
 - Unlinking is logical erasure, not guaranteed physical sanitization on SSDs.
   Use encrypted persistent storage, restrict host access, and protect/backup

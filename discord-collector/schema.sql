@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS discord_messages (
 );
 ALTER TABLE discord_messages ADD COLUMN IF NOT EXISTS revision_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS discord_messages_channel_time ON discord_messages(channel_id,occurred_at);
+CREATE INDEX IF NOT EXISTS discord_messages_author_message ON discord_messages(author_id,message_id) WHERE author_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS discord_message_revisions (
  message_id TEXT NOT NULL, guild_id TEXT NOT NULL, channel_id TEXT NOT NULL,
  revision_key TEXT NOT NULL CHECK(length(revision_key)=64),
@@ -40,7 +41,7 @@ CREATE TABLE IF NOT EXISTS discord_message_tombstones (
  message_id TEXT PRIMARY KEY,
  guild_id TEXT NOT NULL, channel_id TEXT NOT NULL,
  deleted_at TIMESTAMPTZ NOT NULL,
- deletion_reason TEXT NOT NULL CHECK(deletion_reason IN ('deleted','retention_expired','channel_revoked')),
+ deletion_reason TEXT NOT NULL CHECK(deletion_reason IN ('deleted','retention_expired','channel_revoked','user_requested')),
  CHECK (
   message_id ~ '^[1-9][0-9]{14,21}$'
   AND guild_id ~ '^[1-9][0-9]{14,21}$'
@@ -93,3 +94,78 @@ ALTER TABLE discord_messages VALIDATE CONSTRAINT discord_messages_snowflake_ids_
 ALTER TABLE discord_message_revisions VALIDATE CONSTRAINT discord_message_revisions_snowflake_ids_check;
 ALTER TABLE discord_backfill_cursors VALIDATE CONSTRAINT discord_backfill_cursors_snowflake_ids_check;
 ALTER TABLE discord_recovery_checks VALIDATE CONSTRAINT discord_recovery_checks_snowflake_ids_check;
+
+-- Upgrade already-created source databases without rewriting migration history.
+DO $discord_user_erasure_reason$
+BEGIN
+ IF NOT EXISTS (
+  SELECT 1 FROM pg_constraint
+  WHERE conrelid='discord_message_tombstones'::regclass
+    AND conname='discord_message_tombstones_deletion_reason_check'
+    AND pg_get_constraintdef(oid) LIKE '%user_requested%'
+ ) THEN
+  ALTER TABLE discord_message_tombstones
+   DROP CONSTRAINT IF EXISTS discord_message_tombstones_deletion_reason_check;
+  ALTER TABLE discord_message_tombstones
+   ADD CONSTRAINT discord_message_tombstones_deletion_reason_check
+   CHECK(deletion_reason IN ('deleted','retention_expired','channel_revoked','user_requested')) NOT VALID;
+ END IF;
+END;
+$discord_user_erasure_reason$;
+ALTER TABLE discord_message_tombstones
+ VALIDATE CONSTRAINT discord_message_tombstones_deletion_reason_check;
+
+-- Per-message coverage failures are content-free, source-local and retention
+-- bounded. author_id exists only to support user-requested erasure and is
+-- never exported to the central Intelligence Outbox.
+CREATE TABLE IF NOT EXISTS discord_coverage_failures (
+ id BIGSERIAL PRIMARY KEY,
+ guild_id TEXT NOT NULL,
+ channel_id TEXT NOT NULL,
+ message_id TEXT NOT NULL,
+ author_id TEXT,
+ event_kind TEXT NOT NULL CHECK(event_kind IN ('observed','edited','deleted')),
+ received_at TIMESTAMPTZ NOT NULL,
+ failure_code TEXT NOT NULL CHECK(failure_code IN ('message_not_found')),
+ recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ expires_at TIMESTAMPTZ NOT NULL,
+ UNIQUE(guild_id,channel_id,message_id,event_kind,received_at),
+ CHECK (
+  CASE
+   WHEN guild_id ~ '^[1-9][0-9]{14,21}$'
+    AND channel_id ~ '^[1-9][0-9]{14,21}$'
+    AND message_id ~ '^[1-9][0-9]{14,21}$'
+   THEN guild_id::numeric<=18446744073709551615
+    AND channel_id::numeric<=18446744073709551615
+    AND message_id::numeric<=18446744073709551615
+   ELSE false
+  END
+ )
+);
+ALTER TABLE discord_coverage_failures ADD COLUMN IF NOT EXISTS author_id TEXT;
+DO $discord_coverage_author_constraint$
+BEGIN
+ IF NOT EXISTS (
+  SELECT 1 FROM pg_constraint
+  WHERE conrelid='discord_coverage_failures'::regclass
+    AND conname='discord_coverage_failures_author_id_check'
+ ) THEN
+  ALTER TABLE discord_coverage_failures
+   ADD CONSTRAINT discord_coverage_failures_author_id_check CHECK (
+    author_id IS NULL OR CASE
+     WHEN author_id ~ '^[1-9][0-9]{14,21}$'
+     THEN author_id::numeric<=18446744073709551615
+     ELSE false
+    END
+   ) NOT VALID;
+ END IF;
+END;
+$discord_coverage_author_constraint$;
+ALTER TABLE discord_coverage_failures
+ VALIDATE CONSTRAINT discord_coverage_failures_author_id_check;
+CREATE INDEX IF NOT EXISTS discord_coverage_failures_channel_expiry
+ ON discord_coverage_failures(channel_id,expires_at);
+CREATE INDEX IF NOT EXISTS discord_coverage_failures_author
+ ON discord_coverage_failures(author_id) WHERE author_id IS NOT NULL;
+COMMENT ON COLUMN discord_coverage_failures.author_id IS
+ 'Source-local identity used only to satisfy author erasure requests; never exported to Intelligence.';

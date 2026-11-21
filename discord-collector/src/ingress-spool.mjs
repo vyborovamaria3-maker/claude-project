@@ -116,11 +116,13 @@ function decryptRecord(raw,expectedSequence,key){
 }
 
 export class IngressSpool {
-  constructor({directory,key,maxBytes=512*1024*1024,maxEvents=100_000}){
+  constructor({directory,key,maxBytes=512*1024*1024,maxEvents=100_000,createDirectory=true}){
     if(typeof directory!=="string"||!directory.trim()||!isAbsolute(directory))
       throw new TypeError("DISCORD_INGRESS_SPOOL_DIR must be an explicit absolute path");
     if(!Buffer.isBuffer(key)||key.length!==32)
       throw new TypeError("Ingress spool requires a 32-byte encryption key");
+    if(typeof createDirectory!=="boolean")
+      throw new TypeError("Ingress spool createDirectory must be a boolean");
     if(!Number.isSafeInteger(maxBytes)||maxBytes<1)
       throw new RangeError("Ingress spool maxBytes must be a positive safe integer");
     if(!Number.isSafeInteger(maxEvents)||maxEvents<1)
@@ -131,6 +133,7 @@ export class IngressSpool {
     this.key=Buffer.from(key);
     this.maxBytes=maxBytes;
     this.maxEvents=maxEvents;
+    this.createDirectory=createDirectory;
     this.pending=new Map();
     this.pendingBytes=0;
     this.nextSequence=1n;
@@ -143,8 +146,10 @@ export class IngressSpool {
     if(this.opened)throw new Error("Ingress spool is already open");
     try{
       let createdDirectory=false;
-      try{mkdirSync(this.directory,{mode:0o700});createdDirectory=true}
-      catch(error){if(error.code!=="EEXIST")throw error}
+      if(this.createDirectory){
+        try{mkdirSync(this.directory,{mode:0o700});createdDirectory=true}
+        catch(error){if(error.code!=="EEXIST")throw error}
+      }
       const initial=lstatSync(this.directory);
       if(initial.isSymbolicLink()||!initial.isDirectory())
         throw new Error("Ingress spool path must be a real directory, not a symlink");
@@ -208,6 +213,8 @@ export class IngressSpool {
   append(input){
     if(!this.opened)throw new Error("Ingress spool is not open");
     const event=validateEvent(input);
+    if(event.kind!=="deleted"&&event.content!==null&&event.authorId===null)
+      throw new TypeError("Ingress content requires an author identity for erasure");
     const sequence=this.nextSequence.toString();
     const padded=sequence.padStart(20,"0");
     if(padded.length!==20)throw new RangeError("Ingress spool sequence exhausted");
@@ -295,6 +302,35 @@ export class IngressSpool {
     return {eventsErased:erased,pendingEvents:this.pending.size,pendingBytes:this.pendingBytes};
   }
 
+  eraseAuthor(authorId,messageIds=[]){
+    if(!this.opened)throw new Error("Ingress spool is not open");
+    if(!isDiscordSnowflake(authorId))throw new TypeError("Invalid Discord author Snowflake");
+    if(!Array.isArray(messageIds)||messageIds.some(id=>!isDiscordSnowflake(id)))
+      throw new TypeError("Invalid Discord message ID set for author erasure");
+    const targetMessages=new Set(messageIds);
+    const entries=[...this.pending.values()];
+    // An authorless non-delete event cannot be attributed safely. Refuse the
+    // entire operation before unlinking anything; otherwise it could be
+    // hydrated after this DSAR run and reintroduce the requested author's data.
+    for(const entry of entries){
+      const event=decryptRecord(readFileSync(entry.path,"utf8"),entry.sequence,this.key);
+      if(event.kind!=="deleted"&&event.authorId===null&&!targetMessages.has(event.messageId))
+        throw new Error("unattributed_ingress_event_pending");
+    }
+    let eventsErased=0;
+    // Decrypt one record at a time; remove direct author matches and records
+    // for known author-owned messages whose partial Gateway event lacks authorId.
+    for(const entry of entries){
+      const event=decryptRecord(readFileSync(entry.path,"utf8"),entry.sequence,this.key);
+      if(event.authorId===authorId||targetMessages.has(event.messageId)){
+        this.ack(entry.sequence);
+        eventsErased++;
+      }
+    }
+    this.flushAcks();
+    return {eventsErased,pendingEvents:this.pending.size,pendingBytes:this.pendingBytes};
+  }
+
   get pendingCount(){return this.pending.size}
 
   get oldestPending(){return this.listPending(1)[0]??null}
@@ -303,10 +339,13 @@ export class IngressSpool {
     if(!this.opened)return;
     try{this.flushAcks()}
     finally{
-      closeSync(this.directoryFd);
-      this.directoryFd=null;
-      this.opened=false;
-      this.key.fill(0);
+      try{
+        if(this.directoryFd!==null)closeSync(this.directoryFd);
+      }finally{
+        this.directoryFd=null;
+        this.opened=false;
+        this.key.fill(0);
+      }
     }
   }
 }

@@ -22,7 +22,7 @@ async function safeCancel(response){
   try{await response?.body?.cancel?.()}catch{}
 }
 
-function validateOptions({token,authorization,fetchImpl,timeoutMs,maxRetries,maxRetryDelayMs,maxChannels}){
+function validateOptions({token,authorization,fetchImpl,timeoutMs,maxRetries,maxRetryDelayMs,maxChannels,minRequestIntervalMs,onRateLimit}){
   if(typeof token!=="string"||!token.trim())throw new TypeError("A Discord bot token is required");
   if(!(authorization instanceof Map)||authorization.size<1)
     throw new TypeError("A nonempty validated authorization map is required");
@@ -35,6 +35,9 @@ function validateOptions({token,authorization,fetchImpl,timeoutMs,maxRetries,max
     throw new RangeError("maxRetryDelayMs must be in 0..30000");
   if(!Number.isInteger(maxChannels)||maxChannels<1||maxChannels>MAX_AUTHORIZATION_CHANNELS)
     throw new RangeError("maxChannels must be in 1..10000");
+  if(!Number.isInteger(minRequestIntervalMs)||minRequestIntervalMs<0||minRequestIntervalMs>1_000)
+    throw new RangeError("minRequestIntervalMs must be in 0..1000");
+  if(typeof onRateLimit!=="function")throw new TypeError("onRateLimit must be a function");
 }
 
 async function retryAfterMs(response){
@@ -51,7 +54,7 @@ async function retryAfterMs(response){
   return null;
 }
 
-async function requestJson(path,{token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep}){
+async function requestJson(path,{token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep,onRateLimit}){
   let normalizedBaseUrl=baseUrl;
   while(normalizedBaseUrl.endsWith("/"))normalizedBaseUrl=normalizedBaseUrl.slice(0,-1);
   const url=normalizedBaseUrl+path;
@@ -72,6 +75,7 @@ async function requestJson(path,{token,fetchImpl,baseUrl,timeoutMs,maxRetries,ma
     }
 
     if(response.status===429){
+      onRateLimit();
       const waitMs=await retryAfterMs(response);
       await safeCancel(response);
       if(attempt>=maxRetries||waitMs===null||waitMs>maxRetryDelayMs)
@@ -80,7 +84,8 @@ async function requestJson(path,{token,fetchImpl,baseUrl,timeoutMs,maxRetries,ma
       continue;
     }
 
-    if(response.status>=500&&response.status<=599){
+    if(response.status===408||response.status===425||
+       (response.status>=500&&response.status<=599)){
       await safeCancel(response);
       if(attempt>=maxRetries)throw new DiscordApiError("discord_api_unavailable",response.status);
       await sleep(Math.min(1_000,250*(attempt+1)));
@@ -183,10 +188,21 @@ export async function runDiscordPermissionPreflight({
   maxRetries=2,
   maxRetryDelayMs=5_000,
   maxChannels=1_000,
+  minRequestIntervalMs=0,
+  onRateLimit=()=>{},
   now=new Date(),
   sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms)),
 }={}){
-  validateOptions({token,authorization,fetchImpl,timeoutMs,maxRetries,maxRetryDelayMs,maxChannels});
+  validateOptions({token,authorization,fetchImpl,timeoutMs,maxRetries,maxRetryDelayMs,maxChannels,minRequestIntervalMs,onRateLimit});
+  let lastRequestAt=null;
+  const pacedFetch=async(...args)=>{
+    if(lastRequestAt!==null&&minRequestIntervalMs>0){
+      const delay=Math.max(0,minRequestIntervalMs-(Date.now()-lastRequestAt));
+      if(delay>0)await sleep(delay);
+    }
+    lastRequestAt=Date.now();
+    return fetchImpl(...args);
+  };
   let parsedBaseUrl;
   try{parsedBaseUrl=new URL(baseUrl)}catch{throw new TypeError("Discord API base URL is invalid")}
   if(parsedBaseUrl.protocol!=="https:"||parsedBaseUrl.username||parsedBaseUrl.password||
@@ -244,7 +260,7 @@ export async function runDiscordPermissionPreflight({
 
   let bot;
   try{
-    bot=await requestJson("/users/@me",{token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep});
+    bot=await requestJson("/users/@me",{token,fetchImpl:pacedFetch,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep,onRateLimit});
   }catch(error){
     const code=error instanceof DiscordApiError?error.code:"discord_api_unavailable";
     for(const group of groups){
@@ -283,7 +299,7 @@ export async function runDiscordPermissionPreflight({
     try{
       guildResponse=await requestJson(
         "/guilds/"+group.guildId,
-        {token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep},
+        {token,fetchImpl:pacedFetch,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep,onRateLimit},
       );
     }catch(error){
       const code=error instanceof DiscordApiError?error.code:"discord_api_unavailable";
@@ -312,7 +328,7 @@ export async function runDiscordPermissionPreflight({
       try{
         channel=await requestJson(
           "/channels/"+result.channelId,
-          {token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep},
+          {token,fetchImpl:pacedFetch,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep,onRateLimit},
         );
       }catch(error){
         const code=error instanceof DiscordApiError?error.code:"discord_api_unavailable";
@@ -341,7 +357,7 @@ export async function runDiscordPermissionPreflight({
       try{
         permissionResponse=await requestJson(
           "/channels/"+result.channelId+"/permissions/member/"+bot.id,
-          {token,fetchImpl,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep},
+          {token,fetchImpl:pacedFetch,baseUrl,timeoutMs,maxRetries,maxRetryDelayMs,sleep,onRateLimit},
         );
       }catch(error){
         const code=error instanceof DiscordApiError?error.code:"discord_api_unavailable";
@@ -361,4 +377,24 @@ export async function runDiscordPermissionPreflight({
   }
 
   return makeReport({checkedAt,botId:bot.id,groups,topLevelError:stopAfterApiFailure});
+}
+
+
+/**
+ * Bind one immutable runtime configuration to both startup and recurring
+ * permission checks. Keeping the pacing and rate-limit callback here prevents
+ * the initial Gateway gate from silently diverging from periodic rechecks.
+ */
+export function createDiscordPermissionPreflightRunner({
+  token,
+  maxChannels,
+  minRequestIntervalMs=0,
+  onRateLimit=()=>{},
+  run=runDiscordPermissionPreflight,
+}={}){
+  if(typeof run!=="function")throw new TypeError("A permission preflight runner is required");
+  if(typeof onRateLimit!=="function")throw new TypeError("onRateLimit must be a function");
+  return authorization=>run({
+    authorization,token,maxChannels,minRequestIntervalMs,onRateLimit,
+  });
 }
