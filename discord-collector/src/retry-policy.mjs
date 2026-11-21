@@ -9,6 +9,7 @@ export function isTransientDiscordRestError(error){
   let current=error;
   for(let depth=0;current&&depth<4;depth++){
     const status=Number(current.status??current.statusCode??current.httpStatus);
+    if(current.code==="discord_rest_scheduler_queue_full")return true;
     if(status===429||(status>=500&&status<=599))return true;
     if(current.name==="AbortError"||current.name==="TimeoutError")return true;
     if(typeof current.code==="string"&&NETWORK_CODES.has(current.code.toUpperCase()))return true;
