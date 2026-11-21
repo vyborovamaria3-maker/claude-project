@@ -344,3 +344,16 @@ test("collector startup and recurring permission checks share the configured pre
   assert.match(source,/scheduleRest\(\(\)=>runPermissionPreflight\(snapshot\)/);
   assert.match(source,/createDiscordPermissionPreflightRunner\(\{[\s\S]*minRequestIntervalMs:permissionPreflightMinRequestIntervalMs,[\s\S]*onRateLimit:\(\)=>\{restRateLimitResponses\+\+\}/);
 });
+
+test("HTTP request timeout and too-early responses are classified as transient API outages",async()=>{
+  for(const status of [408,425,500,503]){
+    const fetchImpl=async()=>jsonResponse({message:"temporary Discord API failure"},status);
+    const report=await runDiscordPermissionPreflight({
+      authorization:authorization(),token:"token",fetchImpl,now,maxRetries:0,
+    });
+    assert.equal(report.ok,false);
+    assert.equal(report.errorCode,"discord_api_unavailable",`HTTP ${status} must remain retryable`);
+    assert.ok(report.guilds.every(group=>group.channels.every(channel=>
+      channel.errorCode==="discord_api_unavailable")));
+  }
+});
