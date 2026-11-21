@@ -153,6 +153,7 @@ while(true){
       initialPermissionError=error;
       break;
     }
+    initialPermissionError=error;
   }
   if(initialPermissionReport?.ok)break;
   if(initialPermissionReport&&!isTransientPermissionPreflightReport(initialPermissionReport))break;
