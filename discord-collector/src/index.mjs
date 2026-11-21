@@ -142,11 +142,39 @@ if(erasureOnly){
 }
 
 let initialPermissionReport;
-try{
-  initialPermissionReport=await runPermissionPreflight(allowed);
-  if(!initialPermissionReport.ok)
-    throw new Error("Discord permission preflight rejected one or more authorized channels");
-}catch{
+let initialPermissionError=null;
+let initialPreflightRetryAttempt=0;
+let initialPreflightGapRecorded=false;
+while(true){
+  try{
+    initialPermissionReport=await runPermissionPreflight(allowed);
+  }catch(error){
+    if(!isTransientDiscordRestError(error)){
+      initialPermissionError=error;
+      break;
+    }
+  }
+  if(initialPermissionReport?.ok)break;
+  if(initialPermissionReport&&!isTransientPermissionPreflightReport(initialPermissionReport))break;
+  const transientCode=initialPermissionReport?.errorCode??initialPermissionError?.code??"discord_api_unavailable";
+  if(!initialPreflightGapRecorded){
+    for(const [channelId,permission] of allowed)
+      await recordRecoveryCheck(pool,permission.guildId,channelId,
+        recoveryBaselines.get(channelId)??null,{status:"failed"});
+    initialPreflightGapRecorded=true;
+  }
+  const delay=retryDelayMs(initialPreflightRetryAttempt++,{
+    baseMs:transientCode==="discord_rate_limited"?30_000:1_000,
+    maxMs:300_000,
+  });
+  console.warn("Discord permission preflight unavailable; startup remains paused and will retry",{
+    errorCode:transientCode,retryInMs:delay,
+  });
+  await new Promise(resolve=>setTimeout(resolve,delay));
+  initialPermissionReport=null;
+  initialPermissionError=null;
+}
+if(!initialPermissionReport?.ok){
   const failureCodes=[...new Set((initialPermissionReport?.guilds??[])
     .flatMap(group=>group.channels.map(channel=>channel.errorCode).filter(Boolean)))];
   console.error("Discord permission preflight failed; Gateway login was not attempted",{
@@ -154,7 +182,7 @@ try{
     checkedChannels:initialPermissionReport?.checkedChannels??allowed.size,
     failedChannels:initialPermissionReport?.failedChannels??allowed.size,
     errorCodes:failureCodes,
-    errorCode:initialPermissionReport?.errorCode??"permission_preflight_failed",
+    errorCode:initialPermissionReport?.errorCode??initialPermissionError?.code??"permission_preflight_failed",
   });
   try{spool.close()}finally{await releaseSourceDatabase()}
   throw new Error("Discord permission preflight failed; collection remains stopped");
@@ -187,6 +215,9 @@ let permissionPreflightTimer;
 let permissionPreflightTask=Promise.resolve();
 let permissionPreflightRunning=false;
 let permissionPreflightFailed=false;
+let permissionPreflightPaused=false;
+let permissionPreflightRetryTimer=null;
+let permissionPreflightRetryAttempt=0;
 let sweepRunning=false;
 
 function singletonConnectionLost(){
@@ -245,10 +276,11 @@ async function verifyPermissions(snapshot){
   permissionPreflightTask=task;
   try{
     const report=await task;
-    if(!report.ok)permissionPreflightFailed=true;
+    if(!report.ok&&!isTransientPermissionPreflightReport(report))permissionPreflightFailed=true;
     return report;
   }catch(error){
-    permissionPreflightFailed=true;
+    if(!isTransientDiscordRestError(error)&&error?.code!=="discord_rest_scheduler_queue_full")
+      permissionPreflightFailed=true;
     throw error;
   }finally{
     if(permissionPreflightTask===task)permissionPreflightRunning=false;
@@ -256,6 +288,7 @@ async function verifyPermissions(snapshot){
 }
 
 async function record(message,kind,authorizationRetry=0){
+  if(permissionPreflightPaused)throw new Error("discord_permission_preflight_paused");
   const channelId=String(message.channelId??message.channel?.id??"");
   const permission=allowed.get(channelId);
   if(!permissionActive(permission))return {status:"not-allowed"};
@@ -263,7 +296,7 @@ async function record(message,kind,authorizationRetry=0){
   if(!allowedObservation(allowed,observation))return {status:"not-allowed"};
   const stillAuthorized=()=>{
     const current=allowed.get(channelId);
-    return permissionActive(current)&&sameAuthorizationLease(current,permission);
+    return !permissionPreflightPaused&&permissionActive(current)&&sameAuthorizationLease(current,permission);
   };
   const result=await storeObservation(pool,observation,permission.retentionDays,
     new Date(),permission.expiresAt,stillAuthorized);
@@ -345,7 +378,7 @@ function enqueueGatewayEvent(kind,message){
 }
 
 function scheduleSpoolReplayRetry(error){
-  if(stopping||spoolReplayRetryTimer)return null;
+  if(stopping||permissionPreflightPaused||spoolReplayRetryTimer)return null;
   const baseMs=error?.status===429?30_000:1_000;
   const delay=retryDelayMs(spoolReplayRetryAttempt++,{baseMs,maxMs:300_000});
   spoolReplayRetryTimer=setTimeout(()=>{
@@ -363,6 +396,7 @@ function isUnknownDiscordMessage(error){
 }
 
 async function processSpoolEntry(entry,{allowHydration=true}={}){
+  if(permissionPreflightPaused)return {ack:false,status:"permission-preflight-paused"};
   const event=entry.event;
   const permission=allowed.get(event.channelId);
   if(!permissionActive(permission)||permission.guildId!==event.guildId)
@@ -449,7 +483,7 @@ async function processSpoolEntry(entry,{allowHydration=true}={}){
 }
 
 function drainSpool({allowHydration=true}={}){
-  if(spoolReplayRetryTimer)return Promise.resolve();
+  if(permissionPreflightPaused||spoolReplayRetryTimer)return Promise.resolve();
   if(drainPromise)return drainPromise;
   drainPromise=(async()=>{
     while(acceptingEvents&&spool.pendingCount>0){
@@ -513,7 +547,7 @@ client.on(Events.ShardResume,resumeSpoolReplay);
 
 async function backfill(guildId,channelId,maxMessages){
   const permission=allowed.get(channelId);
-  if(!permissionActive(permission)||permission.guildId!==guildId)return;
+  if(permissionPreflightPaused||!permissionActive(permission)||permission.guildId!==guildId)return;
   const stillAuthorized=()=>{
     const current=allowed.get(channelId);
     return permissionActive(current)&&sameAuthorizationLease(current,permission);
