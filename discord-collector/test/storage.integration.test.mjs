@@ -321,7 +321,7 @@ test("retention is rechecked after a source write waits on its per-message lock"
   try{
     await installSchema(pool);
     const now=new Date();
-    const createdAt=new Date(now.getTime()-30*24*60*60*1000+1_500);
+    const createdAt=new Date(now.getTime()-30*24*60*60*1000+3_000);
     const observation=normalizeMessage({
       id,guildId,channelId,author:{id:"423456789012345697"},
       content:"must expire while waiting for the source lock",
@@ -331,8 +331,11 @@ test("retention is rechecked after a source write waits on its per-message lock"
     await blocker.query(
       "SELECT pg_advisory_xact_lock(hashtext('discord'),hashtext($1))",[id],
     );
-    const pendingWrite=storeObservation(pool,observation,30);
-    await new Promise(resolve=>setTimeout(resolve,2_000));
+    let settled=false;
+    const pendingWrite=storeObservation(pool,observation,30).finally(()=>{settled=true});
+    await new Promise(resolve=>setTimeout(resolve,100));
+    assert.equal(settled,false,"the source write must be waiting on the held per-message lock");
+    await new Promise(resolve=>setTimeout(resolve,3_200));
     await blocker.query("COMMIT");
     const result=await pendingWrite;
     assert.deepEqual(result,{status:"expired"});
