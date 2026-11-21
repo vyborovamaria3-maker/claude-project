@@ -128,3 +128,8 @@ test("startup preflight rechecks the authorization document before retries and G
   assert.match(source,/verifiedStartupDocument=await readAuthorizationFile\(authorizationPath\)/);
   assert.match(source,/currentAuthorizationDocument=await readAuthorizationFile\(authorizationPath\)[\s\S]*authorizationDocumentFingerprint/);
 });
+
+test("Gateway login waits until any queued authorization reload has fully settled",()=>{
+  const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
+  assert.match(source,/while\(authorizationReloadRunning\)\{\s*const activeReload=authorizationReloadTask;\s*await activeReload\.catch/);
+});
