@@ -91,3 +91,20 @@ test("collector retains a transiently blocked spool head and retries with capped
   assert.match(source,/encrypted ingress backlog retained/);
   assert.match(source,/clearTimeout\(spoolReplayRetryTimer\)/);
 });
+
+test("startup preflight retries transient API outages before Gateway login and records a coverage watermark",()=>{
+  const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
+  assert.match(source,/while\(true\)\{[\s\S]*runPermissionPreflight\(allowed\)[\s\S]*isTransientPermissionPreflightReport\(initialPermissionReport\)[\s\S]*recordRecoveryCheck\(pool,permission\.guildId,channelId[\s\S]*retryDelayMs\(initialPreflightRetryAttempt\+\+/);
+  assert.match(source,/startup remains paused and will retry/);
+});
+
+test("periodic preflight outage pauses capture, persists a gap, retries, and resumes bounded recovery",()=>{
+  const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
+  assert.match(source,/permissionPreflightPaused=true;[\s\S]*acceptingEvents=false/);
+  assert.match(source,/permission_preflight_gap_checkpoint_failed/);
+  assert.match(source,/schedulePermissionPreflightRetry\(report\)/);
+  assert.match(source,/startPermissionPreflight\(\{retry:true\}\)/);
+  assert.match(source,/permissionPreflightPaused=false;[\s\S]*acceptingEvents=true/);
+  assert.match(source,/await drainSpool\(\);[\s\S]*await recoverRecentGaps\(\)/);
+  assert.match(source,/if\(permissionPreflightPaused\)return \{ack:false,status:"permission-preflight-paused"\}/);
+});
