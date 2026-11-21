@@ -112,6 +112,7 @@ test("periodic preflight outage pauses capture, persists a gap, retries, and res
 test("shutdown waits for replay and catches spool close/fsync failures without leaking an unhandled rejection",()=>{
   const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
   assert.match(source,/await Promise\.allSettled\(\[[\s\S]*permissionPreflightPauseTask[\s\S]*drainPromise\?\?Promise\.resolve\(\)/);
+  assert.match(source,/settled\.some\(result=>result\.status==="rejected"\)/);
   assert.match(source,/try\{spool\.close\(\)\}[\s\S]*ingress_spool_close_failed/);
   assert.match(source,/try\{await releaseSourceDatabase\(\)\}[\s\S]*source_database_release_failed/);
 });
