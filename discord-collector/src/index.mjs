@@ -218,6 +218,7 @@ let permissionPreflightFailed=false;
 let permissionPreflightPaused=false;
 let permissionPreflightRetryTimer=null;
 let permissionPreflightRetryAttempt=0;
+let permissionPreflightPauseTask=Promise.resolve();
 let sweepRunning=false;
 
 function singletonConnectionLost(){
@@ -773,31 +774,35 @@ async function pauseForPermissionPreflight(report){
       clearTimeout(spoolReplayRetryTimer);
       spoolReplayRetryTimer=null;
     }
-    const pendingDrain=drainPromise;
-    if(pendingDrain)await pendingDrain.catch(()=>{});
-    await startupTask.catch(()=>{});
-    coverageTask=(async()=>{
-      for(const [channelId,permission] of allowed){
-        if(!permissionActive(permission))continue;
-        const baseline=await getRecoveryBaseline(pool,channelId);
-        recoveryBaselines.set(channelId,baseline);
-        const stillAuthorized=()=>{
-          const current=allowed.get(channelId);
-          return permissionActive(current)&&sameAuthorizationLease(current,permission);
-        };
-        await recordRecoveryCheck(pool,permission.guildId,channelId,baseline,{status:"failed"},stillAuthorized);
-      }
-    })().catch(()=>{
-      throw new Error("permission_preflight_gap_checkpoint_failed");
-    });
-    await coverageTask;
-    console.warn("Discord permission preflight unavailable; collection paused without discarding the spool",{
-      errorCode:report?.errorCode??"discord_api_unavailable",
-      channels:allowed.size,
-      pendingEvents:spool.pendingCount,
-      pendingBytes:spool.pendingBytes,
-    });
+    permissionPreflightPauseTask=(async()=>{
+      const pendingDrain=drainPromise;
+      if(pendingDrain)await pendingDrain.catch(()=>{});
+      await startupTask.catch(()=>{});
+      if(stopping)return;
+      coverageTask=(async()=>{
+        for(const [channelId,permission] of allowed){
+          if(!permissionActive(permission))continue;
+          const baseline=await getRecoveryBaseline(pool,channelId);
+          recoveryBaselines.set(channelId,baseline);
+          const stillAuthorized=()=>{
+            const current=allowed.get(channelId);
+            return permissionActive(current)&&sameAuthorizationLease(current,permission);
+          };
+          await recordRecoveryCheck(pool,permission.guildId,channelId,baseline,{status:"failed"},stillAuthorized);
+        }
+      })().catch(()=>{
+        throw new Error("permission_preflight_gap_checkpoint_failed");
+      });
+      await coverageTask;
+      console.warn("Discord permission preflight unavailable; collection paused without discarding the spool",{
+        errorCode:report?.errorCode??"discord_api_unavailable",
+        channels:allowed.size,
+        pendingEvents:spool.pendingCount,
+        pendingBytes:spool.pendingBytes,
+      });
+    })();
   }
+  await permissionPreflightPauseTask;
   schedulePermissionPreflightRetry(report);
 }
 
@@ -928,7 +933,7 @@ async function shutdown(){
   spoolReplayRetryTimer=null;
   shutdownPromise=(async()=>{
     try{await client.destroy()}finally{
-      await Promise.allSettled([startupTask,sweepTask,coverageTask,drainPromise??Promise.resolve(),authorizationReloadTask,permissionPreflightTask]);
+      await Promise.allSettled([startupTask,sweepTask,coverageTask,permissionPreflightPauseTask,drainPromise??Promise.resolve(),authorizationReloadTask,permissionPreflightTask]);
       try{spool.close()}finally{await releaseSourceDatabase()}
     }
     if(failures)process.exitCode=1;
