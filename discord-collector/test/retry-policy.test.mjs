@@ -7,6 +7,7 @@ test("REST retry classifier recognizes HTTP throttling, server failures and nest
   assert.equal(isTransientDiscordRestError({status:503}),true);
   assert.equal(isTransientDiscordRestError({cause:{code:"ECONNRESET"}}),true);
   assert.equal(isTransientDiscordRestError({name:"TimeoutError"}),true);
+  assert.equal(isTransientDiscordRestError({code:"discord_rest_scheduler_queue_full"}),true);
   assert.equal(isTransientDiscordRestError({cause:{cause:{code:"UND_ERR_SOCKET"}}}),true);
 });
 
