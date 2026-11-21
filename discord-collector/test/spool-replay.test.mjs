@@ -116,3 +116,8 @@ test("shutdown waits for replay and catches spool close/fsync failures without l
   assert.match(source,/try\{spool\.close\(\)\}[\s\S]*ingress_spool_close_failed/);
   assert.match(source,/try\{await releaseSourceDatabase\(\)\}[\s\S]*source_database_release_failed/);
 });
+
+test("Discord REST requests have a finite timeout before entering outage backoff",()=>{
+  const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
+  assert.match(source,/rest:\{timeout:15_000,retries:3\}/);
+});
