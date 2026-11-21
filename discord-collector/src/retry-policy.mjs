@@ -36,3 +36,15 @@ export function retryDelayMs(attempt,{baseMs=1_000,maxMs=300_000}={}){
     throw new RangeError("retry delay bounds are invalid");
   return Math.min(maxMs,baseMs*2**Math.min(attempt,20));
 }
+
+export function permissionPreflightRetryBaseMs(report,error){
+  if(Number(error?.status??error?.statusCode)===429)return 30_000;
+  const codes=new Set();
+  if(typeof report?.errorCode==="string")codes.add(report.errorCode);
+  for(const group of report?.guilds??[]){
+    if(typeof group?.errorCode==="string")codes.add(group.errorCode);
+    for(const channel of group?.channels??[])
+      if(typeof channel?.errorCode==="string")codes.add(channel.errorCode);
+  }
+  return codes.has("discord_rate_limited")?30_000:1_000;
+}
