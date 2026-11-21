@@ -938,10 +938,15 @@ async function shutdown(){
       process.exitCode=1;
       console.error("Discord Gateway shutdown failed","gateway_shutdown_failed");
     }
-    await Promise.allSettled([
+    const settled=await Promise.allSettled([
       startupTask,sweepTask,coverageTask,permissionPreflightPauseTask,
       drainPromise??Promise.resolve(),authorizationReloadTask,permissionPreflightTask,
     ]);
+    if(settled.some(result=>result.status==="rejected")){
+      failures++;
+      process.exitCode=1;
+      console.error("Discord in-flight work failed during shutdown","shutdown_task_failed");
+    }
     try{spool.close()}
     catch{
       failures++;
