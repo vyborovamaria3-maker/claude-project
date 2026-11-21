@@ -759,7 +759,7 @@ function schedulePermissionPreflightRetry(report){
   const delay=retryDelayMs(permissionPreflightRetryAttempt++,{baseMs,maxMs:300_000});
   permissionPreflightRetryTimer=setTimeout(()=>{
     permissionPreflightRetryTimer=null;
-    startPermissionPreflight();
+    startPermissionPreflight({retry:true});
   },delay);
   permissionPreflightRetryTimer.unref();
 }
@@ -778,9 +778,14 @@ async function pauseForPermissionPreflight(report){
     await startupTask.catch(()=>{});
     coverageTask=(async()=>{
       for(const [channelId,permission] of allowed){
+        if(!permissionActive(permission))continue;
         const baseline=await getRecoveryBaseline(pool,channelId);
         recoveryBaselines.set(channelId,baseline);
-        await recordRecoveryCheck(pool,permission.guildId,channelId,baseline,{status:"failed"});
+        const stillAuthorized=()=>{
+          const current=allowed.get(channelId);
+          return permissionActive(current)&&sameAuthorizationLease(current,permission);
+        };
+        await recordRecoveryCheck(pool,permission.guildId,channelId,baseline,{status:"failed"},stillAuthorized);
       }
     })().catch(()=>{
       throw new Error("permission_preflight_gap_checkpoint_failed");
@@ -807,8 +812,9 @@ function stopAfterPermissionPreflightFailure(){
   void shutdown();
 }
 
-function startPermissionPreflight(){
-  if(stopping||permissionPreflightRunning||permissionPreflightRetryTimer)return;
+function startPermissionPreflight({retry=false}={}){
+  if(stopping||permissionPreflightRunning||permissionPreflightRetryTimer||
+     (permissionPreflightPaused&&!retry))return;
   void verifyPermissions(allowed).then(async report=>{
     if(!report.ok){
       if(isTransientPermissionPreflightReport(report)){
