@@ -1003,7 +1003,10 @@ try{
   throw new Error("Pre-login durable ingress replay failed; pending records were retained");
 }
 if(stopping)throw new Error("Collector stopped before Gateway login");
-await authorizationReloadTask.catch(()=>{});
+while(authorizationReloadRunning){
+  const activeReload=authorizationReloadTask;
+  await activeReload.catch(()=>{});
+}
 if(stopping)throw new Error("Collector stopped during authorization reload");
 try{
   const currentAuthorizationDocument=await readAuthorizationFile(authorizationPath);
