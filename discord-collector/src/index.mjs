@@ -195,7 +195,10 @@ console.log("Discord permission preflight passed",{
 });
 const client=new Client({
   intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent],
-  partials:[Partials.Message,Partials.Channel]
+  partials:[Partials.Message,Partials.Channel],
+  // Bound hung REST requests so a prolonged API outage reaches the durable
+  // spool retry/backoff path instead of pinning replay and shutdown forever.
+  rest:{timeout:15_000,retries:3},
 });
 let failures=0;
 let acceptingEvents=true;
