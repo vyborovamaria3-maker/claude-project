@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {chmodSync,existsSync,mkdtempSync,mkdirSync,readFileSync,readdirSync,renameSync,rmSync,statSync,writeFileSync,symlinkSync} from "node:fs";
+import {chmodSync,closeSync,existsSync,mkdtempSync,mkdirSync,readFileSync,readdirSync,renameSync,rmSync,statSync,writeFileSync,symlinkSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {randomBytes} from "node:crypto";
@@ -307,4 +307,19 @@ test("user-requested spool erasure rejects non-string or malformed author identi
     assert.throws(()=>f.spool.eraseAuthor(123456789012345678),/author Snowflake/);
     assert.throws(()=>f.spool.eraseAuthor("123"),/author Snowflake/);
   }finally{f.cleanup()}
+});
+
+test("spool close wipes the encryption key even if closing the directory descriptor fails",()=>{
+  const f=fixture();
+  const realDirectoryFd=f.spool.directoryFd;
+  try{
+    f.spool.directoryFd=-1;
+    assert.throws(()=>f.spool.close(),/EBADF/);
+    assert.equal(f.spool.opened,false);
+    assert.equal(f.spool.directoryFd,null);
+    assert.ok(f.spool.key.every(byte=>byte===0));
+  }finally{
+    closeSync(realDirectoryFd);
+    f.cleanup();
+  }
 });
