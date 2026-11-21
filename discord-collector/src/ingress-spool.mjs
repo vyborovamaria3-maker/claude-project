@@ -339,10 +339,13 @@ export class IngressSpool {
     if(!this.opened)return;
     try{this.flushAcks()}
     finally{
-      closeSync(this.directoryFd);
-      this.directoryFd=null;
-      this.opened=false;
-      this.key.fill(0);
+      try{
+        if(this.directoryFd!==null)closeSync(this.directoryFd);
+      }finally{
+        this.directoryFd=null;
+        this.opened=false;
+        this.key.fill(0);
+      }
     }
   }
 }
