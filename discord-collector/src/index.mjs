@@ -8,7 +8,7 @@ import {IngressSpool,parseIngressSpoolKey} from "./ingress-spool.mjs";
 import {createDiscordPermissionPreflightRunner} from "./permission-preflight.mjs";
 import {replaySpoolEntries,safeOldestPending} from "./spool-replay.mjs";
 import {RestScheduler} from "./rest-scheduler.mjs";
-import {isTransientDiscordRestError,retryDelayMs} from "./retry-policy.mjs";
+import {isTransientDiscordRestError,isTransientPermissionPreflightReport,permissionPreflightRetryBaseMs,retryDelayMs} from "./retry-policy.mjs";
 
 if(process.env.DISCORD_COLLECTOR_ENABLED!=="true"){
   console.error("Disabled: DISCORD_COLLECTOR_ENABLED is not true");
@@ -164,7 +164,7 @@ while(true){
     initialPreflightGapRecorded=true;
   }
   const delay=retryDelayMs(initialPreflightRetryAttempt++,{
-    baseMs:transientCode==="discord_rate_limited"?30_000:1_000,
+    baseMs:permissionPreflightRetryBaseMs(initialPermissionReport,initialPermissionError),
     maxMs:300_000,
   });
   console.warn("Discord permission preflight unavailable; startup remains paused and will retry",{
@@ -380,7 +380,7 @@ function enqueueGatewayEvent(kind,message){
 
 function scheduleSpoolReplayRetry(error){
   if(stopping||permissionPreflightPaused||spoolReplayRetryTimer)return null;
-  const baseMs=error?.status===429?30_000:1_000;
+  const baseMs=Number(error?.status??error?.statusCode)===429?30_000:1_000;
   const delay=retryDelayMs(spoolReplayRetryAttempt++,{baseMs,maxMs:300_000});
   spoolReplayRetryTimer=setTimeout(()=>{
     spoolReplayRetryTimer=null;
@@ -756,7 +756,7 @@ authorizationReloadTimer.unref();
 
 function schedulePermissionPreflightRetry(report){
   if(stopping||permissionPreflightRetryTimer)return;
-  const baseMs=report?.errorCode==="discord_rate_limited"?30_000:1_000;
+  const baseMs=permissionPreflightRetryBaseMs(report);
   const delay=retryDelayMs(permissionPreflightRetryAttempt++,{baseMs,maxMs:300_000});
   permissionPreflightRetryTimer=setTimeout(()=>{
     permissionPreflightRetryTimer=null;
@@ -853,8 +853,10 @@ function startPermissionPreflight({retry=false}={}){
   }).catch(error=>{
     if(stopping)return;
     if(isTransientDiscordRestError(error)||error?.code==="discord_rest_scheduler_queue_full"){
-      void pauseForPermissionPreflight({errorCode:"discord_api_unavailable",guilds:[]})
-        .catch(()=>stopAfterPermissionPreflightFailure());
+      void pauseForPermissionPreflight({
+        errorCode:Number(error?.status??error?.statusCode)===429?"discord_rate_limited":"discord_api_unavailable",
+        guilds:[],
+      }).catch(()=>stopAfterPermissionPreflightFailure());
       return;
     }
     stopAfterPermissionPreflightFailure();
