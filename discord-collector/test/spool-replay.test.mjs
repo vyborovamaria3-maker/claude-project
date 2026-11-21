@@ -133,3 +133,11 @@ test("Gateway login waits until any queued authorization reload has fully settle
   const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
   assert.match(source,/while\(authorizationReloadRunning\)\{\s*const activeReload=authorizationReloadTask;\s*await activeReload\.catch/);
 });
+
+test("a preflight outage gap is recovered after Gateway reconnect if REST recovers first",()=>{
+  const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
+  assert.match(source,/recoveryPendingAfterPreflightPause=true/);
+  assert.match(source,/async function resumeSpoolAndRecovery\(\)[\s\S]*await drainSpool\(\)[\s\S]*await recoverRecentGaps\(\)/);
+  assert.match(source,/const resumeSpoolReplay=\(\)=>\{[\s\S]*resumeSpoolAndRecovery\(\)/);
+  assert.match(source,/if\(clientReadySeen&&client\.isReady\(\)\)\s*await resumeSpoolAndRecovery\(\)/);
+});
