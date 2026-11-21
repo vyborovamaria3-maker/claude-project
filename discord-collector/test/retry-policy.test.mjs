@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {isTransientDiscordRestError,isTransientPermissionPreflightReport,retryDelayMs} from "../src/retry-policy.mjs";
+import {isTransientDiscordRestError,isTransientPermissionPreflightReport,permissionPreflightRetryBaseMs,retryDelayMs} from "../src/retry-policy.mjs";
 
 test("REST retry classifier recognizes HTTP throttling, server failures and nested network faults",()=>{
   assert.equal(isTransientDiscordRestError({status:429}),true);
@@ -48,4 +48,12 @@ test("retry delay grows exponentially and remains capped during a prolonged outa
   assert.equal(retryDelayMs(3,{baseMs:30_000,maxMs:300_000}),240_000);
   assert.throws(()=>retryDelayMs(-1),/attempt/);
   assert.throws(()=>retryDelayMs(1,{baseMs:10,maxMs:5}),/bounds/);
+});
+
+test("permission preflight honors nested rate-limit reports and thrown HTTP 429 responses",()=>{
+  assert.equal(permissionPreflightRetryBaseMs({
+    ok:false,guilds:[{channels:[{errorCode:"discord_rate_limited"}]}],
+  }),30_000);
+  assert.equal(permissionPreflightRetryBaseMs({ok:false,errorCode:"discord_api_unavailable"}),1_000);
+  assert.equal(permissionPreflightRetryBaseMs(null,{status:"429"}),30_000);
 });
