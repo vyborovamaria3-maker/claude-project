@@ -147,6 +147,13 @@ let initialPreflightRetryAttempt=0;
 let initialPreflightGapRecorded=false;
 while(true){
   try{
+    const currentStartupDocument=await readAuthorizationFile(authorizationPath);
+    if(JSON.stringify(currentStartupDocument)!==JSON.stringify(doc)){
+      initialPermissionError=Object.assign(new Error("authorization_changed_during_startup_preflight"),{
+        code:"authorization_changed_during_startup_preflight",
+      });
+      break;
+    }
     initialPermissionReport=await runPermissionPreflight(allowed);
   }catch(error){
     if(!isTransientDiscordRestError(error)){
@@ -155,7 +162,23 @@ while(true){
     }
     initialPermissionError=error;
   }
-  if(initialPermissionReport?.ok)break;
+  if(initialPermissionReport?.ok){
+    try{
+      const verifiedStartupDocument=await readAuthorizationFile(authorizationPath);
+      if(JSON.stringify(verifiedStartupDocument)!==JSON.stringify(doc)){
+        initialPermissionError=Object.assign(new Error("authorization_changed_during_startup_preflight"),{
+          code:"authorization_changed_during_startup_preflight",
+        });
+        initialPermissionReport=null;
+        break;
+      }
+    }catch(error){
+      initialPermissionError=error;
+      initialPermissionReport=null;
+      break;
+    }
+    break;
+  }
   if(initialPermissionReport&&!isTransientPermissionPreflightReport(initialPermissionReport))break;
   const transientCode=initialPermissionReport?.errorCode??initialPermissionError?.code??"discord_api_unavailable";
   if(!initialPreflightGapRecorded){
@@ -980,6 +1003,17 @@ try{
   throw new Error("Pre-login durable ingress replay failed; pending records were retained");
 }
 if(stopping)throw new Error("Collector stopped before Gateway login");
+try{
+  const currentAuthorizationDocument=await readAuthorizationFile(authorizationPath);
+  if(JSON.stringify(currentAuthorizationDocument)!==authorizationDocumentFingerprint)
+    throw new Error("authorization_changed_before_gateway_login");
+}catch{
+  failures++;
+  acceptingEvents=false;
+  process.exitCode=1;
+  await shutdown();
+  throw new Error("Authorization changed or became unreadable before Gateway login");
+}
 try{
   await client.login(botToken);
 }catch{
