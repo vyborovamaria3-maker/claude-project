@@ -196,7 +196,7 @@ test("a PostgreSQL rollback leaves the encrypted spool event for replay and late
     };
     spool.append(snapshot);
     const observation=normalizeMessage(message,"observed",snapshot.receivedAt,guildId);
-    await pool.query("CREATE OR REPLACE FUNCTION fail_discord_spool_rollback_fixture() RETURNS trigger LANGUAGE plpgsql AS $ BEGIN RAISE EXCEPTION 'spool rollback fixture'; END $");
+    await pool.query("CREATE OR REPLACE FUNCTION fail_discord_spool_rollback_fixture() RETURNS trigger LANGUAGE plpgsql AS $fixture$ BEGIN RAISE EXCEPTION 'spool rollback fixture'; END $fixture$");
     await pool.query("CREATE TRIGGER fail_discord_spool_rollback_fixture BEFORE INSERT ON outbox_events FOR EACH ROW EXECUTE FUNCTION fail_discord_spool_rollback_fixture()");
     await assert.rejects(storeObservation(pool,observation,30),/spool rollback fixture/);
     assert.equal(spool.pendingCount,1,"failed source transaction must not ACK the durable ingress event");
