@@ -79,7 +79,7 @@ test("corrupt spool diagnostics cannot interrupt fail-closed replay shutdown han
 
 test("authorization reload waits for an in-flight replay and retries the spool under the new lease",()=>{
   const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
-  assert.match(source,/const pendingDrain=drainPromise;[\s\S]*if\(pendingDrain\)await pendingDrain\.catch\(\(\)=>\{\}\);[\s\S]*if\(!stopping\)await drainSpool\(\)/);
+  assert.match(source,/const pendingDrain=drainPromise;[\s\S]*if\(pendingDrain\)await pendingDrain\.catch\(\(\)=>\{\}\);[\s\S]*if\(!stopping\)await resumeSpoolAndRecovery\(\)/);
 });
 
 test("collector retains a transiently blocked spool head and retries with capped backoff",()=>{
@@ -105,7 +105,7 @@ test("periodic preflight outage pauses capture, persists a gap, retries, and res
   assert.match(source,/schedulePermissionPreflightRetry\(report\)/);
   assert.match(source,/startPermissionPreflight\(\{retry:true\}\)/);
   assert.match(source,/permissionPreflightPaused=false;[\s\S]*acceptingEvents=true/);
-  assert.match(source,/await drainSpool\(\);[\s\S]*await recoverRecentGaps\(\)/);
+  assert.match(source,/await resumeSpoolAndRecovery\(\)/);
   assert.match(source,/if\(permissionPreflightPaused\)return \{ack:false,status:"permission-preflight-paused"\}/);
 });
 
@@ -139,7 +139,7 @@ test("a preflight outage gap is recovered after Gateway reconnect if REST recove
   assert.match(source,/recoveryPending=true/);
   assert.match(source,/backfillPendingAfterPreflightPause=true/);
   assert.match(source,/async function resumeSpoolAndRecovery\(\{reconcileGap=false\}=\{\}\)[\s\S]*await drainSpool\(\)[\s\S]*await recoverRecentGaps\(\)/);
-  assert.match(source,/const resumeSpoolReplay=\(\)=>\{[\s\S]*resumeSpoolAndRecovery\(\)/);
+  assert.match(source,/const resumeSpoolReplay=\(\)=>\{[\s\S]*resumeSpoolAndRecovery\(\{reconcileGap:true\}\)/);
   assert.match(source,/if\(clientReadySeen&&client\.isReady\(\)\)\s*await resumeSpoolAndRecovery\(\)/);
 });
 
