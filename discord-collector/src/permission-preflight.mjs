@@ -84,7 +84,8 @@ async function requestJson(path,{token,fetchImpl,baseUrl,timeoutMs,maxRetries,ma
       continue;
     }
 
-    if(response.status>=500&&response.status<=599){
+    if(response.status===408||response.status===425||
+       (response.status>=500&&response.status<=599)){
       await safeCancel(response);
       if(attempt>=maxRetries)throw new DiscordApiError("discord_api_unavailable",response.status);
       await sleep(Math.min(1_000,250*(attempt+1)));
