@@ -656,12 +656,27 @@ async function recoverRecentGaps(){
   }
 }
 
+async function runConfiguredBackfill(){
+  const max=Number(process.env.DISCORD_BACKFILL_MAX_MESSAGES||0);
+  if(process.env.DISCORD_BACKFILL_ENABLED!=="true"||!Number.isInteger(max)||max<=0)return;
+  for(const [channelId,permission] of allowed){
+    if(stopping||permissionPreflightPaused)break;
+    try{await backfill(permission.guildId,channelId,max)}
+    catch(error){
+      if(permissionPreflightPaused)break;
+      failures++;
+      console.error("History backfill failed",channelId,error?.code??"backfill_failed");
+    }
+  }
+}
+
 async function resumeSpoolAndRecovery(){
   if(stopping||permissionPreflightPaused||!clientReadySeen||!client.isReady())return;
   await drainSpool();
   if(recoveryPendingAfterPreflightPause&&!stopping&&!permissionPreflightPaused&&
      !spoolReplayRetryTimer&&spool.pendingCount===0){
     await recoverRecentGaps();
+    if(!stopping&&!permissionPreflightPaused)await runConfiguredBackfill();
     recoveryPendingAfterPreflightPause=false;
   }
 }
@@ -912,14 +927,7 @@ client.once(Events.ClientReady,()=>{
     if(stopping)return;
     await recoverRecentGaps();
     if(!permissionPreflightPaused)recoveryPendingAfterPreflightPause=false;
-    const max=Number(process.env.DISCORD_BACKFILL_MAX_MESSAGES||0);
-    if(process.env.DISCORD_BACKFILL_ENABLED==="true"&&Number.isInteger(max)&&max>0){
-      for(const [channelId,permission] of allowed){
-        if(stopping)break;
-        try{await backfill(permission.guildId,channelId,max)}
-        catch(error){failures++;console.error("History backfill failed",channelId,error?.code??"backfill_failed")}
-      }
-    }
+    await runConfiguredBackfill();
     if(!stopping)await drainSpool();
   })();
   void startupTask.catch(()=>{
