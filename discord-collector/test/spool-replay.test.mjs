@@ -136,7 +136,8 @@ test("Gateway login waits until any queued authorization reload has fully settle
 
 test("a preflight outage gap is recovered after Gateway reconnect if REST recovers first",()=>{
   const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
-  assert.match(source,/recoveryPendingAfterPreflightPause=true/);
+  assert.match(source,/recoveryPending=true/);
+  assert.match(source,/backfillPendingAfterPreflightPause=true/);
   assert.match(source,/async function resumeSpoolAndRecovery\(\)[\s\S]*await drainSpool\(\)[\s\S]*await recoverRecentGaps\(\)/);
   assert.match(source,/const resumeSpoolReplay=\(\)=>\{[\s\S]*resumeSpoolAndRecovery\(\)/);
   assert.match(source,/if\(clientReadySeen&&client\.isReady\(\)\)\s*await resumeSpoolAndRecovery\(\)/);
@@ -151,5 +152,6 @@ test("authorization reload treats transient preflight exceptions as a pause, not
 test("Gateway shard resume reconciles a recent coverage gap after replay",()=>{
   const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
   assert.match(source,/resumeSpoolAndRecovery\(\{reconcileGap:true\}\)/);
-  assert.match(source,/\(recoveryPendingAfterPreflightPause\|\|reconcileGap\)/);
+  assert.match(source,/if\(reconcileGap\)recoveryPending=true/);
+  assert.match(source,/if\(recoveryPending&&!stopping&&!permissionPreflightPaused/);
 });
