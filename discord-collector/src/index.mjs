@@ -243,7 +243,8 @@ let permissionPreflightTask=Promise.resolve();
 let permissionPreflightRunning=false;
 let permissionPreflightFailed=false;
 let permissionPreflightPaused=false;
-let recoveryPendingAfterPreflightPause=false;
+let recoveryPending=false;
+let backfillPendingAfterPreflightPause=false;
 let permissionPreflightRetryTimer=null;
 let permissionPreflightRetryAttempt=0;
 let permissionPreflightPauseTask=Promise.resolve();
@@ -679,15 +680,17 @@ async function runConfiguredBackfill(){
 }
 
 async function resumeSpoolAndRecovery({reconcileGap=false}={}){
+  if(reconcileGap)recoveryPending=true;
   if(stopping||permissionPreflightPaused||!clientReadySeen||!client.isReady())return;
   await drainSpool();
-  if((recoveryPendingAfterPreflightPause||reconcileGap)&&!stopping&&!permissionPreflightPaused&&
+  if(recoveryPending&&!stopping&&!permissionPreflightPaused&&
      !spoolReplayRetryTimer&&spool.pendingCount===0){
     await recoverRecentGaps();
-    if(recoveryPendingAfterPreflightPause){
+    if(backfillPendingAfterPreflightPause){
       if(!stopping&&!permissionPreflightPaused)await runConfiguredBackfill();
-      recoveryPendingAfterPreflightPause=false;
+      backfillPendingAfterPreflightPause=false;
     }
+    recoveryPending=false;
   }
 }
 
@@ -844,7 +847,8 @@ async function pauseForPermissionPreflight(report){
   if(stopping)return;
   if(!permissionPreflightPaused){
     permissionPreflightPaused=true;
-    recoveryPendingAfterPreflightPause=true;
+    recoveryPending=true;
+    backfillPendingAfterPreflightPause=true;
     acceptingEvents=false;
     if(spoolReplayRetryTimer){
       clearTimeout(spoolReplayRetryTimer);
@@ -947,8 +951,9 @@ client.once(Events.ClientReady,()=>{
     await drainSpool();
     if(stopping)return;
     await recoverRecentGaps();
-    if(!permissionPreflightPaused)recoveryPendingAfterPreflightPause=false;
+    if(!permissionPreflightPaused)recoveryPending=false;
     await runConfiguredBackfill();
+    if(!permissionPreflightPaused)backfillPendingAfterPreflightPause=false;
     if(!stopping)await drainSpool();
   })();
   void startupTask.catch(()=>{
