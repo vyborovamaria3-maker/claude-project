@@ -137,10 +137,25 @@ message bodies during preflight.
 
 The same check runs every five minutes by default (configurable from one to
 fifteen minutes). Newly added channels are checked before they enter the live
-allowlist. If a periodic check cannot verify permissions, collection stops
-and the Gateway is disconnected. The preflight checks only the bot's current
-effective permissions; it does not replace written community consent,
-platform-policy review, or the separate Message Content intent attestation.
+allowlist. A transient API outage or rate-limit exhaustion during the startup
+preflight keeps the Gateway offline and retries with capped exponential
+backoff (1 second to 5 minutes; rate-limit retries start at 30 seconds). A
+channel-level failed recovery checkpoint is recorded before waiting.
+
+If a periodic preflight encounters a transient API outage, the Collector pauses
+Gateway event acceptance, preserves the encrypted spool, records an unresolved
+recovery checkpoint for each still-authorized channel, and retries the check
+with the same capped backoff. It does not keep collecting while current
+permissions cannot be verified. After a successful check, it resumes spool
+replay and runs bounded recent-history recovery when
+`DISCORD_GAP_RECOVERY_ENABLED=true`. If recovery is disabled or the page
+budget cannot reach the prior watermark, the gap remains explicitly unresolved.
+Permanent permission denial, expired authorization, invalid credentials or a
+least-privilege violation still fail closed and stop the Collector.
+
+The preflight checks only the bot's current effective permissions; it does not
+replace written community consent, platform-policy review, or the separate
+Message Content intent attestation.
 
 ### Run a permission check without starting collection
 
@@ -303,8 +318,10 @@ default.
   PostgreSQL commit and local acknowledgement causes an idempotent replay.
 - Events requiring REST hydration remain at the head of the spool until the
   Gateway is ready. Replay stops at that hydration barrier and does not process
-  later events out of order. Transient REST/storage failures leave the event
-  pending; only Discord's explicit Unknown Message response is terminal.
+  later events out of order. Transient REST network, 429 and 5xx failures leave
+  the event pending and retry with capped exponential backoff. Database/storage
+  failures remain fail-closed: the collector stops with the event retained.
+  Only Discord's explicit Unknown Message response is terminal.
 - Every source write rechecks the current authorization lease under the shared
   source-write lock. Channel revocation takes the exclusive lock before purge,
   so in-flight message, coverage and recovery writes cannot land after erasure.
@@ -351,7 +368,7 @@ default.
 - Synchronous per-event fsync intentionally trades throughput for durability
   and can block the Node event loop. Load-test the actual persistent disk and
   Discord heartbeat behaviour at expected peak message rates before rollout.
-- Pending backlog is logged once per minute with event count and encrypted byte count; no message content or author IDs are logged. A full spool stops collection. The Collector drains any recoverable backlog before Gateway reconnect to reduce restart-time capacity pressure. Alerting, disk-capacity monitoring and an
+- Pending backlog is logged once per minute with event count and encrypted byte count; no message content or author IDs are logged. A full spool stops collection. During a REST hydration outage, the Collector retries without ACKing the blocked head; Gateway events continue entering the encrypted spool until its configured capacity is reached. At capacity, collection stops rather than dropping the event. During a failed periodic permission preflight, Gateway event acceptance is paused entirely until permissions can be verified again. The Collector drains any recoverable backlog before Gateway reconnect to reduce restart-time capacity pressure. Alerting, disk-capacity monitoring and an
   operator runbook for safely restoring capacity are required.
 - Unlinking is logical erasure, not guaranteed physical sanitization on SSDs.
   Use encrypted persistent storage, restrict host access, and protect/backup
