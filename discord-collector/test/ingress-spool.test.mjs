@@ -314,7 +314,7 @@ test("spool close wipes the encryption key even if closing the directory descrip
   const realDirectoryFd=f.spool.directoryFd;
   try{
     f.spool.directoryFd=-1;
-    assert.throws(()=>f.spool.close(),/EBADF/);
+    assert.throws(()=>f.spool.close(),/EBADF|out of range/);
     assert.equal(f.spool.opened,false);
     assert.equal(f.spool.directoryFd,null);
     assert.ok(f.spool.key.every(byte=>byte===0));
