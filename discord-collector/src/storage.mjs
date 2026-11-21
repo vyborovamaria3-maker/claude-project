@@ -87,6 +87,15 @@ async function enqueueErasureTombstones(client,rows,reason){
   return queued;
 }
 
+async function expiredAtDatabaseClock(client,observation,retentionDays){
+  if(observation.kind==="deleted")return false;
+  const result=await client.query(
+    "SELECT $1::timestamptz < clock_timestamp()-($2::integer*INTERVAL '1 day') AS expired",
+    [observation.occurredAt,retentionDays],
+  );
+  return result.rows[0]?.expired===true;
+}
+
 export async function storeObservation(pool, o, retentionDays, clock=new Date(), authorizationExpiresAt=null, authorizationCheck=()=>true){
   if(!o||typeof o!=="object"||!["observed","edited","deleted"].includes(o.kind))
     throw new TypeError("Invalid Discord source observation");
@@ -112,6 +121,13 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date(),
     }
     // Serialize create/edit/delete races for one globally unique Discord message.
     await client.query("SELECT pg_advisory_xact_lock(hashtext('discord'),hashtext($1))",[o.messageId]);
+    // A transaction can wait behind another message writer long enough for a
+    // previously valid observation to cross its retention deadline. Recheck
+    // against PostgreSQL wall-clock time after the per-message lock is held.
+    if(await expiredAtDatabaseClock(client,o,retentionDays)){
+      await client.query("ROLLBACK");
+      return {status:"expired"};
+    }
     if(authorizationExpiresAt!==null&&authorizationExpiresAt!==undefined&&(!Number.isFinite(Date.parse(authorizationExpiresAt))||
        Date.parse(authorizationExpiresAt)<=Date.now())){
       await client.query("ROLLBACK");
@@ -214,6 +230,10 @@ export async function storeObservation(pool, o, retentionDays, clock=new Date(),
     if(!authorizationCheck()){
       await client.query("ROLLBACK");
       return {status:"not-authorized"};
+    }
+    if(await expiredAtDatabaseClock(client,o,retentionDays)){
+      await client.query("ROLLBACK");
+      return {status:"expired"};
     }
     if(authorizationExpiresAt!==null&&authorizationExpiresAt!==undefined&&(!Number.isFinite(Date.parse(authorizationExpiresAt))||
        Date.parse(authorizationExpiresAt)<=Date.now())){
