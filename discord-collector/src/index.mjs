@@ -298,7 +298,14 @@ function permissionPreflightSummary(report){
 
 async function verifyPermissions(snapshot){
   if(permissionPreflightFailed)throw new Error("Discord permission verification already failed");
-  if(permissionPreflightRunning)await permissionPreflightTask;
+  if(permissionPreflightRunning){
+    try{await permissionPreflightTask}
+    catch(error){
+      if(permissionPreflightFailed||
+         (!isTransientDiscordRestError(error)&&error?.code!=="discord_rest_scheduler_queue_full"))
+        throw error;
+    }
+  }
   if(permissionPreflightFailed)throw new Error("Discord permission verification already failed");
   permissionPreflightRunning=true;
   const task=scheduleRest(()=>runPermissionPreflight(snapshot),{priority:0,label:"permission-preflight"});
@@ -725,7 +732,18 @@ async function reloadAuthorization(){
   const newlyAuthorized=new Map([...next].filter(([channelId,permission])=>
     allowed.get(channelId)?.guildId!==permission.guildId));
   if(newlyAuthorized.size>0){
-    const report=await verifyPermissions(newlyAuthorized);
+    let report;
+    try{report=await verifyPermissions(newlyAuthorized)}
+    catch(error){
+      if(isTransientDiscordRestError(error)||error?.code==="discord_rest_scheduler_queue_full"){
+        await pauseForPermissionPreflight({
+          errorCode:Number(error?.status??error?.statusCode)===429?"discord_rate_limited":"discord_api_unavailable",
+          guilds:[],
+        });
+        return;
+      }
+      throw error;
+    }
     if(!report.ok){
       if(isTransientPermissionPreflightReport(report)){
         await pauseForPermissionPreflight(report);
