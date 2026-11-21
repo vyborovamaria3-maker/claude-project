@@ -325,6 +325,9 @@ default.
 - Every source write rechecks the current authorization lease under the shared
   source-write lock. Channel revocation takes the exclusive lock before purge,
   so in-flight message, coverage and recovery writes cannot land after erasure.
+  Message retention is rechecked against PostgreSQL wall-clock time after the
+  per-message lock is acquired and again before COMMIT, so a write waiting on a
+  concurrent transaction cannot persist content after its retention deadline.
   Backfill cursors and recovery watermarks use the same guarded write boundary.
 - Restart gap recovery schedules each REST page independently, allowing higher
   priority permission checks to run between pages instead of waiting for an
