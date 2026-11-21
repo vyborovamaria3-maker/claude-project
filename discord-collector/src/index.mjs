@@ -932,9 +932,27 @@ async function shutdown(){
   clearTimeout(spoolReplayRetryTimer);
   spoolReplayRetryTimer=null;
   shutdownPromise=(async()=>{
-    try{await client.destroy()}finally{
-      await Promise.allSettled([startupTask,sweepTask,coverageTask,permissionPreflightPauseTask,drainPromise??Promise.resolve(),authorizationReloadTask,permissionPreflightTask]);
-      try{spool.close()}finally{await releaseSourceDatabase()}
+    try{await client.destroy()}
+    catch{
+      failures++;
+      process.exitCode=1;
+      console.error("Discord Gateway shutdown failed","gateway_shutdown_failed");
+    }
+    await Promise.allSettled([
+      startupTask,sweepTask,coverageTask,permissionPreflightPauseTask,
+      drainPromise??Promise.resolve(),authorizationReloadTask,permissionPreflightTask,
+    ]);
+    try{spool.close()}
+    catch{
+      failures++;
+      process.exitCode=1;
+      console.error("Discord ingress spool close/fsync failed","ingress_spool_close_failed");
+    }
+    try{await releaseSourceDatabase()}
+    catch{
+      failures++;
+      process.exitCode=1;
+      console.error("Discord source database release failed","source_database_release_failed");
     }
     if(failures)process.exitCode=1;
   })();
