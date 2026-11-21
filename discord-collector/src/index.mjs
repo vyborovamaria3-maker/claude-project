@@ -8,6 +8,7 @@ import {IngressSpool,parseIngressSpoolKey} from "./ingress-spool.mjs";
 import {createDiscordPermissionPreflightRunner} from "./permission-preflight.mjs";
 import {replaySpoolEntries,safeOldestPending} from "./spool-replay.mjs";
 import {RestScheduler} from "./rest-scheduler.mjs";
+import {isTransientDiscordRestError,retryDelayMs} from "./retry-policy.mjs";
 
 if(process.env.DISCORD_COLLECTOR_ENABLED!=="true"){
   console.error("Disabled: DISCORD_COLLECTOR_ENABLED is not true");
@@ -175,6 +176,8 @@ let startupTask=Promise.resolve();
 let sweepTask=Promise.resolve();
 let coverageTask=Promise.resolve();
 let drainPromise=null;
+let spoolReplayRetryTimer=null;
+let spoolReplayRetryAttempt=0;
 let sweepTimer;
 let backlogTimer;
 let authorizationReloadTimer;
@@ -338,7 +341,19 @@ function enqueueGatewayEvent(kind,message){
     failCollector(channelId,error?.code==="INGRESS_SPOOL_FULL"?"ingress_spool_full":"ingress_spool_write_failed");
     return;
   }
-  if(client.isReady())void drainSpool().catch(()=>{});
+  if(client.isReady()&&!spoolReplayRetryTimer)void drainSpool().catch(()=>{});
+}
+
+function scheduleSpoolReplayRetry(error){
+  if(stopping||spoolReplayRetryTimer)return null;
+  const baseMs=error?.status===429?30_000:1_000;
+  const delay=retryDelayMs(spoolReplayRetryAttempt++,{baseMs,maxMs:300_000});
+  spoolReplayRetryTimer=setTimeout(()=>{
+    spoolReplayRetryTimer=null;
+    if(clientReadySeen&&client.isReady()&&!stopping&&!spoolReplayRetryTimer)void drainSpool().catch(()=>{});
+  },delay);
+  spoolReplayRetryTimer.unref();
+  return delay;
 }
 
 function isUnknownDiscordMessage(error){
@@ -377,7 +392,15 @@ async function processSpoolEntry(entry,{allowHydration=true}={}){
       message=await scheduleRest(()=>channel.messages.fetch(event.messageId),
         {priority:0,label:"message-hydration"});
     }catch(error){
-      if(!isUnknownDiscordMessage(error))throw error;
+      if(!isUnknownDiscordMessage(error)){
+        if(isTransientDiscordRestError(error)){
+          const retryable=new Error("discord_rest_temporarily_unavailable");
+          retryable.code="DISCORD_REST_TRANSIENT";
+          retryable.status=error?.status??error?.statusCode??null;
+          throw retryable;
+        }
+        throw error;
+      }
       const currentPermission=allowed.get(event.channelId);
       if(!permissionActive(currentPermission)||currentPermission.guildId!==event.guildId)
         return {ack:true,status:"not-authorized"};
@@ -426,6 +449,7 @@ async function processSpoolEntry(entry,{allowHydration=true}={}){
 }
 
 function drainSpool({allowHydration=true}={}){
+  if(spoolReplayRetryTimer)return Promise.resolve();
   if(drainPromise)return drainPromise;
   drainPromise=(async()=>{
     while(acceptingEvents&&spool.pendingCount>0){
@@ -446,7 +470,17 @@ function drainSpool({allowHydration=true}={}){
       }
       if(spool.pendingCount>0)await new Promise(resolve=>setImmediate(resolve));
     }
+    if(spool.pendingCount===0)spoolReplayRetryAttempt=0;
   })().catch(error=>{
+    if(error?.code==="DISCORD_REST_TRANSIENT"){
+      const retryInMs=scheduleSpoolReplayRetry(error);
+      console.warn("Discord REST temporarily unavailable; encrypted ingress backlog retained",{
+        pendingEvents:spool.pendingCount,
+        pendingBytes:spool.pendingBytes,
+        retryInMs,
+      });
+      return;
+    }
     failures++;
     acceptingEvents=false;
     const oldest=safeOldestPending(spool);
@@ -760,6 +794,8 @@ async function shutdown(){
   clearInterval(authorizationReloadTimer);
   clearInterval(permissionPreflightTimer);
   clearTimeout(authorizationExpiryTimer);
+  clearTimeout(spoolReplayRetryTimer);
+  spoolReplayRetryTimer=null;
   shutdownPromise=(async()=>{
     try{await client.destroy()}finally{
       await Promise.allSettled([startupTask,sweepTask,coverageTask,drainPromise??Promise.resolve(),authorizationReloadTask,permissionPreflightTask]);
