@@ -312,6 +312,50 @@ test("explicit erasure-only mode purges every source message and emits tombstone
   }
 });
 
+test("retention is rechecked after a source write waits on its per-message lock",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const pool=new pg.Pool({connectionString:URL,max:2});
+  const blocker=await pool.connect();
+  const id="923456789012345697";
+  const eventKeyPattern="discord:message:"+channelId+":"+id+":%";
+  try{
+    await installSchema(pool);
+    const now=new Date();
+    const createdAt=new Date(now.getTime()-30*24*60*60*1000+1_500);
+    const observation=normalizeMessage({
+      id,guildId,channelId,author:{id:"423456789012345697"},
+      content:"must expire while waiting for the source lock",
+      createdAt,editedAt:null,
+    },"observed",now.toISOString(),guildId);
+    await blocker.query("BEGIN");
+    await blocker.query(
+      "SELECT pg_advisory_xact_lock(hashtext('discord'),hashtext($1))",[id],
+    );
+    const pendingWrite=storeObservation(pool,observation,30);
+    await new Promise(resolve=>setTimeout(resolve,2_000));
+    await blocker.query("COMMIT");
+    const result=await pendingWrite;
+    assert.deepEqual(result,{status:"expired"});
+    const rows=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_messages WHERE message_id=$1",[id],
+    );
+    assert.equal(rows.rows[0].n,0);
+    const outbox=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1",
+      [eventKeyPattern],
+    );
+    assert.equal(outbox.rows[0].n,0);
+  }finally{
+    await blocker.query("ROLLBACK").catch(()=>{});
+    blocker.release();
+    await pool.query("DELETE FROM outbox_events WHERE source_system='discord' AND event_key LIKE $1",
+      [eventKeyPattern]).catch(()=>{});
+    await pool.query("DELETE FROM discord_message_revisions WHERE message_id=$1",[id]).catch(()=>{});
+    await pool.query("DELETE FROM discord_messages WHERE message_id=$1",[id]).catch(()=>{});
+    await pool.end();
+  }
+});
+
 test("source transaction refuses to persist an event after its authorization lease expired",{skip:!URL},async()=>{
   const {default:pg}=await import("pg");
   const pool=new pg.Pool({connectionString:URL,max:2});
