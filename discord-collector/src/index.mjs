@@ -577,7 +577,8 @@ client.on(Events.MessageBulkDelete,messages=>{
 // ClientReady fires only once. Resume durable backlog after reconnect even
 // when no new message arrives to trigger enqueueGatewayEvent.
 const resumeSpoolReplay=()=>{
-  if(clientReadySeen&&client.isReady()&&!stopping)void resumeSpoolAndRecovery().catch(()=>{});
+  if(clientReadySeen&&client.isReady()&&!stopping)
+    void resumeSpoolAndRecovery({reconcileGap:true}).catch(()=>{});
 };
 client.on(Events.ShardReady,resumeSpoolReplay);
 client.on(Events.ShardResume,resumeSpoolReplay);
@@ -677,14 +678,16 @@ async function runConfiguredBackfill(){
   }
 }
 
-async function resumeSpoolAndRecovery(){
+async function resumeSpoolAndRecovery({reconcileGap=false}={}){
   if(stopping||permissionPreflightPaused||!clientReadySeen||!client.isReady())return;
   await drainSpool();
-  if(recoveryPendingAfterPreflightPause&&!stopping&&!permissionPreflightPaused&&
+  if((recoveryPendingAfterPreflightPause||reconcileGap)&&!stopping&&!permissionPreflightPaused&&
      !spoolReplayRetryTimer&&spool.pendingCount===0){
     await recoverRecentGaps();
-    if(!stopping&&!permissionPreflightPaused)await runConfiguredBackfill();
-    recoveryPendingAfterPreflightPause=false;
+    if(recoveryPendingAfterPreflightPause){
+      if(!stopping&&!permissionPreflightPaused)await runConfiguredBackfill();
+      recoveryPendingAfterPreflightPause=false;
+    }
   }
 }
 
