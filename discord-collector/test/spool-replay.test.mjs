@@ -138,7 +138,7 @@ test("a preflight outage gap is recovered after Gateway reconnect if REST recove
   const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
   assert.match(source,/recoveryPending=true/);
   assert.match(source,/backfillPendingAfterPreflightPause=true/);
-  assert.match(source,/async function resumeSpoolAndRecovery\(\)[\s\S]*await drainSpool\(\)[\s\S]*await recoverRecentGaps\(\)/);
+  assert.match(source,/async function resumeSpoolAndRecovery\(\{reconcileGap=false\}=\{\}\)[\s\S]*await drainSpool\(\)[\s\S]*await recoverRecentGaps\(\)/);
   assert.match(source,/const resumeSpoolReplay=\(\)=>\{[\s\S]*resumeSpoolAndRecovery\(\)/);
   assert.match(source,/if\(clientReadySeen&&client\.isReady\(\)\)\s*await resumeSpoolAndRecovery\(\)/);
 });
