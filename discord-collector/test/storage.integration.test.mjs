@@ -6,7 +6,7 @@ import {mkdtempSync,rmSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {randomBytes} from "node:crypto";
-import {installSchema,storeObservation,purgeExpired,getRecoveryBaseline,recordRecoveryCheck,recordCoverageFailure,findUserMessageIds,eraseUserMessages,assertNoUnattributedRetainedContent,advanceBackfillCursor} from "../src/storage.mjs";
+import {installSchema,storeObservation,purgeExpired,getRecoveryBaseline,recordRecoveryCheck,recordRecoveryFailureBatch,recordCoverageFailure,findUserMessageIds,eraseUserMessages,assertNoUnattributedRetainedContent,advanceBackfillCursor} from "../src/storage.mjs";
 
 const URL=process.env.DISCORD_TEST_DATABASE_URL;
 const guildId="123456789012345678";
@@ -99,6 +99,65 @@ test("source schema upgrades an old tombstone reason constraint and remains idem
   }finally{
     if(pool)await pool.end();
     await admin.query("SET search_path TO public");
+    await admin.query('DROP SCHEMA IF EXISTS "'+schema+'" CASCADE');
+    await admin.end();
+  }
+});
+
+test("fatal recovery checkpoints for all authorized channels commit atomically",{skip:!URL},async()=>{
+  const {default:pg}=await import("pg");
+  const suffix=randomBytes(5).toString("hex");
+  const schema="discord_recovery_batch_"+suffix;
+  const admin=new pg.Client({connectionString:URL});
+  let pool;
+  await admin.connect();
+  try{
+    await admin.query('CREATE SCHEMA "'+schema+'"');
+    pool=new pg.Pool({connectionString:URL,options:"-c search_path="+schema,max:2});
+    await installSchema(pool);
+    await pool.query(`
+      CREATE FUNCTION fail_recovery_checkpoint_fixture() RETURNS trigger
+      LANGUAGE plpgsql AS $
+      BEGIN
+        IF NEW.channel_id=$1 THEN
+          RAISE EXCEPTION 'fixture recovery checkpoint failure';
+        END IF;
+        RETURN NEW;
+      END $;
+    `,[otherChannel]);
+    await pool.query(
+      "CREATE TRIGGER fail_recovery_checkpoint_fixture BEFORE INSERT ON discord_recovery_checks "+
+      "FOR EACH ROW EXECUTE FUNCTION fail_recovery_checkpoint_fixture()",
+    );
+    const channels=new Map([
+      [channelId,{guildId}],
+      [otherChannel,{guildId}],
+    ]);
+    const baselines=new Map([[channelId,null],[otherChannel,messageId]]);
+    await assert.rejects(
+      recordRecoveryFailureBatch(pool,channels,baselines,()=>true),
+      /fixture recovery checkpoint failure/,
+    );
+    const rolledBack=await pool.query(
+      "SELECT COUNT(*)::int AS n FROM discord_recovery_checks WHERE channel_id=ANY($1::text[])",
+      [[channelId,otherChannel]],
+    );
+    assert.equal(rolledBack.rows[0].n,0,"a failed channel insert must roll back the entire batch");
+    await pool.query("DROP TRIGGER fail_recovery_checkpoint_fixture ON discord_recovery_checks");
+    await pool.query("DROP FUNCTION fail_recovery_checkpoint_fixture()");
+    const inserted=await recordRecoveryFailureBatch(pool,channels,baselines,()=>true);
+    assert.equal(inserted,2);
+    const rows=await pool.query(
+      "SELECT channel_id,baseline_message_id,status FROM discord_recovery_checks "+
+      "WHERE channel_id=ANY($1::text[]) ORDER BY channel_id",
+      [[channelId,otherChannel]],
+    );
+    assert.deepEqual(rows.rows,[
+      {channel_id:channelId,baseline_message_id:null,status:"failed"},
+      {channel_id:otherChannel,baseline_message_id:messageId,status:"failed"},
+    ]);
+  }finally{
+    if(pool)await pool.end();
     await admin.query('DROP SCHEMA IF EXISTS "'+schema+'" CASCADE');
     await admin.end();
   }
