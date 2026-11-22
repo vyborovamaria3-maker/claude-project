@@ -2,7 +2,7 @@ import {readAuthorizationFile} from "./authorization-file.mjs";
 import {Client,GatewayIntentBits,Events,Partials} from "discord.js";
 import pg from "pg";
 import {validateAuthorization,normalizeMessage,allowedObservation,isMetadataOnlyMessageUpdate,isEventCurrentlyAuthorized} from "./events.mjs";
-import {installSchema,storeObservation,getBackfillCursor,advanceBackfillCursor,purgeExpired,getRecoveryBaseline,recordRecoveryCheck,recordCoverageFailure} from "./storage.mjs";
+import {installSchema,storeObservation,getBackfillCursor,advanceBackfillCursor,purgeExpired,getRecoveryBaseline,recordRecoveryCheck,recordRecoveryFailureBatch,recordCoverageFailure} from "./storage.mjs";
 import {scanRecentGap} from "./reconcile.mjs";
 import {IngressSpool,parseIngressSpoolKey} from "./ingress-spool.mjs";
 import {createDiscordPermissionPreflightRunner} from "./permission-preflight.mjs";
@@ -352,25 +352,14 @@ async function record(message,kind,authorizationRetry=0){
 
 async function persistCoverageGap(){
   // A fatal ingress/replay failure stops the whole Collector, not just the
-  // channel whose event happened to expose the failure. Preserve a checkpoint
-  // for every still-authorized channel so disabled/bounded recovery cannot
-  // silently move the other channels' watermarks past the outage.
-  let checkpointFailures=0;
-  for(const [channelId,permission] of allowed){
-    if(!permissionActive(permission))continue;
-    const stillAuthorized=()=>{
-      const current=allowed.get(channelId);
-      return permissionActive(current)&&sameAuthorizationLease(current,permission);
-    };
-    try{
-      await recordRecoveryCheck(pool,permission.guildId,channelId,
-        recoveryBaselines.get(channelId)??null,{status:"failed"},stillAuthorized);
-    }catch{
-      checkpointFailures++;
-    }
-  }
-  if(checkpointFailures>0)
-    throw new Error("discord_recovery_gap_checkpoint_failed");
+  // channel whose event happened to expose the failure. Insert all active
+  // channel checkpoints in one transaction so a process crash cannot leave
+  // only a subset of the Collector's outage watermarks persisted.
+  const channels=new Map([...allowed].filter(([,permission])=>permissionActive(permission)));
+  await recordRecoveryFailureBatch(pool,channels,recoveryBaselines,(channelId,permission)=>{
+    const current=allowed.get(channelId);
+    return permissionActive(current)&&current.guildId===permission.guildId;
+  });
 }
 
 function ensureFatalCoverageCheckpoints(){
