@@ -130,8 +130,8 @@ test("global ingress or replay failure checkpoints every active channel",()=>{
   const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
   const checkpoint=source.slice(source.indexOf("async function persistCoverageGap()"),
     source.indexOf("function ensureFatalCoverageCheckpoints()"));
-  assert.match(checkpoint,/for\(const \[channelId,permission\] of allowed\)/);
-  assert.match(checkpoint,/recoveryBaselines\.get\(channelId\)\?\?null/);
+  assert.match(checkpoint,/new Map\(\[\.\.\.allowed\]\./);
+  assert.match(checkpoint,/recordRecoveryFailureBatch\(pool,channels,recoveryBaselines/);
   assert.match(source,/void ensureFatalCoverageCheckpoints\(\)\.finally\(\(\)=>void shutdown\(\)\)/);
 });
 
