@@ -117,14 +117,14 @@ test("fatal recovery checkpoints for all authorized channels commit atomically",
     await installSchema(pool);
     await pool.query(`
       CREATE FUNCTION fail_recovery_checkpoint_fixture() RETURNS trigger
-      LANGUAGE plpgsql AS $
+      LANGUAGE plpgsql AS $function$
       BEGIN
-        IF NEW.channel_id=$1 THEN
+        IF NEW.channel_id='523456789012345678' THEN
           RAISE EXCEPTION 'fixture recovery checkpoint failure';
         END IF;
         RETURN NEW;
-      END $;
-    `,[otherChannel]);
+      END $function$;
+    `);
     await pool.query(
       "CREATE TRIGGER fail_recovery_checkpoint_fixture BEFORE INSERT ON discord_recovery_checks "+
       "FOR EACH ROW EXECUTE FUNCTION fail_recovery_checkpoint_fixture()",
