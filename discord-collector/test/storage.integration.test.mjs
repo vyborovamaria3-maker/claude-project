@@ -123,7 +123,7 @@ test("fatal recovery checkpoints for all authorized channels commit atomically",
           RAISE EXCEPTION 'fixture recovery checkpoint failure';
         END IF;
         RETURN NEW;
-      END $function$;
+      END; $function$;
     `);
     await pool.query(
       "CREATE TRIGGER fail_recovery_checkpoint_fixture BEFORE INSERT ON discord_recovery_checks "+
