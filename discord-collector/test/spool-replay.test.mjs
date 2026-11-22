@@ -117,6 +117,24 @@ test("shutdown waits for replay and catches spool close/fsync failures without l
   assert.match(source,/try\{await releaseSourceDatabase\(\)\}[\s\S]*source_database_release_failed/);
 });
 
+test("graceful shutdown keeps Gateway ingress open until destroy settles and pauses replay",()=>{
+  const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
+  const shutdown=source.slice(source.indexOf("async function shutdown()"));
+  assert.match(shutdown,/stopping=true;[\s\S]*try\{await client\.destroy\(\)\}[\s\S]*finally\{[\s\S]*acceptingEvents=false/);
+  assert.doesNotMatch(shutdown,/stopping=true;\s*acceptingEvents=false/);
+  assert.match(source,/if\(client\.isReady\(\)&&!spoolReplayRetryTimer&&!stopping\)void drainSpool\(\)/);
+  assert.match(source,/while\(acceptingEvents&&!stopping&&spool\.pendingCount>0\)/);
+});
+
+test("global ingress or replay failure checkpoints every active channel",()=>{
+  const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
+  const checkpoint=source.slice(source.indexOf("async function persistCoverageGap()"),
+    source.indexOf("function isoOrNull"));
+  assert.match(checkpoint,/for\(const \[channelId,permission\] of allowed\)/);
+  assert.match(checkpoint,/recoveryBaselines\.get\(channelId\)\?\?null/);
+  assert.match(source,/coverageTask=Promise\.resolve\(\)\.then\(\(\)=>persistCoverageGap\(\)\)/);
+});
+
 test("Discord REST requests have a finite timeout before entering outage backoff",()=>{
   const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
   assert.match(source,/rest:\{timeout:15_000,retries:3\}/);
