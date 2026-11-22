@@ -388,6 +388,46 @@ export async function recordRecoveryCheck(pool,guildId,channelId,baseline,result
 }
 
 
+export async function recordRecoveryFailureBatch(pool,channels,baselines,authorizationCheck=()=>true){
+  if(!(channels instanceof Map)||!(baselines instanceof Map))
+    throw new TypeError("Recovery failure channels and baselines must be maps");
+  if(typeof authorizationCheck!=="function")
+    throw new TypeError("Recovery authorization check must be a function");
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('potapoff:discord-source-write',0))");
+    const entries=[...channels.entries()].filter(([channelId,permission])=>{
+      requireSnowflake(channelId,"channel");
+      requireSnowflake(permission?.guildId,"guild");
+      return authorizationCheck(channelId,permission);
+    });
+    if(entries.length===0){
+      await client.query("COMMIT");
+      return 0;
+    }
+    const baselineValues=entries.map(([channelId])=>{
+      const baseline=baselines.get(channelId)??null;
+      return baseline===null?null:requireSnowflake(String(baseline),"recovery baseline");
+    });
+    const result=await client.query(
+      "INSERT INTO discord_recovery_checks "+
+      "(guild_id,channel_id,baseline_message_id,status,pages_scanned,messages_processed) "+
+      "SELECT checkpoint.guild_id,checkpoint.channel_id,checkpoint.baseline_message_id,'failed',0,0 "+
+      "FROM unnest($1::text[],$2::text[],$3::text[]) "+
+      "AS checkpoint(guild_id,channel_id,baseline_message_id)",
+      [
+        entries.map(([,permission])=>permission.guildId),
+        entries.map(([channelId])=>channelId),
+        baselineValues,
+      ],
+    );
+    await client.query("COMMIT");
+    return result.rowCount;
+  }catch(error){await client.query("ROLLBACK");throw error}
+  finally{client.release()}
+}
+
 export async function recordCoverageFailure(pool,event,retentionDays,authorizationCheck=()=>true){
   requireRetention(retentionDays);
   if(typeof authorizationCheck!=="function")throw new TypeError("Authorization check must be a function");
