@@ -182,6 +182,11 @@ export class IngressSpool {
         decryptRecord(readFileSync(path,"utf8"),sequence,this.key); // Authenticate before Gateway login.
         if(this.pending.has(sequence))throw new Error("Duplicate ingress spool sequence");
         if(match[2]==="tmp"){
+          // A process can die after writing a valid .tmp record but before its
+          // file fsync. Re-fsync the recovered contents before making the name
+          // durable, otherwise a later power loss could erase a replayed event.
+          const fd=openSync(path,"r+");
+          try{fsyncSync(fd)}finally{closeSync(fd)}
           const target=join(this.directory,paddedSequence+".evt");
           if(existsSync(target))throw new Error("Ingress spool temporary/final record collision");
           renameSync(path,target);
