@@ -348,15 +348,27 @@ async function record(message,kind,authorizationRetry=0){
   return result;
 }
 
-async function persistCoverageGap(channelId){
-  const permission=allowed.get(channelId);
-  if(!permissionActive(permission))return;
-  const stillAuthorized=()=>{
-    const current=allowed.get(channelId);
-    return permissionActive(current)&&sameAuthorizationLease(current,permission);
-  };
-  await recordRecoveryCheck(pool,permission.guildId,channelId,
-    recoveryBaselines.get(channelId)??null,{status:"failed"},stillAuthorized);
+async function persistCoverageGap(){
+  // A fatal ingress/replay failure stops the whole Collector, not just the
+  // channel whose event happened to expose the failure. Preserve a checkpoint
+  // for every still-authorized channel so disabled/bounded recovery cannot
+  // silently move the other channels' watermarks past the outage.
+  let checkpointFailures=0;
+  for(const [channelId,permission] of allowed){
+    if(!permissionActive(permission))continue;
+    const stillAuthorized=()=>{
+      const current=allowed.get(channelId);
+      return permissionActive(current)&&sameAuthorizationLease(current,permission);
+    };
+    try{
+      await recordRecoveryCheck(pool,permission.guildId,channelId,
+        recoveryBaselines.get(channelId)??null,{status:"failed"},stillAuthorized);
+    }catch{
+      checkpointFailures++;
+    }
+  }
+  if(checkpointFailures>0)
+    throw new Error("discord_recovery_gap_checkpoint_failed");
 }
 
 function isoOrNull(value,fallbackTimestamp){
@@ -391,8 +403,8 @@ function failCollector(channelId,code){
   failures++;
   process.exitCode=1;
   console.error("Discord durable ingress stopped",code);
-  coverageTask=Promise.resolve().then(()=>persistCoverageGap(channelId)).catch(()=>{
-    console.error("Discord coverage gap could not be persisted",channelId);
+  coverageTask=Promise.resolve().then(()=>persistCoverageGap()).catch(()=>{
+    console.error("Discord coverage checkpoints could not all be persisted");
   });
   void coverageTask.finally(()=>void shutdown());
 }
@@ -411,7 +423,7 @@ function enqueueGatewayEvent(kind,message){
     failCollector(channelId,error?.code==="INGRESS_SPOOL_FULL"?"ingress_spool_full":"ingress_spool_write_failed");
     return;
   }
-  if(client.isReady()&&!spoolReplayRetryTimer)void drainSpool().catch(()=>{});
+  if(client.isReady()&&!spoolReplayRetryTimer&&!stopping)void drainSpool().catch(()=>{});
 }
 
 function scheduleSpoolReplayRetry(error){
@@ -521,17 +533,17 @@ async function processSpoolEntry(entry,{allowHydration=true}={}){
 }
 
 function drainSpool({allowHydration=true}={}){
-  if(permissionPreflightPaused||spoolReplayRetryTimer)return Promise.resolve();
+  if(stopping||permissionPreflightPaused||spoolReplayRetryTimer)return Promise.resolve();
   if(drainPromise)return drainPromise;
   drainPromise=(async()=>{
-    while(acceptingEvents&&spool.pendingCount>0){
+    while(acceptingEvents&&!stopping&&spool.pendingCount>0){
       const batch=spool.listPending(100);
       const replay=await replaySpoolEntries({
         entries:batch,
         processEntry:entry=>processSpoolEntry(entry,{allowHydration}),
         acknowledge:sequence=>spool.ack(sequence),
         flushAcks:()=>spool.flushAcks(),
-        shouldContinue:()=>acceptingEvents,
+        shouldContinue:()=>acceptingEvents&&!stopping,
       });
       if(replay.blocked){
         console.log("Discord durable ingress replay deferred until Gateway REST hydration",{
@@ -558,10 +570,9 @@ function drainSpool({allowHydration=true}={}){
     const oldest=safeOldestPending(spool);
     process.exitCode=1;
     console.error("Discord durable ingress replay stopped; event retained for restart",
-      error?.code??"ingress_replay_failed");
-    coverageTask=Promise.resolve().then(()=>
-      oldest?persistCoverageGap(oldest.event.channelId):undefined
-    ).catch(()=>console.error("Discord replay coverage gap could not be persisted"));
+      error?.code??"ingress_replay_failed",oldest?{blockedSequence:oldest.sequence}:null);
+    coverageTask=Promise.resolve().then(()=>persistCoverageGap())
+      .catch(()=>console.error("Discord replay coverage checkpoints could not all be persisted"));
     void coverageTask.finally(()=>void shutdown());
     throw error;
   }).finally(()=>{drainPromise=null;});
@@ -996,7 +1007,8 @@ sweepTimer.unref();
 async function shutdown(){
   if(shutdownPromise)return shutdownPromise;
   stopping=true;
-  acceptingEvents=false;
+  // Keep durable ingress enabled until Gateway destruction completes. Any
+  // dispatch delivered while the WebSocket is closing must still reach Spool.
   clearInterval(sweepTimer);
   clearInterval(backlogTimer);
   clearInterval(authorizationReloadTimer);
@@ -1012,6 +1024,10 @@ async function shutdown(){
       failures++;
       process.exitCode=1;
       console.error("Discord Gateway shutdown failed","gateway_shutdown_failed");
+    }finally{
+      // No more Gateway dispatches can arrive after destroy settles. Close the
+      // ingress gate only now; replay itself is already paused by stopping.
+      acceptingEvents=false;
     }
     const settled=await Promise.allSettled([
       startupTask,sweepTask,coverageTask,permissionPreflightPauseTask,
