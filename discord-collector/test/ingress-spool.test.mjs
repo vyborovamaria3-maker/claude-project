@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {chmodSync,mkdtempSync,mkdirSync,readFileSync,readdirSync,renameSync,rmSync,statSync,writeFileSync,symlinkSync} from "node:fs";
+import {chmodSync,closeSync,existsSync,mkdtempSync,mkdirSync,readFileSync,readdirSync,renameSync,rmSync,statSync,writeFileSync,symlinkSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {randomBytes} from "node:crypto";
@@ -70,6 +70,11 @@ test("valid fsynced temporary records are recovered after a crash before rename"
       assert.equal(recovered.listPending()[0].event.messageId,messageId);
     }finally{recovered.close()}
   }finally{f.cleanup()}
+});
+
+test("temporary spool recovery fsyncs the file before promoting its durable name",()=>{
+  const source=readFileSync(new URL("../src/ingress-spool.mjs",import.meta.url),"utf8");
+  assert.match(source,/if\(match\[2\]==="tmp"\)[\s\S]*openSync\(path,"r\+"\)[\s\S]*fsyncSync\(fd\)[\s\S]*renameSync\(path,target\)/);
 });
 
 test("partial or corrupt temporary records fail closed instead of being silently discarded",()=>{
@@ -204,6 +209,7 @@ test("invalid event identifiers, content bounds, timestamps and extra fields are
     assert.throws(()=>f.spool.append(event({kind:"deleted",content:"must not persist"})),/cannot retain/i);
     assert.throws(()=>f.spool.append(event({createdAt:null})),/publication timestamp/i);
     assert.throws(()=>f.spool.append(event({kind:"deleted",authorId,content:null})),/author identifiers/i);
+    assert.throws(()=>f.spool.append(event({authorId:null})),/author identity for erasure/i);
     assert.doesNotThrow(()=>f.spool.append(event({createdAt:null,content:null,authorId:null})));
   }finally{f.cleanup()}
 });
@@ -247,4 +253,78 @@ test("spool refuses symlink directories and unexpected files",()=>{
     writeFileSync(join(f.directory,"unexpected.txt"),"no",{mode:0o600});
     assert.throws(()=>new IngressSpool({directory:f.directory,key:f.key}).open(),/Unexpected file/i);
   }finally{f.cleanup()}
+});
+
+test("user erasure refuses to create a missing spool directory",()=>{
+  const parent=mkdtempSync(join(tmpdir(),"potapoff-discord-spool-erasure-"));
+  const directory=join(parent,"missing-spool");
+  const key=randomBytes(32);
+  try{
+    assert.throws(
+      ()=>new IngressSpool({directory,key,createDirectory:false}).open(),
+      error=>error.code==="ENOENT",
+    );
+    assert.equal(existsSync(directory),false);
+  }finally{
+    key.fill(0);
+    rmSync(parent,{recursive:true,force:true});
+  }
+});
+
+test("user-requested erasure removes matching encrypted spool events durably",()=>{
+  const f=fixture();
+  try{
+    f.spool.append(event({messageId:"623456789012345678"}));
+    f.spool.append(event({messageId:"723456789012345678",authorId:null,content:null}));
+    f.spool.append(event({messageId:"823456789012345678",authorId:"923456789012345678"}));
+    const result=f.spool.eraseAuthor(authorId,["723456789012345678"]);
+    assert.equal(result.eventsErased,2);
+    assert.equal(result.pendingEvents,1);
+    assert.equal(f.spool.pendingCount,1);
+    f.spool.close();
+    const reopened=new IngressSpool({directory:f.directory,key:f.key}).open();
+    try{
+      const pending=reopened.listPending();
+      assert.deepEqual(pending.map(item=>item.event.messageId),["823456789012345678"]);
+      assert.equal(pending[0].event.authorId,"923456789012345678");
+    }finally{reopened.close()}
+  }finally{f.cleanup()}
+});
+
+test("user erasure refuses unknown authorless pending events before deleting any spool record",()=>{
+  const f=fixture();
+  try{
+    f.spool.append(event({messageId:"623456789012345678"}));
+    f.spool.append(event({messageId:"723456789012345678",authorId:null,content:null}));
+    assert.throws(()=>f.spool.eraseAuthor(authorId),/unattributed_ingress_event_pending/);
+    assert.equal(f.spool.pendingCount,2);
+    assert.deepEqual(
+      f.spool.listPending().map(item=>item.sequence),
+      ["1","2"],
+      "the fail-closed preflight must not partially unlink matching records",
+    );
+  }finally{f.cleanup()}
+});
+
+test("user-requested spool erasure rejects non-string or malformed author identifiers",()=>{
+  const f=fixture();
+  try{
+    assert.throws(()=>f.spool.eraseAuthor(123456789012345678),/author Snowflake/);
+    assert.throws(()=>f.spool.eraseAuthor("123"),/author Snowflake/);
+  }finally{f.cleanup()}
+});
+
+test("spool close wipes the encryption key even if closing the directory descriptor fails",()=>{
+  const f=fixture();
+  const realDirectoryFd=f.spool.directoryFd;
+  try{
+    f.spool.directoryFd=-1;
+    assert.throws(()=>f.spool.close(),/EBADF|out of range/);
+    assert.equal(f.spool.opened,false);
+    assert.equal(f.spool.directoryFd,null);
+    assert.ok(f.spool.key.every(byte=>byte===0));
+  }finally{
+    closeSync(realDirectoryFd);
+    f.cleanup();
+  }
 });

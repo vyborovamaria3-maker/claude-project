@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
 import {scanRecentGap} from "../src/reconcile.mjs";
+import {RestScheduler} from "../src/rest-scheduler.mjs";
 
 const root=1300000000000000000n;
 const ids=Array.from({length:250},(_,i)=>String(root+BigInt(250-i)));
@@ -33,6 +35,54 @@ test("recover full bounded recent gap across multiple pages",async()=>{
   assert.equal(channel.requests[0].limit,100);
   assert.equal(channel.requests[1].before,ids[99]);
 });
+test("each recovery page is scheduled separately so higher-priority work can interleave",async()=>{
+  const channel=fakeChannel();
+  const scheduler=new RestScheduler();
+  const order=[];
+  let preflight;
+  let pageNumber=0;
+  const fetchPage=options=>scheduler.run(async()=>{
+    pageNumber++;
+    order.push("page-"+pageNumber);
+    const result=await channel.messages.fetch(options);
+    if(pageNumber===1){
+      preflight=scheduler.run(()=>{order.push("preflight")},{priority:0});
+    }
+    return result;
+  },{priority:1,label:"gap-recovery-page"});
+  const result=await scanRecentGap({
+    channel,fetchPage,baselineMessageId:ids[239],maxPages:5,onMessage:async()=>{},
+  });
+  await preflight;
+  assert.equal(result.status,"bounded_recovery");
+  assert.deepEqual(order.slice(0,3),["page-1","preflight","page-2"]);
+  assert.equal(pageNumber,3);
+});
+
+test("collector wires every recovery page through the priority REST scheduler",()=>{
+  const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
+  assert.match(source,/fetchPage:options=>scheduleRest\(\(\)=>channel\.messages\.fetch\(options\),\s*\{priority:1,label:"gap-recovery-page"\}\)/);
+  assert.doesNotMatch(source,/scheduleRest\(async\(\)=>\{[\s\S]{0,300}scanRecentGap\(/);
+});
+
+test("recovery stops at the next safe boundary when authorization is revoked",async()=>{
+  const channel=fakeChannel();
+  let authorized=true;
+  const delivered=[];
+  const result=await scanRecentGap({
+    channel,baselineMessageId:ids[239],maxPages:5,
+    shouldContinue:()=>authorized,
+    onMessage:async message=>{
+      delivered.push(message.id);
+      authorized=false;
+    },
+  });
+  assert.equal(result.status,"gap_unresolved");
+  assert.equal(result.pagesScanned,1);
+  assert.equal(result.messagesProcessed,1);
+  assert.equal(delivered.length,1);
+});
+
 test("budget exhausted must never claim full recovery",async()=>{
   const channel=fakeChannel();
   const r=await scanRecentGap({
@@ -48,6 +98,20 @@ test("first-time channel is explicitly unverified",async()=>{
   });
   assert.equal(r.status,"initial_unverified");
 });
+test("first-time recovery is complete only after the REST history is exhausted",async()=>{
+  const messages=ids.slice(0,12);
+  const channel={messages:{fetch:async({limit})=>new Map(messages.slice(0,limit).map(id=>[id,{id}]))}};
+  const complete=await scanRecentGap({
+    channel,baselineMessageId:null,maxPages:2,onMessage:async()=>{},
+  });
+  assert.equal(complete.ranOutOfHistory,true);
+  assert.equal(complete.status,"bounded_recovery");
+  const bounded=await scanRecentGap({
+    channel:fakeChannel(),baselineMessageId:null,maxPages:1,onMessage:async()=>{},
+  });
+  assert.equal(bounded.ranOutOfHistory,false);
+  assert.equal(bounded.status,"initial_unverified");
+});
 test("provider permission failure surfaces, no false success",async()=>{
   const channel={messages:{fetch:async()=>{throw new Error("403 Forbidden")}}};
   await assert.rejects(scanRecentGap({
@@ -59,4 +123,10 @@ test("invalid recovery budgets rejected",async()=>{
   await assert.rejects(scanRecentGap({
     channel,baselineMessageId:null,maxPages:0,onMessage:async()=>{}
   }),/budget/);
+});
+
+test("history writes retry under a renewed active lease before advancing the backfill cursor",()=>{
+  const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
+  assert.match(source,/async function record\(message,kind,authorizationRetry=0\)/);
+  assert.match(source,/\["not-authorized","authorization-expired"\]\.includes\(result\.status\)[\s\S]*isEventCurrentlyAuthorized\(allowed,observation\)[\s\S]*authorization_changed_during_source_write/);
 });

@@ -1,11 +1,14 @@
 import {readAuthorizationFile} from "./authorization-file.mjs";
 import {Client,GatewayIntentBits,Events,Partials} from "discord.js";
 import pg from "pg";
-import {validateAuthorization,normalizeMessage,allowedObservation} from "./events.mjs";
-import {installSchema,storeObservation,getBackfillCursor,advanceBackfillCursor,purgeExpired,getRecoveryBaseline,recordRecoveryCheck} from "./storage.mjs";
+import {validateAuthorization,normalizeMessage,allowedObservation,isMetadataOnlyMessageUpdate,isEventCurrentlyAuthorized} from "./events.mjs";
+import {installSchema,storeObservation,getBackfillCursor,advanceBackfillCursor,purgeExpired,getRecoveryBaseline,recordRecoveryCheck,recordRecoveryFailureBatch,recordCoverageFailure} from "./storage.mjs";
 import {scanRecentGap} from "./reconcile.mjs";
 import {IngressSpool,parseIngressSpoolKey} from "./ingress-spool.mjs";
-import {runDiscordPermissionPreflight} from "./permission-preflight.mjs";
+import {createDiscordPermissionPreflightRunner} from "./permission-preflight.mjs";
+import {replaySpoolEntries,safeOldestPending} from "./spool-replay.mjs";
+import {RestScheduler} from "./rest-scheduler.mjs";
+import {isTransientDiscordRestError,isTransientPermissionPreflightReport,permissionPreflightRetryBaseMs,retryDelayMs} from "./retry-policy.mjs";
 
 if(process.env.DISCORD_COLLECTOR_ENABLED!=="true"){
   console.error("Disabled: DISCORD_COLLECTOR_ENABLED is not true");
@@ -47,6 +50,12 @@ if(!Number.isInteger(permissionPreflightMaxChannels)||permissionPreflightMaxChan
 const permissionPreflightIntervalMs=Number(process.env.DISCORD_PERMISSION_PREFLIGHT_INTERVAL_MS||300_000);
 if(!Number.isInteger(permissionPreflightIntervalMs)||permissionPreflightIntervalMs<60_000||permissionPreflightIntervalMs>900_000)
   throw new RangeError("DISCORD_PERMISSION_PREFLIGHT_INTERVAL_MS must be in 60000..900000");
+const permissionPreflightMinRequestIntervalMs=Number(process.env.DISCORD_PERMISSION_PREFLIGHT_MIN_REQUEST_INTERVAL_MS||25);
+if(!Number.isInteger(permissionPreflightMinRequestIntervalMs)||permissionPreflightMinRequestIntervalMs<0||permissionPreflightMinRequestIntervalMs>1_000)
+  throw new RangeError("DISCORD_PERMISSION_PREFLIGHT_MIN_REQUEST_INTERVAL_MS must be in 0..1000");
+const estimatedPreflightRequests=3*permissionPreflightMaxChannels+1;
+if(permissionPreflightIntervalMs<estimatedPreflightRequests*permissionPreflightMinRequestIntervalMs)
+  throw new RangeError("Permission preflight interval is too short for the configured channel cap and REST pacing");
 if(allowed.size>0&&process.env.DISCORD_PERMISSION_PREFLIGHT_ENABLED!=="true")
   throw new Error("DISCORD_PERMISSION_PREFLIGHT_ENABLED=true is mandatory before Gateway login");
 if(allowed.size>0&&process.env.DISCORD_MESSAGE_CONTENT_INTENT_CONFIRMED!=="true")
@@ -57,8 +66,24 @@ const singletonClient=await pool.connect().catch(async error=>{spoolKey.fill(0);
 let singletonLockHeld=false;
 let spool=null;
 const recoveryBaselines=new Map();
+const restScheduler=new RestScheduler({maxPending:100});
+async function scheduleRest(task,options){
+  try{return await restScheduler.run(task,options)}
+  catch(error){
+    if((error?.status===429||error?.code===429)&&error?.code!=="discord_rate_limited")restRateLimitResponses++;
+    throw error;
+  }
+}
+let restRateLimitResponses=0;
+const runPermissionPreflight=createDiscordPermissionPreflightRunner({
+  token:botToken,
+  maxChannels:permissionPreflightMaxChannels,
+  minRequestIntervalMs:permissionPreflightMinRequestIntervalMs,
+  onRateLimit:()=>{restRateLimitResponses++},
+});
 let startupSpoolSweep={eventsErased:0};
 let startupPurge={rowsErased:0,tombstonesQueued:0};
+let clientReadySeen=false;
 async function releaseSourceDatabase(){
   try{
     if(singletonLockHeld)
@@ -117,15 +142,63 @@ if(erasureOnly){
 }
 
 let initialPermissionReport;
-try{
-  initialPermissionReport=await runDiscordPermissionPreflight({
-    authorization:allowed,
-    token:botToken,
-    maxChannels:permissionPreflightMaxChannels,
+let initialPermissionError=null;
+let initialPreflightRetryAttempt=0;
+let initialPreflightGapRecorded=false;
+while(true){
+  try{
+    const currentStartupDocument=await readAuthorizationFile(authorizationPath);
+    if(JSON.stringify(currentStartupDocument)!==JSON.stringify(doc)){
+      initialPermissionError=Object.assign(new Error("authorization_changed_during_startup_preflight"),{
+        code:"authorization_changed_during_startup_preflight",
+      });
+      break;
+    }
+    initialPermissionReport=await runPermissionPreflight(allowed);
+  }catch(error){
+    if(!isTransientDiscordRestError(error)){
+      initialPermissionError=error;
+      break;
+    }
+    initialPermissionError=error;
+  }
+  if(initialPermissionReport?.ok){
+    try{
+      const verifiedStartupDocument=await readAuthorizationFile(authorizationPath);
+      if(JSON.stringify(verifiedStartupDocument)!==JSON.stringify(doc)){
+        initialPermissionError=Object.assign(new Error("authorization_changed_during_startup_preflight"),{
+          code:"authorization_changed_during_startup_preflight",
+        });
+        initialPermissionReport=null;
+        break;
+      }
+    }catch(error){
+      initialPermissionError=error;
+      initialPermissionReport=null;
+      break;
+    }
+    break;
+  }
+  if(initialPermissionReport&&!isTransientPermissionPreflightReport(initialPermissionReport))break;
+  const transientCode=initialPermissionReport?.errorCode??initialPermissionError?.code??"discord_api_unavailable";
+  if(!initialPreflightGapRecorded){
+    for(const [channelId,permission] of allowed)
+      await recordRecoveryCheck(pool,permission.guildId,channelId,
+        recoveryBaselines.get(channelId)??null,{status:"failed"});
+    initialPreflightGapRecorded=true;
+  }
+  const delay=retryDelayMs(initialPreflightRetryAttempt++,{
+    baseMs:permissionPreflightRetryBaseMs(initialPermissionReport,initialPermissionError),
+    maxMs:300_000,
   });
-  if(!initialPermissionReport.ok)
-    throw new Error("Discord permission preflight rejected one or more authorized channels");
-}catch{
+  console.warn("Discord permission preflight unavailable; startup remains paused and will retry",{
+    errorCode:transientCode,retryInMs:delay,
+  });
+  await new Promise(resolve=>setTimeout(resolve,delay));
+  initialPermissionReport=null;
+  initialPermissionError=null;
+}
+if(!initialPermissionReport?.ok){
   const failureCodes=[...new Set((initialPermissionReport?.guilds??[])
     .flatMap(group=>group.channels.map(channel=>channel.errorCode).filter(Boolean)))];
   console.error("Discord permission preflight failed; Gateway login was not attempted",{
@@ -133,7 +206,7 @@ try{
     checkedChannels:initialPermissionReport?.checkedChannels??allowed.size,
     failedChannels:initialPermissionReport?.failedChannels??allowed.size,
     errorCodes:failureCodes,
-    errorCode:initialPermissionReport?.errorCode??"permission_preflight_failed",
+    errorCode:initialPermissionReport?.errorCode??initialPermissionError?.code??"permission_preflight_failed",
   });
   try{spool.close()}finally{await releaseSourceDatabase()}
   throw new Error("Discord permission preflight failed; collection remains stopped");
@@ -141,10 +214,14 @@ try{
 console.log("Discord permission preflight passed",{
   checkedGuilds:initialPermissionReport.checkedGuilds,
   checkedChannels:initialPermissionReport.checkedChannels,
+  rateLimitResponses:restRateLimitResponses,
 });
 const client=new Client({
   intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent],
-  partials:[Partials.Message,Partials.Channel]
+  partials:[Partials.Message,Partials.Channel],
+  // Bound hung REST requests so a prolonged API outage reaches the durable
+  // spool retry/backoff path instead of pinning replay and shutdown forever.
+  rest:{timeout:15_000,retries:3},
 });
 let failures=0;
 let acceptingEvents=true;
@@ -153,7 +230,11 @@ let shutdownPromise=null;
 let startupTask=Promise.resolve();
 let sweepTask=Promise.resolve();
 let coverageTask=Promise.resolve();
+let fatalCoverageTask=Promise.resolve();
+let fatalCoverageScheduled=false;
 let drainPromise=null;
+let spoolReplayRetryTimer=null;
+let spoolReplayRetryAttempt=0;
 let sweepTimer;
 let backlogTimer;
 let authorizationReloadTimer;
@@ -163,6 +244,12 @@ let permissionPreflightTimer;
 let permissionPreflightTask=Promise.resolve();
 let permissionPreflightRunning=false;
 let permissionPreflightFailed=false;
+let permissionPreflightPaused=false;
+let recoveryPending=false;
+let backfillPendingAfterPreflightPause=false;
+let permissionPreflightRetryTimer=null;
+let permissionPreflightRetryAttempt=0;
+let permissionPreflightPauseTask=Promise.resolve();
 let sweepRunning=false;
 
 function singletonConnectionLost(){
@@ -188,6 +275,17 @@ function permissionActive(permission){
   return Number.isFinite(expiry)&&expiry>Date.now();
 }
 
+function sameAuthorizationLease(current,expected){
+  return Boolean(current&&expected&&
+    current.guildId===expected.guildId&&
+    current.retentionDays===expected.retentionDays&&
+    current.permissionReference===expected.permissionReference&&
+    current.policyReviewReference===expected.policyReviewReference&&
+    current.permissionExpiresAt===expected.permissionExpiresAt&&
+    current.policyReviewExpiresAt===expected.policyReviewExpiresAt&&
+    current.expiresAt===expected.expiresAt);
+}
+
 function permissionPreflightSummary(report){
   return {
     status:report.status,
@@ -203,41 +301,83 @@ function permissionPreflightSummary(report){
 
 async function verifyPermissions(snapshot){
   if(permissionPreflightFailed)throw new Error("Discord permission verification already failed");
-  if(permissionPreflightRunning)await permissionPreflightTask;
+  if(permissionPreflightRunning){
+    try{await permissionPreflightTask}
+    catch(error){
+      if(permissionPreflightFailed||
+         (!isTransientDiscordRestError(error)&&error?.code!=="discord_rest_scheduler_queue_full"))
+        throw error;
+    }
+  }
   if(permissionPreflightFailed)throw new Error("Discord permission verification already failed");
   permissionPreflightRunning=true;
-  const task=runDiscordPermissionPreflight({
-    authorization:snapshot,
-    token:botToken,
-    maxChannels:permissionPreflightMaxChannels,
-  });
+  const task=scheduleRest(()=>runPermissionPreflight(snapshot),{priority:0,label:"permission-preflight"});
   permissionPreflightTask=task;
   try{
     const report=await task;
-    if(!report.ok)permissionPreflightFailed=true;
+    if(!report.ok&&!isTransientPermissionPreflightReport(report))permissionPreflightFailed=true;
     return report;
   }catch(error){
-    permissionPreflightFailed=true;
+    if(!isTransientDiscordRestError(error)&&error?.code!=="discord_rest_scheduler_queue_full")
+      permissionPreflightFailed=true;
     throw error;
   }finally{
     if(permissionPreflightTask===task)permissionPreflightRunning=false;
   }
 }
 
-async function record(message,kind){
+async function record(message,kind,authorizationRetry=0){
+  if(permissionPreflightPaused)throw new Error("discord_permission_preflight_paused");
   const channelId=String(message.channelId??message.channel?.id??"");
   const permission=allowed.get(channelId);
   if(!permissionActive(permission))return {status:"not-allowed"};
   const observation=normalizeMessage(message,kind,new Date().toISOString(),permission.guildId);
   if(!allowedObservation(allowed,observation))return {status:"not-allowed"};
-  return await storeObservation(pool,observation,permission.retentionDays,new Date(),permission.expiresAt);
+  const stillAuthorized=()=>{
+    const current=allowed.get(channelId);
+    return !permissionPreflightPaused&&permissionActive(current)&&sameAuthorizationLease(current,permission);
+  };
+  const result=await storeObservation(pool,observation,permission.retentionDays,
+    new Date(),permission.expiresAt,stillAuthorized);
+  if(["not-authorized","authorization-expired"].includes(result.status)&&
+     isEventCurrentlyAuthorized(allowed,observation)){
+    if(authorizationRetry>=2)
+      throw new Error("authorization_changed_during_source_write");
+    // A renewed lease still authorizes this channel. Re-evaluate retention and
+    // retry instead of letting backfill advance its cursor past a lost event.
+    return record(message,kind,authorizationRetry+1);
+  }
+  return result;
 }
 
-async function persistCoverageGap(channelId){
-  const permission=allowed.get(channelId);
-  if(!permissionActive(permission))return;
-  await recordRecoveryCheck(pool,permission.guildId,channelId,
-    recoveryBaselines.get(channelId)??null,{status:"failed"});
+async function persistCoverageGap(){
+  // A fatal ingress/replay failure stops the whole Collector, not just the
+  // channel whose event happened to expose the failure. Insert all active
+  // channel checkpoints in one transaction so a process crash cannot leave
+  // only a subset of the Collector's outage watermarks persisted.
+  const channels=new Map([...allowed].filter(([,permission])=>permissionActive(permission)));
+  await recordRecoveryFailureBatch(pool,channels,recoveryBaselines,(channelId,permission)=>{
+    const current=allowed.get(channelId);
+    return permissionActive(current)&&current.guildId===permission.guildId;
+  });
+}
+
+function ensureFatalCoverageCheckpoints(){
+  // Ingress append failure and an in-flight replay failure can race. Share one
+  // checkpoint task so shutdown cannot close PostgreSQL while a second set of
+  // recovery writes is still running, and do not overwrite the preflight task.
+  if(!fatalCoverageScheduled){
+    fatalCoverageScheduled=true;
+    fatalCoverageTask=Promise.resolve().then(async()=>{
+      // Let a policy reload finish its allowlist transition and revocation purge
+      // before taking the fatal-stop checkpoint snapshot.
+      await authorizationReloadTask.catch(()=>{});
+      await persistCoverageGap();
+    }).catch(()=>{
+      console.error("Discord fatal coverage checkpoints could not all be persisted");
+    });
+  }
+  return fatalCoverageTask;
 }
 
 function isoOrNull(value,fallbackTimestamp){
@@ -250,31 +390,29 @@ function snapshotGatewayEvent(kind,message,permission){
   const channelId=String(message.channelId??message.channel?.id??"");
   const createdAt=isoOrNull(message.createdAt,message.createdTimestamp);
   const retainPersonalFields=kind!=="deleted"&&createdAt!==null;
+  const authorId=retainPersonalFields&&message.author?.id?String(message.author.id):null;
   return {
     kind,
     messageId:String(message.id??""),
     guildId:String(message.guildId??message.guild?.id??permission.guildId),
     channelId,
-    // Without a trustworthy publication timestamp, keep only identifiers needed
-    // to hydrate the event later; never retain author/content beyond retention.
-    authorId:retainPersonalFields&&message.author?.id?String(message.author.id):null,
-    content:retainPersonalFields&&typeof message.content==="string"?message.content:null,
+    // Content is retained only when its author can be tied to the source row.
+    // Authorless partial events remain identifier-only until REST hydration.
+    authorId,
+    content:authorId!==null&&typeof message.content==="string"?message.content:null,
     createdAt,
     editedAt:isoOrNull(message.editedAt,message.editedTimestamp),
     receivedAt:new Date().toISOString(),
   };
 }
 
-function failCollector(channelId,code){
+function failCollector(code){
   if(!acceptingEvents)return;
   acceptingEvents=false;
   failures++;
   process.exitCode=1;
   console.error("Discord durable ingress stopped",code);
-  coverageTask=Promise.resolve().then(()=>persistCoverageGap(channelId)).catch(()=>{
-    console.error("Discord coverage gap could not be persisted",channelId);
-  });
-  void coverageTask.finally(()=>void shutdown());
+  void ensureFatalCoverageCheckpoints().finally(()=>void shutdown());
 }
 
 function enqueueGatewayEvent(kind,message){
@@ -288,20 +426,37 @@ function enqueueGatewayEvent(kind,message){
     // it, and fsyncs the directory before this Gateway callback returns.
     spool.append(event);
   }catch(error){
-    failCollector(channelId,error?.code==="INGRESS_SPOOL_FULL"?"ingress_spool_full":"ingress_spool_write_failed");
+    failCollector(error?.code==="INGRESS_SPOOL_FULL"?"ingress_spool_full":"ingress_spool_write_failed");
     return;
   }
-  if(client.isReady())void drainSpool().catch(()=>{});
+  if(client.isReady()&&!spoolReplayRetryTimer&&!stopping)void drainSpool().catch(()=>{});
+}
+
+function scheduleSpoolReplayRetry(error){
+  if(stopping||permissionPreflightPaused||spoolReplayRetryTimer)return null;
+  const baseMs=Number(error?.status??error?.statusCode)===429?30_000:1_000;
+  const delay=retryDelayMs(spoolReplayRetryAttempt++,{baseMs,maxMs:300_000});
+  spoolReplayRetryTimer=setTimeout(()=>{
+    spoolReplayRetryTimer=null;
+    if(clientReadySeen&&client.isReady()&&!stopping&&!spoolReplayRetryTimer)
+      void resumeSpoolAndRecovery().catch(()=>{});
+  },delay);
+  spoolReplayRetryTimer.unref();
+  return delay;
 }
 
 function isUnknownDiscordMessage(error){
-  return error?.code===10008||error?.status===404||error?.rawError?.code===10008;
+  // Only Discord's explicit Unknown Message code is terminal. A generic HTTP
+  // 404 may describe a missing channel/route and must not silently ACK data.
+  return error?.code===10008||error?.rawError?.code===10008;
 }
 
 async function processSpoolEntry(entry,{allowHydration=true}={}){
+  if(permissionPreflightPaused)return {ack:false,status:"permission-preflight-paused"};
   const event=entry.event;
   const permission=allowed.get(event.channelId);
-  if(!permissionActive(permission)||permission.guildId!==event.guildId)return; // Current allowlist wins over queued data.
+  if(!permissionActive(permission)||permission.guildId!==event.guildId)
+    return {ack:true,status:"not-authorized"}; // Current allowlist wins over queued data.
 
   let message={
     id:event.messageId,
@@ -313,66 +468,116 @@ async function processSpoolEntry(entry,{allowHydration=true}={}){
     editedAt:event.editedAt?new Date(event.editedAt):null,
   };
   const needsHydration=event.kind!=="deleted"&&
-    (!event.createdAt||(event.kind==="edited"&&(!event.editedAt||event.content===null)));
+    (!event.createdAt||!event.authorId||event.content===null||(event.kind==="edited"&&!event.editedAt));
   if(needsHydration&&!allowHydration){
-    await recordRecoveryCheck(pool,permission.guildId,event.channelId,
-      recoveryBaselines.get(event.channelId)??null,{status:"failed"});
-    failures++;
-    process.exitCode=1;
-    console.error("Pre-login Discord event lacks enough source fields; coverage marked failed",event.kind);
-    return;
+    // Keep this exact encrypted record at the head of the queue. The Gateway
+    // must be allowed to connect before REST hydration can be attempted.
+    return {ack:false,status:"needs_hydration"};
   }
   if(needsHydration){
     try{
-      const channel=await client.channels.fetch(event.channelId);
+      const channel=await scheduleRest(()=>client.channels.fetch(event.channelId),
+        {priority:0,label:"message-hydration-channel"});
       if(!channel?.messages)throw new Error("Authorized Discord channel history is unavailable");
-      message=await channel.messages.fetch(event.messageId);
+      message=await scheduleRest(()=>channel.messages.fetch(event.messageId),
+        {priority:0,label:"message-hydration"});
     }catch(error){
-      if(!isUnknownDiscordMessage(error))throw error;
-      // A deleted message may no longer be fetchable. Record the coverage gap,
-      // then continue so a queued delete event behind it can still be applied.
-      await recordRecoveryCheck(pool,permission.guildId,event.channelId,
-        recoveryBaselines.get(event.channelId)??null,{status:"failed"});
+      if(!isUnknownDiscordMessage(error)){
+        if(isTransientDiscordRestError(error)){
+          const retryable=new Error("discord_rest_temporarily_unavailable");
+          retryable.code="DISCORD_REST_TRANSIENT";
+          retryable.status=error?.status??error?.statusCode??null;
+          throw retryable;
+        }
+        throw error;
+      }
+      const currentPermission=allowed.get(event.channelId);
+      if(!permissionActive(currentPermission)||currentPermission.guildId!==event.guildId)
+        return {ack:true,status:"not-authorized"};
+      // A terminal Unknown Message is not hydratable. Persist a per-message,
+      // content-free coverage failure before ACK so analytics can see the gap.
+      const stillAuthorized=()=>{
+        const current=allowed.get(event.channelId);
+        return !permissionPreflightPaused&&permissionActive(current)&&sameAuthorizationLease(current,currentPermission);
+      };
+      const recorded=await recordCoverageFailure(
+        pool,event,currentPermission.retentionDays,stillAuthorized,
+      );
+      if(!recorded)return isEventCurrentlyAuthorized(allowed,event)
+        ? {ack:false,status:"authorization-changed"}
+        : {ack:true,status:"not-authorized"};
+      const recoveryRecorded=await recordRecoveryCheck(pool,currentPermission.guildId,event.channelId,
+        recoveryBaselines.get(event.channelId)??null,{status:"failed"},stillAuthorized);
+      if(!recoveryRecorded&&isEventCurrentlyAuthorized(allowed,event))
+        return {ack:false,status:"authorization-changed"};
       failures++;
       process.exitCode=1;
-      console.error("Discord ingress event could not be hydrated; coverage marked failed",event.kind);
-      return;
+      console.error("Discord ingress event could not be hydrated; durable coverage gap recorded",event.kind);
+      return {ack:true,status:"coverage-gap"};
     }
   }
+  // Discord MESSAGE_UPDATE also fires for metadata-only changes such as pins
+  // and flags. If neither the Gateway event nor the hydrated message has a
+  // source edit timestamp, it is not a content revision and must not stop replay.
+  if(isMetadataOnlyMessageUpdate(event,message))
+    return {ack:true,status:"non-content-update"};
   const observation=normalizeMessage(message,event.kind,event.receivedAt,event.guildId);
-  if(!allowedObservation(allowed,observation))return;
+  if(!allowedObservation(allowed,observation))return {ack:true,status:"not-allowed"};
   const currentPermission=allowed.get(event.channelId);
-  if(!permissionActive(currentPermission)||currentPermission.guildId!==event.guildId)return;
-  await storeObservation(pool,observation,currentPermission.retentionDays,
-    new Date(),currentPermission.expiresAt);
+  if(!permissionActive(currentPermission)||currentPermission.guildId!==event.guildId)
+    return {ack:true,status:"not-authorized"};
+  const stillAuthorized=()=>{
+    const current=allowed.get(event.channelId);
+    return !permissionPreflightPaused&&permissionActive(current)&&sameAuthorizationLease(current,currentPermission);
+  };
+  const result=await storeObservation(pool,observation,currentPermission.retentionDays,
+    new Date(),currentPermission.expiresAt,stillAuthorized);
+  if(["not-authorized","authorization-expired"].includes(result.status)&&
+     isEventCurrentlyAuthorized(allowed,event))
+    return {ack:false,status:"authorization-changed"};
+  return {ack:true,status:result.status};
 }
 
 function drainSpool({allowHydration=true}={}){
+  if(stopping||permissionPreflightPaused||spoolReplayRetryTimer)return Promise.resolve();
   if(drainPromise)return drainPromise;
   drainPromise=(async()=>{
-    while(acceptingEvents&&spool.pendingCount>0){
+    while(acceptingEvents&&!stopping&&spool.pendingCount>0){
       const batch=spool.listPending(100);
-      for(const entry of batch){
-        if(!acceptingEvents)break;
-        await processSpoolEntry(entry,{allowHydration});
-        // PostgreSQL commits before the local event is acknowledged. If the
-        // process crashes before unlink, the idempotent source transaction replays.
-        spool.ack(entry.sequence);
+      const replay=await replaySpoolEntries({
+        entries:batch,
+        processEntry:entry=>processSpoolEntry(entry,{allowHydration}),
+        acknowledge:sequence=>spool.ack(sequence),
+        flushAcks:()=>spool.flushAcks(),
+        shouldContinue:()=>acceptingEvents&&!stopping,
+      });
+      if(replay.blocked){
+        console.log("Discord durable ingress replay deferred until Gateway REST hydration",{
+          pendingEvents:spool.pendingCount,
+          blockedSequence:replay.blockedSequence,
+        });
+        break;
       }
-      spool.flushAcks();
       if(spool.pendingCount>0)await new Promise(resolve=>setImmediate(resolve));
     }
+    if(spool.pendingCount===0)spoolReplayRetryAttempt=0;
   })().catch(error=>{
-    const oldest=spool.oldestPending;
+    if(error?.code==="DISCORD_REST_TRANSIENT"){
+      const retryInMs=scheduleSpoolReplayRetry(error);
+      console.warn("Discord REST temporarily unavailable; encrypted ingress backlog retained",{
+        pendingEvents:spool.pendingCount,
+        pendingBytes:spool.pendingBytes,
+        retryInMs,
+      });
+      return;
+    }
     failures++;
     acceptingEvents=false;
+    const oldest=safeOldestPending(spool);
     process.exitCode=1;
     console.error("Discord durable ingress replay stopped; event retained for restart",
-      error?.code??"ingress_replay_failed");
-    coverageTask=Promise.resolve().then(()=>
-      oldest?persistCoverageGap(oldest.event.channelId):undefined
-    ).catch(()=>console.error("Discord replay coverage gap could not be persisted"));
-    void coverageTask.finally(()=>void shutdown());
+      error?.code??"ingress_replay_failed",oldest?{blockedSequence:oldest.sequence}:null);
+    void ensureFatalCoverageCheckpoints().finally(()=>void shutdown());
     throw error;
   }).finally(()=>{drainPromise=null;});
   return drainPromise;
@@ -385,28 +590,123 @@ client.on(Events.MessageBulkDelete,messages=>{
   for(const message of messages.values())enqueueGatewayEvent("deleted",message);
 });
 
+// ClientReady fires only once. Resume durable backlog after reconnect even
+// when no new message arrives to trigger enqueueGatewayEvent.
+const resumeSpoolReplay=()=>{
+  if(clientReadySeen&&client.isReady()&&!stopping)
+    void resumeSpoolAndRecovery({reconcileGap:true}).catch(()=>{});
+};
+client.on(Events.ShardReady,resumeSpoolReplay);
+client.on(Events.ShardResume,resumeSpoolReplay);
+
 async function backfill(guildId,channelId,maxMessages){
-  const channel=await client.channels.fetch(channelId);
+  const permission=allowed.get(channelId);
+  if(permissionPreflightPaused||!permissionActive(permission)||permission.guildId!==guildId)return;
+  const stillAuthorized=()=>{
+    const current=allowed.get(channelId);
+    return !permissionPreflightPaused&&permissionActive(current)&&sameAuthorizationLease(current,permission);
+  };
+  const channel=await scheduleRest(()=>client.channels.fetch(channelId),
+    {priority:2,label:"history-backfill-channel"});
   if(!channel?.messages)throw new Error("Channel not accessible for history");
   let cursor=await getBackfillCursor(pool,channelId);
   let count=0;
-  while(count<maxMessages&&!stopping){
+  while(count<maxMessages&&!stopping&&!permissionPreflightPaused&&stillAuthorized()){
     const requested=Math.min(100,maxMessages-count);
-    const page=await channel.messages.fetch({limit:requested,...(cursor?{before:cursor}:{})});
+    const page=await scheduleRest(
+      ()=>channel.messages.fetch({limit:requested,...(cursor?{before:cursor}:{})}),
+      {priority:2,label:"history-backfill-page"},
+    );
     if(page.size===0)break;
     const ordered=[...page.values()].sort((a,b)=>BigInt(a.id)<BigInt(b.id)?-1:1);
     for(const message of ordered){
-      if(stopping)break;
+      if(stopping||permissionPreflightPaused)break;
       await record(message,"observed");
       count++;
     }
-    if(stopping)break;
+    if(stopping||permissionPreflightPaused||!stillAuthorized())break;
     cursor=ordered[0].id;
     // Cursor never advances past a failed page; successful rows replay idempotently.
-    await advanceBackfillCursor(pool,guildId,channelId,cursor);
+    if(!await advanceBackfillCursor(pool,guildId,channelId,cursor,stillAuthorized))break;
     if(page.size<requested)break;
   }
   console.log("History sync pass",{channelId,processed:count});
+}
+
+async function recoverRecentGaps(){
+  if(process.env.DISCORD_GAP_RECOVERY_ENABLED!=="true")return;
+  for(const [channelId,permission] of allowed){
+    if(stopping||permissionPreflightPaused)break;
+    const baseline=await getRecoveryBaseline(pool,channelId);
+    recoveryBaselines.set(channelId,baseline);
+    try{
+      const stillAuthorized=()=>{
+        const current=allowed.get(channelId);
+        return !permissionPreflightPaused&&permissionActive(current)&&sameAuthorizationLease(current,permission);
+      };
+      const channel=await scheduleRest(()=>client.channels.fetch(channelId),
+        {priority:1,label:"gap-recovery-channel"});
+      if(!stillAuthorized())continue;
+      const result=await scanRecentGap({
+        channel,
+        fetchPage:options=>scheduleRest(()=>channel.messages.fetch(options),
+          {priority:1,label:"gap-recovery-page"}),
+        baselineMessageId:baseline,
+        maxPages:recoveryMaxPages,
+        shouldContinue:stillAuthorized,
+        onMessage:message=>record(message,"observed"),
+      });
+      if(!await recordRecoveryCheck(pool,permission.guildId,channelId,baseline,result,stillAuthorized))
+        continue;
+      console.log("Discord recovery window",{channelId,status:result.status,
+        pages:result.pagesScanned,processed:result.messagesProcessed});
+    }catch(error){
+      if(permissionPreflightPaused)break;
+      failures++;
+      try{
+        const stillAuthorized=()=>{
+          const current=allowed.get(channelId);
+          return !permissionPreflightPaused&&permissionActive(current)&&sameAuthorizationLease(current,permission);
+        };
+        await recordRecoveryCheck(pool,permission.guildId,channelId,baseline,{status:"failed"},stillAuthorized);
+      }catch{
+        if(permissionPreflightPaused)break;
+        console.error("Recovery failure status could not be saved",channelId);
+        process.exitCode=1;
+        void shutdown();
+      }
+      console.error("Discord gap recovery failed",channelId,error?.code??"recovery_failed");
+    }
+  }
+}
+
+async function runConfiguredBackfill(){
+  const max=Number(process.env.DISCORD_BACKFILL_MAX_MESSAGES||0);
+  if(process.env.DISCORD_BACKFILL_ENABLED!=="true"||!Number.isInteger(max)||max<=0)return;
+  for(const [channelId,permission] of allowed){
+    if(stopping||permissionPreflightPaused)break;
+    try{await backfill(permission.guildId,channelId,max)}
+    catch(error){
+      if(permissionPreflightPaused)break;
+      failures++;
+      console.error("History backfill failed",channelId,error?.code??"backfill_failed");
+    }
+  }
+}
+
+async function resumeSpoolAndRecovery({reconcileGap=false}={}){
+  if(reconcileGap)recoveryPending=true;
+  if(stopping||permissionPreflightPaused||!clientReadySeen||!client.isReady())return;
+  await drainSpool();
+  if(recoveryPending&&!stopping&&!permissionPreflightPaused&&
+     !spoolReplayRetryTimer&&spool.pendingCount===0){
+    await recoverRecentGaps();
+    if(backfillPendingAfterPreflightPause){
+      if(!stopping&&!permissionPreflightPaused)await runConfiguredBackfill();
+      backfillPendingAfterPreflightPause=false;
+    }
+    recoveryPending=false;
+  }
 }
 
 let authorizationReloadRunning=false;
@@ -442,7 +742,7 @@ async function reloadAuthorization(){
   if(retained.size!==allowed.size){
     allowed=retained;
     const revokedSpool=spool.sweepExpired(allowed);
-    const revokedPurge=await purgeExpired(pool,allowed,{allowEmpty:nextErasureOnly||allowed.size===0});
+    const revokedPurge=await purgeExpired(pool,allowed,{allowEmpty:nextErasureOnly||allowed.size===0,exclusive:true});
     console.log("Discord revoked-channel erasure",{
       queuedEventsErased:revokedSpool.eventsErased,
       sourceRowsErased:revokedPurge.rowsErased,
@@ -453,8 +753,25 @@ async function reloadAuthorization(){
   const newlyAuthorized=new Map([...next].filter(([channelId,permission])=>
     allowed.get(channelId)?.guildId!==permission.guildId));
   if(newlyAuthorized.size>0){
-    const report=await verifyPermissions(newlyAuthorized);
-    if(!report.ok)throw new Error("New Discord channels failed permission preflight");
+    let report;
+    try{report=await verifyPermissions(newlyAuthorized)}
+    catch(error){
+      if(isTransientDiscordRestError(error)||error?.code==="discord_rest_scheduler_queue_full"){
+        await pauseForPermissionPreflight({
+          errorCode:Number(error?.status??error?.statusCode)===429?"discord_rate_limited":"discord_api_unavailable",
+          guilds:[],
+        });
+        return;
+      }
+      throw error;
+    }
+    if(!report.ok){
+      if(isTransientPermissionPreflightReport(report)){
+        await pauseForPermissionPreflight(report);
+        return;
+      }
+      throw new Error("New Discord channels failed permission preflight");
+    }
     console.log("New Discord channel permission preflight passed",permissionPreflightSummary(report));
   }
 
@@ -470,7 +787,7 @@ async function reloadAuthorization(){
   scheduleAuthorizationExpiry(allowed);
 
   const spoolResult=spool.sweepExpired(allowed);
-  const purgeResult=await purgeExpired(pool,allowed,{allowEmpty:erasureOnly});
+  const purgeResult=await purgeExpired(pool,allowed,{allowEmpty:erasureOnly,exclusive:true});
   console.log("Discord authorization policy reloaded",{
     activeChannels:allowed.size,
     expiredChannels:allowed.expiredChannels.length,
@@ -478,6 +795,13 @@ async function reloadAuthorization(){
     sourceRowsErased:purgeResult.rowsErased,
     erasureTombstonesQueued:purgeResult.tombstonesQueued,
   });
+  // If an in-flight replay deferred an event while its lease changed, retry it
+  // under the newly committed allowlist before waiting for another Gateway event.
+  if(!erasureOnly&&!stopping){
+    const pendingDrain=drainPromise;
+    if(pendingDrain)await pendingDrain.catch(()=>{});
+    if(!stopping)await resumeSpoolAndRecovery();
+  }
   if(erasureOnly){
     acceptingEvents=false;
     console.log("No active Discord authorization remains; stopping after erasure");
@@ -523,65 +847,129 @@ scheduleAuthorizationExpiry(allowed);
 authorizationReloadTimer=setInterval(startAuthorizationReload,authorizationReloadMs);
 authorizationReloadTimer.unref();
 
-function startPermissionPreflight(){
-  if(stopping||permissionPreflightRunning)return;
-  void verifyPermissions(allowed).then(report=>{
-    if(!report.ok)throw new Error("Discord channel permission check failed");
+function schedulePermissionPreflightRetry(report){
+  if(stopping||permissionPreflightRetryTimer)return;
+  const baseMs=permissionPreflightRetryBaseMs(report);
+  const delay=retryDelayMs(permissionPreflightRetryAttempt++,{baseMs,maxMs:300_000});
+  permissionPreflightRetryTimer=setTimeout(()=>{
+    permissionPreflightRetryTimer=null;
+    startPermissionPreflight({retry:true});
+  },delay);
+  permissionPreflightRetryTimer.unref();
+}
+
+async function pauseForPermissionPreflight(report){
+  if(stopping)return;
+  if(!permissionPreflightPaused){
+    permissionPreflightPaused=true;
+    recoveryPending=true;
+    backfillPendingAfterPreflightPause=true;
+    acceptingEvents=false;
+    if(spoolReplayRetryTimer){
+      clearTimeout(spoolReplayRetryTimer);
+      spoolReplayRetryTimer=null;
+    }
+    permissionPreflightPauseTask=(async()=>{
+      const pendingDrain=drainPromise;
+      if(pendingDrain)await pendingDrain.catch(()=>{});
+      await startupTask.catch(()=>{});
+      if(stopping)return;
+      coverageTask=(async()=>{
+        for(const [channelId,permission] of allowed){
+          if(!permissionActive(permission))continue;
+          const baseline=await getRecoveryBaseline(pool,channelId);
+          recoveryBaselines.set(channelId,baseline);
+          const stillAuthorized=()=>{
+            const current=allowed.get(channelId);
+            return permissionActive(current)&&sameAuthorizationLease(current,permission);
+          };
+          await recordRecoveryCheck(pool,permission.guildId,channelId,baseline,{status:"failed"},stillAuthorized);
+        }
+      })().catch(()=>{
+        throw new Error("permission_preflight_gap_checkpoint_failed");
+      });
+      await coverageTask;
+      console.warn("Discord permission preflight unavailable; collection paused without discarding the spool",{
+        errorCode:report?.errorCode??"discord_api_unavailable",
+        channels:allowed.size,
+        pendingEvents:spool.pendingCount,
+        pendingBytes:spool.pendingBytes,
+      });
+    })();
+  }
+  await permissionPreflightPauseTask;
+  schedulePermissionPreflightRetry(report);
+}
+
+function stopAfterPermissionPreflightFailure(){
+  if(stopping)return;
+  failures++;
+  acceptingEvents=false;
+  process.exitCode=1;
+  console.error("Discord permission preflight failed; collection stopped",{
+    code:"permission_preflight_failed",rateLimitResponses:restRateLimitResponses,
+  });
+  void shutdown();
+}
+
+function startPermissionPreflight({retry=false}={}){
+  if(stopping||permissionPreflightRunning||permissionPreflightRetryTimer||
+     (permissionPreflightPaused&&!retry))return;
+  void verifyPermissions(allowed).then(async report=>{
+    if(!report.ok){
+      if(isTransientPermissionPreflightReport(report)){
+        await pauseForPermissionPreflight(report);
+        return;
+      }
+      throw new Error("Discord channel permission check failed");
+    }
+    if(permissionPreflightPaused){
+      await startupTask.catch(()=>{});
+      if(stopping)return;
+      permissionPreflightPaused=false;
+      permissionPreflightRetryAttempt=0;
+      acceptingEvents=true;
+      console.log("Discord permission preflight recovered; collection resumed",{
+        checkedChannels:report.checkedChannels,
+        checkedGuilds:report.checkedGuilds,
+        pendingEvents:spool.pendingCount,
+      });
+      if(clientReadySeen&&client.isReady())
+        await resumeSpoolAndRecovery();
+      return;
+    }
     console.log("Discord periodic permission preflight passed",{
       checkedChannels:report.checkedChannels,
       checkedGuilds:report.checkedGuilds,
+      rateLimitResponses:restRateLimitResponses,
     });
-  }).catch(()=>{
+  }).catch(error=>{
     if(stopping)return;
-    failures++;
-    acceptingEvents=false;
-    process.exitCode=1;
-    console.error("Discord permission preflight failed; collection stopped","permission_preflight_failed");
-    void shutdown();
+    if(isTransientDiscordRestError(error)||error?.code==="discord_rest_scheduler_queue_full"){
+      void pauseForPermissionPreflight({
+        errorCode:Number(error?.status??error?.statusCode)===429?"discord_rate_limited":"discord_api_unavailable",
+        guilds:[],
+      }).catch(()=>stopAfterPermissionPreflightFailure());
+      return;
+    }
+    stopAfterPermissionPreflightFailure();
   });
 }
 permissionPreflightTimer=setInterval(startPermissionPreflight,permissionPreflightIntervalMs);
 permissionPreflightTimer.unref();
 
 client.once(Events.ClientReady,()=>{
+  clientReadySeen=true;
   startupTask=(async()=>{
     console.log("Collector connected",{channels:allowed.size,pendingIngressEvents:spool.pendingCount});
     // Replay durable Gateway events before optional history reconciliation.
     await drainSpool();
     if(stopping)return;
-    if(process.env.DISCORD_GAP_RECOVERY_ENABLED==="true"){
-      for(const [channelId,permission] of allowed){
-        if(stopping)break;
-        const baseline=recoveryBaselines.get(channelId)??null;
-        try{
-          const channel=await client.channels.fetch(channelId);
-          const result=await scanRecentGap({
-            channel,baselineMessageId:baseline,maxPages:recoveryMaxPages,
-            onMessage:message=>record(message,"observed")
-          });
-          await recordRecoveryCheck(pool,permission.guildId,channelId,baseline,result);
-          console.log("Discord recovery window",{channelId,status:result.status,
-            pages:result.pagesScanned,processed:result.messagesProcessed});
-        }catch(error){
-          failures++;
-          try{
-            await recordRecoveryCheck(pool,permission.guildId,channelId,baseline,{status:"failed"});
-          }catch{
-            console.error("Recovery failure status could not be saved",channelId);
-            process.exitCode=1;
-            void shutdown();
-          }
-          console.error("Discord gap recovery failed",channelId,error?.code??"recovery_failed");
-        }
-      }
-    }
-    const max=Number(process.env.DISCORD_BACKFILL_MAX_MESSAGES||0);
-    if(process.env.DISCORD_BACKFILL_ENABLED!=="true"||!Number.isInteger(max)||max<=0)return;
-    for(const [channelId,permission] of allowed){
-      if(stopping)break;
-      try{await backfill(permission.guildId,channelId,max)}
-      catch(error){failures++;console.error("History backfill failed",channelId,error?.code??"backfill_failed")}
-    }
+    await recoverRecentGaps();
+    if(!permissionPreflightPaused)recoveryPending=false;
+    await runConfiguredBackfill();
+    if(!permissionPreflightPaused)backfillPendingAfterPreflightPause=false;
+    if(!stopping)await drainSpool();
   })();
   void startupTask.catch(()=>{
     failures++;
@@ -623,16 +1011,48 @@ sweepTimer.unref();
 async function shutdown(){
   if(shutdownPromise)return shutdownPromise;
   stopping=true;
-  acceptingEvents=false;
+  // Keep durable ingress enabled until Gateway destruction completes. Any
+  // dispatch delivered while the WebSocket is closing must still reach Spool.
   clearInterval(sweepTimer);
   clearInterval(backlogTimer);
   clearInterval(authorizationReloadTimer);
   clearInterval(permissionPreflightTimer);
   clearTimeout(authorizationExpiryTimer);
+  clearTimeout(permissionPreflightRetryTimer);
+  permissionPreflightRetryTimer=null;
+  clearTimeout(spoolReplayRetryTimer);
+  spoolReplayRetryTimer=null;
   shutdownPromise=(async()=>{
-    try{await client.destroy()}finally{
-      await Promise.allSettled([startupTask,sweepTask,coverageTask,drainPromise??Promise.resolve(),authorizationReloadTask,permissionPreflightTask]);
-      try{spool.close()}finally{await releaseSourceDatabase()}
+    try{await client.destroy()}
+    catch{
+      failures++;
+      process.exitCode=1;
+      console.error("Discord Gateway shutdown failed","gateway_shutdown_failed");
+    }finally{
+      // No more Gateway dispatches can arrive after destroy settles. Close the
+      // ingress gate only now; replay itself is already paused by stopping.
+      acceptingEvents=false;
+    }
+    const settled=await Promise.allSettled([
+      startupTask,sweepTask,coverageTask,fatalCoverageTask,permissionPreflightPauseTask,
+      drainPromise??Promise.resolve(),authorizationReloadTask,permissionPreflightTask,
+    ]);
+    if(settled.some(result=>result.status==="rejected")){
+      failures++;
+      process.exitCode=1;
+      console.error("Discord in-flight work failed during shutdown","shutdown_task_failed");
+    }
+    try{spool.close()}
+    catch{
+      failures++;
+      process.exitCode=1;
+      console.error("Discord ingress spool close/fsync failed","ingress_spool_close_failed");
+    }
+    try{await releaseSourceDatabase()}
+    catch{
+      failures++;
+      process.exitCode=1;
+      console.error("Discord source database release failed","source_database_release_failed");
     }
     if(failures)process.exitCode=1;
   })();
@@ -649,6 +1069,22 @@ try{
   throw new Error("Pre-login durable ingress replay failed; pending records were retained");
 }
 if(stopping)throw new Error("Collector stopped before Gateway login");
+while(authorizationReloadRunning){
+  const activeReload=authorizationReloadTask;
+  await activeReload.catch(()=>{});
+}
+if(stopping)throw new Error("Collector stopped during authorization reload");
+try{
+  const currentAuthorizationDocument=await readAuthorizationFile(authorizationPath);
+  if(JSON.stringify(currentAuthorizationDocument)!==authorizationDocumentFingerprint)
+    throw new Error("authorization_changed_before_gateway_login");
+}catch{
+  failures++;
+  acceptingEvents=false;
+  process.exitCode=1;
+  await shutdown();
+  throw new Error("Authorization changed or became unreadable before Gateway login");
+}
 try{
   await client.login(botToken);
 }catch{

@@ -121,6 +121,11 @@ export async function checkDestination(pool,options={}){
     to_regclass('entity_evidence') IS NOT NULL AS evidence,
     to_regclass('timeline_events') IS NOT NULL AS timeline,
     to_regclass('discord_message_tombstones') IS NOT NULL AS discord_message_tombstones,
+    EXISTS (SELECT 1 FROM pg_constraint
+      WHERE conrelid=to_regclass('discord_message_tombstones')
+        AND conname='discord_message_tombstones_deletion_reason_check'
+        AND contype='c' AND convalidated
+        AND pg_get_constraintdef(oid) LIKE '%user_requested%') AS discord_user_erasure_ready,
     to_regclass('token_link_observations') IS NOT NULL AS token_links,
     to_regclass('blockchain_swap_evidence_revisions') IS NOT NULL AS blockchain_revisions,
     EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('intelligence_inbox')
@@ -171,6 +176,9 @@ export async function checkDestination(pool,options={}){
     }
     if(row.discord_message_tombstones!==true){
       throw new Error("destination Intelligence migration 023 required before Discord source claims");
+    }
+    if(row.discord_user_erasure_ready!==true){
+      throw new Error("destination Intelligence migration 024 required before Discord source claims");
     }
   }
   if(options.requireBlockchainRevisions===true && !row.blockchain_revisions){

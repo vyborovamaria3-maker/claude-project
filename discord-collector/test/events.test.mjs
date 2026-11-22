@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {validateAuthorization,normalizeMessage,allowedObservation} from "../src/events.mjs";
+import {readFileSync} from "node:fs";
+import {validateAuthorization,normalizeMessage,allowedObservation,isMetadataOnlyMessageUpdate,isEventCurrentlyAuthorized} from "../src/events.mjs";
 const guildId="123456789012345678";
 const channelId="223456789012345678";
 const messageId="323456789012345678";
@@ -10,6 +11,18 @@ const valid={version:2,mode:"collect",guilds:[{guild_id:guildId,channel_ids:[cha
  reviewed_by:"test",retention_days:30}]};
 const mock={id:messageId,guildId,channelId,author:{id:"423456789012345678"},
  content:"Solana token!",createdAt:new Date("2024-05-01T00:00:00Z"),editedAt:null};
+test("Gateway snapshots never retain content when the author identity is missing",()=>{
+ const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
+ assert.match(source,/content:authorId!==null&&typeof message\.content==="string"\?message\.content:null/);
+});
+
+test("metadata-only MESSAGE_UPDATE events do not become content revisions",()=>{
+ assert.equal(isMetadataOnlyMessageUpdate({kind:"edited"},{editedAt:null}),true);
+ assert.equal(isMetadataOnlyMessageUpdate({kind:"edited",editedAt:"2026-11-19T12:00:00.000Z"},{editedAt:null}),false);
+ assert.equal(isMetadataOnlyMessageUpdate({kind:"edited"},{editedAt:new Date("2026-11-19T12:00:00.000Z")}),false);
+ assert.equal(isMetadataOnlyMessageUpdate({kind:"observed"},{editedAt:null}),false);
+});
+
 test("default deny missing guild/channel permission",()=>{
  assert.throws(()=>validateAuthorization({guilds:[]}));
  assert.throws(()=>validateAuthorization({guilds:[{guild_id:guildId,channel_ids:[channelId],retention_days:30}]}));
@@ -93,6 +106,11 @@ test("message revisions stable and deletion drops raw body",()=>{
  assert.equal(erased.contentSha,null);
  assert.notEqual(first.revisionKey,erased.revisionKey);
 });
+test("retained observations and edits require an author ID for later erasure",()=>{
+ assert.throws(()=>normalizeMessage({...mock,author:null},"observed"),/author ID for erasure/);
+ assert.throws(()=>normalizeMessage({...mock,author:null,editedAt:new Date("2024-05-01T01:00:00Z")},"edited"),/author ID for erasure/);
+ assert.doesNotThrow(()=>normalizeMessage({id:messageId,channelId},"deleted",new Date().toISOString(),guildId));
+});
 test("partial deletion can be resolved only with trusted allowed guild id",()=>{
  const deletion=normalizeMessage({id:messageId,channelId},"deleted",new Date().toISOString(),guildId);
  assert.equal(deletion.guildId,guildId);
@@ -113,4 +131,21 @@ test("invalid IDs, event types and timestamps rejected",()=>{
  assert.throws(()=>normalizeMessage({...mock,id:"123"},"observed"));
  assert.throws(()=>normalizeMessage(mock,"unknown"));
  assert.throws(()=>normalizeMessage(mock,"observed","2024-05-01T10:00:00"));
+});
+
+test("a renewed active lease keeps an in-flight spool event retryable",()=>{
+ const event={channelId,guildId};
+ const renewed=new Map([[channelId,{
+  guildId,retentionDays:90,permissionReference:"renewed-consent",
+  expiresAt:"2026-12-20T00:00:00.000Z",
+ }]]);
+ assert.equal(isEventCurrentlyAuthorized(renewed,event,Date.parse("2026-11-20T00:00:00Z")),true);
+ const revoked=new Map([[channelId,{
+  guildId:"923456789012345699",expiresAt:"2026-12-20T00:00:00.000Z",
+ }]]);
+ assert.equal(isEventCurrentlyAuthorized(revoked,event,Date.parse("2026-11-20T00:00:00Z")),false);
+ const expired=new Map([[channelId,{
+  guildId,expiresAt:"2026-11-19T00:00:00.000Z",
+ }]]);
+ assert.equal(isEventCurrentlyAuthorized(expired,event,Date.parse("2026-11-20T00:00:00Z")),false);
 });
