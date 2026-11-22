@@ -137,7 +137,7 @@ test("global ingress or replay failure checkpoints every active channel",()=>{
 
 test("fatal coverage checkpoints are single-flight and awaited before PostgreSQL closes",()=>{
   const source=readFileSync(new URL("../src/index.mjs",import.meta.url),"utf8");
-  assert.match(source,/function ensureFatalCoverageCheckpoints\(\)[\s\S]*if\(!fatalCoverageScheduled\)[\s\S]*fatalCoverageTask=Promise\.resolve\(\)\.then\(\(\)=>persistCoverageGap\(\)\)/);
+  assert.match(source,/function ensureFatalCoverageCheckpoints\(\)[\s\S]*if\(!fatalCoverageScheduled\)[\s\S]*fatalCoverageTask=Promise\.resolve\(\)\.then\(async\(\)=>\{[\s\S]*await authorizationReloadTask\.catch\(\(\)=>\{\}\);[\s\S]*await persistCoverageGap\(\);/);
   assert.match(source,/startupTask,sweepTask,coverageTask,fatalCoverageTask,permissionPreflightPauseTask/);
   assert.match(source,/void ensureFatalCoverageCheckpoints\(\)\.finally\(\(\)=>void shutdown\(\)\)/);
 });
