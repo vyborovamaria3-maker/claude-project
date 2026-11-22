@@ -72,6 +72,11 @@ test("valid fsynced temporary records are recovered after a crash before rename"
   }finally{f.cleanup()}
 });
 
+test("temporary spool recovery fsyncs the file before promoting its durable name",()=>{
+  const source=readFileSync(new URL("../src/ingress-spool.mjs",import.meta.url),"utf8");
+  assert.match(source,/if\(match\[2\]==="tmp"\)[\s\S]*openSync\(path,"r\+"\)[\s\S]*fsyncSync\(fd\)[\s\S]*renameSync\(path,target\)/);
+});
+
 test("partial or corrupt temporary records fail closed instead of being silently discarded",()=>{
   const f=fixture();
   try{
