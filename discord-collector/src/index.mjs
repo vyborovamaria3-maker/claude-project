@@ -230,6 +230,8 @@ let shutdownPromise=null;
 let startupTask=Promise.resolve();
 let sweepTask=Promise.resolve();
 let coverageTask=Promise.resolve();
+let fatalCoverageTask=Promise.resolve();
+let fatalCoverageScheduled=false;
 let drainPromise=null;
 let spoolReplayRetryTimer=null;
 let spoolReplayRetryAttempt=0;
@@ -371,6 +373,19 @@ async function persistCoverageGap(){
     throw new Error("discord_recovery_gap_checkpoint_failed");
 }
 
+function ensureFatalCoverageCheckpoints(){
+  // Ingress append failure and an in-flight replay failure can race. Share one
+  // checkpoint task so shutdown cannot close PostgreSQL while a second set of
+  // recovery writes is still running, and do not overwrite the preflight task.
+  if(!fatalCoverageScheduled){
+    fatalCoverageScheduled=true;
+    fatalCoverageTask=Promise.resolve().then(()=>persistCoverageGap()).catch(()=>{
+      console.error("Discord fatal coverage checkpoints could not all be persisted");
+    });
+  }
+  return fatalCoverageTask;
+}
+
 function isoOrNull(value,fallbackTimestamp){
   if(value instanceof Date&&Number.isFinite(value.getTime()))return value.toISOString();
   if(Number.isFinite(fallbackTimestamp))return new Date(fallbackTimestamp).toISOString();
@@ -397,16 +412,13 @@ function snapshotGatewayEvent(kind,message,permission){
   };
 }
 
-function failCollector(channelId,code){
+function failCollector(code){
   if(!acceptingEvents)return;
   acceptingEvents=false;
   failures++;
   process.exitCode=1;
   console.error("Discord durable ingress stopped",code);
-  coverageTask=Promise.resolve().then(()=>persistCoverageGap()).catch(()=>{
-    console.error("Discord coverage checkpoints could not all be persisted");
-  });
-  void coverageTask.finally(()=>void shutdown());
+  void ensureFatalCoverageCheckpoints().finally(()=>void shutdown());
 }
 
 function enqueueGatewayEvent(kind,message){
@@ -420,7 +432,7 @@ function enqueueGatewayEvent(kind,message){
     // it, and fsyncs the directory before this Gateway callback returns.
     spool.append(event);
   }catch(error){
-    failCollector(channelId,error?.code==="INGRESS_SPOOL_FULL"?"ingress_spool_full":"ingress_spool_write_failed");
+    failCollector(error?.code==="INGRESS_SPOOL_FULL"?"ingress_spool_full":"ingress_spool_write_failed");
     return;
   }
   if(client.isReady()&&!spoolReplayRetryTimer&&!stopping)void drainSpool().catch(()=>{});
@@ -571,9 +583,7 @@ function drainSpool({allowHydration=true}={}){
     process.exitCode=1;
     console.error("Discord durable ingress replay stopped; event retained for restart",
       error?.code??"ingress_replay_failed",oldest?{blockedSequence:oldest.sequence}:null);
-    coverageTask=Promise.resolve().then(()=>persistCoverageGap())
-      .catch(()=>console.error("Discord replay coverage checkpoints could not all be persisted"));
-    void coverageTask.finally(()=>void shutdown());
+    void ensureFatalCoverageCheckpoints().finally(()=>void shutdown());
     throw error;
   }).finally(()=>{drainPromise=null;});
   return drainPromise;
@@ -1030,7 +1040,7 @@ async function shutdown(){
       acceptingEvents=false;
     }
     const settled=await Promise.allSettled([
-      startupTask,sweepTask,coverageTask,permissionPreflightPauseTask,
+      startupTask,sweepTask,coverageTask,fatalCoverageTask,permissionPreflightPauseTask,
       drainPromise??Promise.resolve(),authorizationReloadTask,permissionPreflightTask,
     ]);
     if(settled.some(result=>result.status==="rejected")){
