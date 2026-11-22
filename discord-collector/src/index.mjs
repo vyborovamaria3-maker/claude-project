@@ -368,7 +368,12 @@ function ensureFatalCoverageCheckpoints(){
   // recovery writes is still running, and do not overwrite the preflight task.
   if(!fatalCoverageScheduled){
     fatalCoverageScheduled=true;
-    fatalCoverageTask=Promise.resolve().then(()=>persistCoverageGap()).catch(()=>{
+    fatalCoverageTask=Promise.resolve().then(async()=>{
+      // Let a policy reload finish its allowlist transition and revocation purge
+      // before taking the fatal-stop checkpoint snapshot.
+      await authorizationReloadTask.catch(()=>{});
+      await persistCoverageGap();
+    }).catch(()=>{
       console.error("Discord fatal coverage checkpoints could not all be persisted");
     });
   }
